@@ -1,0 +1,8 @@
+[package]
+name = "cddl"
+version = "0.1.0"
+authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
+edition = "2018"
+
+[dependencies]
+whoami = "0.4.1"
