@@ -1,6 +1,6 @@
-use super::ast::{GenericParm, Identifier, Node, Rule, Type, Type1, Type2, TypeRule, CDDL, RangeCtlOp};
+use super::ast::*;
 use super::lexer::Lexer;
-use super::token::Token;
+use super::token::{Token, Value};
 use std::error::Error;
 use std::mem;
 
@@ -37,8 +37,6 @@ impl<'a> Parser<'a> {
 
     while self.cur_token != Token::EOF {
       c.rules.push(self.parse_rule()?);
-      // self.next_token()?;
-      
     }
 
     Ok(c)
@@ -74,8 +72,6 @@ impl<'a> Parser<'a> {
       is_group_choice_alternate = true;
     }
 
-    
-
     self.next_token()?;
 
     let mut t: Type;
@@ -93,8 +89,6 @@ impl<'a> Parser<'a> {
       is_type_choice_alternate: is_type_choice_alternate,
       value: t,
     };
-
-    println!("rule value: {:?}", tr);
 
     Ok(Rule::Type(tr))
   }
@@ -120,6 +114,23 @@ impl<'a> Parser<'a> {
     Ok(generic_params)
   }
 
+  fn parse_genericarg(&mut self) -> Result<GenericArg, Box<Error>> {
+    self.next_token()?;
+
+    let mut generic_args = GenericArg(Vec::new());
+
+    while !self.cur_token_is(Token::RANGLEBRACKET) {
+      generic_args.0.push(self.parse_type1()?);
+      if self.cur_token_is(Token::COMMA) {
+        self.next_token()?;
+      }
+    }
+
+    self.next_token()?;
+
+    Ok(generic_args)
+  }
+
   fn parse_type(&mut self) -> Result<Type, Box<Error>> {
     let mut t = Type(Vec::new());
 
@@ -135,33 +146,25 @@ impl<'a> Parser<'a> {
 
   fn parse_type1(&mut self) -> Result<Type1, Box<Error>> {
     match &self.cur_token {
-      Token::RANGE((l, u, i)) => {
-        Ok(Type1 {
-          type2: Type2::Value(l.to_string().into()),
-          operator: Some((RangeCtlOp::RangeOp(*i), Type2::Value(u.to_string().into()))),
-        })
-      }
-      Token::IDENT(_) => {
-        Ok(Type1{
-          type2: self.parse_type2()?,
-          operator: None,
-        })
-      }
-      _ => Err("Unknown".into()),
+      Token::RANGE((l, u, i)) => Ok(Type1 {
+        type2: Type2::Value(l.to_string()),
+        operator: Some((RangeCtlOp::RangeOp(*i), Type2::Value(u.to_string()))),
+      }),
+      _ => Ok(Type1 {
+        type2: self.parse_type2()?,
+        operator: None,
+      }),
     }
   }
 
   fn parse_type2(&mut self) -> Result<Type2, Box<Error>> {
     let t2 = match &self.cur_token {
       // value
-      Token::DQUOTE => {
-        if !self.expect_peek(&Token::IDENT("".into())) {
-          return Err("Expecting \"IDENT(String)\"".into());
-        }
-
-        match &self.cur_token {
-          Token::IDENT(ident) => Ok(Type2::Value(ident.to_string().into())),
-          _ => Err("Expecting \"IDENT(String)\"".into()),
+      Token::VALUE(value) => {
+        match value {
+          // TODO: fix workaround for double escaping string literal values
+          Value::TEXT(text) => Ok(Type2::Value(text.to_string())),
+          _ => Err("bad value".into()),
         }
       }
       // typename [genericarg]
@@ -177,7 +180,7 @@ impl<'a> Parser<'a> {
     };
 
     self.next_token()?;
-    
+
     t2
   }
 
@@ -309,7 +312,10 @@ secondrule = thirdrule"#;
     check_parser_errors(&p)?;
 
     if gps.0.len() != 2 {
-      eprintln!("GenericParm does not contain 2 generic parameters. got='{}'", gps.0.len());
+      eprintln!(
+        "GenericParm does not contain 2 generic parameters. got='{}'",
+        gps.0.len()
+      );
     }
 
     let expected_generic_params = ["t", "v"];
@@ -317,6 +323,33 @@ secondrule = thirdrule"#;
     for (idx, expected_generic_param) in expected_generic_params.iter().enumerate() {
       let gp = &gps.0[idx];
       assert_eq!(gp.to_string(), *expected_generic_param);
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn verify_genericarg() -> Result<(), Box<Error>> {
+    let input = r#"<"reboot", "now">"#;
+
+    let mut l = Lexer::new(input);
+    let mut p = Parser::new(&mut l)?;
+
+    let generic_args = p.parse_genericarg()?;
+    check_parser_errors(&p)?;
+
+    if generic_args.0.len() != 2 {
+      eprintln!(
+        "generic_args does not contain 2 generic args. got='{}'",
+        generic_args.0.len()
+      );
+    }
+
+    let expected_generic_args = ["\"reboot\"", "\"now\""];
+
+    for (idx, expected_generic_arg) in expected_generic_args.iter().enumerate() {
+      let ga = &generic_args.0[idx];
+      assert_eq!(ga.to_string(), *expected_generic_arg);
     }
 
     Ok(())

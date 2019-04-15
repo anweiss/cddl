@@ -1,6 +1,5 @@
 use super::token::Token;
 use std::fmt;
-use std::string::ToString;
 
 pub trait Node {
   fn token_literal(&self) -> Option<String>;
@@ -100,15 +99,40 @@ pub struct Type1 {
   pub operator: Option<(RangeCtlOp, Type2)>,
 }
 
+impl<'a> fmt::Display for Type1 {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let mut t1 = String::new();
+
+    t1.push_str(&self.type2.to_string());
+
+    if let Some((rco, t2)) = &self.operator {
+      t1.push_str(&rco.to_string());
+      t1.push_str(&t2.to_string());
+    }
+
+    write!(f, "{}", t1)
+  }
+}
+
 #[derive(Debug)]
 pub enum RangeCtlOp {
   RangeOp(bool),
   CtlOp(String),
 }
 
+impl<'a> fmt::Display for RangeCtlOp {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      RangeCtlOp::RangeOp(false) => write!(f, "..."),
+      RangeCtlOp::RangeOp(true) => write!(f, ".."),
+      RangeCtlOp::CtlOp(ctrl) => write!(f, ".{}", ctrl),
+    }
+  }
+}
+
 #[derive(Debug)]
 pub enum Type2 {
-  Value(Identifier),
+  Value(String),
   Typename((Identifier, Option<GenericArg>)),
   Group(Type),
   Map(Group),
@@ -124,6 +148,7 @@ pub enum Type2 {
 impl<'a> fmt::Display for Type2 {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
+      Type2::Value(value) => write!(f, "\"{}\"", value),
       Type2::Typename((tn, _)) => write!(f, "{}", tn.0),
       _ => write!(f, ""),
     }
@@ -147,7 +172,7 @@ pub enum GroupEntry {
 pub struct MemberKeyEntry {
   pub occur: Option<Occur>,
   pub member_key: Option<MemberKey>,
-  pub entry_type: Type, 
+  pub entry_type: Type,
 }
 
 #[derive(Debug)]
@@ -162,7 +187,7 @@ pub enum MemberKey {
   // if true, cut is present
   Type1((Type1, bool)),
   Bareword(Identifier),
-  Value(String)
+  Value(String),
 }
 
 #[derive(Debug)]

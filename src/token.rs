@@ -6,6 +6,7 @@ pub enum Token {
   EOF,
 
   IDENT(String),
+  VALUE(Value),
   INTLITERAL(usize),
   FLOATLITERAL(f64),
   TAG((usize, String)),
@@ -43,7 +44,6 @@ pub enum Token {
   RBRACKET,
   LANGLEBRACKET,
   RANGLEBRACKET,
-  DQUOTE,
 
   // Control operators
   SIZE,
@@ -105,6 +105,25 @@ pub enum Token {
   UNDEFINED,
 }
 
+#[derive(Debug, PartialEq)]
+pub enum Value {
+  // TODO: support hexfloat, fraction and exponent
+  NUMBER,
+  TEXT(String),
+
+  // TODO: support raw byte string
+  BYTES(String),
+}
+
+impl<'a> fmt::Display for Value {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      Value::TEXT(text) => write!(f, "\"{}\"", text),
+      _ => write!(f, ""),
+    }
+  }
+}
+
 impl<'a> fmt::Display for Token {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
@@ -129,7 +148,6 @@ impl<'a> fmt::Display for Token {
       Token::TSTR => write!(f, "tstr"),
       Token::LANGLEBRACKET => write!(f, "<"),
       Token::RANGLEBRACKET => write!(f, ">"),
-      Token::DQUOTE => write!(f, "\""),
       Token::INT => write!(f, "int"),
       Token::UINT => write!(f, "uint"),
       Token::INTLITERAL(i) => write!(f, "{}", i),
@@ -154,6 +172,7 @@ impl<'a> fmt::Display for Token {
       Token::GCHOICE => write!(f, "//"),
       Token::TRUE => write!(f, "true"),
       Token::GTOCHOICE => write!(f, "&"),
+      Token::VALUE(value) => write!(f, "{}", value),
       Token::RANGE((l, u, i)) => {
         if *i {
           return write!(f, "{}..{}", l, u);

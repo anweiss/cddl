@@ -1,5 +1,5 @@
 use super::token;
-use super::token::Token;
+use super::token::{Token, Value};
 use std::error::Error;
 use std::iter::Peekable;
 use std::str::Chars;
@@ -17,11 +17,16 @@ pub struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
   pub fn new(input: &'a str) -> Lexer<'a> {
-    Lexer { input: input.chars().peekable() }
+    Lexer {
+      input: input.chars().peekable(),
+    }
   }
 
   fn read_char(&mut self) -> Result<char, Box<Error>> {
-    self.input.next().ok_or("Unable to advance to the next token".into())
+    self
+      .input
+      .next()
+      .ok_or("Unable to advance to the next token".into())
   }
 
   pub fn next_token(&mut self) -> Result<Token, Box<Error>> {
@@ -32,17 +37,26 @@ impl<'a> Lexer<'a> {
         '=' => match self.peek_char() {
           Some(&c) if c == '>' => {
             let _ = self.read_char()?;
-             Ok(Token::ARROWMAP)
+            Ok(Token::ARROWMAP)
           }
           _ => Ok(Token::ASSIGN),
-        }
+        },
         '+' => Ok(Token::PLUS),
         '?' => Ok(Token::OPTIONAL),
         '*' => Ok(Token::ASTERISK),
         '(' => Ok(Token::LPAREN),
         ')' => Ok(Token::RPAREN),
         '<' => Ok(Token::LANGLEBRACKET),
-        '"' => Ok(Token::DQUOTE),
+        '"' => {
+          let v = Token::VALUE(Value::TEXT(self.read_text_value()?));
+          match self.peek_char() {
+            Some(&c) if c != '"' => return Err("Expecting closing \" in text value".into()),
+            _ => {
+              let _ = self.read_char()?;
+              Ok(v)
+            }
+          }
+        }
         '{' => Ok(Token::LBRACE),
         '}' => Ok(Token::RBRACE),
         ',' => Ok(Token::COMMA),
@@ -84,7 +98,7 @@ impl<'a> Lexer<'a> {
           }
           None => Ok(Token::ANY),
           _ => Ok(Token::ILLEGAL), // Temporary ... need to lex Some(c)
-        }
+        },
         '.' => {
           let ch = self.read_char()?;
 
@@ -144,6 +158,25 @@ impl<'a> Lexer<'a> {
       }
     }
     Ok(ident)
+  }
+
+  fn read_text_value(&mut self) -> Result<String, Box<Error>> {
+    let mut text_value = String::new();
+
+    while let Some(&c) = self.peek_char() {
+      // TODO: support SESC = "\" (%x20-7E / %x80-10FFFD)
+      if c == '\x21'
+        || (c >= '\x23' && c <= '\x5b')
+        || (c >= '\x5d' && c <= '\x7e')
+        || (c >= '\u{0128}' && c <= '\u{10FFFD}')
+      {
+        text_value.push(self.read_char()?);
+      } else {
+        break;
+      }
+    }
+
+    Ok(text_value)
   }
 
   fn skip_whitespace(&mut self) {
@@ -235,11 +268,7 @@ impl<'a> Lexer<'a> {
           is_inclusive,
         ));
       } else if is_ealpha(c) {
-          t = Token::RANGE((
-          lower.to_string(),
-          self.read_identifier(c)?,
-          is_inclusive,
-        ));
+        t = Token::RANGE((lower.to_string(), self.read_identifier(c)?, is_inclusive));
       }
     }
 
@@ -262,7 +291,7 @@ mod tests {
 
   #[test]
   fn verify_next_token() {
-    let input = r#"myfirstrule = myotherrule
+    let input = r#"myfirstrule = "myotherrule"
 
 mysecondrule = mythirdrule
 
@@ -286,7 +315,7 @@ city = (
     let expected_tok = [
       (IDENT("myfirstrule".into()), "myfirstrule"),
       (ASSIGN, "="),
-      (IDENT("myotherrule".into()), "myotherrule"),
+      (VALUE(Value::TEXT("myotherrule".into())), "\"myotherrule\""),
       (IDENT("mysecondrule".into()), "mysecondrule"),
       (ASSIGN, "="),
       (IDENT("mythirdrule".into()), "mythirdrule"),
@@ -299,13 +328,9 @@ city = (
       (ASSIGN, "="),
       (IDENT("message".into()), "message"),
       (LANGLEBRACKET, "<"),
-      (DQUOTE, "\""),
-      (IDENT("reboot".into()), "reboot"),
-      (DQUOTE, "\""),
+      (VALUE(Value::TEXT("reboot".into())), "\"reboot\""),
       (COMMA, ","),
-      (DQUOTE, "\""),
-      (IDENT("now".into()), "now"),
-      (DQUOTE, "\""),
+      (VALUE(Value::TEXT("now".into())), "\"now\""),
       (RANGLEBRACKET, ">"),
       (IDENT("address".into()), "address"),
       (ASSIGN, "="),
