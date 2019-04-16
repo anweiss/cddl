@@ -6,8 +6,8 @@ use std::mem;
 
 struct Parser<'a> {
   l: &'a mut Lexer<'a>,
-  cur_token: Token,
-  peek_token: Token,
+  cur_token: Token<'a>,
+  peek_token: Token<'a>,
   errors: Vec<Box<Error>>,
 }
 
@@ -32,7 +32,7 @@ impl<'a> Parser<'a> {
     Ok(())
   }
 
-  fn parse_cddl(&mut self) -> Result<CDDL, Box<Error>> {
+  fn parse_cddl(&mut self) -> Result<CDDL<'a>, Box<Error>> {
     let mut c = CDDL::default();
 
     while self.cur_token != Token::EOF {
@@ -42,9 +42,9 @@ impl<'a> Parser<'a> {
     Ok(c)
   }
 
-  fn parse_rule(&mut self) -> Result<Rule, Box<Error>> {
+  fn parse_rule(&mut self) -> Result<Rule<'a>, Box<Error>> {
     let name = match &self.cur_token {
-      Token::IDENT(i) => Token::IDENT(i.to_string()),
+      Token::IDENT(i) => Token::IDENT(i),
       _ => return Err("expected IDENT".into()),
     };
 
@@ -93,7 +93,7 @@ impl<'a> Parser<'a> {
     Ok(Rule::Type(tr))
   }
 
-  fn parse_genericparm(&mut self) -> Result<GenericParm, Box<Error>> {
+  fn parse_genericparm(&mut self) -> Result<GenericParm<'a>, Box<Error>> {
     self.next_token()?;
 
     let mut generic_params = GenericParm(Vec::new());
@@ -101,7 +101,7 @@ impl<'a> Parser<'a> {
     while !self.cur_token_is(Token::RANGLEBRACKET) {
       match &self.cur_token {
         Token::IDENT(i) => {
-          generic_params.0.push(Identifier::from(i.to_string()));
+          generic_params.0.push(Identifier::from(*i));
           self.next_token()?;
         }
         Token::COMMA => self.next_token()?,
@@ -114,7 +114,7 @@ impl<'a> Parser<'a> {
     Ok(generic_params)
   }
 
-  fn parse_genericarg(&mut self) -> Result<GenericArg, Box<Error>> {
+  fn parse_genericarg(&mut self) -> Result<GenericArg<'a>, Box<Error>> {
     self.next_token()?;
 
     let mut generic_args = GenericArg(Vec::new());
@@ -131,7 +131,7 @@ impl<'a> Parser<'a> {
     Ok(generic_args)
   }
 
-  fn parse_type(&mut self) -> Result<Type, Box<Error>> {
+  fn parse_type(&mut self) -> Result<Type<'a>, Box<Error>> {
     let mut t = Type(Vec::new());
 
     t.0.push(self.parse_type1()?);
@@ -144,7 +144,7 @@ impl<'a> Parser<'a> {
     Ok(t)
   }
 
-  fn parse_type1(&mut self) -> Result<Type1, Box<Error>> {
+  fn parse_type1(&mut self) -> Result<Type1<'a>, Box<Error>> {
     match &self.cur_token {
       Token::RANGE((l, u, i)) => Ok(Type1 {
         type2: Type2::Value(l.to_string()),
@@ -157,7 +157,7 @@ impl<'a> Parser<'a> {
     }
   }
 
-  fn parse_type2(&mut self) -> Result<Type2, Box<Error>> {
+  fn parse_type2(&mut self) -> Result<Type2<'a>, Box<Error>> {
     let t2 = match &self.cur_token {
       // value
       Token::VALUE(value) => {
@@ -174,7 +174,7 @@ impl<'a> Parser<'a> {
 
         // }
 
-        Ok(Type2::Typename((ident.to_string().into(), None)))
+        Ok(Type2::Typename((Identifier::from(*ident), None)))
       }
       _ => return Err("Unknown".into()),
     };

@@ -6,11 +6,11 @@ pub trait Node {
 }
 
 #[derive(Default, Debug)]
-pub struct CDDL {
-  pub rules: Vec<Rule>,
+pub struct CDDL<'a> {
+  pub rules: Vec<Rule<'a>>,
 }
 
-impl Node for CDDL {
+impl<'a> Node for CDDL<'a> {
   fn token_literal(&self) -> Option<String> {
     if self.rules.len() > 0 {
       return self.rules[0].token_literal();
@@ -21,33 +21,33 @@ impl Node for CDDL {
 }
 
 #[derive(Debug)]
-pub struct Identifier(pub Token);
+pub struct Identifier<'a>(pub Token<'a>);
 
-impl Node for Identifier {
+impl<'a> Node for Identifier<'a> {
   fn token_literal(&self) -> Option<String> {
     Some(format!("{:?}", self.0))
   }
 }
 
-impl From<String> for Identifier {
-  fn from(s: String) -> Self {
+impl<'a> From<&'a str> for Identifier<'a> {
+  fn from(s: &'a str) -> Self {
     Identifier(Token::IDENT(s))
   }
 }
 
-impl ToString for Identifier {
-  fn to_string(&self) -> String {
-    format!("{}", self.0.to_string())
+impl<'a> fmt::Display for Identifier<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{}", self.0.to_string())
   }
 }
 
 #[derive(Debug)]
-pub enum Rule {
-  Type(TypeRule),
-  Group(GroupRule),
+pub enum Rule<'a> {
+  Type(TypeRule<'a>),
+  Group(GroupRule<'a>),
 }
 
-impl Node for Rule {
+impl<'a> Node for Rule<'a> {
   fn token_literal(&self) -> Option<String> {
     match self {
       Rule::Type(tr) => tr.token_literal(),
@@ -57,49 +57,49 @@ impl Node for Rule {
 }
 
 #[derive(Debug)]
-pub struct TypeRule {
-  pub name: Identifier,
-  pub generic_param: Option<GenericParm>,
+pub struct TypeRule<'a> {
+  pub name: Identifier<'a>,
+  pub generic_param: Option<GenericParm<'a>>,
   pub is_type_choice_alternate: bool,
-  pub value: Type,
+  pub value: Type<'a>,
 }
 
-impl TypeRule {
+impl<'a> TypeRule<'a> {
   pub fn token_literal(&self) -> Option<String> {
     self.name.token_literal()
   }
 }
 
 #[derive(Debug)]
-pub struct GroupRule {
-  pub name: Identifier,
-  pub generic_para: Option<GenericParm>,
+pub struct GroupRule<'a> {
+  pub name: Identifier<'a>,
+  pub generic_para: Option<GenericParm<'a>>,
   pub is_group_choice_alternate: bool,
-  pub entry: GroupEntry,
+  pub entry: GroupEntry<'a>,
 }
 
-impl Node for GroupRule {
+impl<'a> Node for GroupRule<'a> {
   fn token_literal(&self) -> Option<String> {
     Some("".into())
   }
 }
 
 #[derive(Default, Debug)]
-pub struct GenericParm(pub Vec<Identifier>);
+pub struct GenericParm<'a>(pub Vec<Identifier<'a>>);
 
 #[derive(Debug)]
-pub struct GenericArg(pub Vec<Type1>);
+pub struct GenericArg<'a>(pub Vec<Type1<'a>>);
 
 #[derive(Debug)]
-pub struct Type(pub Vec<Type1>);
+pub struct Type<'a>(pub Vec<Type1<'a>>);
 
 #[derive(Debug)]
-pub struct Type1 {
-  pub type2: Type2,
-  pub operator: Option<(RangeCtlOp, Type2)>,
+pub struct Type1<'a> {
+  pub type2: Type2<'a>,
+  pub operator: Option<(RangeCtlOp, Type2<'a>)>,
 }
 
-impl<'a> fmt::Display for Type1 {
+impl<'a> fmt::Display for Type1<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut t1 = String::new();
 
@@ -131,24 +131,25 @@ impl<'a> fmt::Display for RangeCtlOp {
 }
 
 #[derive(Debug)]
-pub enum Type2 {
+pub enum Type2<'a> {
+  // TODO: figure out zero-copy range Value(&'a str)
   Value(String),
-  Typename((Identifier, Option<GenericArg>)),
-  Group(Type),
-  Map(Group),
-  Array(Group),
-  Unwrap((Identifier, Option<GenericArg>)),
-  ChoiceFromInlineGroup(Group),
-  ChoiceFromGroup((Identifier, Option<GenericArg>)),
+  Typename((Identifier<'a>, Option<GenericArg<'a>>)),
+  Group(Type<'a>),
+  Map(Group<'a>),
+  Array(Group<'a>),
+  Unwrap((Identifier<'a>, Option<GenericArg<'a>>)),
+  ChoiceFromInlineGroup(Group<'a>),
+  ChoiceFromGroup((Identifier<'a>, Option<GenericArg<'a>>)),
   TaggedData(String),
   TaggedDataMajorType(String),
   Any,
 }
 
-impl<'a> fmt::Display for Type2 {
+impl<'a> fmt::Display for Type2<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      Type2::Value(value) => write!(f, "\"{}\"", value),
+      Type2::Value(value) => write!(f, "{}", value),
       Type2::Typename((tn, _)) => write!(f, "{}", tn.0),
       _ => write!(f, ""),
     }
@@ -156,37 +157,37 @@ impl<'a> fmt::Display for Type2 {
 }
 
 #[derive(Debug)]
-pub struct Group(Vec<GroupChoice>);
+pub struct Group<'a>(Vec<GroupChoice<'a>>);
 
 #[derive(Debug)]
-pub struct GroupChoice(Vec<GroupEntry>);
+pub struct GroupChoice<'a>(Vec<GroupEntry<'a>>);
 
 #[derive(Debug)]
-pub enum GroupEntry {
-  MemberKey(MemberKeyEntry),
-  Groupname(GroupnameEntry),
-  InlineGroup((Option<Occur>, Group)),
+pub enum GroupEntry<'a> {
+  MemberKey(MemberKeyEntry<'a>),
+  Groupname(GroupnameEntry<'a>),
+  InlineGroup((Option<Occur>, Group<'a>)),
 }
 
 #[derive(Debug)]
-pub struct MemberKeyEntry {
+pub struct MemberKeyEntry<'a> {
   pub occur: Option<Occur>,
-  pub member_key: Option<MemberKey>,
-  pub entry_type: Type,
+  pub member_key: Option<MemberKey<'a>>,
+  pub entry_type: Type<'a>,
 }
 
 #[derive(Debug)]
-pub struct GroupnameEntry {
+pub struct GroupnameEntry<'a> {
   pub occur: Option<Occur>,
-  pub name: Identifier,
-  pub generic_arg: Option<GenericArg>,
+  pub name: Identifier<'a>,
+  pub generic_arg: Option<GenericArg<'a>>,
 }
 
 #[derive(Debug)]
-pub enum MemberKey {
+pub enum MemberKey<'a> {
   // if true, cut is present
-  Type1((Type1, bool)),
-  Bareword(Identifier),
+  Type1((Type1<'a>, bool)),
+  Bareword(Identifier<'a>),
   Value(String),
 }
 

@@ -1,15 +1,15 @@
 use std::fmt;
 
 #[derive(PartialEq, Debug)]
-pub enum Token {
+pub enum Token<'a> {
   ILLEGAL,
   EOF,
 
-  IDENT(String),
-  VALUE(Value),
+  IDENT(&'a str),
+  VALUE(Value<'a>),
   INTLITERAL(usize),
   FLOATLITERAL(f64),
-  TAG((usize, String)),
+  TAG((usize, &'a str)),
 
   // Operators
   ASSIGN,
@@ -18,7 +18,7 @@ pub enum Token {
   OCCURENCE((usize, usize)),
   PLUS,
   UNWRAP,
-  CONTROL(String),
+  CONTROL(&'a str),
 
   // Delimiters
   COMMA,
@@ -34,6 +34,7 @@ pub enum Token {
   TSOCKET,
   GSOCKET,
 
+  // TODO: zero-copy
   RANGE((String, String, bool)),
 
   LPAREN,
@@ -106,25 +107,25 @@ pub enum Token {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Value {
+pub enum Value<'a> {
   // TODO: support hexfloat, fraction and exponent
   NUMBER,
-  TEXT(String),
+  TEXT(&'a str),
 
   // TODO: support raw byte string
-  BYTES(String),
+  BYTES(&'a str),
 }
 
-impl<'a> fmt::Display for Value {
+impl<'a> fmt::Display for Value<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      Value::TEXT(text) => write!(f, "\"{}\"", text),
+      Value::TEXT(text) => write!(f, "{}", text),
       _ => write!(f, ""),
     }
   }
 }
 
-impl<'a> fmt::Display for Token {
+impl<'a> fmt::Display for Token<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Token::IDENT(ident) => write!(f, "{}", ident),
@@ -181,7 +182,7 @@ impl<'a> fmt::Display for Token {
         write!(f, "{}...{}", l, u)
       }
       Token::TAG((tn, tt)) => {
-        if tt != "" {
+        if *tt != "" {
           return write!(f, "#6.{}({})", tn, tt);
         }
 
@@ -192,7 +193,7 @@ impl<'a> fmt::Display for Token {
   }
 }
 
-pub fn lookup_control(ident: &str) -> Token {
+pub fn lookup_control<'a>(ident: &str) -> Token<'a> {
   match ident {
     "size" => Token::SIZE,
     "bits" => Token::BITS,
@@ -212,7 +213,7 @@ pub fn lookup_control(ident: &str) -> Token {
   }
 }
 
-pub fn lookup_ident(ident: &str) -> Token {
+pub fn lookup_ident<'a>(ident: &'a str) -> Token<'a> {
   match ident {
     "false" => Token::FALSE,
     "true" => Token::TRUE,
