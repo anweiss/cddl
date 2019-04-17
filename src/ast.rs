@@ -12,7 +12,7 @@ pub struct CDDL<'a> {
 
 impl<'a> Node for CDDL<'a> {
   fn token_literal(&self) -> Option<String> {
-    if self.rules.len() > 0 {
+    if !self.rules.is_empty() {
       return self.rules[0].token_literal();
     }
 
@@ -44,7 +44,7 @@ impl<'a> fmt::Display for Identifier<'a> {
 #[derive(Debug)]
 pub enum Rule<'a> {
   Type(TypeRule<'a>),
-  Group(GroupRule<'a>),
+  Group(Box<GroupRule<'a>>),
 }
 
 impl<'a> Node for Rule<'a> {

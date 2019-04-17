@@ -192,7 +192,7 @@ impl<'a> fmt::Display for Token<'a> {
   }
 }
 
-pub fn lookup_control<'a>(ident: &str) -> Token<'a> {
+pub fn lookup_control(ident: &str) -> Token {
   match ident {
     "size" => Token::SIZE,
     "bits" => Token::BITS,
@@ -212,7 +212,7 @@ pub fn lookup_control<'a>(ident: &str) -> Token<'a> {
   }
 }
 
-pub fn lookup_ident<'a>(ident: &'a str) -> Token<'a> {
+pub fn lookup_ident(ident: &str) -> Token {
   match ident {
     "false" => Token::FALSE,
     "true" => Token::TRUE,
@@ -253,6 +253,6 @@ pub fn lookup_ident<'a>(ident: &'a str) -> Token<'a> {
     "mime-message" => Token::MIMEMESSAGE,
     "cbor-any" => Token::CBORANY,
     "undefined" => Token::UNDEFINED,
-    _ => Token::IDENT(ident.into()),
+    _ => Token::IDENT(ident),
   }
 }

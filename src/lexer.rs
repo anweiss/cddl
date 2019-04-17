@@ -21,7 +21,7 @@ impl<'a> Lexer<'a> {
     self
       .input
       .next()
-      .ok_or("Unable to advance to the next token".into())
+      .ok_or_else(|| "Unable to advance to the next token".into())
   }
 
   pub fn next_token(&mut self) -> Result<Token<'a>, Box<Error>> {
@@ -165,7 +165,7 @@ impl<'a> Lexer<'a> {
     }
 
     match self.peek_char() {
-      Some(&c) if c.1 != '"' => return Err("Expecting closing \" in text value".into()),
+      Some(&c) if c.1 != '"' => Err("Expecting closing \" in text value".into()),
       _ => {
         let (ei, _) = self.read_char()?;
         end_index = ei;
@@ -361,7 +361,11 @@ city = (
       (IDENT("mysecondrule"), "mysecondrule"),
       (ASSIGN, "="),
       (
-        RANGE((Box::from(IDENT("mynumber")), Box::from(FLOATLITERAL(100.5)), true)),
+        RANGE((
+          Box::from(IDENT("mynumber")),
+          Box::from(FLOATLITERAL(100.5)),
+          true,
+        )),
         "mynumber..100.5",
       ),
       (IDENT("@terminal-color"), "@terminal-color"),

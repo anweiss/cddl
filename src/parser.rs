@@ -14,7 +14,7 @@ struct Parser<'a> {
 impl<'a> Parser<'a> {
   fn new(l: &'a mut Lexer<'a>) -> Result<Parser, Box<Error>> {
     let mut p = Parser {
-      l: l,
+      l,
       cur_token: Token::EOF,
       peek_token: Token::EOF,
       errors: Vec::default(),
@@ -48,13 +48,11 @@ impl<'a> Parser<'a> {
       _ => return Err("expected IDENT".into()),
     };
 
-    let mut gp: Option<GenericParm>;
-
-    if self.peek_token_is(&Token::LANGLEBRACKET) {
-      gp = Some(self.parse_genericparm()?);
+    let gp = if self.peek_token_is(&Token::LANGLEBRACKET) {
+      Some(self.parse_genericparm()?)
     } else {
-      gp = None;
-    }
+      None
+    };
 
     if !self.expect_peek(&Token::ASSIGN)
       && !self.expect_peek(&Token::TCHOICEALT)
@@ -64,12 +62,12 @@ impl<'a> Parser<'a> {
     }
 
     let mut is_type_choice_alternate = false;
-    let mut is_group_choice_alternate = false;
+    let mut _is_group_choice_alternate = false;
 
     if self.cur_token_is(Token::TCHOICEALT) {
       is_type_choice_alternate = true;
     } else if self.cur_token_is(Token::GCHOICEALT) {
-      is_group_choice_alternate = true;
+      _is_group_choice_alternate = true;
     }
 
     self.next_token()?;
@@ -86,7 +84,7 @@ impl<'a> Parser<'a> {
     let tr = TypeRule {
       name: Identifier(name),
       generic_param: gp,
-      is_type_choice_alternate: is_type_choice_alternate,
+      is_type_choice_alternate,
       value: t,
     };
 
