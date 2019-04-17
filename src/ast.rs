@@ -1,4 +1,4 @@
-use super::token::Token;
+use super::token::{Token, Value};
 use std::fmt;
 
 pub trait Node {
@@ -132,8 +132,7 @@ impl<'a> fmt::Display for RangeCtlOp {
 
 #[derive(Debug)]
 pub enum Type2<'a> {
-  // TODO: figure out zero-copy range Value(&'a str)
-  Value(String),
+  Value(Value<'a>),
   Typename((Identifier<'a>, Option<GenericArg<'a>>)),
   Group(Type<'a>),
   Map(Group<'a>),

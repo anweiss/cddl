@@ -144,10 +144,62 @@ impl<'a> Parser<'a> {
 
   fn parse_type1(&mut self) -> Result<Type1<'a>, Box<Error>> {
     match &self.cur_token {
-      Token::RANGE((l, u, i)) => Ok(Type1 {
-        type2: Type2::Value(l.to_string()),
-        operator: Some((RangeCtlOp::RangeOp(*i), Type2::Value(u.to_string()))),
-      }),
+      Token::RANGE((lower, upper, inclusive)) => {
+        let lower_ident = if let Token::IDENT(ident) = lower.as_ref() {
+          Some(Token::IDENT(*ident))
+        } else {
+          None
+        };
+
+        let upper_ident = if let Token::IDENT(ident) = upper.as_ref() {
+          Some(Token::IDENT(*ident))
+        } else {
+          None
+        };
+
+        let lower_value = lower.as_value();
+        let upper_value = upper.as_value();
+
+        if let Some(li) = lower_ident {
+          let mut t1 = Type1 {
+            type2: Type2::Typename((Identifier(li), None)),
+            operator: None,
+          };
+
+          if let Some(ui) = upper_ident {
+            t1.operator = Some((
+              RangeCtlOp::RangeOp(*inclusive),
+              Type2::Typename((Identifier(ui), None)),
+            ));
+          } else {
+            t1.operator = Some((
+              RangeCtlOp::RangeOp(*inclusive),
+              Type2::Value(upper_value.ok_or_else(|| "Illegal upper range value")?),
+            ));
+          }
+
+          Ok(t1)
+        } else {
+          let mut t1 = Type1 {
+            type2: Type2::Value(lower_value.ok_or_else(|| "Illegal lower range value")?),
+            operator: None,
+          };
+
+          if let Some(ui) = upper_ident {
+            t1.operator = Some((
+              RangeCtlOp::RangeOp(*inclusive),
+              Type2::Typename((Identifier(ui), None)),
+            ));
+          } else {
+            t1.operator = Some((
+              RangeCtlOp::RangeOp(*inclusive),
+              Type2::Value(upper_value.ok_or_else(|| "Illegal upper range value")?),
+            ));
+          }
+
+          Ok(t1)
+        }
+      }
       _ => Ok(Type1 {
         type2: self.parse_type2()?,
         operator: None,
@@ -159,9 +211,9 @@ impl<'a> Parser<'a> {
     let t2 = match &self.cur_token {
       // value
       Token::VALUE(value) => {
-        match value {
+        match *value {
           // TODO: fix workaround for double escaping string literal values
-          Value::TEXT(text) => Ok(Type2::Value(text.to_string())),
+          Value::TEXT(text) => Ok(Type2::Value(Value::TEXT(text))),
           _ => Err("bad value".into()),
         }
       }

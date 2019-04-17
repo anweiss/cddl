@@ -105,10 +105,21 @@ pub enum Token<'a> {
   UNDEFINED,
 }
 
+impl<'a> Token<'a> {
+  pub fn as_value(&self) -> Option<Value<'a>> {
+    match &self {
+      Token::INTLITERAL(i) => Some(Value::INT(*i)),
+      Token::FLOATLITERAL(f) => Some(Value::FLOAT(*f)),
+      _ => None,
+    }
+  }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Value<'a> {
-  // TODO: support hexfloat, fraction and exponent
-  NUMBER,
+  // TODO: verify HEXFLOAT works
+  INT(usize),
+  FLOAT(f64),
   TEXT(&'a str),
 
   // TODO: support raw byte string
