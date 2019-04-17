@@ -405,6 +405,24 @@ secondrule = thirdrule"#;
     Ok(())
   }
 
+  #[test]
+  fn verify_type1() -> Result<(), Box<Error>> {
+    let input = r#"mynumber..100.5"#;
+
+    let mut l = Lexer::new(input);
+    let mut p = Parser::new(&mut l)?;
+
+    let t1 = p.parse_type1()?;
+    check_parser_errors(&p)?;
+
+    assert_eq!(t1.type2.to_string(), "mynumber");
+
+    let (op, t2) = t1.operator.unwrap();
+    assert_eq!((op, &*t2.to_string()), (RangeCtlOp::RangeOp(true), "100.5"));
+
+    Ok(())
+  }
+
   fn check_parser_errors(p: &Parser) -> Result<(), Box<Error>> {
     if p.errors.len() == 0 {
       return Ok(());

@@ -114,7 +114,7 @@ impl<'a> fmt::Display for Type1<'a> {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum RangeCtlOp {
   RangeOp(bool),
   CtlOp(String),

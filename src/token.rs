@@ -130,7 +130,9 @@ impl<'a> fmt::Display for Value<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Value::TEXT(text) => write!(f, "{}", text),
-      _ => write!(f, ""),
+      Value::INT(i) => write!(f, "{}", i),
+      Value::FLOAT(float) => write!(f, "{}", float),
+      Value::BYTES(b) => write!(f, "{}", b),
     }
   }
 }
