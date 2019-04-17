@@ -34,8 +34,7 @@ pub enum Token<'a> {
   TSOCKET,
   GSOCKET,
 
-  // TODO: zero-copy
-  RANGE((String, String, bool)),
+  RANGE((Box<Token<'a>>, Box<Token<'a>>, bool)),
 
   LPAREN,
   RPAREN,

@@ -99,16 +99,19 @@ impl<'a> Lexer<'a> {
               Some(&c) if c.1 == '.' => {
                 let _ = self.read_char()?;
 
-                return self.read_range(&ident);
+                return self.read_range(ident);
               }
               _ => return Ok(ident),
             }
           } else if is_digit(c.1) {
-            let number = self.read_int_or_float()?;
-
+            let number = self.read_int_or_float(c.0)?;
             // Range detected
             match self.read_char() {
-              Ok(c) if c.1 == '.' => return self.read_range(&number),
+              Ok(c) if c.1 == '.' => {
+                let _ = self.read_char()?;
+
+                return self.read_range(number);
+              }
               _ => return Ok(number),
             }
           }
@@ -124,22 +127,20 @@ impl<'a> Lexer<'a> {
   fn read_identifier(&mut self, idx: usize) -> Result<&'a str, Box<Error>> {
     let mut end_idx = idx;
 
-    let mut special_char_count = 0;
-
     while let Some(&c) = self.peek_char() {
       if is_ealpha(c.1) || is_digit(c.1) || c.1 == '.' || c.1 == '-' {
-        // Illegal to have multiple "."'s or "-"'s in an identifier
-        if c.1 == '.' || c.1 == '-' {
-          if special_char_count > 1 {
-            return Err("Invalid identifier".into());
+        // Check for range
+        if c.1 == '.' {
+          end_idx = self.read_char()?.0;
+
+          if let Some(&c) = self.peek_char() {
+            if c.1 == '.' {
+              return Ok(std::str::from_utf8(&self.str_input[idx..end_idx])?);
+            }
           }
-
-          special_char_count += 1;
+        } else {
+          end_idx = self.read_char()?.0;
         }
-
-        let (ei, _) = self.read_char()?;
-
-        end_idx = ei;
       } else {
         break;
       }
@@ -157,9 +158,7 @@ impl<'a> Lexer<'a> {
         || (c.1 >= '\x5d' && c.1 <= '\x7e')
         || (c.1 >= '\u{0128}' && c.1 <= '\u{10FFFD}')
       {
-        let (ei, _) = self.read_char()?;
-
-        end_index = ei;
+        end_index = self.read_char()?.0;
       } else {
         break;
       }
@@ -173,7 +172,7 @@ impl<'a> Lexer<'a> {
 
         Ok(std::str::from_utf8(&self.str_input[idx..=end_index])?)
       }
-    }    
+    }
   }
 
   fn skip_whitespace(&mut self) {
@@ -186,9 +185,7 @@ impl<'a> Lexer<'a> {
     }
   }
 
-  fn read_int_or_float(&mut self) -> Result<Token<'a>, Box<Error>> {
-    let (idx, _) = self.read_char()?;
-
+  fn read_int_or_float(&mut self, idx: usize) -> Result<Token<'a>, Box<Error>> {
     let i = self.read_number(idx)?;
 
     if let Some(&c) = self.peek_char() {
@@ -198,7 +195,7 @@ impl<'a> Lexer<'a> {
         if let Some(&c) = self.peek_char() {
           if is_digit(c.1) {
             return Ok(Token::FLOATLITERAL(
-              format!("{}.{}", i, self.read_number(idx)?).parse::<f64>()?,
+              format!("{}.{}", i, self.read_number(c.0)?).parse::<f64>()?,
             ));
           }
         }
@@ -250,23 +247,65 @@ impl<'a> Lexer<'a> {
     Ok((0, ""))
   }
 
-  fn read_range(&mut self, lower: &Token) -> Result<Token<'a>, Box<Error>> {
+  fn read_range(&mut self, lower: Token<'a>) -> Result<Token<'a>, Box<Error>> {
     let mut is_inclusive = true;
     let mut t = Token::ILLEGAL;
 
-    if let Ok(c) = self.read_char() {
+    if let Some(&c) = self.peek_char() {
       if c.1 == '.' {
         is_inclusive = false;
-      }
 
+        let _ = self.read_char()?;
+      }
+    }
+
+    if let Ok(c) = self.read_char() {
       if is_digit(c.1) {
+        let upper = self.read_int_or_float(c.0)?;
+
+        match lower {
+          Token::INTLITERAL(_) => {
+            if let Token::INTLITERAL(_) = upper {
+              return Ok(Token::RANGE((
+                Box::from(lower),
+                Box::from(upper),
+                is_inclusive,
+              )));
+            } else {
+              return Err(
+                "Only numerical ranges between integers or floating point values are allowed"
+                  .into(),
+              );
+            }
+          }
+          Token::FLOATLITERAL(_) => {
+            if let Token::FLOATLITERAL(_) = upper {
+              return Ok(Token::RANGE((
+                Box::from(lower),
+                Box::from(upper),
+                is_inclusive,
+              )));
+            } else {
+              return Err(
+                "Only numerical ranges between integers or floating point values are allowed"
+                  .into(),
+              );
+            }
+          }
+          _ => {
+            return Ok(Token::RANGE((
+              Box::from(lower),
+              Box::from(upper),
+              is_inclusive,
+            )))
+          }
+        }
+      } else if is_ealpha(c.1) {
         t = Token::RANGE((
-          lower.to_string(),
-          self.read_int_or_float()?.to_string(),
+          Box::from(lower),
+          Box::from(token::lookup_ident(self.read_identifier(c.0)?)),
           is_inclusive,
         ));
-      } else if is_ealpha(c.1) {
-        t = Token::RANGE((lower.to_string(), self.read_identifier(c.0)?.to_string(), is_inclusive));
       }
     }
 
@@ -289,9 +328,11 @@ mod tests {
 
   #[test]
   fn verify_next_token() {
-    let input = r#"myfirstrule = "myotherrule"
+    let input = r#"mynumber = 10.5
+    
+myfirstrule = "myotherrule"
 
-mysecondrule = mythirdrule
+mysecondrule = mynumber..100.5
 
 @terminal-color = basecolors / othercolors
     
@@ -311,12 +352,18 @@ city = (
 )"#;
 
     let expected_tok = [
+      (IDENT("mynumber"), "mynumber"),
+      (ASSIGN, "="),
+      (FLOATLITERAL(10.5), "10.5"),
       (IDENT("myfirstrule"), "myfirstrule"),
       (ASSIGN, "="),
       (VALUE(Value::TEXT("\"myotherrule\"")), "\"myotherrule\""),
       (IDENT("mysecondrule"), "mysecondrule"),
       (ASSIGN, "="),
-      (IDENT("mythirdrule"), "mythirdrule"),
+      (
+        RANGE((Box::from(IDENT("mynumber")), Box::from(FLOATLITERAL(100.5)), true)),
+        "mynumber..100.5",
+      ),
       (IDENT("@terminal-color"), "@terminal-color"),
       (ASSIGN, "="),
       (IDENT("basecolors"), "basecolors"),
