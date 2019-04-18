@@ -264,6 +264,7 @@ impl<'a> Parser<'a> {
 }
 
 #[cfg(test)]
+#[allow(unused_imports)]
 mod tests {
   use super::super::{ast, lexer::Lexer};
   use super::*;
@@ -309,7 +310,7 @@ secondrule = thirdrule"#;
           return false;
         }
 
-        if tr.name.token_literal().unwrap() != format!("{:?}", Token::IDENT(name.into())) {
+        if tr.name.token_literal().unwrap() != format!("{:?}", Token::IDENT(name)) {
           eprintln!(
             "rule.value not '{}'. got={}",
             name,
@@ -424,7 +425,7 @@ secondrule = thirdrule"#;
   }
 
   fn check_parser_errors(p: &Parser) -> Result<(), Box<Error>> {
-    if p.errors.len() == 0 {
+    if p.errors.is_empty() {
       return Ok(());
     }
 

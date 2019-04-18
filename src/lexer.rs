@@ -149,7 +149,6 @@ impl<'a> Lexer<'a> {
   }
 
   fn read_text_value(&mut self, idx: usize) -> Result<&'a str, Box<Error>> {
-    let mut end_index = idx;
 
     while let Some(&c) = self.peek_char() {
       // TODO: support SESC = "\" (%x20-7E / %x80-10FFFD)
@@ -158,21 +157,16 @@ impl<'a> Lexer<'a> {
         || (c.1 >= '\x5d' && c.1 <= '\x7e')
         || (c.1 >= '\u{0128}' && c.1 <= '\u{10FFFD}')
       {
-        end_index = self.read_char()?.0;
+        let _ = self.read_char()?;
       } else {
-        break;
+        match self.peek_char() {
+          Some(&c) if c.1 != '"' => return Err("Expecting closing \" in text value".into()),
+          _ => return Ok(std::str::from_utf8(&self.str_input[idx..=self.read_char()?.0])?),
+        }
       }
     }
 
-    match self.peek_char() {
-      Some(&c) if c.1 != '"' => Err("Expecting closing \" in text value".into()),
-      _ => {
-        let (ei, _) = self.read_char()?;
-        end_index = ei;
-
-        Ok(std::str::from_utf8(&self.str_input[idx..=end_index])?)
-      }
-    }
+    Ok("")
   }
 
   fn skip_whitespace(&mut self) {
@@ -411,7 +405,7 @@ city = (
       (COLON, ":"),
       (TRUE, "true"),
       (RPAREN, ")"),
-      (IDENT("city".into()), "city"),
+      (IDENT("city"), "city"),
       (ASSIGN, "="),
       (LPAREN, "("),
       (IDENT("name"), "name"),
