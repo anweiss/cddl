@@ -147,17 +147,17 @@ impl<'a> Lexer<'a> {
   }
 
   fn read_text_value(&mut self, idx: usize) -> Result<&'a str, Box<Error>> {
-    while let Some(&c) = self.peek_char() {
+    while let Some(&(_, ch)) = self.peek_char() {
       // TODO: support SESC = "\" (%x20-7E / %x80-10FFFD)
-      if c.1 == '\x21'
-        || (c.1 >= '\x23' && c.1 <= '\x5b')
-        || (c.1 >= '\x5d' && c.1 <= '\x7e')
-        || (c.1 >= '\u{0128}' && c.1 <= '\u{10FFFD}')
+      if ch == '\x21'
+        || (ch >= '\x23' && ch <= '\x5b')
+        || (ch >= '\x5d' && ch <= '\x7e')
+        || (ch >= '\u{0128}' && ch <= '\u{10FFFD}')
       {
         let _ = self.read_char()?;
       } else {
         match self.peek_char() {
-          Some(&c) if c.1 != '"' => return Err("Expecting closing \" in text value".into()),
+          Some(&(_, ch)) if ch != '"' => return Err("Expecting closing \" in text value".into()),
           _ => {
             return Ok(std::str::from_utf8(
               &self.str_input[idx..=self.read_char()?.0],
@@ -171,8 +171,8 @@ impl<'a> Lexer<'a> {
   }
 
   fn skip_whitespace(&mut self) {
-    while let Some(&c) = self.peek_char() {
-      if c.1.is_whitespace() {
+    while let Some(&(_, ch)) = self.peek_char() {
+      if ch.is_whitespace() {
         let _ = self.read_char();
       } else {
         break;
