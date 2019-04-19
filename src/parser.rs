@@ -43,7 +43,8 @@ impl<'a> Parser<'a> {
 
   fn parse_rule(&mut self) -> Result<Rule<'a>, Box<Error>> {
     let name = match &self.cur_token {
-      Token::IDENT(i) => Token::IDENT(i),
+      // Have to copy SocketPlug here
+      Token::IDENT(i) => Token::IDENT(*i),
       _ => return Err("expected IDENT".into()),
     };
 
@@ -98,7 +99,7 @@ impl<'a> Parser<'a> {
     while !self.cur_token_is(Token::RANGLEBRACKET) {
       match &self.cur_token {
         Token::IDENT(i) => {
-          generic_params.0.push(Identifier::from(*i));
+          generic_params.0.push(Identifier::from(i.0));
           self.next_token()?;
         }
         Token::COMMA => self.next_token()?,
@@ -226,12 +227,12 @@ impl<'a> Parser<'a> {
         // optional genericarg detected
         if self.peek_token_is(&Token::LANGLEBRACKET) {          
           return Ok(Type2::Typename((
-            Identifier::from(*ident),
+            Identifier::from(ident.0),
             Some(self.parse_genericarg()?),
           )));
         }
 
-        Ok(Type2::Typename((Identifier::from(*ident), None)))
+        Ok(Type2::Typename((Identifier::from(ident.0), None)))
       }
       _ => return Err("Unknown".into()),
     };
@@ -317,7 +318,7 @@ secondrule = thirdrule"#;
           return false;
         }
 
-        if tr.name.token_literal().unwrap() != format!("{:?}", Token::IDENT(name)) {
+        if tr.name.token_literal().unwrap() != format!("{:?}", Token::IDENT((name, None))) {
           eprintln!(
             "rule.value not '{}'. got={}",
             name,
@@ -440,7 +441,7 @@ secondrule = thirdrule"#;
 
     let expected_outputs = [
       Type2::Value(Value::TEXT("\"myvalue\"")),
-      Type2::Typename((Identifier(Token::IDENT("message")), Some(GenericArg(vec![
+      Type2::Typename((Identifier(Token::IDENT(("message", None))), Some(GenericArg(vec![
         Type1{type2: Type2::Value(Value::TEXT("\"reboot\"")), operator: None},
         Type1{type2: Type2::Value(Value::TEXT("\"now\"")), operator: None},
       ])))),

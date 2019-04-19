@@ -1,4 +1,4 @@
-use super::token::{Token, Value};
+use super::token::{Token, Value, SocketPlug};
 use std::fmt;
 
 pub trait Node {
@@ -31,7 +31,7 @@ impl<'a> Node for Identifier<'a> {
 
 impl<'a> From<&'a str> for Identifier<'a> {
   fn from(s: &'a str) -> Self {
-    Identifier(Token::IDENT(s))
+    Identifier(Token::IDENT((s, SocketPlug::from_str(s))))
   }
 }
 

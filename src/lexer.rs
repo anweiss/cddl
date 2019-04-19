@@ -49,14 +49,6 @@ impl<'a> Lexer<'a> {
         (_, '^') => Ok(Token::CUT),
         (_, '&') => Ok(Token::GTOCHOICE),
         (_, '>') => Ok(Token::RANGLEBRACKET),
-        (_, '$') => match self.peek_char() {
-          Some(&c) if c.1 == '$' => {
-            let _ = self.read_char()?;
-
-            Ok(Token::GSOCKET)
-          }
-          _ => Ok(Token::TSOCKET),
-        },
         (_, '/') => match self.peek_char() {
           Some(&c) if c.1 == '/' => {
             let _ = self.read_char()?;
@@ -127,17 +119,18 @@ impl<'a> Lexer<'a> {
 
     while let Some(&c) = self.peek_char() {
       if is_ealpha(c.1) || is_digit(c.1) || c.1 == '.' || c.1 == '-' {
-        // Check for range
-        if c.1 == '.' {
-          end_idx = self.read_char()?.0;
+        match c.1 {
+          // Check for range
+          '.' => {
+            end_idx = self.read_char()?.0;
 
-          if let Some(&c) = self.peek_char() {
-            if c.1 == '.' {
-              return Ok(std::str::from_utf8(&self.str_input[idx..end_idx])?);
+            if let Some(&c) = self.peek_char() {
+              if c.1 == '.' {
+                return Ok(std::str::from_utf8(&self.str_input[idx..end_idx])?);
+              }
             }
           }
-        } else {
-          end_idx = self.read_char()?.0;
+          _ => end_idx = self.read_char()?.0,
         }
       } else {
         break;
@@ -318,7 +311,7 @@ fn is_digit(ch: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-  use super::super::token::Token::*;
+  use super::super::token::{SocketPlug, Token::*};
   use super::*;
 
   #[test]
@@ -343,48 +336,49 @@ delivery = (
 
 city = (
   name: tstr,
-  zip-code: uint
+  zip-code: uint,
+  * $$tcp-option,
 )"#;
 
     let expected_tok = [
-      (IDENT("mynumber"), "mynumber"),
+      (IDENT(("mynumber", None)), "mynumber"),
       (ASSIGN, "="),
       (FLOATLITERAL(10.5), "10.5"),
-      (IDENT("myfirstrule"), "myfirstrule"),
+      (IDENT(("myfirstrule", None)), "myfirstrule"),
       (ASSIGN, "="),
       (VALUE(Value::TEXT("\"myotherrule\"")), "\"myotherrule\""),
-      (IDENT("mysecondrule"), "mysecondrule"),
+      (IDENT(("mysecondrule", None)), "mysecondrule"),
       (ASSIGN, "="),
       (
         RANGE((
-          Box::from(IDENT("mynumber")),
+          Box::from(IDENT(("mynumber", None))),
           Box::from(FLOATLITERAL(100.5)),
           true,
         )),
         "mynumber..100.5",
       ),
-      (IDENT("@terminal-color"), "@terminal-color"),
+      (IDENT(("@terminal-color", None)), "@terminal-color"),
       (ASSIGN, "="),
-      (IDENT("basecolors"), "basecolors"),
+      (IDENT(("basecolors", None)), "basecolors"),
       (TCHOICE, "/"),
-      (IDENT("othercolors"), "othercolors"),
-      (IDENT("messages"), "messages"),
+      (IDENT(("othercolors", None)), "othercolors"),
+      (IDENT(("messages", None)), "messages"),
       (ASSIGN, "="),
-      (IDENT("message"), "message"),
+      (IDENT(("message", None)), "message"),
       (LANGLEBRACKET, "<"),
       (VALUE(Value::TEXT("\"reboot\"")), "\"reboot\""),
       (COMMA, ","),
       (VALUE(Value::TEXT("\"now\"")), "\"now\""),
       (RANGLEBRACKET, ">"),
-      (IDENT("address"), "address"),
+      (IDENT(("address", None)), "address"),
       (ASSIGN, "="),
       (LBRACE, "{"),
-      (IDENT("delivery"), "delivery"),
+      (IDENT(("delivery", None)), "delivery"),
       (RBRACE, "}"),
-      (IDENT("delivery"), "delivery"),
+      (IDENT(("delivery", None)), "delivery"),
       (ASSIGN, "="),
       (LPAREN, "("),
-      (IDENT("street"), "street"),
+      (IDENT(("street", None)), "street"),
       (COLON, ":"),
       (TSTR, "tstr"),
       (COMMA, ","),
@@ -394,28 +388,32 @@ city = (
       (ARROWMAP, "=>"),
       (UINT, "uint"),
       (COMMA, ","),
-      (IDENT("city"), "city"),
+      (IDENT(("city", None)), "city"),
       (GCHOICE, "//"),
-      (IDENT("po-box"), "po-box"),
+      (IDENT(("po-box", None)), "po-box"),
       (COLON, ":"),
       (UINT, "uint"),
       (COMMA, ","),
-      (IDENT("city"), "city"),
+      (IDENT(("city", None)), "city"),
       (GCHOICE, "//"),
-      (IDENT("per-pickup"), "per-pickup"),
+      (IDENT(("per-pickup", None)), "per-pickup"),
       (COLON, ":"),
       (TRUE, "true"),
       (RPAREN, ")"),
-      (IDENT("city"), "city"),
+      (IDENT(("city", None)), "city"),
       (ASSIGN, "="),
       (LPAREN, "("),
-      (IDENT("name"), "name"),
+      (IDENT(("name", None)), "name"),
       (COLON, ":"),
       (TSTR, "tstr"),
       (COMMA, ","),
-      (IDENT("zip-code"), "zip-code"),
+      (IDENT(("zip-code", None)), "zip-code"),
       (COLON, ":"),
       (UINT, "uint"),
+      (COMMA, ","),
+      (ASTERISK, "*"),
+      (IDENT(("tcp-option", Some(SocketPlug::GROUP))), "$$tcp-option"),
+      (COMMA, ","),
       (RPAREN, ")"),
     ];
 

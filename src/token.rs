@@ -5,7 +5,7 @@ pub enum Token<'a> {
   ILLEGAL,
   EOF,
 
-  IDENT(&'a str),
+  IDENT((&'a str, Option<SocketPlug>)),
   VALUE(Value<'a>),
   INTLITERAL(usize),
   FLOATLITERAL(f64),
@@ -31,8 +31,6 @@ pub enum Token<'a> {
   GCHOICEALT,
   ARROWMAP,
   CUT,
-  TSOCKET,
-  GSOCKET,
 
   RANGE((Box<Token<'a>>, Box<Token<'a>>, bool)),
 
@@ -126,6 +124,39 @@ pub enum Value<'a> {
   BYTES(&'a str),
 }
 
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum SocketPlug {
+  TYPE,
+  GROUP,
+}
+
+impl SocketPlug {
+  pub fn from_str(s: &str) -> Option<Self> {
+    if let Some(c) = s.chars().next() {
+      if c == '$' {
+        if let Some(c) = s.chars().nth(1) {
+          if c == '$' {
+            return Some(SocketPlug::GROUP);
+          }
+        }
+
+        return Some(SocketPlug::TYPE);
+      }
+    }
+
+    None
+  }
+}
+
+impl <'a> fmt::Display for SocketPlug {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      SocketPlug::TYPE => write!(f, "$"),
+      SocketPlug::GROUP => write!(f, "$$"),
+    }
+  }
+}
+
 impl<'a> fmt::Display for Value<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
@@ -140,7 +171,13 @@ impl<'a> fmt::Display for Value<'a> {
 impl<'a> fmt::Display for Token<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      Token::IDENT(ident) => write!(f, "{}", ident),
+      Token::IDENT((ident, socket_plug)) => {
+        if let Some(sp) = socket_plug {
+          return write!(f, "{}{}", sp, ident);
+        }
+
+        write!(f, "{}", ident)
+      }
       Token::ILLEGAL => write!(f, ""),
       Token::ASSIGN => write!(f, "="),
       Token::PLUS => write!(f, "+"),
@@ -266,6 +303,20 @@ pub fn lookup_ident(ident: &str) -> Token {
     "mime-message" => Token::MIMEMESSAGE,
     "cbor-any" => Token::CBORANY,
     "undefined" => Token::UNDEFINED,
-    _ => Token::IDENT(ident),
+    _ => {
+      if let Some(c) = ident.chars().next() {
+        if c == '$' {
+          if let Some(c) = ident.chars().nth(1) {
+            if c == '$' {
+              return Token::IDENT((&ident[2..], Some(SocketPlug::GROUP)));
+            }
+          }
+
+          return Token::IDENT((&ident[1..], Some(SocketPlug::TYPE)));
+        }
+      }
+
+      Token::IDENT((ident, None))
+    }
   }
 }
