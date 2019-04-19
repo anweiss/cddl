@@ -1,8 +1,6 @@
 use super::token;
 use super::token::{Token, Value};
-use std::error::Error;
-use std::iter::Peekable;
-use std::str::CharIndices;
+use std::{error::Error, iter::Peekable, str::CharIndices};
 
 pub struct Lexer<'a> {
   str_input: &'a [u8],
@@ -90,9 +88,9 @@ impl<'a> Lexer<'a> {
 
           Ok(token::lookup_control(self.read_identifier(idx)?))
         }
-        _ => {
-          if is_ealpha(c.1) {
-            let ident = token::lookup_ident(self.read_identifier(c.0)?);
+        (idx, ch) => {
+          if is_ealpha(ch) {
+            let ident = token::lookup_ident(self.read_identifier(idx)?);
 
             // Range detected
             match self.peek_char() {
@@ -103,8 +101,8 @@ impl<'a> Lexer<'a> {
               }
               _ => return Ok(ident),
             }
-          } else if is_digit(c.1) {
-            let number = self.read_int_or_float(c.0)?;
+          } else if is_digit(ch) {
+            let number = self.read_int_or_float(idx)?;
             // Range detected
             match self.read_char() {
               Ok(c) if c.1 == '.' => {
@@ -149,7 +147,6 @@ impl<'a> Lexer<'a> {
   }
 
   fn read_text_value(&mut self, idx: usize) -> Result<&'a str, Box<Error>> {
-
     while let Some(&c) = self.peek_char() {
       // TODO: support SESC = "\" (%x20-7E / %x80-10FFFD)
       if c.1 == '\x21'
@@ -161,7 +158,11 @@ impl<'a> Lexer<'a> {
       } else {
         match self.peek_char() {
           Some(&c) if c.1 != '"' => return Err("Expecting closing \" in text value".into()),
-          _ => return Ok(std::str::from_utf8(&self.str_input[idx..=self.read_char()?.0])?),
+          _ => {
+            return Ok(std::str::from_utf8(
+              &self.str_input[idx..=self.read_char()?.0],
+            )?)
+          }
         }
       }
     }

@@ -1,7 +1,9 @@
 use super::lexer::Lexer;
 use super::token::Token;
-use std::error;
-use std::io::{BufRead, Write};
+use std::{
+  error,
+  io::{BufRead, Write},
+};
 
 const PROMPT: &[u8] = b">> ";
 

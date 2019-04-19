@@ -1,8 +1,7 @@
 use super::ast::*;
 use super::lexer::Lexer;
 use super::token::{Token, Value};
-use std::error::Error;
-use std::mem;
+use std::{error::Error, mem};
 
 struct Parser<'a> {
   l: &'a mut Lexer<'a>,
@@ -115,6 +114,11 @@ impl<'a> Parser<'a> {
   fn parse_genericarg(&mut self) -> Result<GenericArg<'a>, Box<Error>> {
     self.next_token()?;
 
+    // Required for type2 mutual recursion
+    if self.cur_token_is(Token::LANGLEBRACKET) {
+      self.next_token()?;
+    }
+
     let mut generic_args = GenericArg(Vec::new());
 
     while !self.cur_token_is(Token::RANGLEBRACKET) {
@@ -220,9 +224,12 @@ impl<'a> Parser<'a> {
       // typename [genericarg]
       Token::IDENT(ident) => {
         // optional genericarg detected
-        // if self.peek_token_is(&Token::LANGLEBRACKET) {
-
-        // }
+        if self.peek_token_is(&Token::LANGLEBRACKET) {          
+          return Ok(Type2::Typename((
+            Identifier::from(*ident),
+            Some(self.parse_genericarg()?),
+          )));
+        }
 
         Ok(Type2::Typename((Identifier::from(*ident), None)))
       }
@@ -326,33 +333,6 @@ secondrule = thirdrule"#;
   }
 
   #[test]
-  fn verify_type() -> Result<(), Box<Error>> {
-    let input = r#"tchoice1 / tchoice2"#;
-
-    let mut l = Lexer::new(input);
-    let mut p = Parser::new(&mut l)?;
-
-    let t = p.parse_type()?;
-    check_parser_errors(&p)?;
-
-    if t.0.len() != 2 {
-      eprintln!(
-        "type.0 does not contain 2 type choices. got='{}'",
-        t.0.len()
-      );
-    }
-
-    let expected_t1_identifiers = ["tchoice1", "tchoice2"];
-
-    for (idx, expected_t1_identifier) in expected_t1_identifiers.iter().enumerate() {
-      let t_choice = &t.0[idx];
-      assert_eq!(t_choice.type2.to_string(), *expected_t1_identifier);
-    }
-
-    Ok(())
-  }
-
-  #[test]
   fn verify_genericparm() -> Result<(), Box<Error>> {
     let input = r#"<t, v>"#;
 
@@ -407,6 +387,33 @@ secondrule = thirdrule"#;
   }
 
   #[test]
+  fn verify_type() -> Result<(), Box<Error>> {
+    let input = r#"tchoice1 / tchoice2"#;
+
+    let mut l = Lexer::new(input);
+    let mut p = Parser::new(&mut l)?;
+
+    let t = p.parse_type()?;
+    check_parser_errors(&p)?;
+
+    if t.0.len() != 2 {
+      eprintln!(
+        "type.0 does not contain 2 type choices. got='{}'",
+        t.0.len()
+      );
+    }
+
+    let expected_t1_identifiers = ["tchoice1", "tchoice2"];
+
+    for (idx, expected_t1_identifier) in expected_t1_identifiers.iter().enumerate() {
+      let t_choice = &t.0[idx];
+      assert_eq!(t_choice.type2.to_string(), *expected_t1_identifier);
+    }
+
+    Ok(())
+  }
+
+  #[test]
   fn verify_type1() -> Result<(), Box<Error>> {
     let input = r#"mynumber..100.5"#;
 
@@ -420,6 +427,35 @@ secondrule = thirdrule"#;
 
     let (op, t2) = t1.operator.unwrap();
     assert_eq!((op, &*t2.to_string()), (RangeCtlOp::RangeOp(true), "100.5"));
+
+    Ok(())
+  }
+
+  #[test]
+  fn verify_type2() -> Result<(), Box<Error>> {
+    let inputs = [
+      r#""myvalue""#,
+      r#"message<"reboot", "now">"#,
+    ];
+
+    let expected_outputs = [
+      Type2::Value(Value::TEXT("\"myvalue\"")),
+      Type2::Typename((Identifier(Token::IDENT("message")), Some(GenericArg(vec![
+        Type1{type2: Type2::Value(Value::TEXT("\"reboot\"")), operator: None},
+        Type1{type2: Type2::Value(Value::TEXT("\"now\"")), operator: None},
+      ])))),
+    ];
+
+    for (idx, expected_output) in expected_outputs.iter().enumerate() {
+      let mut l = Lexer::new(&inputs[idx]);
+      let mut p = Parser::new(&mut l)?;
+
+      let t2 = p.parse_type2()?;
+      check_parser_errors(&p)?;
+
+      assert_eq!(t2.to_string(), expected_output.to_string());
+    }
+    
 
     Ok(())
   }

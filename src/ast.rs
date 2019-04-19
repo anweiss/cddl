@@ -64,9 +64,9 @@ pub struct TypeRule<'a> {
   pub value: Type<'a>,
 }
 
-impl<'a> TypeRule<'a> {
-  pub fn token_literal(&self) -> Option<String> {
-    self.name.token_literal()
+impl<'a> Node for TypeRule<'a> {
+  fn token_literal(&self) -> Option<String> {
+    Some(format!("{:?}", self))
   }
 }
 
@@ -89,6 +89,23 @@ pub struct GenericParm<'a>(pub Vec<Identifier<'a>>);
 
 #[derive(Debug)]
 pub struct GenericArg<'a>(pub Vec<Type1<'a>>);
+
+impl<'a> fmt::Display for GenericArg<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let mut ga = String::from("<");
+    for (idx, arg) in self.0.iter().enumerate() {
+      if idx != 0 {
+        ga.push_str(", ");
+      }
+      
+      ga.push_str(&arg.to_string());
+    }
+
+    ga.push('>');
+
+    write!(f, "{}", ga)
+  }
+}
 
 #[derive(Debug)]
 pub struct Type<'a>(pub Vec<Type1<'a>>);
@@ -149,7 +166,13 @@ impl<'a> fmt::Display for Type2<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Type2::Value(value) => write!(f, "{}", value),
-      Type2::Typename((tn, _)) => write!(f, "{}", tn.0),
+      Type2::Typename((tn, ga)) => {
+        if let Some(args) = ga {
+          return write!(f, "{}{}", tn.0, args);
+        }
+
+        write!(f, "{}", tn.0)
+      }
       _ => write!(f, ""),
     }
   }
