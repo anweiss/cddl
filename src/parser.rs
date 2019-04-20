@@ -43,7 +43,6 @@ impl<'a> Parser<'a> {
 
   fn parse_rule(&mut self) -> Result<Rule<'a>, Box<Error>> {
     let name = match &self.cur_token {
-      // Have to copy SocketPlug here
       Token::IDENT(i) => Token::IDENT(*i),
       _ => return Err("expected IDENT".into()),
     };
@@ -99,7 +98,7 @@ impl<'a> Parser<'a> {
     while !self.cur_token_is(Token::RANGLEBRACKET) {
       match &self.cur_token {
         Token::IDENT(i) => {
-          generic_params.0.push(Identifier::from(i.0));
+          generic_params.0.push(Identifier(Token::IDENT(*i)));
           self.next_token()?;
         }
         Token::COMMA => self.next_token()?,
@@ -225,14 +224,16 @@ impl<'a> Parser<'a> {
       // typename [genericarg]
       Token::IDENT(ident) => {
         // optional genericarg detected
-        if self.peek_token_is(&Token::LANGLEBRACKET) {          
+        if self.peek_token_is(&Token::LANGLEBRACKET) {
           return Ok(Type2::Typename((
-            Identifier::from(ident.0),
+            Identifier(Token::IDENT(*ident)),
             Some(self.parse_genericarg()?),
           )));
         }
 
-        Ok(Type2::Typename((Identifier::from(ident.0), None)))
+        println!("{:?}", ident.1);
+
+        Ok(Type2::Typename((Identifier(Token::IDENT(*ident)), None)))
       }
       _ => return Err("Unknown".into()),
     };
@@ -274,7 +275,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 #[allow(unused_imports)]
 mod tests {
-  use super::super::{ast, lexer::Lexer};
+  use super::super::{ast, lexer::Lexer, token::SocketPlug};
   use super::*;
 
   #[test]
@@ -437,14 +438,28 @@ secondrule = thirdrule"#;
     let inputs = [
       r#""myvalue""#,
       r#"message<"reboot", "now">"#,
+      r#"$$tcp-option"#,
     ];
 
     let expected_outputs = [
       Type2::Value(Value::TEXT("\"myvalue\"")),
-      Type2::Typename((Identifier(Token::IDENT(("message", None))), Some(GenericArg(vec![
-        Type1{type2: Type2::Value(Value::TEXT("\"reboot\"")), operator: None},
-        Type1{type2: Type2::Value(Value::TEXT("\"now\"")), operator: None},
-      ])))),
+      Type2::Typename((
+        Identifier(Token::IDENT(("message", None))),
+        Some(GenericArg(vec![
+          Type1 {
+            type2: Type2::Value(Value::TEXT("\"reboot\"")),
+            operator: None,
+          },
+          Type1 {
+            type2: Type2::Value(Value::TEXT("\"now\"")),
+            operator: None,
+          },
+        ])),
+      )),
+      Type2::Typename((
+        Identifier(Token::IDENT(("tcp-option", Some(&SocketPlug::GROUP)))),
+        None,
+      )),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -456,7 +471,6 @@ secondrule = thirdrule"#;
 
       assert_eq!(t2.to_string(), expected_output.to_string());
     }
-    
 
     Ok(())
   }

@@ -412,7 +412,10 @@ city = (
       (UINT, "uint"),
       (COMMA, ","),
       (ASTERISK, "*"),
-      (IDENT(("tcp-option", Some(SocketPlug::GROUP))), "$$tcp-option"),
+      (
+        IDENT(("tcp-option", Some(&SocketPlug::GROUP))),
+        "$$tcp-option",
+      ),
       (COMMA, ","),
       (RPAREN, ")"),
     ];

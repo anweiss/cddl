@@ -5,7 +5,7 @@ pub enum Token<'a> {
   ILLEGAL,
   EOF,
 
-  IDENT((&'a str, Option<SocketPlug>)),
+  IDENT((&'a str, Option<&'a SocketPlug>)),
   VALUE(Value<'a>),
   INTLITERAL(usize),
   FLOATLITERAL(f64),
@@ -32,6 +32,7 @@ pub enum Token<'a> {
   ARROWMAP,
   CUT,
 
+  // lower, upper and is_inclusive
   RANGE((Box<Token<'a>>, Box<Token<'a>>, bool)),
 
   LPAREN,
@@ -124,23 +125,23 @@ pub enum Value<'a> {
   BYTES(&'a str),
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq)]
 pub enum SocketPlug {
   TYPE,
   GROUP,
 }
 
 impl SocketPlug {
-  pub fn from_str(s: &str) -> Option<Self> {
+  pub fn from_str(s: &str) -> Option<&Self> {
     if let Some(c) = s.chars().next() {
       if c == '$' {
         if let Some(c) = s.chars().nth(1) {
           if c == '$' {
-            return Some(SocketPlug::GROUP);
+            return Some(&SocketPlug::GROUP);
           }
         }
 
-        return Some(SocketPlug::TYPE);
+        return Some(&SocketPlug::TYPE);
       }
     }
 
@@ -148,7 +149,7 @@ impl SocketPlug {
   }
 }
 
-impl <'a> fmt::Display for SocketPlug {
+impl<'a> fmt::Display for SocketPlug {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       SocketPlug::TYPE => write!(f, "$"),
@@ -308,11 +309,11 @@ pub fn lookup_ident(ident: &str) -> Token {
         if c == '$' {
           if let Some(c) = ident.chars().nth(1) {
             if c == '$' {
-              return Token::IDENT((&ident[2..], Some(SocketPlug::GROUP)));
+              return Token::IDENT((&ident[2..], Some(&SocketPlug::GROUP)));
             }
           }
 
-          return Token::IDENT((&ident[1..], Some(SocketPlug::TYPE)));
+          return Token::IDENT((&ident[1..], Some(&SocketPlug::TYPE)));
         }
       }
 

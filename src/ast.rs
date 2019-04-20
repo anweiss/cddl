@@ -1,4 +1,4 @@
-use super::token::{Token, Value, SocketPlug};
+use super::token::{Token, Value};
 use std::fmt;
 
 pub trait Node {
@@ -29,15 +29,9 @@ impl<'a> Node for Identifier<'a> {
   }
 }
 
-impl<'a> From<&'a str> for Identifier<'a> {
-  fn from(s: &'a str) -> Self {
-    Identifier(Token::IDENT((s, SocketPlug::from_str(s))))
-  }
-}
-
 impl<'a> fmt::Display for Identifier<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{}", self.0.to_string())
+    write!(f, "{}", self.0)
   }
 }
 
@@ -97,7 +91,7 @@ impl<'a> fmt::Display for GenericArg<'a> {
       if idx != 0 {
         ga.push_str(", ");
       }
-      
+
       ga.push_str(&arg.to_string());
     }
 
