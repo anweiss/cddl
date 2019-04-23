@@ -173,10 +173,10 @@ impl<'a> fmt::Display for Type2<'a> {
 }
 
 #[derive(Debug)]
-pub struct Group<'a>(Vec<GroupChoice<'a>>);
+pub struct Group<'a>(pub Vec<GroupChoice<'a>>);
 
 #[derive(Debug)]
-pub struct GroupChoice<'a>(Vec<GroupEntry<'a>>);
+pub struct GroupChoice<'a>(pub Vec<GroupEntry<'a>>);
 
 #[derive(Debug)]
 pub enum GroupEntry<'a> {
@@ -209,7 +209,33 @@ pub enum MemberKey<'a> {
 
 #[derive(Debug)]
 pub enum Occur {
-  Exact((usize, usize)),
+  Exact((Option<usize>, Option<usize>)),
+  ZeroOrMore,
   OneOrMore,
   Optional,
+}
+
+impl fmt::Display for Occur {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      Occur::ZeroOrMore => write!(f, "*"),
+      Occur::Exact((l, u)) => {
+        if let Some(li) = l {
+          if let Some(ui) = u {
+            return write!(f, "{}*{}", li, ui);
+          }
+
+          return write!(f, "{}*", li);
+        }
+
+        if let Some(ui) = u {
+          return write!(f, "*{}", ui);
+        }
+
+        write!(f, "*")
+      }
+      Occur::OneOrMore => write!(f, "+"),
+      Occur::Optional => write!(f, "?"),
+    }
+  }
 }

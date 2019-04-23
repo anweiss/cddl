@@ -15,8 +15,7 @@ pub enum Token<'a> {
   ASSIGN,
   OPTIONAL,
   ASTERISK,
-  OCCURENCE((usize, usize)),
-  PLUS,
+  ONEORMORE,
   UNWRAP,
   CONTROL(&'a str),
 
@@ -181,7 +180,7 @@ impl<'a> fmt::Display for Token<'a> {
       }
       Token::ILLEGAL => write!(f, ""),
       Token::ASSIGN => write!(f, "="),
-      Token::PLUS => write!(f, "+"),
+      Token::ONEORMORE => write!(f, "+"),
       Token::OPTIONAL => write!(f, "?"),
       Token::ASTERISK => write!(f, "*"),
       Token::LPAREN => write!(f, "("),

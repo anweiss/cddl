@@ -34,7 +34,7 @@ impl<'a> Lexer<'a> {
           }
           _ => Ok(Token::ASSIGN),
         },
-        (_, '+') => Ok(Token::PLUS),
+        (_, '+') => Ok(Token::ONEORMORE),
         (_, '?') => Ok(Token::OPTIONAL),
         (_, '*') => Ok(Token::ASTERISK),
         (_, '(') => Ok(Token::LPAREN),
@@ -95,15 +95,16 @@ impl<'a> Lexer<'a> {
             }
           } else if is_digit(ch) {
             let number = self.read_int_or_float(idx)?;
-            // Range detected
-            match self.read_char() {
-              Ok(c) if c.1 == '.' => {
+
+            match self.peek_char() {
+              // Range detected
+              Some(&c) if c.1 == '.' => {
                 let _ = self.read_char()?;
 
                 return self.read_range(number);
               }
               _ => return Ok(number),
-            }
+            }           
           }
 
           Ok(Token::ILLEGAL)
@@ -337,7 +338,7 @@ delivery = (
 city = (
   name: tstr,
   zip-code: uint,
-  * $$tcp-option,
+  1*3 $$tcp-option,
 )"#;
 
     let expected_tok = [
@@ -411,7 +412,9 @@ city = (
       (COLON, ":"),
       (UINT, "uint"),
       (COMMA, ","),
+      (INTLITERAL(1), "1"),
       (ASTERISK, "*"),
+      (INTLITERAL(3), "3"),
       (
         IDENT(("tcp-option", Some(&SocketPlug::GROUP))),
         "$$tcp-option",

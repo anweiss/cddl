@@ -221,6 +221,7 @@ impl<'a> Parser<'a> {
           _ => Err("bad value".into()),
         }
       }
+
       // typename [genericarg]
       Token::IDENT(ident) => {
         // optional genericarg detected
@@ -231,16 +232,97 @@ impl<'a> Parser<'a> {
           )));
         }
 
-        println!("{:?}", ident.1);
-
         Ok(Type2::Typename((Identifier(Token::IDENT(*ident)), None)))
       }
+
+      // ( type )
+      // TODO: This is a parenthesized type expression which may be necessary to
+      // override some operator precedence
+      Token::LPAREN => Ok(Type2::Group(self.parse_type()?)),
+
+      // { group }
+      Token::LBRACE => Ok(Type2::Map(self.parse_group()?)),
+
       _ => return Err("Unknown".into()),
     };
 
     self.next_token()?;
 
     t2
+  }
+
+  fn parse_group(&mut self) -> Result<Group<'a>, Box<Error>> {
+    let mut group = Group(Vec::new());
+
+    group.0.push(self.parse_grpchoice()?);
+
+    while self.cur_token_is(Token::GCHOICE) {
+      group.0.push(self.parse_grpchoice()?);
+    }
+
+    Ok(group)
+  }
+
+  fn parse_grpchoice(&mut self) -> Result<GroupChoice<'a>, Box<Error>> {
+    let mut grpchoice = GroupChoice(Vec::new());
+
+    grpchoice.0.push(self.parse_grpent()?);
+
+    while self.cur_token_is(Token::COMMA)
+      || !self.cur_token_is(Token::RBRACE)
+      || !self.cur_token_is(Token::RPAREN)
+      || !self.cur_token_is(Token::RBRACKET)
+    {
+      grpchoice.0.push(self.parse_grpent()?);
+    }
+
+    Ok(grpchoice)
+  }
+
+  fn parse_grpent(&mut self) -> Result<GroupEntry<'a>, Box<Error>> {
+    let occur = self.parse_occur()?;
+    let member_key = self.parse_memberkey()?;
+
+    unimplemented!()
+  }
+
+  fn parse_occur(&mut self) -> Result<Option<Occur>, Box<Error>> {    
+    match &self.cur_token {
+      Token::OPTIONAL => Ok(Some(Occur::Optional)),
+      Token::ONEORMORE => Ok(Some(Occur::OneOrMore)),
+      Token::ASTERISK => {
+        if let Token::INTLITERAL(u) = &self.peek_token {
+          return Ok(Some(Occur::Exact((None, Some(*u)))));
+        }
+
+        Ok(Some(Occur::ZeroOrMore))
+      }
+      _ => {
+        let lower = if let Token::INTLITERAL(li) = &self.cur_token {
+          Some(*li)
+        } else {
+          None
+        };
+        
+        if !self.expect_peek(&Token::ASTERISK) {
+          return Err("Malformed occurrence syntax".into());
+        }
+
+        self.next_token()?;
+
+        let upper = if let Token::INTLITERAL(ui) = &self.cur_token {
+          Some(*ui)
+        } else {
+          None
+        };
+
+        Ok(Some(Occur::Exact((lower, upper))))
+      }
+    }
+  }
+
+  fn parse_memberkey(&mut self) -> Result<Option<MemberKey>, Box<Error>> {
+    unimplemented!()
   }
 
   fn cur_token_is(&self, t: Token) -> bool {
@@ -470,6 +552,39 @@ secondrule = thirdrule"#;
       check_parser_errors(&p)?;
 
       assert_eq!(t2.to_string(), expected_output.to_string());
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn verify_occur() -> Result<(), Box<Error>> {
+    let inputs = [
+      r#"1*3"#,
+      r#"*"#,
+      r#"+"#,
+      r#"5*"#,
+      r#"*3"#,
+      r#"?"#,
+    ];
+
+    let expected_outputs = [
+      Occur::Exact((Some(1), Some(3))),
+      Occur::ZeroOrMore,
+      Occur::OneOrMore,
+      Occur::Exact((Some(5), None)),
+      Occur::Exact((None, Some(3))),
+      Occur::Optional,
+    ];
+
+    for (idx, expected_output) in expected_outputs.iter().enumerate() {
+      let mut l = Lexer::new(&inputs[idx]);
+      let mut p = Parser::new(&mut l)?;
+
+      let o = p.parse_occur()?.unwrap();
+      check_parser_errors(&p)?;
+
+      assert_eq!(o.to_string(), expected_output.to_string());
     }
 
     Ok(())
