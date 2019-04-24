@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{convert::TryFrom, fmt};
 
 #[derive(PartialEq, Debug)]
 pub enum Token<'a> {
@@ -32,7 +32,7 @@ pub enum Token<'a> {
   CUT,
 
   // lower, upper and is_inclusive
-  RANGE((Box<Token<'a>>, Box<Token<'a>>, bool)),
+  RANGE((RangeValue<'a>, RangeValue<'a>, bool)),
 
   LPAREN,
   RPAREN,
@@ -103,12 +103,42 @@ pub enum Token<'a> {
   UNDEFINED,
 }
 
-impl<'a> Token<'a> {
+#[derive(Debug, PartialEq)]
+pub enum RangeValue<'a> {
+  IDENT((&'a str, Option<&'a SocketPlug>)),
+  INT(usize),
+  FLOAT(f64),
+}
+
+impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
+  type Error = Box<std::error::Error>;
+
+  fn try_from(t: Token<'a>) -> Result<Self, Self::Error> {
+    match t {
+      Token::IDENT(ident) => Ok(RangeValue::IDENT(ident)),
+      Token::INTLITERAL(i) => Ok(RangeValue::INT(i)),
+      Token::FLOATLITERAL(f) => Ok(RangeValue::FLOAT(f)),
+      _ => Err("Invalid range token".into()),
+    }
+  }
+}
+
+impl<'a> RangeValue<'a> {
   pub fn as_value(&self) -> Option<Value<'a>> {
     match &self {
-      Token::INTLITERAL(i) => Some(Value::INT(*i)),
-      Token::FLOATLITERAL(f) => Some(Value::FLOAT(*f)),
+      RangeValue::INT(i) => Some(Value::INT(*i)),
+      RangeValue::FLOAT(f) => Some(Value::FLOAT(*f)),
       _ => None,
+    }
+  }
+}
+
+impl<'a> fmt::Display for RangeValue<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      RangeValue::IDENT(ident) => write!(f, "{}", ident.0),
+      RangeValue::INT(i) => write!(f, "{}", i),
+      RangeValue::FLOAT(fl) => write!(f, "{}", fl),
     }
   }
 }

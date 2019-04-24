@@ -180,7 +180,7 @@ pub struct GroupChoice<'a>(pub Vec<GroupEntry<'a>>);
 
 #[derive(Debug)]
 pub enum GroupEntry<'a> {
-  MemberKey(MemberKeyEntry<'a>),
+  MemberKey(Box<MemberKeyEntry<'a>>),
   Groupname(GroupnameEntry<'a>),
   InlineGroup((Option<Occur>, Group<'a>)),
 }
@@ -202,7 +202,7 @@ pub struct GroupnameEntry<'a> {
 #[derive(Debug)]
 pub enum MemberKey<'a> {
   // if true, cut is present
-  Type1((Type1<'a>, bool)),
+  Type1(Box<(Type1<'a>, bool)>),
   Bareword(Identifier<'a>),
   Value(String),
 }

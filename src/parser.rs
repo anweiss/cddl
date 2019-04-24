@@ -1,6 +1,6 @@
 use super::ast::*;
 use super::lexer::Lexer;
-use super::token::{Token, Value};
+use super::token::{RangeValue, Token, Value};
 use std::{error::Error, mem};
 
 struct Parser<'a> {
@@ -149,13 +149,13 @@ impl<'a> Parser<'a> {
   fn parse_type1(&mut self) -> Result<Type1<'a>, Box<Error>> {
     match &self.cur_token {
       Token::RANGE((lower, upper, inclusive)) => {
-        let lower_ident = if let Token::IDENT(ident) = lower.as_ref() {
+        let lower_ident = if let RangeValue::IDENT(ident) = lower {
           Some(Token::IDENT(*ident))
         } else {
           None
         };
 
-        let upper_ident = if let Token::IDENT(ident) = upper.as_ref() {
+        let upper_ident = if let RangeValue::IDENT(ident) = upper {
           Some(Token::IDENT(*ident))
         } else {
           None
@@ -286,7 +286,7 @@ impl<'a> Parser<'a> {
     unimplemented!()
   }
 
-  fn parse_occur(&mut self) -> Result<Option<Occur>, Box<Error>> {    
+  fn parse_occur(&mut self) -> Result<Option<Occur>, Box<Error>> {
     match &self.cur_token {
       Token::OPTIONAL => Ok(Some(Occur::Optional)),
       Token::ONEORMORE => Ok(Some(Occur::OneOrMore)),
@@ -303,7 +303,7 @@ impl<'a> Parser<'a> {
         } else {
           None
         };
-        
+
         if !self.expect_peek(&Token::ASTERISK) {
           return Err("Malformed occurrence syntax".into());
         }
@@ -559,14 +559,7 @@ secondrule = thirdrule"#;
 
   #[test]
   fn verify_occur() -> Result<(), Box<Error>> {
-    let inputs = [
-      r#"1*3"#,
-      r#"*"#,
-      r#"+"#,
-      r#"5*"#,
-      r#"*3"#,
-      r#"?"#,
-    ];
+    let inputs = [r#"1*3"#, r#"*"#, r#"+"#, r#"5*"#, r#"*3"#, r#"?"#];
 
     let expected_outputs = [
       Occur::Exact((Some(1), Some(3))),

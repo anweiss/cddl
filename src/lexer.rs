@@ -1,6 +1,6 @@
 use super::token;
-use super::token::{Token, Value};
-use std::{error::Error, iter::Peekable, str::CharIndices};
+use super::token::{RangeValue, Token, Value};
+use std::{convert::TryFrom, error::Error, iter::Peekable, str::CharIndices};
 
 pub struct Lexer<'a> {
   str_input: &'a [u8],
@@ -104,7 +104,7 @@ impl<'a> Lexer<'a> {
                 return self.read_range(number);
               }
               _ => return Ok(number),
-            }           
+            }
           }
 
           Ok(Token::ILLEGAL)
@@ -238,7 +238,6 @@ impl<'a> Lexer<'a> {
 
   fn read_range(&mut self, lower: Token<'a>) -> Result<Token<'a>, Box<Error>> {
     let mut is_inclusive = true;
-    let mut t = Token::ILLEGAL;
 
     if let Some(&c) = self.peek_char() {
       if c.1 == '.' {
@@ -248,57 +247,55 @@ impl<'a> Lexer<'a> {
       }
     }
 
-    if let Ok(c) = self.read_char() {
-      if is_digit(c.1) {
-        let upper = self.read_int_or_float(c.0)?;
+    let c = self.read_char()?;
 
-        match lower {
-          Token::INTLITERAL(_) => {
-            if let Token::INTLITERAL(_) = upper {
-              return Ok(Token::RANGE((
-                Box::from(lower),
-                Box::from(upper),
-                is_inclusive,
-              )));
-            } else {
-              return Err(
-                "Only numerical ranges between integers or floating point values are allowed"
-                  .into(),
-              );
-            }
-          }
-          Token::FLOATLITERAL(_) => {
-            if let Token::FLOATLITERAL(_) = upper {
-              return Ok(Token::RANGE((
-                Box::from(lower),
-                Box::from(upper),
-                is_inclusive,
-              )));
-            } else {
-              return Err(
-                "Only numerical ranges between integers or floating point values are allowed"
-                  .into(),
-              );
-            }
-          }
-          _ => {
+    if is_digit(c.1) {
+      let upper = self.read_int_or_float(c.0)?;
+
+      match lower {
+        Token::INTLITERAL(li) => {
+          if let Token::INTLITERAL(ui) = upper {
             return Ok(Token::RANGE((
-              Box::from(lower),
-              Box::from(upper),
+              RangeValue::INT(li),
+              RangeValue::INT(ui),
               is_inclusive,
-            )))
+            )));
+          } else {
+            return Err(
+              "Only numerical ranges between integers or floating point values are allowed".into(),
+            );
           }
         }
-      } else if is_ealpha(c.1) {
-        t = Token::RANGE((
-          Box::from(lower),
-          Box::from(token::lookup_ident(self.read_identifier(c.0)?)),
-          is_inclusive,
-        ));
+        Token::FLOATLITERAL(lf) => {
+          if let Token::FLOATLITERAL(uf) = upper {
+            return Ok(Token::RANGE((
+              RangeValue::FLOAT(lf),
+              RangeValue::FLOAT(uf),
+              is_inclusive,
+            )));
+          } else {
+            return Err(
+              "Only numerical ranges between integers or floating point values are allowed".into(),
+            );
+          }
+        }
+        _ => {
+          return Ok(Token::RANGE((
+            RangeValue::try_from(lower)?,
+            RangeValue::try_from(upper)?,
+            is_inclusive,
+          )))
+        }
       }
+    } else if is_ealpha(c.1) {
+      return Ok(Token::RANGE((
+        RangeValue::try_from(lower)?,
+        RangeValue::try_from(token::lookup_ident(self.read_identifier(c.0)?))?,
+        is_inclusive,
+      )));
     }
 
-    Ok(t)
+    Err("invalid range syntax".into())
   }
 }
 
@@ -352,8 +349,8 @@ city = (
       (ASSIGN, "="),
       (
         RANGE((
-          Box::from(IDENT(("mynumber", None))),
-          Box::from(FLOATLITERAL(100.5)),
+          RangeValue::IDENT(("mynumber", None)),
+          RangeValue::FLOAT(100.5),
           true,
         )),
         "mynumber..100.5",
