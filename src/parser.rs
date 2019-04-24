@@ -149,20 +149,17 @@ impl<'a> Parser<'a> {
   fn parse_type1(&mut self) -> Result<Type1<'a>, Box<Error>> {
     match &self.cur_token {
       Token::RANGE((lower, upper, inclusive)) => {
-        let lower_ident = if let RangeValue::IDENT(ident) = lower {
-          Some(Token::IDENT(*ident))
+        let (lower_ident, upper_ident) = if let RangeValue::IDENT(li) = lower {
+          if let RangeValue::IDENT(ui) = upper {
+            (Some(Token::IDENT(*li)), Some(Token::IDENT(*ui)))
+          } else {
+            (Some(Token::IDENT(*li)), None)
+          }          
+        } else if let RangeValue::IDENT(ui) = upper {
+          (None, Some(Token::IDENT(*ui)))
         } else {
-          None
+          (None, None)
         };
-
-        let upper_ident = if let RangeValue::IDENT(ident) = upper {
-          Some(Token::IDENT(*ident))
-        } else {
-          None
-        };
-
-        let lower_value = lower.as_value();
-        let upper_value = upper.as_value();
 
         if let Some(li) = lower_ident {
           let mut t1 = Type1 {
@@ -178,14 +175,14 @@ impl<'a> Parser<'a> {
           } else {
             t1.operator = Some((
               RangeCtlOp::RangeOp(*inclusive),
-              Type2::Value(upper_value.ok_or_else(|| "Illegal upper range value")?),
+              Type2::Value(upper.as_value().ok_or_else(|| "Illegal upper range value")?),
             ));
           }
 
           Ok(t1)
         } else {
           let mut t1 = Type1 {
-            type2: Type2::Value(lower_value.ok_or_else(|| "Illegal lower range value")?),
+            type2: Type2::Value(lower.as_value().ok_or_else(|| "Illegal lower range value")?),
             operator: None,
           };
 
@@ -197,7 +194,7 @@ impl<'a> Parser<'a> {
           } else {
             t1.operator = Some((
               RangeCtlOp::RangeOp(*inclusive),
-              Type2::Value(upper_value.ok_or_else(|| "Illegal upper range value")?),
+              Type2::Value(upper.as_value().ok_or_else(|| "Illegal upper range value")?),
             ));
           }
 
@@ -280,8 +277,8 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_grpent(&mut self) -> Result<GroupEntry<'a>, Box<Error>> {
-    let occur = self.parse_occur()?;
-    let member_key = self.parse_memberkey()?;
+    let _occur = self.parse_occur()?;
+    let _member_key = self.parse_memberkey()?;
 
     unimplemented!()
   }
