@@ -143,7 +143,7 @@ impl<'a> fmt::Display for RangeValue<'a> {
   }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Value<'a> {
   // TODO: verify HEXFLOAT works
   INT(usize),

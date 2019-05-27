@@ -154,7 +154,7 @@ impl<'a> Parser<'a> {
             (Some(Token::IDENT(*li)), Some(Token::IDENT(*ui)))
           } else {
             (Some(Token::IDENT(*li)), None)
-          }          
+          }
         } else if let RangeValue::IDENT(ui) = upper {
           (None, Some(Token::IDENT(*ui)))
         } else {
@@ -175,14 +175,22 @@ impl<'a> Parser<'a> {
           } else {
             t1.operator = Some((
               RangeCtlOp::RangeOp(*inclusive),
-              Type2::Value(upper.as_value().ok_or_else(|| "Illegal upper range value")?),
+              Type2::Value(
+                upper
+                  .as_value()
+                  .ok_or_else(|| "Illegal upper range value")?,
+              ),
             ));
           }
 
           Ok(t1)
         } else {
           let mut t1 = Type1 {
-            type2: Type2::Value(lower.as_value().ok_or_else(|| "Illegal lower range value")?),
+            type2: Type2::Value(
+              lower
+                .as_value()
+                .ok_or_else(|| "Illegal lower range value")?,
+            ),
             operator: None,
           };
 
@@ -194,7 +202,11 @@ impl<'a> Parser<'a> {
           } else {
             t1.operator = Some((
               RangeCtlOp::RangeOp(*inclusive),
-              Type2::Value(upper.as_value().ok_or_else(|| "Illegal upper range value")?),
+              Type2::Value(
+                upper
+                  .as_value()
+                  .ok_or_else(|| "Illegal upper range value")?,
+              ),
             ));
           }
 
@@ -214,7 +226,7 @@ impl<'a> Parser<'a> {
       Token::VALUE(value) => {
         match *value {
           // TODO: fix workaround for double escaping string literal values
-          Value::TEXT(text) => Ok(Type2::Value(Value::TEXT(text))),
+          Value::TEXT(_) => Ok(Type2::Value(*value)),
           _ => Err("bad value".into()),
         }
       }
@@ -277,22 +289,54 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_grpent(&mut self) -> Result<GroupEntry<'a>, Box<Error>> {
-    let _occur = self.parse_occur()?;
-    let _member_key = self.parse_memberkey()?;
+    let occur = self.parse_occur().ok();
 
-    unimplemented!()
+    match &self.cur_token {
+      Token::IDENT(ident) => Ok(GroupEntry::Groupname(GroupnameEntry {
+        occur,
+        name: Identifier(Token::IDENT(*ident)),
+        generic_arg: self.parse_genericarg().ok(),
+      })),
+      Token::LPAREN => Ok(GroupEntry::InlineGroup((occur, self.parse_group()?))),
+      _ => Ok(GroupEntry::MemberKey(Box::from(MemberKeyEntry {
+        occur,
+        member_key: self.parse_memberkey().ok(),
+        entry_type: self.parse_type()?,
+      }))),
+    }
   }
 
-  fn parse_occur(&mut self) -> Result<Option<Occur>, Box<Error>> {
+  fn parse_memberkey(&mut self) -> Result<MemberKey<'a>, Box<Error>> {
     match &self.cur_token {
-      Token::OPTIONAL => Ok(Some(Occur::Optional)),
-      Token::ONEORMORE => Ok(Some(Occur::OneOrMore)),
-      Token::ASTERISK => {
-        if let Token::INTLITERAL(u) = &self.peek_token {
-          return Ok(Some(Occur::Exact((None, Some(*u)))));
+      Token::IDENT(ident) => Ok(MemberKey::Bareword(Identifier(Token::IDENT(*ident)))),
+      _ => {
+        let t1 = self.parse_type1()?;
+
+        if self.cur_token_is(Token::CUT) {
+          self.next_token()?;
+
+          return Ok(MemberKey::Type1(Box::from((t1, true))));
         }
 
-        Ok(Some(Occur::ZeroOrMore))
+        if let Type2::Value(value) = t1.type2 {
+          return Ok(MemberKey::Value(value));
+        }
+
+        Ok(MemberKey::Type1(Box::from((t1, false))))
+      }
+    }
+  }
+
+  fn parse_occur(&mut self) -> Result<Occur, Box<Error>> {
+    match &self.cur_token {
+      Token::OPTIONAL => Ok(Occur::Optional),
+      Token::ONEORMORE => Ok(Occur::OneOrMore),
+      Token::ASTERISK => {
+        if let Token::INTLITERAL(u) = &self.peek_token {
+          return Ok(Occur::Exact((None, Some(*u))));
+        }
+
+        Ok(Occur::ZeroOrMore)
       }
       _ => {
         let lower = if let Token::INTLITERAL(li) = &self.cur_token {
@@ -313,14 +357,10 @@ impl<'a> Parser<'a> {
           None
         };
 
-        Ok(Some(Occur::Exact((lower, upper))))
+        Ok(Occur::Exact((lower, upper)))
       }
     }
-  }
-
-  fn parse_memberkey(&mut self) -> Result<Option<MemberKey>, Box<Error>> {
-    unimplemented!()
-  }
+  }  
 
   fn cur_token_is(&self, t: Token) -> bool {
     mem::discriminant(&self.cur_token) == mem::discriminant(&t)
@@ -555,6 +595,35 @@ secondrule = thirdrule"#;
   }
 
   #[test]
+  fn verify_memberkey() -> Result<(), Box<Error>> {
+    let inputs = [r#""mytype1" ^ =>"#, r#"mybareword:"#, r#""myvalue": "#];
+
+    let expected_outputs = [
+      MemberKey::Type1(Box::from((
+        Type1 {
+          type2: Type2::Value(Value::TEXT("\"mytype1\"")),
+          operator: None,
+        },
+        true,
+      ))),
+      MemberKey::Bareword(Identifier(Token::IDENT(("mybareword", None)))),
+      MemberKey::Value(Value::TEXT("\"myvalue\"")),
+    ];
+
+    for (idx, expected_output) in expected_outputs.iter().enumerate() {
+      let mut l = Lexer::new(&inputs[idx]);
+      let mut p = Parser::new(&mut l)?;
+
+      let mk = p.parse_memberkey()?;
+      check_parser_errors(&p)?;
+
+      assert_eq!(mk.to_string(), expected_output.to_string());
+    }
+
+    Ok(())
+  }
+
+  #[test]
   fn verify_occur() -> Result<(), Box<Error>> {
     let inputs = [r#"1*3"#, r#"*"#, r#"+"#, r#"5*"#, r#"*3"#, r#"?"#];
 
@@ -571,7 +640,7 @@ secondrule = thirdrule"#;
       let mut l = Lexer::new(&inputs[idx]);
       let mut p = Parser::new(&mut l)?;
 
-      let o = p.parse_occur()?.unwrap();
+      let o = p.parse_occur()?;
       check_parser_errors(&p)?;
 
       assert_eq!(o.to_string(), expected_output.to_string());

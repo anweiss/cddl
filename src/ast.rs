@@ -204,7 +204,23 @@ pub enum MemberKey<'a> {
   // if true, cut is present
   Type1(Box<(Type1<'a>, bool)>),
   Bareword(Identifier<'a>),
-  Value(String),
+  Value(Value<'a>),
+}
+
+impl<'a> fmt::Display for MemberKey<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      MemberKey::Type1(t1) => {
+        if t1.1 {
+          return write!(f, "{} ^ =>", t1.0)
+        }
+
+        write!(f, "{} =>", t1.0)
+      }
+      MemberKey::Bareword(ident) => write!(f, "{}", ident),
+      MemberKey::Value(value) => write!(f, "{}", value),
+    }
+  }
 }
 
 #[derive(Debug)]
