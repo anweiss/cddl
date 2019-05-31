@@ -104,6 +104,23 @@ impl<'a> fmt::Display for GenericArg<'a> {
 #[derive(Debug)]
 pub struct Type<'a>(pub Vec<Type1<'a>>);
 
+impl<'a> fmt::Display for Type<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let mut types = String::new();
+
+    for (idx, t) in self.0.iter().enumerate() {
+      if idx == 0 {
+        types.push_str(&t.to_string());
+        continue;
+      }
+
+      types.push_str(&format!(" / {}", t.to_string()));
+    }
+
+    write!(f, "{}", types)
+  }
+}
+
 #[derive(Debug)]
 pub struct Type1<'a> {
   pub type2: Type2<'a>,
@@ -175,21 +192,67 @@ impl<'a> fmt::Display for Type2<'a> {
 #[derive(Debug)]
 pub struct Group<'a>(pub Vec<GroupChoice<'a>>);
 
+impl<'a> fmt::Display for Group<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{:?}", self.0)
+  }
+}
+
 #[derive(Debug)]
 pub struct GroupChoice<'a>(pub Vec<GroupEntry<'a>>);
 
+impl<'a> fmt::Display for GroupChoice<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{:?}", self.0)
+  }
+}
+
 #[derive(Debug)]
 pub enum GroupEntry<'a> {
-  MemberKey(Box<MemberKeyEntry<'a>>),
+  ValueMemberKey(Box<ValueMemberKeyEntry<'a>>),
   Groupname(GroupnameEntry<'a>),
   InlineGroup((Option<Occur>, Group<'a>)),
 }
 
+impl<'a> fmt::Display for GroupEntry<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      GroupEntry::ValueMemberKey(vmke) => write!(f, "{}", vmke),
+      GroupEntry::Groupname(gne) => write!(f, "{}", gne),
+      GroupEntry::InlineGroup((occur, group)) => {
+        if let Some(o) = occur {
+          return write!(f, "{} {}", o, group);
+        }
+
+        write!(f, "{}", group)
+      }
+    }
+  }
+}
+
 #[derive(Debug)]
-pub struct MemberKeyEntry<'a> {
+pub struct ValueMemberKeyEntry<'a> {
   pub occur: Option<Occur>,
   pub member_key: Option<MemberKey<'a>>,
   pub entry_type: Type<'a>,
+}
+
+impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    if let Some(o) = &self.occur {
+      if let Some(mk) = &self.member_key {
+        return write!(f, "{} {} {}", o, mk, self.entry_type);
+      }
+
+      return write!(f, "{} {}", o, self.entry_type);
+    }
+
+    if let Some(mk) = &self.member_key {
+      return write!(f, "{} {}", mk, self.entry_type);
+    }
+
+    write!(f, "{}", self.entry_type)
+  }
 }
 
 #[derive(Debug)]
@@ -197,6 +260,24 @@ pub struct GroupnameEntry<'a> {
   pub occur: Option<Occur>,
   pub name: Identifier<'a>,
   pub generic_arg: Option<GenericArg<'a>>,
+}
+
+impl<'a> fmt::Display for GroupnameEntry<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    if let Some(o) = &self.occur {
+      if let Some(ga) = &self.generic_arg {
+        return write!(f, "{} {} {}", o, self.name, ga);
+      }
+
+      return write!(f, "{} {}", o, self.name);
+    }
+
+    if let Some(ga) = &self.generic_arg {
+      return write!(f, "{} {}", self.name, ga);
+    }
+
+    write!(f, "{}", self.name)
+  }
 }
 
 #[derive(Debug)]

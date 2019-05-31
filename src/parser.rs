@@ -252,6 +252,9 @@ impl<'a> Parser<'a> {
       // { group }
       Token::LBRACE => Ok(Type2::Map(self.parse_group()?)),
 
+      // [ group ]
+      Token::LBRACKET => Ok(Type2::Array(self.parse_group()?)),
+
       _ => return Err("Unknown".into()),
     };
 
@@ -289,7 +292,17 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_grpent(&mut self) -> Result<GroupEntry<'a>, Box<Error>> {
-    let occur = self.parse_occur().ok();
+    let occur = self.parse_occur(true)?;
+
+    if occur.is_some() {
+      self.next_token()?;
+    }
+
+    let member_key = self.parse_memberkey(true)?;
+
+    if member_key.is_some() {
+      self.next_token()?;
+    }
 
     match &self.cur_token {
       Token::IDENT(ident) => Ok(GroupEntry::Groupname(GroupnameEntry {
@@ -298,45 +311,52 @@ impl<'a> Parser<'a> {
         generic_arg: self.parse_genericarg().ok(),
       })),
       Token::LPAREN => Ok(GroupEntry::InlineGroup((occur, self.parse_group()?))),
-      _ => Ok(GroupEntry::MemberKey(Box::from(MemberKeyEntry {
+      _ => Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
         occur,
-        member_key: self.parse_memberkey().ok(),
+        member_key,
         entry_type: self.parse_type()?,
       }))),
     }
   }
 
-  fn parse_memberkey(&mut self) -> Result<MemberKey<'a>, Box<Error>> {
-    match &self.cur_token {
-      Token::IDENT(ident) => Ok(MemberKey::Bareword(Identifier(Token::IDENT(*ident)))),
-      _ => {
+  fn parse_memberkey(&mut self, is_optional: bool) -> Result<Option<MemberKey<'a>>, Box<Error>> {
+    match &self.peek_token {
+      Token::ARROWMAP | Token::CUT => {
         let t1 = self.parse_type1()?;
 
         if self.cur_token_is(Token::CUT) {
           self.next_token()?;
 
-          return Ok(MemberKey::Type1(Box::from((t1, true))));
+          return Ok(Some(MemberKey::Type1(Box::from((t1, true)))));
         }
 
-        if let Type2::Value(value) = t1.type2 {
-          return Ok(MemberKey::Value(value));
+        Ok(Some(MemberKey::Type1(Box::from((t1, false)))))
+      }
+      Token::COLON => match &self.cur_token {
+        Token::IDENT(ident) => Ok(Some(MemberKey::Bareword(Identifier(Token::IDENT(*ident))))),
+        Token::VALUE(value) => Ok(Some(MemberKey::Value(*value))),
+        _ => Err("Malformed memberkey".into()),
+      }
+      _ => {
+        if !is_optional {
+          return Err("Malformed memberkey. Missing \":\" or \"=>\"".into());
         }
 
-        Ok(MemberKey::Type1(Box::from((t1, false))))
+        Ok(None)
       }
     }
   }
 
-  fn parse_occur(&mut self) -> Result<Occur, Box<Error>> {
+  fn parse_occur(&mut self, is_optional: bool) -> Result<Option<Occur>, Box<Error>> {
     match &self.cur_token {
-      Token::OPTIONAL => Ok(Occur::Optional),
-      Token::ONEORMORE => Ok(Occur::OneOrMore),
+      Token::OPTIONAL => Ok(Some(Occur::Optional)),
+      Token::ONEORMORE => Ok(Some(Occur::OneOrMore)),
       Token::ASTERISK => {
         if let Token::INTLITERAL(u) = &self.peek_token {
-          return Ok(Occur::Exact((None, Some(*u))));
+          return Ok(Some(Occur::Exact((None, Some(*u)))));
         }
 
-        Ok(Occur::ZeroOrMore)
+        Ok(Some(Occur::ZeroOrMore))
       }
       _ => {
         let lower = if let Token::INTLITERAL(li) = &self.cur_token {
@@ -345,10 +365,15 @@ impl<'a> Parser<'a> {
           None
         };
 
-        if !self.expect_peek(&Token::ASTERISK) {
+        if !self.peek_token_is(&Token::ASTERISK) {
+          if is_optional {
+            return Ok(None);
+          }
+
           return Err("Malformed occurrence syntax".into());
         }
 
+        self.next_token()?;
         self.next_token()?;
 
         let upper = if let Token::INTLITERAL(ui) = &self.cur_token {
@@ -357,10 +382,10 @@ impl<'a> Parser<'a> {
           None
         };
 
-        Ok(Occur::Exact((lower, upper)))
+        Ok(Some(Occur::Exact((lower, upper))))
       }
     }
-  }  
+  }
 
   fn cur_token_is(&self, t: Token) -> bool {
     mem::discriminant(&self.cur_token) == mem::discriminant(&t)
@@ -595,6 +620,48 @@ secondrule = thirdrule"#;
   }
 
   #[test]
+  fn verify_grpent() -> Result<(), Box<Error>> {
+    let inputs = [r#"typename"#, r#"* type1 ^ => "value""#];
+
+    let expected_outputs = [
+      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+        occur: None,
+        member_key: None,
+        entry_type: Type(vec![Type1 {
+          type2: Type2::Typename((Identifier(Token::IDENT(("typename", None))), None)),
+          operator: None,
+        }]),
+      })),
+      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+        occur: Some(Occur::ZeroOrMore),
+        member_key: Some(MemberKey::Type1(Box::from((
+          Type1 {
+            type2: Type2::Typename((Identifier(Token::IDENT(("type1", None))), None)),
+            operator: None,
+          },
+          true,
+        )))),
+        entry_type: Type(vec![Type1 {
+          type2: Type2::Value(Value::TEXT("\"value\"")),
+          operator: None,
+        }]),
+      })),
+    ];
+
+    for (idx, expected_output) in expected_outputs.iter().enumerate() {
+      let mut l = Lexer::new(&inputs[idx]);
+      let mut p = Parser::new(&mut l)?;
+
+      let grpent = p.parse_grpent()?;
+      check_parser_errors(&p)?;
+
+      assert_eq!(grpent.to_string(), expected_output.to_string());
+    }
+
+    Ok(())
+  }
+
+  #[test]
   fn verify_memberkey() -> Result<(), Box<Error>> {
     let inputs = [r#""mytype1" ^ =>"#, r#"mybareword:"#, r#""myvalue": "#];
 
@@ -614,10 +681,10 @@ secondrule = thirdrule"#;
       let mut l = Lexer::new(&inputs[idx]);
       let mut p = Parser::new(&mut l)?;
 
-      let mk = p.parse_memberkey()?;
+      let mk = p.parse_memberkey(false)?;
       check_parser_errors(&p)?;
 
-      assert_eq!(mk.to_string(), expected_output.to_string());
+      assert_eq!(mk.unwrap().to_string(), expected_output.to_string());
     }
 
     Ok(())
@@ -640,10 +707,10 @@ secondrule = thirdrule"#;
       let mut l = Lexer::new(&inputs[idx]);
       let mut p = Parser::new(&mut l)?;
 
-      let o = p.parse_occur()?;
+      let o = p.parse_occur(false)?;
       check_parser_errors(&p)?;
 
-      assert_eq!(o.to_string(), expected_output.to_string());
+      assert_eq!(o.unwrap().to_string(), expected_output.to_string());
     }
 
     Ok(())
