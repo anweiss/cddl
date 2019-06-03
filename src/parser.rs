@@ -42,8 +42,8 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_rule(&mut self) -> Result<Rule<'a>, Box<Error>> {
-    let name = match &self.cur_token {
-      Token::IDENT(i) => Token::IDENT(*i),
+    let ident = match &self.cur_token {
+      Token::IDENT(i) => *i,
       _ => return Err("expected IDENT".into()),
     };
 
@@ -81,7 +81,7 @@ impl<'a> Parser<'a> {
     }
 
     let tr = TypeRule {
-      name: Identifier(name),
+      name: Identifier(ident),
       generic_param: gp,
       is_type_choice_alternate,
       value: t,
@@ -98,7 +98,7 @@ impl<'a> Parser<'a> {
     while !self.cur_token_is(Token::RANGLEBRACKET) {
       match &self.cur_token {
         Token::IDENT(i) => {
-          generic_params.0.push(Identifier(Token::IDENT(*i)));
+          generic_params.0.push(Identifier(*i));
           self.next_token()?;
         }
         Token::COMMA => self.next_token()?,
@@ -161,13 +161,13 @@ impl<'a> Parser<'a> {
           (None, None)
         };
 
-        if let Some(li) = lower_ident {
+        if let Some(Token::IDENT(li)) = lower_ident {
           let mut t1 = Type1 {
             type2: Type2::Typename((Identifier(li), None)),
             operator: None,
           };
 
-          if let Some(ui) = upper_ident {
+          if let Some(Token::IDENT(ui)) = upper_ident {
             t1.operator = Some((
               RangeCtlOp::RangeOp(*inclusive),
               Type2::Typename((Identifier(ui), None)),
@@ -194,7 +194,7 @@ impl<'a> Parser<'a> {
             operator: None,
           };
 
-          if let Some(ui) = upper_ident {
+          if let Some(Token::IDENT(ui)) = upper_ident {
             t1.operator = Some((
               RangeCtlOp::RangeOp(*inclusive),
               Type2::Typename((Identifier(ui), None)),
@@ -236,12 +236,12 @@ impl<'a> Parser<'a> {
         // optional genericarg detected
         if self.peek_token_is(&Token::LANGLEBRACKET) {
           return Ok(Type2::Typename((
-            Identifier(Token::IDENT(*ident)),
+            Identifier(*ident),
             Some(self.parse_genericarg()?),
           )));
         }
 
-        Ok(Type2::Typename((Identifier(Token::IDENT(*ident)), None)))
+        Ok(Type2::Typename((Identifier(*ident), None)))
       }
 
       // ( type )
@@ -255,7 +255,19 @@ impl<'a> Parser<'a> {
       // [ group ]
       Token::LBRACKET => Ok(Type2::Array(self.parse_group()?)),
 
-      _ => return Err("Unknown".into()),
+      // ~ typename [genericarg]
+      Token::UNWRAP => unimplemented!(),
+
+      // & ( group )
+      // & groupname [genericarg]
+      Token::GTOCHOICE => unimplemented!(),
+
+      // # 6 ["." uint] ( type )
+      // # DIGIT ["." uint]   ; major/ai
+      // #                    ; any
+      Token::TAG(_) => unimplemented!(),
+
+      _ => return Err("Unknown type2 alternative".into()),
     };
 
     self.next_token()?;
@@ -298,19 +310,41 @@ impl<'a> Parser<'a> {
       self.next_token()?;
     }
 
+    if self.cur_token_is(Token::LPAREN) {
+      return Ok(GroupEntry::InlineGroup((occur, self.parse_group()?)));
+    }
+
     let member_key = self.parse_memberkey(true)?;
 
     if member_key.is_some() {
       self.next_token()?;
     }
 
+    let ga = if self.peek_token_is(&Token::LANGLEBRACKET) {
+      Some(self.parse_genericarg()?)
+    } else {
+      None
+    };
+    
     match &self.cur_token {
-      Token::IDENT(ident) => Ok(GroupEntry::Groupname(GroupnameEntry {
-        occur,
-        name: Identifier(Token::IDENT(*ident)),
-        generic_arg: self.parse_genericarg().ok(),
-      })),
-      Token::LPAREN => Ok(GroupEntry::InlineGroup((occur, self.parse_group()?))),
+      Token::IDENT(ident) => {
+        // [occur S] [memberkey S] type
+        if member_key.is_some() {
+          return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+            occur,
+            member_key,
+            entry_type: self.parse_type()?,
+          })));
+        }
+        // Otherwise it could be either typename or groupname. Requires context.
+        // [occur S] [memberkey S] type
+        // [occur S] groupname [genericarg]  ; preempted by above
+        Ok(GroupEntry::TypeGroupname(TypeGroupnameEntry {
+          occur,
+          name: Identifier(*ident),
+          generic_arg: ga,
+        }))
+      }
       _ => Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
         occur,
         member_key,
@@ -332,10 +366,16 @@ impl<'a> Parser<'a> {
 
         Ok(Some(MemberKey::Type1(Box::from((t1, false)))))
       }
-      Token::COLON => match &self.cur_token {
-        Token::IDENT(ident) => Ok(Some(MemberKey::Bareword(Identifier(Token::IDENT(*ident))))),
-        Token::VALUE(value) => Ok(Some(MemberKey::Value(*value))),
-        _ => Err("Malformed memberkey".into()),
+      Token::COLON => {
+        let mk = match &self.cur_token {
+          Token::IDENT(ident) => Some(MemberKey::Bareword(Identifier(*ident))),
+          Token::VALUE(value) => Some(MemberKey::Value(*value)),
+          _ => return Err("Malformed memberkey".into()),
+        };
+
+        self.next_token()?;
+
+        Ok(mk)
       }
       _ => {
         if !is_optional {
@@ -454,16 +494,12 @@ secondrule = thirdrule"#;
   fn test_rule(r: &Rule, name: &str) -> bool {
     match r {
       Rule::Type(tr) => {
-        if tr.name.0.to_string() != name {
-          eprintln!(
-            "rule.name.value not '{}'. got={}",
-            name,
-            tr.name.0.to_string()
-          );
+        if (tr.name.0).0 != name {
+          eprintln!("rule.name.value not '{}'. got={}", name, tr.name,);
           return false;
         }
 
-        if tr.name.token_literal().unwrap() != format!("{:?}", Token::IDENT((name, None))) {
+        if tr.name.token_literal().unwrap() != Identifier((name, None)).token_literal().unwrap() {
           eprintln!(
             "rule.value not '{}'. got={}",
             name,
@@ -588,7 +624,7 @@ secondrule = thirdrule"#;
     let expected_outputs = [
       Type2::Value(Value::TEXT("\"myvalue\"")),
       Type2::Typename((
-        Identifier(Token::IDENT(("message", None))),
+        Identifier(("message", None)),
         Some(GenericArg(vec![
           Type1 {
             type2: Type2::Value(Value::TEXT("\"reboot\"")),
@@ -600,10 +636,7 @@ secondrule = thirdrule"#;
           },
         ])),
       )),
-      Type2::Typename((
-        Identifier(Token::IDENT(("tcp-option", Some(&SocketPlug::GROUP)))),
-        None,
-      )),
+      Type2::Typename((Identifier(("tcp-option", Some(&SocketPlug::GROUP))), None)),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -621,28 +654,36 @@ secondrule = thirdrule"#;
 
   #[test]
   fn verify_grpent() -> Result<(), Box<Error>> {
-    let inputs = [r#"typename"#, r#"* type1 ^ => "value""#];
+    let inputs = [r#"* type1 => "value""#, r#"type1: type2"#, r#"typename"#];
 
     let expected_outputs = [
-      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-        occur: None,
-        member_key: None,
-        entry_type: Type(vec![Type1 {
-          type2: Type2::Typename((Identifier(Token::IDENT(("typename", None))), None)),
-          operator: None,
-        }]),
-      })),
       GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
         occur: Some(Occur::ZeroOrMore),
         member_key: Some(MemberKey::Type1(Box::from((
           Type1 {
-            type2: Type2::Typename((Identifier(Token::IDENT(("type1", None))), None)),
+            type2: Type2::Typename((Identifier(("type1", None)), None)),
             operator: None,
           },
-          true,
+          false,
         )))),
         entry_type: Type(vec![Type1 {
           type2: Type2::Value(Value::TEXT("\"value\"")),
+          operator: None,
+        }]),
+      })),
+      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+        occur: None,
+        member_key: Some(MemberKey::Bareword(Identifier(("type1", None)))),
+        entry_type: Type(vec![Type1 {
+          type2: Type2::Typename((Identifier(("type2", None)), None)),
+          operator: None,
+        }]),
+      })),
+      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+        occur: None,
+        member_key: None,
+        entry_type: Type(vec![Type1 {
+          type2: Type2::Typename((Identifier(("typename", None)), None)),
           operator: None,
         }]),
       })),
@@ -663,9 +704,21 @@ secondrule = thirdrule"#;
 
   #[test]
   fn verify_memberkey() -> Result<(), Box<Error>> {
-    let inputs = [r#""mytype1" ^ =>"#, r#"mybareword:"#, r#""myvalue": "#];
+    let inputs = [
+      r#"type1 =>"#,
+      r#""mytype1" ^ =>"#,
+      r#"mybareword:"#,
+      r#""myvalue": "#,
+    ];
 
     let expected_outputs = [
+      MemberKey::Type1(Box::from((
+        Type1 {
+          type2: Type2::Typename((Identifier(("type1", None)), None)),
+          operator: None,
+        },
+        false,
+      ))),
       MemberKey::Type1(Box::from((
         Type1 {
           type2: Type2::Value(Value::TEXT("\"mytype1\"")),
@@ -673,7 +726,7 @@ secondrule = thirdrule"#;
         },
         true,
       ))),
-      MemberKey::Bareword(Identifier(Token::IDENT(("mybareword", None)))),
+      MemberKey::Bareword(Identifier(("mybareword", None))),
       MemberKey::Value(Value::TEXT("\"myvalue\"")),
     ];
 

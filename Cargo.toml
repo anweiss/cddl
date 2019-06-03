@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 whoami = "0.4.1"
+serde_json = "1.0"

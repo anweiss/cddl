@@ -1,4 +1,4 @@
-use super::token::{Token, Value};
+use super::token::{SocketPlug, Value};
 use std::fmt;
 
 pub trait Node {
@@ -21,17 +21,21 @@ impl<'a> Node for CDDL<'a> {
 }
 
 #[derive(Debug)]
-pub struct Identifier<'a>(pub Token<'a>);
+pub struct Identifier<'a>(pub (&'a str, Option<&'a SocketPlug>));
 
 impl<'a> Node for Identifier<'a> {
   fn token_literal(&self) -> Option<String> {
-    Some(format!("{:?}", self.0))
+    Some(format!("{:?}", self))
   }
 }
 
 impl<'a> fmt::Display for Identifier<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{}", self.0)
+    if let Some(sp) = (self.0).1 {
+      return write!(f, "{}{}", sp, (self.0).0);
+    }
+
+    write!(f, "{}", (self.0).0)
   }
 }
 
@@ -179,10 +183,10 @@ impl<'a> fmt::Display for Type2<'a> {
       Type2::Value(value) => write!(f, "{}", value),
       Type2::Typename((tn, ga)) => {
         if let Some(args) = ga {
-          return write!(f, "{}{}", tn.0, args);
+          return write!(f, "{}{}", tn, args);
         }
 
-        write!(f, "{}", tn.0)
+        write!(f, "{}", tn)
       }
       _ => write!(f, ""),
     }
@@ -210,7 +214,7 @@ impl<'a> fmt::Display for GroupChoice<'a> {
 #[derive(Debug)]
 pub enum GroupEntry<'a> {
   ValueMemberKey(Box<ValueMemberKeyEntry<'a>>),
-  Groupname(GroupnameEntry<'a>),
+  TypeGroupname(TypeGroupnameEntry<'a>),
   InlineGroup((Option<Occur>, Group<'a>)),
 }
 
@@ -218,7 +222,7 @@ impl<'a> fmt::Display for GroupEntry<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       GroupEntry::ValueMemberKey(vmke) => write!(f, "{}", vmke),
-      GroupEntry::Groupname(gne) => write!(f, "{}", gne),
+      GroupEntry::TypeGroupname(gne) => write!(f, "{}", gne),
       GroupEntry::InlineGroup((occur, group)) => {
         if let Some(o) = occur {
           return write!(f, "{} {}", o, group);
@@ -256,13 +260,13 @@ impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
 }
 
 #[derive(Debug)]
-pub struct GroupnameEntry<'a> {
+pub struct TypeGroupnameEntry<'a> {
   pub occur: Option<Occur>,
   pub name: Identifier<'a>,
   pub generic_arg: Option<GenericArg<'a>>,
 }
 
-impl<'a> fmt::Display for GroupnameEntry<'a> {
+impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if let Some(o) = &self.occur {
       if let Some(ga) = &self.generic_arg {
@@ -293,7 +297,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
     match self {
       MemberKey::Type1(t1) => {
         if t1.1 {
-          return write!(f, "{} ^ =>", t1.0)
+          return write!(f, "{} ^ =>", t1.0);
         }
 
         write!(f, "{} =>", t1.0)
