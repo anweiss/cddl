@@ -86,6 +86,7 @@ pub enum Token<'a> {
   NUMBER,
   BIGUINT,
   BIGNINT,
+  BIGINT,
   INTEGER,
   UNSIGNED,
   DECFRAC,
@@ -101,6 +102,54 @@ pub enum Token<'a> {
   MIMEMESSAGE,
   CBORANY,
   UNDEFINED,
+}
+
+impl<'a> Token<'a> {
+  pub fn in_standard_prelude(&self) -> Option<&'a str> {
+    match self {
+      Token::ANY => Some("any"),
+      Token::UINT => Some("uint"),
+      Token::NINT => Some("nint"),
+      Token::INT => Some("int"),
+      Token::BSTR => Some("bstr"),
+      Token::BYTES => Some("bytes"),
+      Token::TSTR => Some("tstr"),
+      Token::TEXT => Some("text"),
+      Token::TDATE => Some("tdate"),
+      Token::TIME => Some("time"),
+      Token::NUMBER => Some("number"),
+      Token::BIGUINT => Some("biguint"),
+      Token::BIGNINT => Some("bignint"),
+      Token::BIGINT => Some("bigint"),
+      Token::INTEGER => Some("integer"),
+      Token::UNSIGNED => Some("unsigned"),
+      Token::DECFRAC => Some("decfrac"),
+      Token::BIGFLOAT => Some("bigfloat"),
+      Token::EB64URL => Some("eb64url"),
+      Token::EB64LEGACY => Some("eb64legacy"),
+      Token::EB16 => Some("eb16"),
+      Token::ENCODEDCBOR => Some("encoded-cbor"),
+      Token::URI => Some("uri"),
+      Token::B64URL => Some("b64url"),
+      Token::B64LEGACY => Some("b64legacy"),
+      Token::REGEXP => Some("regexp"),
+      Token::MIMEMESSAGE => Some("mime-message"),
+      Token::CBORANY => Some("cbor-any"),
+      Token::FLOAT16 => Some("float16"),
+      Token::FLOAT32 => Some("float32"),
+      Token::FLOAT64 => Some("float64"),
+      Token::FLOAT1632 => Some("float16-32"),
+      Token::FLOAT3264 => Some("float32-64"),
+      Token::FLOAT => Some("float"),
+      Token::FALSE => Some("false"),
+      Token::TRUE => Some("true"),
+      Token::BOOL => Some("bool"),
+      Token::NIL => Some("nil"),
+      Token::NULL => Some("null"),
+      Token::UNDEFINED => Some("undefined"),
+      _ => None,
+    }
+  }
 }
 
 #[derive(Debug, PartialEq)]

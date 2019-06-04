@@ -3,7 +3,7 @@ use super::lexer::Lexer;
 use super::token::{RangeValue, Token, Value};
 use std::{error::Error, mem};
 
-struct Parser<'a> {
+pub struct Parser<'a> {
   l: &'a mut Lexer<'a>,
   cur_token: Token<'a>,
   peek_token: Token<'a>,
@@ -11,7 +11,7 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-  fn new(l: &'a mut Lexer<'a>) -> Result<Parser, Box<Error>> {
+  pub fn new(l: &'a mut Lexer<'a>) -> Result<Parser, Box<Error>> {
     let mut p = Parser {
       l,
       cur_token: Token::EOF,
@@ -31,7 +31,7 @@ impl<'a> Parser<'a> {
     Ok(())
   }
 
-  fn parse_cddl(&mut self) -> Result<CDDL<'a>, Box<Error>> {
+  pub fn parse_cddl(&mut self) -> Result<CDDL<'a>, Box<Error>> {
     let mut c = CDDL::default();
 
     while self.cur_token != Token::EOF {
@@ -61,33 +61,31 @@ impl<'a> Parser<'a> {
     }
 
     let mut is_type_choice_alternate = false;
-    let mut _is_group_choice_alternate = false;
+    let mut is_group_choice_alternate = false;
 
     if self.cur_token_is(Token::TCHOICEALT) {
       is_type_choice_alternate = true;
     } else if self.cur_token_is(Token::GCHOICEALT) {
-      _is_group_choice_alternate = true;
+      is_group_choice_alternate = true;
     }
 
     self.next_token()?;
 
-    let mut t: Type;
-
-    // Parse grpent
     if self.cur_token_is(Token::LPAREN) {
-      unimplemented!();
+      Ok(Rule::Group(Box::from(GroupRule {
+        name: Identifier(ident),
+        generic_param: gp,
+        is_group_choice_alternate,
+        entry: self.parse_grpent()?,
+      })))
     } else {
-      t = self.parse_type()?;
+      Ok(Rule::Type(TypeRule {
+        name: Identifier(ident),
+        generic_param: gp,
+        is_type_choice_alternate,
+        value: self.parse_type()?,
+      }))
     }
-
-    let tr = TypeRule {
-      name: Identifier(ident),
-      generic_param: gp,
-      is_type_choice_alternate,
-      value: t,
-    };
-
-    Ok(Rule::Type(tr))
   }
 
   fn parse_genericparm(&mut self) -> Result<GenericParm<'a>, Box<Error>> {
@@ -267,7 +265,13 @@ impl<'a> Parser<'a> {
       // #                    ; any
       Token::TAG(_) => unimplemented!(),
 
-      _ => return Err("Unknown type2 alternative".into()),
+      _ => {
+        if let Some(s) = self.cur_token.in_standard_prelude() {
+          Ok(Type2::Typename((Identifier((s, None)), None)))
+        } else {
+          Err("Unknown type2 alternative".into())
+        }
+      }
     };
 
     self.next_token()?;
@@ -292,13 +296,19 @@ impl<'a> Parser<'a> {
 
     grpchoice.0.push(self.parse_grpent()?);
 
-    while self.cur_token_is(Token::COMMA)
-      || !self.cur_token_is(Token::RBRACE)
-      || !self.cur_token_is(Token::RPAREN)
-      || !self.cur_token_is(Token::RBRACKET)
+    if self.cur_token_is(Token::COMMA) {
+      self.next_token()?;
+    }
+
+    while !self.cur_token_is(Token::RBRACE)
+      && !self.cur_token_is(Token::RPAREN)
+      && !self.cur_token_is(Token::RBRACKET)
     {
       grpchoice.0.push(self.parse_grpent()?);
     }
+
+    self.next_token()?;
+
 
     Ok(grpchoice)
   }
@@ -311,6 +321,8 @@ impl<'a> Parser<'a> {
     }
 
     if self.cur_token_is(Token::LPAREN) {
+      self.next_token()?;
+
       return Ok(GroupEntry::InlineGroup((occur, self.parse_group()?)));
     }
 
@@ -325,7 +337,7 @@ impl<'a> Parser<'a> {
     } else {
       None
     };
-    
+
     match &self.cur_token {
       Token::IDENT(ident) => {
         // [occur S] [memberkey S] type
