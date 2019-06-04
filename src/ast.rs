@@ -71,7 +71,7 @@ impl<'a> Node for TypeRule<'a> {
 #[derive(Debug)]
 pub struct GroupRule<'a> {
   pub name: Identifier<'a>,
-  pub generic_para: Option<GenericParm<'a>>,
+  pub generic_param: Option<GenericParm<'a>>,
   pub is_group_choice_alternate: bool,
   pub entry: GroupEntry<'a>,
 }
