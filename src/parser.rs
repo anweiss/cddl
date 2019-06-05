@@ -44,7 +44,7 @@ impl<'a> Parser<'a> {
   fn parse_rule(&mut self) -> Result<Rule<'a>, Box<Error>> {
     let ident = match &self.cur_token {
       Token::IDENT(i) => *i,
-      _ => return Err("expected IDENT".into()),
+      _ => return Err(format!("expected IDENT. Got {:#?}", self.cur_token).into()),
     };
 
     let gp = if self.peek_token_is(&Token::LANGLEBRACKET) {
@@ -72,20 +72,20 @@ impl<'a> Parser<'a> {
     self.next_token()?;
 
     if self.cur_token_is(Token::LPAREN) {
-      Ok(Rule::Group(Box::from(GroupRule {
+      return Ok(Rule::Group(Box::from(GroupRule {
         name: Identifier(ident),
         generic_param: gp,
         is_group_choice_alternate,
         entry: self.parse_grpent()?,
-      })))
-    } else {
-      Ok(Rule::Type(TypeRule {
-        name: Identifier(ident),
-        generic_param: gp,
-        is_type_choice_alternate,
-        value: self.parse_type()?,
-      }))
+      })));
     }
+
+    Ok(Rule::Type(TypeRule {
+      name: Identifier(ident),
+      generic_param: gp,
+      is_type_choice_alternate,
+      value: self.parse_type()?,
+    }))
   }
 
   fn parse_genericparm(&mut self) -> Result<GenericParm<'a>, Box<Error>> {
@@ -248,10 +248,18 @@ impl<'a> Parser<'a> {
       Token::LPAREN => Ok(Type2::Group(self.parse_type()?)),
 
       // { group }
-      Token::LBRACE => Ok(Type2::Map(self.parse_group()?)),
+      Token::LBRACE => {
+        self.next_token()?;
+
+        Ok(Type2::Map(self.parse_group()?))
+      }
 
       // [ group ]
-      Token::LBRACKET => Ok(Type2::Array(self.parse_group()?)),
+      Token::LBRACKET => {
+        self.next_token()?;
+
+        Ok(Type2::Array(self.parse_group()?))
+      }
 
       // ~ typename [genericarg]
       Token::UNWRAP => unimplemented!(),
@@ -269,6 +277,7 @@ impl<'a> Parser<'a> {
         if let Some(s) = self.cur_token.in_standard_prelude() {
           Ok(Type2::Typename((Identifier((s, None)), None)))
         } else {
+          println!("Unknown token: {:#?}", self.cur_token);
           Err("Unknown type2 alternative".into())
         }
       }
@@ -294,21 +303,27 @@ impl<'a> Parser<'a> {
   fn parse_grpchoice(&mut self) -> Result<GroupChoice<'a>, Box<Error>> {
     let mut grpchoice = GroupChoice(Vec::new());
 
-    grpchoice.0.push(self.parse_grpent()?);
-
-    if self.cur_token_is(Token::COMMA) {
-      self.next_token()?;
-    }
-
     while !self.cur_token_is(Token::RBRACE)
       && !self.cur_token_is(Token::RPAREN)
       && !self.cur_token_is(Token::RBRACKET)
+      && !self.cur_token_is(Token::EOF)
     {
       grpchoice.0.push(self.parse_grpent()?);
+
+      // FYI, this was a really difficult bug to fix. When the last entry in a
+      // map, group or array is of the form "memberkey: type" without a trailing
+      // comma, don't advance the token
+      if !self.cur_token_is(Token::RPAREN)
+        && !self.cur_token_is(Token::RBRACE)
+        && !self.cur_token_is(Token::RBRACKET)
+      {
+        self.next_token()?;
+      }
+
+      if self.cur_token_is(Token::COMMA) {
+        self.next_token()?;
+      }
     }
-
-    self.next_token()?;
-
 
     Ok(grpchoice)
   }
@@ -323,14 +338,16 @@ impl<'a> Parser<'a> {
     if self.cur_token_is(Token::LPAREN) {
       self.next_token()?;
 
-      return Ok(GroupEntry::InlineGroup((occur, self.parse_group()?)));
+      let ge = GroupEntry::InlineGroup((occur, self.parse_group()?));
+
+      if self.cur_token_is(Token::RPAREN) {
+        self.next_token()?;
+      }
+
+      return Ok(ge);
     }
 
     let member_key = self.parse_memberkey(true)?;
-
-    if member_key.is_some() {
-      self.next_token()?;
-    }
 
     let ga = if self.peek_token_is(&Token::LANGLEBRACKET) {
       Some(self.parse_genericarg()?)
@@ -348,6 +365,7 @@ impl<'a> Parser<'a> {
             entry_type: self.parse_type()?,
           })));
         }
+
         // Otherwise it could be either typename or groupname. Requires context.
         // [occur S] [memberkey S] type
         // [occur S] groupname [genericarg]  ; preempted by above
@@ -373,10 +391,18 @@ impl<'a> Parser<'a> {
         if self.cur_token_is(Token::CUT) {
           self.next_token()?;
 
-          return Ok(Some(MemberKey::Type1(Box::from((t1, true)))));
+          let t1 = Some(MemberKey::Type1(Box::from((t1, true))));
+
+          self.next_token()?;
+
+          return Ok(t1);
         }
 
-        Ok(Some(MemberKey::Type1(Box::from((t1, false)))))
+        let t1 = Some(MemberKey::Type1(Box::from((t1, false))));
+
+        self.next_token()?;
+
+        Ok(t1)
       }
       Token::COLON => {
         let mk = match &self.cur_token {
@@ -385,6 +411,7 @@ impl<'a> Parser<'a> {
           _ => return Err("Malformed memberkey".into()),
         };
 
+        self.next_token()?;
         self.next_token()?;
 
         Ok(mk)
