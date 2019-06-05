@@ -1,5 +1,4 @@
-use super::lexer::Lexer;
-use super::token::Token;
+use super::{lexer::Lexer, parser::Parser, token::Token};
 use std::{
   error,
   io::{BufRead, Write},
@@ -15,12 +14,12 @@ pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<(), B
     let mut line = String::new();
     reader.read_line(&mut line)?;
 
-    let mut l = Lexer::new(&*line);
-    let mut tok = l.next_token()?;
-    while tok != Token::EOF {
-      writer.write_all(format!("{:?} [literal: \"{}\"]\n", tok, tok.to_string()).as_bytes())?;
-      writer.flush()?;
-      tok = l.next_token()?;
-    }
+    let mut l = Lexer::new(&line);
+    let mut p = Parser::new(&mut l)?;
+
+    let cddl = p.parse_cddl()?;
+
+    writer.write_all(format!("{:?}\n", cddl).as_bytes())?;
+    writer.flush()?;
   }
 }
