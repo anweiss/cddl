@@ -39,6 +39,8 @@ impl<'a> Lexer<'a> {
         (_, '*') => Ok(Token::ASTERISK),
         (_, '(') => Ok(Token::LPAREN),
         (_, ')') => Ok(Token::RPAREN),
+        (_, '[') => Ok(Token::LBRACKET),
+        (_, ']') => Ok(Token::RBRACKET),
         (_, '<') => Ok(Token::LANGLEBRACKET),
         (idx, '"') => Ok(Token::VALUE(Value::TEXT(self.read_text_value(idx)?))),
         (_, '{') => Ok(Token::LBRACE),
