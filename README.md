@@ -6,9 +6,9 @@
 
 A Rust implementation of the Concise data definition language (CDDL). CDDL is an IETF draft standard that "proposes a notational convention to express CBOR and JSON data structures." The current draft can be found at https://tools.ietf.org/html/draft-ietf-cbor-cddl-08 and is currently in AUTH48 state as of 2019-05-24 (RFC-to-be 8610), per https://www.rfc-editor.org/auth48/rfc8610.
 
-This library includes a handwritten parser and lexer for CDDL and is heavily inspired by Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). I'm currently only focused on using CDDL as a means for validating JSON data, and as such, work is being done to build a JSON validation component into the library.
+This library includes a handwritten parser and lexer for CDDL and is heavily inspired by Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/draft-ietf-cbor-cddl-08#appendix-B) of the spec.
 
-An extremely basic REPL is included as well.
+I'm currently only focused on using CDDL as a means for validating JSON data, and as such, work is being done to build a JSON validation component into the library. An extremely basic REPL is included as well.
 
 ## Goals
 
@@ -22,3 +22,26 @@ An extremely basic REPL is included as well.
 
 - Validate CBOR data structures (might eventually support this given it's one of the primary goals for CDDL, but not focused on this at the moment)
 - Performance
+
+
+## Features supported by the parser
+
+- [x] maps
+  - [x] structs
+  - [x] tables
+  - [x] cuts
+- [x] groups
+- [x] arrays
+- [x] values
+- [x] choices
+- [x] ranges
+- [ ] enumeration (building a choice from a group)
+- [x] root type
+- [x] occurrence
+- [x] predefined types
+- [ ] tags
+- [ ] unwrapping
+- [x] controls
+- [x] socket/plug
+- [x] generics
+- [ ] operator precedence
