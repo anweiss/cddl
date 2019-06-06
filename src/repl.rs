@@ -1,4 +1,4 @@
-use super::{lexer::Lexer, parser::Parser, token::Token};
+use super::{lexer::Lexer, parser::Parser};
 use std::{
   error,
   io::{BufRead, Write},
