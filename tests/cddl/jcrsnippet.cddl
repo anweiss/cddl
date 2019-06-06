@@ -1,0 +1,10 @@
+root = [2*2 {
+  precision: text,
+  Latitude: float,
+  Longitude: float,
+  Address: text,
+  City: text,
+  State: text,
+  Zip: text,
+  Country: text
+}]
