@@ -229,6 +229,11 @@ impl<'a> Parser<'a> {
         }
       }
 
+      // TODO: return Value type from lexer instead of these tokens. Duplicate
+      // code
+      Token::INTLITERAL(il) => Ok(Type2::Value(Value::INT(*il))),
+      Token::FLOATLITERAL(fl) => Ok(Type2::Value(Value::FLOAT(*fl))),
+
       // typename [genericarg]
       Token::IDENT(ident) => {
         // optional genericarg detected
@@ -359,6 +364,15 @@ impl<'a> Parser<'a> {
       Token::IDENT(ident) => {
         // [occur S] [memberkey S] type
         if member_key.is_some() {
+          return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+            occur,
+            member_key,
+            entry_type: self.parse_type()?,
+          })));
+        }
+
+        // Check for type choices in a group entry
+        if self.peek_token_is(&Token::TCHOICE) {
           return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
             occur,
             member_key,
