@@ -166,7 +166,7 @@ impl<'a> fmt::Display for RangeCtlOp {
 pub enum Type2<'a> {
   Value(Value<'a>),
   Typename((Identifier<'a>, Option<GenericArg<'a>>)),
-  Group(Type<'a>),
+  ParenthesizedType(Type<'a>),
   Map(Group<'a>),
   Array(Group<'a>),
   Unwrap((Identifier<'a>, Option<GenericArg<'a>>)),

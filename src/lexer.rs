@@ -46,7 +46,7 @@ impl<'a> Lexer<'a> {
         (_, '{') => Ok(Token::LBRACE),
         (_, '}') => Ok(Token::RBRACE),
         (_, ',') => Ok(Token::COMMA),
-        (_, ';') => Ok(Token::SEMICOLON),
+        (idx, ';') => Ok(Token::COMMENT(self.read_comment(idx)?)),
         (_, ':') => Ok(Token::COLON),
         (_, '^') => Ok(Token::CUT),
         (_, '&') => Ok(Token::GTOCHOICE),
@@ -160,6 +160,20 @@ impl<'a> Lexer<'a> {
             )?)
           }
         }
+      }
+    }
+
+    Ok("")
+  }
+
+  fn read_comment(&mut self, idx: usize) -> Result<&'a str, Box<Error>> {
+    while let Some(&(_, ch)) = self.peek_char() {
+      if ch != '\x0a' && ch != '\x0d' {
+        let _ = self.read_char()?;
+      } else {
+        return Ok(std::str::from_utf8(
+          &self.str_input[idx + 1..self.read_char()?.0],
+        )?);
       }
     }
 
@@ -316,13 +330,16 @@ mod tests {
 
   #[test]
   fn verify_next_token() {
-    let input = r#"mynumber = 10.5
+    let input = r#"; this is a comment
+; this is another comment
+
+mynumber = 10.5
     
 myfirstrule = "myotherrule"
 
 mysecondrule = mynumber..100.5
 
-@terminal-color = basecolors / othercolors
+@terminal-color = basecolors / othercolors ; an inline comment
     
 messages = message<"reboot", "now">
 
@@ -341,6 +358,11 @@ city = (
 )"#;
 
     let expected_tok = [
+      (COMMENT(" this is a comment"), "; this is a comment"),
+      (
+        COMMENT(" this is another comment"),
+        "; this is another comment",
+      ),
       (IDENT(("mynumber", None)), "mynumber"),
       (ASSIGN, "="),
       (FLOATLITERAL(10.5), "10.5"),
@@ -362,6 +384,7 @@ city = (
       (IDENT(("basecolors", None)), "basecolors"),
       (TCHOICE, "/"),
       (IDENT(("othercolors", None)), "othercolors"),
+      (COMMENT(" an inline comment"), "; an inline comment"),
       (IDENT(("messages", None)), "messages"),
       (ASSIGN, "="),
       (IDENT(("message", None)), "message"),

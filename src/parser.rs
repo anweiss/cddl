@@ -42,6 +42,10 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_rule(&mut self) -> Result<Rule<'a>, Box<Error>> {
+    while let Token::COMMENT(_) = self.cur_token {
+      self.next_token()?;
+    }
+
     let ident = match &self.cur_token {
       Token::IDENT(i) => *i,
       _ => return Err(format!("expected IDENT. Got {:#?}", self.cur_token).into()),
@@ -52,6 +56,10 @@ impl<'a> Parser<'a> {
     } else {
       None
     };
+
+    while let Token::COMMENT(_) = self.cur_token {
+      self.next_token()?;
+    }
 
     if !self.expect_peek(&Token::ASSIGN)
       && !self.expect_peek(&Token::TCHOICEALT)
@@ -70,6 +78,10 @@ impl<'a> Parser<'a> {
     }
 
     self.next_token()?;
+
+    while let Token::COMMENT(_) = self.cur_token {
+      self.next_token()?;
+    }
 
     if self.cur_token_is(Token::LPAREN) {
       return Ok(Rule::Group(Box::from(GroupRule {
@@ -100,6 +112,7 @@ impl<'a> Parser<'a> {
           self.next_token()?;
         }
         Token::COMMA => self.next_token()?,
+        Token::COMMENT(_) => self.next_token()?,
         _ => return Err("Illegal token".into()),
       }
     }
@@ -121,7 +134,7 @@ impl<'a> Parser<'a> {
 
     while !self.cur_token_is(Token::RANGLEBRACKET) {
       generic_args.0.push(self.parse_type1()?);
-      if self.cur_token_is(Token::COMMA) {
+      if self.cur_token_is(Token::COMMA) || self.cur_token_is(Token::COMMENT("")) {
         self.next_token()?;
       }
     }
@@ -136,8 +149,17 @@ impl<'a> Parser<'a> {
 
     t.0.push(self.parse_type1()?);
 
+    while let Token::COMMENT(_) = self.cur_token {
+      self.next_token()?;
+    }
+
     while self.cur_token_is(Token::TCHOICE) {
       self.next_token()?;
+
+      while let Token::COMMENT(_) = self.cur_token {
+        self.next_token()?;
+      }
+
       t.0.push(self.parse_type1()?);
     }
 
@@ -248,13 +270,25 @@ impl<'a> Parser<'a> {
       }
 
       // ( type )
-      // TODO: This is a parenthesized type expression which may be necessary to
-      // override some operator precedence
-      Token::LPAREN => Ok(Type2::Group(self.parse_type()?)),
+      // TODO: This is used to define precedence of a type expression, but not
+      // quite sure how to implement it. At the moment, this is never matched.
+      Token::LPAREN => {
+        self.next_token()?;
+
+        while let Token::COMMENT(_) = self.cur_token {
+          self.next_token()?;
+        }
+
+        Ok(Type2::ParenthesizedType(self.parse_type()?))
+      }
 
       // { group }
       Token::LBRACE => {
         self.next_token()?;
+
+        while let Token::COMMENT(_) = self.cur_token {
+          self.next_token()?;
+        }
 
         Ok(Type2::Map(self.parse_group()?))
       }
@@ -262,6 +296,10 @@ impl<'a> Parser<'a> {
       // [ group ]
       Token::LBRACKET => {
         self.next_token()?;
+
+        while let Token::COMMENT(_) = self.cur_token {
+          self.next_token()?;
+        }
 
         Ok(Type2::Array(self.parse_group()?))
       }
@@ -279,6 +317,10 @@ impl<'a> Parser<'a> {
       Token::TAG(_) => unimplemented!(),
 
       _ => {
+        while let Token::COMMENT(_) = self.cur_token {
+          self.next_token()?;
+        }
+
         if let Some(s) = self.cur_token.in_standard_prelude() {
           Ok(Type2::Typename((Identifier((s, None)), None)))
         } else {
@@ -298,7 +340,15 @@ impl<'a> Parser<'a> {
 
     group.0.push(self.parse_grpchoice()?);
 
+    while let Token::COMMENT(_) = self.cur_token {
+      self.next_token()?;
+    }
+
     while self.cur_token_is(Token::GCHOICE) {
+      while let Token::COMMENT(_) = self.cur_token {
+        self.next_token()?;
+      }
+
       group.0.push(self.parse_grpchoice()?);
     }
 
@@ -328,6 +378,10 @@ impl<'a> Parser<'a> {
       if self.cur_token_is(Token::COMMA) {
         self.next_token()?;
       }
+
+      while let Token::COMMENT(_) = self.cur_token {
+        self.next_token()?;
+      }
     }
 
     Ok(grpchoice)
@@ -340,10 +394,28 @@ impl<'a> Parser<'a> {
       self.next_token()?;
     }
 
+    while let Token::COMMENT(_) = self.cur_token {
+      self.next_token()?;
+    }
+
+    let member_key = self.parse_memberkey(true)?;
+
+    while let Token::COMMENT(_) = self.cur_token {
+      self.next_token()?;
+    }
+
     if self.cur_token_is(Token::LPAREN) {
       self.next_token()?;
 
+      while let Token::COMMENT(_) = self.cur_token {
+        self.next_token()?;
+      }
+
       let ge = GroupEntry::InlineGroup((occur, self.parse_group()?));
+
+      while let Token::COMMENT(_) = self.cur_token {
+        self.next_token()?;
+      }
 
       if self.cur_token_is(Token::RPAREN) {
         self.next_token()?;
@@ -351,8 +423,6 @@ impl<'a> Parser<'a> {
 
       return Ok(ge);
     }
-
-    let member_key = self.parse_memberkey(true)?;
 
     let ga = if self.peek_token_is(&Token::LANGLEBRACKET) {
       Some(self.parse_genericarg()?)
@@ -402,8 +472,16 @@ impl<'a> Parser<'a> {
       Token::ARROWMAP | Token::CUT => {
         let t1 = self.parse_type1()?;
 
+        while let Token::COMMENT(_) = self.cur_token {
+          self.next_token()?;
+        }
+
         if self.cur_token_is(Token::CUT) {
           self.next_token()?;
+
+          while let Token::COMMENT(_) = self.cur_token {
+            self.next_token()?;
+          }
 
           let t1 = Some(MemberKey::Type1(Box::from((t1, true))));
 
@@ -431,6 +509,12 @@ impl<'a> Parser<'a> {
         Ok(mk)
       }
       _ => {
+        if let Token::COMMENT(_) = self.cur_token {
+          self.next_token()?;
+
+          return self.parse_memberkey(is_optional);
+        }
+
         if !is_optional {
           return Err("Malformed memberkey. Missing \":\" or \"=>\"".into());
         }

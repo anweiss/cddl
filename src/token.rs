@@ -22,7 +22,8 @@ pub enum Token<'a> {
   // Delimiters
   COMMA,
   COLON,
-  SEMICOLON,
+
+  COMMENT(&'a str),
 
   TCHOICE,
   GCHOICE,
@@ -270,7 +271,7 @@ impl<'a> fmt::Display for Token<'a> {
       Token::TCHOICEALT => write!(f, "/="),
       Token::GCHOICEALT => write!(f, "//="),
       Token::COMMA => write!(f, ","),
-      Token::SEMICOLON => write!(f, ";"),
+      Token::COMMENT(c) => write!(f, ";{}", c),
       Token::COLON => write!(f, ":"),
       Token::CUT => write!(f, "^"),
       Token::EOF => write!(f, ""),
