@@ -23,7 +23,7 @@ pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<(), B
 
       let cddl = p.parse_cddl()?;
 
-      writer.write_all(format!("{:?}\n", cddl).as_bytes())?;
+      writer.write_all(format!("{:#?}\n", cddl).as_bytes())?;
     }
 
     writer.flush()?;
@@ -37,4 +37,3 @@ fn control(line: &str) -> Option<String> {
     _ => None,
   }
 }
-
