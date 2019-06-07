@@ -45,3 +45,4 @@ I'm currently only focused on using CDDL as a means for validating JSON data, an
 - [x] socket/plug
 - [x] generics
 - [ ] operator precedence
+- [x] comments
