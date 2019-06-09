@@ -1,8 +1,13 @@
 [package]
 name = "cddl"
+description = "Parser for the Concise data definition language (CDDL)"
+repository = "https://github.com/anweiss/cddl"
+license = "MIT"
 version = "0.1.0"
 authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
 edition = "2018"
+exclude = ["src/bin/serde.rs"]
+
 
 [dependencies]
 serde_json = "1.0"
