@@ -3,7 +3,7 @@ use std::{
   error,
   io::{BufRead, Write},
 };
-use termion::{clear, cursor};
+use crossterm::{terminal, ClearType};
 
 const PROMPT: &[u8] = b">> ";
 
@@ -15,8 +15,8 @@ pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<(), B
     let mut line = String::new();
     reader.read_line(&mut line)?;
 
-    if let Some(s) = control(&line) {
-      writer.write_all(s.as_bytes())?;
+    if let Ok(Some(_)) = control(&line) {
+      writer.flush()?;
     } else {
       let mut l = Lexer::new(&line);
       let mut p = Parser::new(&mut l)?;
@@ -24,16 +24,22 @@ pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<(), B
       let cddl = p.parse_cddl()?;
 
       writer.write_all(format!("{:#?}\n", cddl).as_bytes())?;
-    }
 
-    writer.flush()?;
+      writer.flush()?;
+    }
   }
 }
 
-fn control(line: &str) -> Option<String> {
+fn control(line: &str) -> Result<Option<()>, Box<error::Error>> {
   match line {
-    "clear()\n" => Some(format!("{}{}", clear::All, cursor::Goto(1, 1))),
-    "quit()\n" | "exit()\n" => std::process::exit(0),
-    _ => None,
+    "clear\n" => {
+      let terminal = terminal();
+
+      terminal.clear(ClearType::All)?;
+
+      Ok(Some(()))
+    }
+    "quit\n" | "exit\n" => std::process::exit(0),
+    _ => Ok(None),
   }
 }
