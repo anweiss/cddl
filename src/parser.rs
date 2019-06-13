@@ -305,7 +305,21 @@ impl<'a> Parser<'a> {
       }
 
       // ~ typename [genericarg]
-      Token::UNWRAP => unimplemented!(),
+      Token::UNWRAP => {
+        self.next_token()?;
+
+        if let Token::IDENT(ident) = self.cur_token {
+          self.next_token()?;
+
+          if self.cur_token_is(Token::LANGLEBRACKET) {
+            return Ok(Type2::Unwrap((Identifier(ident), Some(self.parse_genericarg()?))));
+          }
+
+          return Ok(Type2::Unwrap((Identifier(ident), None)));
+        }
+        
+        Err("Invalid unwrap".into())
+      }
 
       // & ( group )
       // & groupname [genericarg]
@@ -756,6 +770,7 @@ secondrule = thirdrule"#;
       r#""myvalue""#,
       r#"message<"reboot", "now">"#,
       r#"$$tcp-option"#,
+      r#"~group1"#,
     ];
 
     let expected_outputs = [
@@ -774,6 +789,7 @@ secondrule = thirdrule"#;
         ])),
       )),
       Type2::Typename((Identifier(("tcp-option", Some(&SocketPlug::GROUP))), None)),
+      Type2::Unwrap((Identifier(("group1", None)), None)),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {

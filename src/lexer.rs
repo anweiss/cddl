@@ -51,6 +51,7 @@ impl<'a> Lexer<'a> {
         (_, '^') => Ok(Token::CUT),
         (_, '&') => Ok(Token::GTOCHOICE),
         (_, '>') => Ok(Token::RANGLEBRACKET),
+        (_, '~') => Ok(Token::UNWRAP),
         (_, '/') => match self.peek_char() {
           Some(&c) if c.1 == '/' => {
             let _ = self.read_char()?;

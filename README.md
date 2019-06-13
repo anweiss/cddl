@@ -23,6 +23,9 @@ I'm currently only focused on using CDDL as a means for validating JSON data, an
 - Validate CBOR data structures (might eventually support this given it's one of the primary goals for CDDL, but not focused on this at the moment)
 - Performance
 
+## Why Rust?
+
+Rust is a systems programming language designed around safety and is ideally-suited for resource-constrained systems. CDDL and CBOR are designed around small code and message sizes and constrained nodes, scenarios that Rust has also been designed for.
 
 ## Features supported by the parser
 
@@ -40,7 +43,7 @@ I'm currently only focused on using CDDL as a means for validating JSON data, an
 - [x] occurrence
 - [x] predefined types
 - [ ] tags
-- [ ] unwrapping
+- [x] unwrapping
 - [x] controls
 - [x] socket/plug
 - [x] generics
