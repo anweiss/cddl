@@ -328,7 +328,7 @@ impl<'a> Parser<'a> {
       // # 6 ["." uint] ( type )
       // # DIGIT ["." uint]   ; major/ai
       // #                    ; any
-      Token::TAG(_) => unimplemented!(),
+      Token::TAG(tag) => Ok(Type2::TaggedData(*tag)),
 
       _ => {
         while let Token::COMMENT(_) = self.cur_token {
@@ -771,6 +771,7 @@ secondrule = thirdrule"#;
       r#"message<"reboot", "now">"#,
       r#"$$tcp-option"#,
       r#"~group1"#,
+      r#"#6.997(tstr)"#,
     ];
 
     let expected_outputs = [
@@ -790,6 +791,7 @@ secondrule = thirdrule"#;
       )),
       Type2::Typename((Identifier(("tcp-option", Some(&SocketPlug::GROUP))), None)),
       Type2::Unwrap((Identifier(("group1", None)), None)),
+      Type2::TaggedData((997, "tstr")),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -799,6 +801,7 @@ secondrule = thirdrule"#;
       let t2 = p.parse_type2()?;
       check_parser_errors(&p)?;
 
+      println!("{}", expected_output.to_string());
       assert_eq!(t2.to_string(), expected_output.to_string());
     }
 
