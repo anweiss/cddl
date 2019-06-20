@@ -312,12 +312,15 @@ impl<'a> Parser<'a> {
           self.next_token()?;
 
           if self.cur_token_is(Token::LANGLEBRACKET) {
-            return Ok(Type2::Unwrap((Identifier(ident), Some(self.parse_genericarg()?))));
+            return Ok(Type2::Unwrap((
+              Identifier(ident),
+              Some(self.parse_genericarg()?),
+            )));
           }
 
           return Ok(Type2::Unwrap((Identifier(ident), None)));
         }
-        
+
         Err("Invalid unwrap".into())
       }
 
@@ -610,7 +613,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 #[allow(unused_imports)]
 mod tests {
-  use super::super::{ast, lexer::Lexer, token::SocketPlug};
+  use super::super::{ast, lexer::Lexer, token::SocketPlug, token::Tag};
   use super::*;
 
   #[test]
@@ -791,7 +794,7 @@ secondrule = thirdrule"#;
       )),
       Type2::Typename((Identifier(("tcp-option", Some(&SocketPlug::GROUP))), None)),
       Type2::Unwrap((Identifier(("group1", None)), None)),
-      Type2::TaggedData((997, "tstr")),
+      Type2::TaggedData(Tag::DATA((Some(997), "tstr"))),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {

@@ -1,5 +1,5 @@
 use super::token;
-use super::token::{RangeValue, Token, Value};
+use super::token::{RangeValue, Tag, Token, Value};
 use std::{convert::TryFrom, error::Error, iter::Peekable, str::CharIndices};
 
 pub struct Lexer<'a> {
@@ -71,12 +71,9 @@ impl<'a> Lexer<'a> {
           _ => Ok(Token::TCHOICE),
         },
         (_, '#') => match self.peek_char() {
-          Some(&c) if c.1 == '6' => {
-            let _ = self.read_char()?;
-            Ok(Token::TAG(self.read_tag()?))
-          }
-          None => Ok(Token::ANY),
-          _ => Ok(Token::ILLEGAL), // Temporary ... need to lex Some(c)
+          Some(&c) if is_digit(c.1) => Ok(Token::TAG(self.read_tag()?)),
+          None => Ok(Token::TAG(Tag::ANY)),
+          _ => Ok(Token::ILLEGAL),
         },
         (_, '.') => {
           let (idx, _) = self.read_char()?;
@@ -231,26 +228,54 @@ impl<'a> Lexer<'a> {
     self.input.peek()
   }
 
-  fn read_tag(&mut self) -> Result<(usize, &'a str), Box<Error>> {
-    if let Ok(c) = self.read_char() {
-      if c.1 == '.' {
-        let (idx, _) = self.read_char()?;
+  fn read_tag(&mut self) -> Result<Tag<'a>, Box<Error>> {
+    match self.read_char() {
+      Ok(c) if c.1 == '6' => {
+        let (_, ch) = self.read_char()?;
 
-        let t = self.read_number(idx)?;
+        if ch == '.' {
+          let (idx, _) = self.read_char()?;
 
-        if let Ok(c) = self.read_char() {
-          if c.1 == '(' {
-            let (idx, _) = self.read_char()?;
+          let t = self.read_number(idx)?;
 
-            return Ok((t, self.read_identifier(idx)?));
+          if let Ok(c) = self.read_char() {
+            if c.1 == '(' {
+              let (idx, _) = self.read_char()?;
+              let tag = Tag::DATA((Some(t), self.read_identifier(idx)?));
+
+              if let Some(c) = self.peek_char() {
+                if c.1 == ')' {
+                  let _ = self.read_char()?;
+                } else {
+                  return Err("Malformed tag".into());
+                }
+              }
+
+              return Ok(tag);
+            }
           }
         }
 
-        return Ok((t, ""));
-      }
-    }
+        let (idx, _) = self.read_char()?;
 
-    Ok((0, ""))
+        Ok(Tag::DATA((None, self.read_identifier(idx)?)))
+      }
+      Ok(c) if is_digit(c.1) => {
+        let mt = self.read_number(c.0)? as u8;
+
+        let (_, ch) = self.read_char()?;
+
+        if ch == '.' {
+          let (idx, _) = self.read_char()?;
+
+          let t = self.read_number(idx)?;
+          return Ok(Tag::MAJORTYPE((mt, Some(t))));
+        }
+
+        Ok(Tag::MAJORTYPE((mt, None)))
+      }
+      _ => Err("Malformed tag".into()),
+    }
   }
 
   fn read_range(&mut self, lower: Token<'a>) -> Result<Token<'a>, Box<Error>> {
@@ -335,6 +360,8 @@ mod tests {
 ; this is another comment
 
 mynumber = 10.5
+
+mytag = #6.1234(tstr)
     
 myfirstrule = "myotherrule"
 
@@ -367,6 +394,9 @@ city = (
       (IDENT(("mynumber", None)), "mynumber"),
       (ASSIGN, "="),
       (FLOATLITERAL(10.5), "10.5"),
+      (IDENT(("mytag", None)), "mytag"),
+      (ASSIGN, "="),
+      (TAG(Tag::DATA((Some(1234), "tstr"))), "#6.1234(tstr)"),
       (IDENT(("myfirstrule", None)), "myfirstrule"),
       (ASSIGN, "="),
       (VALUE(Value::TEXT("\"myotherrule\"")), "\"myotherrule\""),

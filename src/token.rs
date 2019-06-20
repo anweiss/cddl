@@ -9,7 +9,7 @@ pub enum Token<'a> {
   VALUE(Value<'a>),
   INTLITERAL(usize),
   FLOATLITERAL(f64),
-  TAG((usize, &'a str)),
+  TAG(Tag<'a>),
 
   // Operators
   ASSIGN,
@@ -149,6 +149,35 @@ impl<'a> Token<'a> {
       Token::NULL => Some("null"),
       Token::UNDEFINED => Some("undefined"),
       _ => None,
+    }
+  }
+}
+
+#[derive(PartialEq, Debug, Copy, Clone)]
+pub enum Tag<'a> {
+  DATA((Option<usize>, &'a str)),
+  MAJORTYPE((u8, Option<usize>)),
+  ANY,
+}
+
+impl<'a> fmt::Display for Tag<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      Tag::DATA((tag_uint, tagged_value)) => {
+        if let Some(t) = tag_uint {
+          return write!(f, "#6.{}({})", t, tagged_value);
+        }
+
+        write!(f, "#6({})", tagged_value)
+      }
+      Tag::MAJORTYPE((major_type, tag_uint)) => {
+        if let Some(t) = tag_uint {
+          return write!(f, "{}.{}", major_type, t);
+        }
+
+        write!(f, "{}", major_type)
+      }
+      Tag::ANY => write!(f, "#"),
     }
   }
 }
@@ -310,13 +339,7 @@ impl<'a> fmt::Display for Token<'a> {
 
         write!(f, "{}...{}", l, u)
       }
-      Token::TAG((tn, tt)) => {
-        if *tt != "" {
-          return write!(f, "#6.{}({})", tn, tt);
-        }
-
-        write!(f, "#6.{}", tn)
-      }
+      Token::TAG(tag) => write!(f, "{}", tag),
       _ => write!(f, ""),
     }
   }

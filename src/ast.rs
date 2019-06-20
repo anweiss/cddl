@@ -1,4 +1,4 @@
-use super::token::{SocketPlug, Value};
+use super::token::{SocketPlug, Tag, Value};
 use std::fmt;
 
 pub trait Node {
@@ -172,8 +172,8 @@ pub enum Type2<'a> {
   Unwrap((Identifier<'a>, Option<GenericArg<'a>>)),
   ChoiceFromInlineGroup(Group<'a>),
   ChoiceFromGroup((Identifier<'a>, Option<GenericArg<'a>>)),
-  TaggedData((usize, &'a str)),
-  TaggedDataMajorType(String),
+  TaggedData(Tag<'a>),
+  TaggedDataMajorType(Tag<'a>),
   Any,
 }
 
@@ -189,13 +189,14 @@ impl<'a> fmt::Display for Type2<'a> {
         write!(f, "{}", tn)
       }
       Type2::Unwrap((ident, ga)) => {
-        if let Some(args) = ga { 
+        if let Some(args) = ga {
           return write!(f, "{}{}", ident, args);
         }
 
         write!(f, "{}", ident)
       }
-      Type2::TaggedData((tag, value_type)) => write!(f, "#6.{}({})", tag, value_type),
+      Type2::TaggedData(tag) | Type2::TaggedDataMajorType(tag) => write!(f, "{}", tag),
+      Type2::Any => write!(f, "#"),
       _ => write!(f, ""),
     }
   }
