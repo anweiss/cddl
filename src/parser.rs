@@ -1,6 +1,6 @@
 use super::ast::*;
 use super::lexer::Lexer;
-use super::token::{RangeValue, Token, Value, Tag};
+use super::token::{RangeValue, Tag, Token, Value};
 use std::{error::Error, mem};
 
 pub struct Parser<'a> {
@@ -243,12 +243,10 @@ impl<'a> Parser<'a> {
   fn parse_type2(&mut self) -> Result<Type2<'a>, Box<Error>> {
     let t2 = match &self.cur_token {
       // value
-      Token::VALUE(value) => {
-        match *value {
-          // TODO: fix workaround for double escaping string literal values
-          Value::TEXT(_) => Ok(Type2::Value(*value)),
-          _ => Err("bad value".into()),
-        }
+      Token::VALUE(value) => match value {
+        // TODO: fix workaround for double escaping string literal values
+        Value::TEXT(_) => Ok(Type2::Value(*value)),
+        _ => Err("bad value".into()),
       }
 
       // TODO: return Value type from lexer instead of these tokens. Duplicate
@@ -335,7 +333,7 @@ impl<'a> Parser<'a> {
         Tag::DATA(data) => Ok(Type2::TaggedData(*data)),
         Tag::MAJORTYPE(mt) => Ok(Type2::TaggedDataMajorType(*mt)),
         Tag::ANY => Ok(Type2::Any),
-      }
+      },
 
       _ => {
         while let Token::COMMENT(_) = self.cur_token {

@@ -1,4 +1,4 @@
-use super::token::{SocketPlug, Tag, Value};
+use super::token::{SocketPlug, Value};
 use std::fmt;
 
 pub trait Node {
