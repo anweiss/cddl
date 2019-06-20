@@ -1,9 +1,9 @@
 use super::{lexer::Lexer, parser::Parser};
+use crossterm::{terminal, ClearType};
 use std::{
   error,
   io::{BufRead, Write},
 };
-use crossterm::{terminal, ClearType};
 
 const PROMPT: &[u8] = b">> ";
 
