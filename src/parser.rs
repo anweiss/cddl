@@ -1,6 +1,6 @@
 use super::ast::*;
 use super::lexer::Lexer;
-use super::token::{RangeValue, Token, Value};
+use super::token::{RangeValue, Token, Value, Tag};
 use std::{error::Error, mem};
 
 pub struct Parser<'a> {
@@ -331,7 +331,11 @@ impl<'a> Parser<'a> {
       // # 6 ["." uint] ( type )
       // # DIGIT ["." uint]   ; major/ai
       // #                    ; any
-      Token::TAG(tag) => Ok(Type2::TaggedData(*tag)),
+      Token::TAG(tag) => match tag {
+        Tag::DATA(data) => Ok(Type2::TaggedData(*data)),
+        Tag::MAJORTYPE(mt) => Ok(Type2::TaggedDataMajorType(*mt)),
+        Tag::ANY => Ok(Type2::Any),
+      }
 
       _ => {
         while let Token::COMMENT(_) = self.cur_token {
@@ -794,7 +798,7 @@ secondrule = thirdrule"#;
       )),
       Type2::Typename((Identifier(("tcp-option", Some(&SocketPlug::GROUP))), None)),
       Type2::Unwrap((Identifier(("group1", None)), None)),
-      Type2::TaggedData(Tag::DATA((Some(997), "tstr"))),
+      Type2::TaggedData((Some(997), "tstr")),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {

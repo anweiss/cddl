@@ -153,7 +153,7 @@ impl<'a> Token<'a> {
   }
 }
 
-#[derive(PartialEq, Debug, Copy, Clone)]
+#[derive(PartialEq, Debug)]
 pub enum Tag<'a> {
   DATA((Option<usize>, &'a str)),
   MAJORTYPE((u8, Option<usize>)),

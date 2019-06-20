@@ -172,8 +172,8 @@ pub enum Type2<'a> {
   Unwrap((Identifier<'a>, Option<GenericArg<'a>>)),
   ChoiceFromInlineGroup(Group<'a>),
   ChoiceFromGroup((Identifier<'a>, Option<GenericArg<'a>>)),
-  TaggedData(Tag<'a>),
-  TaggedDataMajorType(Tag<'a>),
+  TaggedData((Option<usize>, &'a str)),
+  TaggedDataMajorType((u8, Option<usize>)),
   Any,
 }
 
@@ -195,7 +195,20 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", ident)
       }
-      Type2::TaggedData(tag) | Type2::TaggedDataMajorType(tag) => write!(f, "{}", tag),
+      Type2::TaggedData((tag_uint, tagged_value)) => {
+        if let Some(t) = tag_uint {
+          return write!(f, "#6.{}({})", t, tagged_value);
+        }
+
+        write!(f, "#6({})", tagged_value)
+      }
+      Type2::TaggedDataMajorType((major_type, tag_uint)) => {
+        if let Some(t) = tag_uint {
+          return write!(f, "{}.{}", major_type, t);
+        }
+
+        write!(f, "{}", major_type)
+      }
       Type2::Any => write!(f, "#"),
       _ => write!(f, ""),
     }
