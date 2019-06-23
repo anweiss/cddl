@@ -247,7 +247,7 @@ impl<'a> Parser<'a> {
         // TODO: fix workaround for double escaping string literal values
         Value::TEXT(_) => Ok(Type2::Value(*value)),
         _ => Err("bad value".into()),
-      }
+      },
 
       // TODO: return Value type from lexer instead of these tokens. Duplicate
       // code
@@ -714,7 +714,7 @@ secondrule = thirdrule"#;
       );
     }
 
-    let expected_generic_args = ["\"reboot\"", "\"now\""];
+    let expected_generic_args = ["reboot", "now"];
 
     for (idx, expected_generic_arg) in expected_generic_args.iter().enumerate() {
       let ga = &generic_args.0[idx];
@@ -777,19 +777,21 @@ secondrule = thirdrule"#;
       r#"$$tcp-option"#,
       r#"~group1"#,
       r#"#6.997(tstr)"#,
+      r#"9.9"#,
+      r#"#"#,
     ];
 
     let expected_outputs = [
-      Type2::Value(Value::TEXT("\"myvalue\"")),
+      Type2::Value(Value::TEXT("myvalue")),
       Type2::Typename((
         Identifier(("message", None)),
         Some(GenericArg(vec![
           Type1 {
-            type2: Type2::Value(Value::TEXT("\"reboot\"")),
+            type2: Type2::Value(Value::TEXT("reboot")),
             operator: None,
           },
           Type1 {
-            type2: Type2::Value(Value::TEXT("\"now\"")),
+            type2: Type2::Value(Value::TEXT("now")),
             operator: None,
           },
         ])),
@@ -797,6 +799,8 @@ secondrule = thirdrule"#;
       Type2::Typename((Identifier(("tcp-option", Some(&SocketPlug::GROUP))), None)),
       Type2::Unwrap((Identifier(("group1", None)), None)),
       Type2::TaggedData((Some(997), "tstr")),
+      Type2::TaggedDataMajorType((9, Some(9))),
+      Type2::Any,
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -828,7 +832,7 @@ secondrule = thirdrule"#;
           false,
         )))),
         entry_type: Type(vec![Type1 {
-          type2: Type2::Value(Value::TEXT("\"value\"")),
+          type2: Type2::Value(Value::TEXT("value")),
           operator: None,
         }]),
       })),
@@ -882,13 +886,13 @@ secondrule = thirdrule"#;
       ))),
       MemberKey::Type1(Box::from((
         Type1 {
-          type2: Type2::Value(Value::TEXT("\"mytype1\"")),
+          type2: Type2::Value(Value::TEXT("mytype1")),
           operator: None,
         },
         true,
       ))),
       MemberKey::Bareword(Identifier(("mybareword", None))),
-      MemberKey::Value(Value::TEXT("\"myvalue\"")),
+      MemberKey::Value(Value::TEXT("myvalue")),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {

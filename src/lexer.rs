@@ -154,7 +154,7 @@ impl<'a> Lexer<'a> {
           Some(&(_, ch)) if ch != '"' => return Err("Expecting closing \" in text value".into()),
           _ => {
             return Ok(std::str::from_utf8(
-              &self.str_input[idx..=self.read_char()?.0],
+              &self.str_input[idx + 1..self.read_char()?.0],
             )?)
           }
         }
@@ -399,7 +399,7 @@ city = (
       (TAG(Tag::DATA((Some(1234), "tstr"))), "#6.1234(tstr)"),
       (IDENT(("myfirstrule", None)), "myfirstrule"),
       (ASSIGN, "="),
-      (VALUE(Value::TEXT("\"myotherrule\"")), "\"myotherrule\""),
+      (VALUE(Value::TEXT("myotherrule")), "myotherrule"),
       (IDENT(("mysecondrule", None)), "mysecondrule"),
       (ASSIGN, "="),
       (
@@ -420,9 +420,9 @@ city = (
       (ASSIGN, "="),
       (IDENT(("message", None)), "message"),
       (LANGLEBRACKET, "<"),
-      (VALUE(Value::TEXT("\"reboot\"")), "\"reboot\""),
+      (VALUE(Value::TEXT("reboot")), "reboot"),
       (COMMA, ","),
-      (VALUE(Value::TEXT("\"now\"")), "\"now\""),
+      (VALUE(Value::TEXT("now")), "now"),
       (RANGLEBRACKET, ">"),
       (IDENT(("address", None)), "address"),
       (ASSIGN, "="),
