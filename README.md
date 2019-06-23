@@ -8,7 +8,7 @@ A Rust implementation of the Concise data definition language (CDDL). CDDL is an
 
 This library includes a handwritten parser and lexer for CDDL and is heavily inspired by Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec.
 
-I'm currently only focused on using CDDL as a means for validating JSON data, and as such, work is being done to build a JSON validation component into the library. An extremely basic REPL is included as well, with plans to compile for use in the browser with WebAssembly.
+I'm currently only focused on using CDDL as a means for validating JSON data, and as such, work is being done to build a JSON validation component into the library and to distribute a CLI binary. An extremely basic REPL is included as well, with plans to compile for use in the browser with WebAssembly.
 
 ## Goals
 
@@ -25,6 +25,7 @@ I'm currently only focused on using CDDL as a means for validating JSON data, an
 - Validate CBOR data structures (might eventually support this given it's one of the primary goals for CDDL, but not focused on this at the moment)
 - Performance (if this library gains enough traction, it may be prudent to explore using a parser-combinator framework like [nom](https://github.com/Geal/nom))
 - Support CBOR diagnostic notation
+- I-JSON compatibility
 
 ## Why Rust?
 
@@ -52,3 +53,37 @@ Rust is a systems programming language designed around safety and is ideally-sui
 - [x] generics
 - [ ] operator precedence
 - [x] comments
+
+## Validating JSON
+
+> Incomplete
+
+This library uses the [Serde](https://serde.rs/) framework, and more specifically, the [serde_json](https://crates.io/crates/serde_json) crate, for parsing and validating JSON. Serde was chosen due to its maturity in the ecosystem and its support for serializing and deserializing CBOR via the [serde_cbor](https://crates.io/crates/serde_cbor) crate.
+
+As outlined in [Appendix E.](https://tools.ietf.org/html/rfc8610#appendix-E) of the standard, only the JSON data model subset of CBOR can be used for validation. The limited prelude from the spec has been included below for brevity:
+
+```
+any = #
+
+uint = #0
+nint = #1
+int = uint / nint
+
+tstr = #3
+text = tstr
+
+number = int / float
+
+float16 = #7.25
+float32 = #7.26
+float64 = #7.27
+float16-32 = float16 / float32
+float32-64 = float32 / float64
+float = float16-32 / float64
+
+false = #7.20
+true = #7.21
+bool = false / true
+nil = #7.22
+null = nil
+```
