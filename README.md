@@ -46,7 +46,7 @@ Rust is a systems programming language designed around safety and is ideally-sui
 - [x] root type
 - [x] occurrence
 - [x] predefined types
-- [ ] tags
+- [X] tags
 - [x] unwrapping
 - [x] controls
 - [x] socket/plug
