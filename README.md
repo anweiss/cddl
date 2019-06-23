@@ -6,14 +6,14 @@
 
 A Rust implementation of the Concise data definition language (CDDL). CDDL is an IETF standard that "proposes a notational convention to express CBOR and JSON data structures." As of 2019-06-12, it is published as RFC 8610 (Proposed Standard) at https://tools.ietf.org/html/rfc8610.
 
-This library includes a handwritten parser and lexer for CDDL and is heavily inspired by Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/draft-ietf-cbor-cddl-08#appendix-B) of the spec.
+This library includes a handwritten parser and lexer for CDDL and is heavily inspired by Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec.
 
 I'm currently only focused on using CDDL as a means for validating JSON data, and as such, work is being done to build a JSON validation component into the library. An extremely basic REPL is included as well, with plans to compile for use in the browser with WebAssembly.
 
 ## Goals
 
 - Parse CDDL documents into an AST
-- Verify conformance of CDDL documents against the draft standard
+- Verify conformance of CDDL documents against RFC 8610
 - Validate JSON documents using CDDL (only interested in the JSON subset of the CBOR generic data model for now)
 - Basic REPL
 - Generate dummy JSON from conformant CDDL
