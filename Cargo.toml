@@ -12,3 +12,4 @@ exclude = ["src/bin/serde.rs"]
 [dependencies]
 serde_json = "1.0"
 crossterm = "0.9"
+half = "1.3"
