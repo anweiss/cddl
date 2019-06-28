@@ -69,7 +69,7 @@ any = #
 uint = #0
 nint = #1
 int = uint / nint
-w
+
 tstr = #3
 text = tstr
 
