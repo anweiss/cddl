@@ -20,7 +20,7 @@ impl<'a> Node for CDDL<'a> {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Identifier<'a>(pub (&'a str, Option<&'a SocketPlug>));
 
 impl<'a> Node for Identifier<'a> {
