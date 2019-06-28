@@ -1,5 +1,6 @@
 use super::token;
 use super::token::{RangeValue, Tag, Token, Value};
+use lexical_core;
 use std::{convert::TryFrom, error::Error, iter::Peekable, str::CharIndices};
 
 pub struct Lexer<'a> {
@@ -197,9 +198,9 @@ impl<'a> Lexer<'a> {
 
         if let Some(&c) = self.peek_char() {
           if is_digit(c.1) {
-            return Ok(Token::FLOATLITERAL(
-              format!("{}.{}", i, self.read_number(c.0)?).parse::<f64>()?,
-            ));
+            return Ok(Token::FLOATLITERAL(lexical_core::atof64_slice(
+              format!("{}.{}", i, self.read_number(c.0)?).as_bytes(),
+            )));
           }
         }
       }
