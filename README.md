@@ -8,7 +8,7 @@ A Rust implementation of the Concise data definition language (CDDL). CDDL is an
 
 This library includes a handwritten parser and lexer for CDDL and is heavily inspired by Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec.
 
-I'm currently only focused on using CDDL as a means for validating JSON data, and as such, work is being done to build a JSON validation component into the library and to distribute a CLI binary. An extremely basic REPL is included as well, with plans to compile for use in the browser with WebAssembly.
+I'm currently only focused on using CDDL as a means for validating JSON data, and as such, work is being done to build a JSON validation component into the library and to distribute a CLI binary. An extremely basic REPL is included as well, with plans to compile for use in the browser with WebAssembly. Furthermore, there are a number of improvements to error handling and validation that need to be made.
 
 ## Goals
 
