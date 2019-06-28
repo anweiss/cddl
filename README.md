@@ -26,6 +26,7 @@ I'm currently only focused on using CDDL as a means for validating JSON data, an
 - Performance (if this library gains enough traction, it may be prudent to explore using a parser-combinator framework like [nom](https://github.com/Geal/nom))
 - Support CBOR diagnostic notation
 - I-JSON compatibility
+- Support for `no_std` (although this would certainly be interesting given both CBOR's and Rust's use in embedded systems)
 
 ## Why Rust?
 
@@ -68,7 +69,7 @@ any = #
 uint = #0
 nint = #1
 int = uint / nint
-
+w
 tstr = #3
 text = tstr
 
