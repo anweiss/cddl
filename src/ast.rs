@@ -10,6 +10,18 @@ pub struct CDDL<'a> {
   pub rules: Vec<Rule<'a>>,
 }
 
+impl<'a> fmt::Display for CDDL<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let mut cddl_output = String::new();
+
+    for r in self.rules.iter() {
+      cddl_output.push_str(&format!("{}\n\n", r));
+    }
+
+    write!(f, "{}", cddl_output)
+  }
+}
+
 impl<'a> Node for CDDL<'a> {
   fn token_literal(&self) -> Option<String> {
     if !self.rules.is_empty() {
@@ -45,6 +57,15 @@ pub enum Rule<'a> {
   Group(Box<GroupRule<'a>>),
 }
 
+impl<'a> fmt::Display for Rule<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      Rule::Type(tr) => write!(f, "{}", tr),
+      Rule::Group(gr) => write!(f, "{}", gr),
+    }
+  }
+}
+
 impl<'a> Node for Rule<'a> {
   fn token_literal(&self) -> Option<String> {
     match self {
@@ -62,6 +83,26 @@ pub struct TypeRule<'a> {
   pub value: Type<'a>,
 }
 
+impl<'a> fmt::Display for TypeRule<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let mut tr_output = self.name.to_string();
+
+    if let Some(gp) = &self.generic_param {
+      tr_output.push_str(&gp.to_string());
+    }
+
+    if self.is_type_choice_alternate {
+      tr_output.push_str(" /= ");
+    } else {
+      tr_output.push_str(" = ");
+    }
+
+    tr_output.push_str(&self.value.to_string());
+
+    write!(f, "{}", tr_output)
+  }
+}
+
 impl<'a> Node for TypeRule<'a> {
   fn token_literal(&self) -> Option<String> {
     Some(format!("{:?}", self))
@@ -76,6 +117,26 @@ pub struct GroupRule<'a> {
   pub entry: GroupEntry<'a>,
 }
 
+impl<'a> fmt::Display for GroupRule<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let mut gr_output = self.name.to_string();
+
+    if let Some(gp) = &self.generic_param {
+      gr_output.push_str(&gp.to_string());
+    }
+
+    if self.is_group_choice_alternate {
+      gr_output.push_str(" //= ");
+    } else {
+      gr_output.push_str(" = ");
+    }
+
+    gr_output.push_str(&self.entry.to_string());
+
+    write!(f, "{}", gr_output)
+  }
+}
+
 impl<'a> Node for GroupRule<'a> {
   fn token_literal(&self) -> Option<String> {
     Some("".into())
@@ -84,6 +145,23 @@ impl<'a> Node for GroupRule<'a> {
 
 #[derive(Default, Debug)]
 pub struct GenericParm<'a>(pub Vec<Identifier<'a>>);
+
+impl<'a> fmt::Display for GenericParm<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let mut gp = String::from("<");
+    for (idx, parm) in self.0.iter().enumerate() {
+      if idx != 0 {
+        gp.push_str(", ");
+      }
+
+      gp.push_str(&parm.to_string());
+    }
+
+    gp.push('>');
+
+    write!(f, "{}", gp)
+  }
+}
 
 #[derive(Debug)]
 pub struct GenericArg<'a>(pub Vec<Type1<'a>>);
@@ -188,6 +266,8 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", tn)
       }
+      Type2::Map(g) => write!(f, "{{{}}}", g),
+      Type2::Array(g) => write!(f, "[{}]", g),
       Type2::Unwrap((ident, ga)) => {
         if let Some(args) = ga {
           return write!(f, "{}{}", ident, args);
@@ -220,7 +300,18 @@ pub struct Group<'a>(pub Vec<GroupChoice<'a>>);
 
 impl<'a> fmt::Display for Group<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{:?}", self.0)
+    let mut group_choices = String::new();
+
+    for (idx, gc) in self.0.iter().enumerate() {
+      if idx == 0 {
+        group_choices.push_str(&gc.to_string());
+        continue;
+      }
+
+      group_choices.push_str(&format!(" / {}", gc));
+    }
+
+    write!(f, "{}", group_choices)
   }
 }
 
@@ -229,7 +320,13 @@ pub struct GroupChoice<'a>(pub Vec<GroupEntry<'a>>);
 
 impl<'a> fmt::Display for GroupChoice<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{:?}", self.0)
+    let mut group_entries = String::new();
+
+    for ge in self.0.iter() {
+      group_entries.push_str(&ge.to_string());
+    }
+
+    write!(f, "{}", group_entries)
   }
 }
 
@@ -247,10 +344,10 @@ impl<'a> fmt::Display for GroupEntry<'a> {
       GroupEntry::TypeGroupname(gne) => write!(f, "{}", gne),
       GroupEntry::InlineGroup((occur, group)) => {
         if let Some(o) = occur {
-          return write!(f, "{} {}", o, group);
+          return write!(f, "{} ({})", o, group);
         }
 
-        write!(f, "{}", group)
+        write!(f, "({})", group)
       }
     }
   }
@@ -267,17 +364,17 @@ impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if let Some(o) = &self.occur {
       if let Some(mk) = &self.member_key {
-        return write!(f, "{} {} {}", o, mk, self.entry_type);
+        return writeln!(f, "{} {} {},", o, mk, self.entry_type);
       }
 
-      return write!(f, "{} {}", o, self.entry_type);
+      return writeln!(f, "{} {},", o, self.entry_type);
     }
 
     if let Some(mk) = &self.member_key {
-      return write!(f, "{} {}", mk, self.entry_type);
+      return writeln!(f, "{} {},", mk, self.entry_type);
     }
 
-    write!(f, "{}", self.entry_type)
+    writeln!(f, "{},", self.entry_type)
   }
 }
 
@@ -292,17 +389,17 @@ impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if let Some(o) = &self.occur {
       if let Some(ga) = &self.generic_arg {
-        return write!(f, "{} {} {}", o, self.name, ga);
+        return writeln!(f, "{} {} {},", o, self.name, ga);
       }
 
-      return write!(f, "{} {}", o, self.name);
+      return writeln!(f, "{} {},", o, self.name);
     }
 
     if let Some(ga) = &self.generic_arg {
-      return write!(f, "{} {}", self.name, ga);
+      return writeln!(f, "{} {},", self.name, ga);
     }
 
-    write!(f, "{}", self.name)
+    writeln!(f, "{},", self.name)
   }
 }
 
@@ -324,8 +421,8 @@ impl<'a> fmt::Display for MemberKey<'a> {
 
         write!(f, "{} =>", t1.0)
       }
-      MemberKey::Bareword(ident) => write!(f, "{}", ident),
-      MemberKey::Value(value) => write!(f, "{}", value),
+      MemberKey::Bareword(ident) => write!(f, "{}:", ident),
+      MemberKey::Value(value) => write!(f, "{}:", value),
     }
   }
 }
