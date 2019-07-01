@@ -195,11 +195,18 @@ impl<'a> CDDL<'a> {
       GroupEntry::ValueMemberKey(vmke) => {
         if let Some(mk) = &vmke.member_key {
           match mk {
-            // TODO: include same type hoisting logic here
             MemberKey::Type1(t1) => match &t1.0.type2 {
               Type2::Value(token::Value::TEXT(t)) => match json {
                 // CDDL { "my-key" => tstr, } validates JSON { "my-key": "myvalue" }
                 Value::Object(om) => {
+                  if !is_type_json_prelude(&vmke.entry_type.to_string()) {
+                    if let Some(v) = om.get(*t) {
+                      return self.validate_type(&vmke.entry_type, occur, v);
+                    }
+
+                    return self.validate_type(&vmke.entry_type, occur, json);
+                  }
+
                   if let Some(v) = om.get(*t) {
                     self.validate_type(&vmke.entry_type, occur, v)
                   } else {
@@ -227,19 +234,12 @@ impl<'a> CDDL<'a> {
             MemberKey::Bareword(ident) => {
               match json {
                 Value::Object(om) => {
-                  // TODO: this is a very kludgy way to hoist the group entry
-                  if let Some(c) = vmke.entry_type.to_string().chars().next() {
-                    if c != '['
-                      && c != '{'
-                      && c != '('
-                      && !is_type_json_prelude(&vmke.entry_type.to_string())
-                    {
-                      if let Some(v) = om.get((ident.0).0) {
-                        return self.validate_type(&vmke.entry_type, occur, v);
-                      }
-
-                      return self.validate_type(&vmke.entry_type, occur, json);
+                  if !is_type_json_prelude(&vmke.entry_type.to_string()) {
+                    if let Some(v) = om.get((ident.0).0) {
+                      return self.validate_type(&vmke.entry_type, occur, v);
                     }
+
+                    return self.validate_type(&vmke.entry_type, occur, json);
                   }
 
                   if let Some(v) = om.get((ident.0).0) {
