@@ -1,8 +1,7 @@
-use super::ast::*;
-use super::token;
+use super::{ast::*, lexer::Lexer, parser::Parser, token};
 use serde_json;
 use serde_json::Value;
-use std::fmt;
+use std::{error::Error, fmt};
 
 pub type Result = std::result::Result<(), ValidationError>;
 
@@ -11,12 +10,14 @@ pub enum ValidationError {
   CDDL(String),
   JSON(JSONError),
   Compilation(String),
+  Occurrence(String),
+  MultiError(Vec<ValidationError>),
 }
 
 #[derive(Debug)]
 pub struct JSONError {
   expected: String,
-  actual: String,
+  actual: Value,
 }
 
 impl fmt::Display for ValidationError {
@@ -25,16 +26,51 @@ impl fmt::Display for ValidationError {
       ValidationError::CDDL(ce) => write!(f, "malformed CDDL: {}", ce),
       ValidationError::JSON(je) => write!(
         f,
-        "failed to validate JSON against CDDL\nexpected: {}\nactual: {}",
+        "failed to validate JSON against CDDL\n\nexpected: {}\nactual: {}",
         je.expected,
-        serde_json::to_string_pretty(&je.actual).map_err(|_| std::fmt::Error)?
+        serde_json::to_string_pretty(&je.actual).map_err(|_| fmt::Error)?,
       ),
-      ValidationError::Compilation(ce) => writeln!(f, "error on compilation: {}", ce),
+      ValidationError::Compilation(ce) => write!(f, "error on compilation: {}", ce),
+      ValidationError::Occurrence(oe) => write!(f, "occurrence error: {}", oe),
+      ValidationError::MultiError(me) => {
+        let mut errors = String::new();
+
+        for e in me.iter() {
+          match e {
+            // Temporary work around for nested MultiError's
+            ValidationError::MultiError(_) => errors.push_str(&format!("{}", e)),
+            _ => errors.push_str(&format!("{}\n", e)),
+          }
+        }
+
+        write!(f, "{}", errors)
+      }
     }
   }
 }
 
-pub fn validate_json(cddl: &CDDL, json: &Value) -> Result {
+impl Error for ValidationError {
+  fn description(&self) -> &str {
+    "ValidationError"
+  }
+
+  fn cause(&self) -> Option<&Error> {
+    None
+  }
+}
+
+pub fn validate_json_from_str(cddl: &str, json: &str) -> Result {
+  let mut l = Lexer::new(cddl);
+  let mut p = Parser::new(&mut l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
+
+  validate_json(
+    &p.parse_cddl()
+      .map_err(|e| ValidationError::Compilation(e.to_string()))?,
+    &serde_json::from_str(json).map_err(|e| ValidationError::Compilation(e.to_string()))?,
+  )
+}
+
+fn validate_json(cddl: &CDDL, json: &Value) -> Result {
   for rule in cddl.rules.iter() {
     // First type rule is root
     if let Rule::Type(tr) = rule {
@@ -46,6 +82,7 @@ pub fn validate_json(cddl: &CDDL, json: &Value) -> Result {
 }
 
 impl<'a> CDDL<'a> {
+  // TODO: support socket plug evaluation
   fn validate_rule_for_ident(
     &self,
     ident: &Identifier,
@@ -66,31 +103,38 @@ impl<'a> CDDL<'a> {
     )))
   }
 
+  // TODO: support generic parameter and type choice alternative evaluation
   fn validate_type_rule(&self, tr: &TypeRule, occur: Option<&Occur>, json: &Value) -> Result {
     self.validate_type(&tr.value, occur, json)
   }
 
+  // TODO: support generic parameter and group choice alternative evaluation
   fn validate_group_rule(&self, gr: &GroupRule, occur: Option<&Occur>, json: &Value) -> Result {
     self.validate_group_entry(&gr.entry, occur, json)
   }
 
   fn validate_type(&self, t: &Type, occur: Option<&Occur>, json: &Value) -> Result {
+    let mut validation_errors: Vec<ValidationError> = Vec::new();
+
     // Find the first type choice that validates to true
     if t
       .0
       .iter()
-      .any(|t1| self.validate_type1(t1, occur, json).is_ok())
+      .any(|t1| match self.validate_type1(t1, occur, json) {
+        Ok(()) => true,
+        Err(e) => {
+          validation_errors.push(e);
+          false
+        }
+      })
     {
       return Ok(());
     }
 
-    // TODO: need to retrieve the more granular error
-    Err(ValidationError::JSON(JSONError {
-      expected: t.to_string(),
-      actual: json.to_string(),
-    }))
+    Err(ValidationError::MultiError(validation_errors))
   }
 
+  // TODO: support range and control operator evaluation
   fn validate_type1(&self, t1: &Type1, occur: Option<&Occur>, json: &Value) -> Result {
     self.validate_type2(&t1.type2, occur, json)
   }
@@ -102,7 +146,7 @@ impl<'a> CDDL<'a> {
         Value::String(s) => validate_string_value(v, s),
         _ => Err(ValidationError::JSON(JSONError {
           expected: t2.to_string(),
-          actual: json.to_string(),
+          actual: json.clone(),
         })),
       },
       // TODO: evaluate genericarg
@@ -124,14 +168,14 @@ impl<'a> CDDL<'a> {
         Value::Array(_) => validate_array_values(self, g, occur, json),
         _ => Err(ValidationError::JSON(JSONError {
           expected: t2.to_string(),
-          actual: json.to_string(),
+          actual: json.clone(),
         })),
       },
       Type2::Map(g) => match json {
         Value::Object(_) => self.validate_group(g, occur, json),
         _ => Err(ValidationError::JSON(JSONError {
           expected: t2.to_string(),
-          actual: json.to_string(),
+          actual: json.clone(),
         })),
       },
       _ => Err(ValidationError::CDDL(format!(
@@ -142,20 +186,24 @@ impl<'a> CDDL<'a> {
   }
 
   fn validate_group(&self, g: &Group, occur: Option<&Occur>, json: &Value) -> Result {
+    let mut validation_errors: Vec<ValidationError> = Vec::new();
+
     // Find the first group choice that validates to true
     if g
       .0
       .iter()
-      .any(|gc| self.validate_group_choice(gc, occur, json).is_ok())
+      .any(|gc| match self.validate_group_choice(gc, occur, json) {
+        Ok(()) => true,
+        Err(e) => {
+          validation_errors.push(e);
+          false
+        }
+      })
     {
       return Ok(());
     }
 
-    // TODO: need to retrieve the more granular error
-    Err(ValidationError::JSON(JSONError {
-      expected: g.to_string(),
-      actual: json.to_string(),
-    }))
+    Err(ValidationError::MultiError(validation_errors))
   }
 
   fn validate_group_choice(&self, gc: &GroupChoice, occur: Option<&Occur>, json: &Value) -> Result {
@@ -170,7 +218,7 @@ impl<'a> CDDL<'a> {
           } else {
             return Err(ValidationError::JSON(JSONError {
               expected: gc.to_string(),
-              actual: json.to_string(),
+              actual: json.clone(),
             }));
           }
         }
@@ -181,7 +229,7 @@ impl<'a> CDDL<'a> {
         _ => {
           return Err(ValidationError::JSON(JSONError {
             expected: gc.to_string(),
-            actual: json.to_string(),
+            actual: json.clone(),
           }))
         }
       }
@@ -212,7 +260,7 @@ impl<'a> CDDL<'a> {
                   } else {
                     Err(ValidationError::JSON(JSONError {
                       expected: ge.to_string(),
-                      actual: json.to_string(),
+                      actual: json.clone(),
                     }))
                   }
                 }
@@ -250,13 +298,13 @@ impl<'a> CDDL<'a> {
                       Occur::Optional => Ok(()),
                       _ => Err(ValidationError::JSON(JSONError {
                         expected: ge.to_string(),
-                        actual: json.to_string(),
+                        actual: json.clone(),
                       })),
                     }
                   } else {
                     Err(ValidationError::JSON(JSONError {
                       expected: ge.to_string(),
-                      actual: json.to_string(),
+                      actual: json.clone(),
                     }))
                   }
                 }
@@ -286,7 +334,7 @@ fn expect_null(ident: &str) -> Result {
     "null" | "nil" => Ok(()),
     _ => Err(ValidationError::JSON(JSONError {
       expected: ident.to_string(),
-      actual: Value::Null.to_string(),
+      actual: Value::Null,
     })),
   }
 }
@@ -305,18 +353,18 @@ fn expect_bool(ident: &str, json: &Value) -> Result {
 
         return Err(ValidationError::JSON(JSONError {
           expected: ident.to_string(),
-          actual: json.to_string(),
+          actual: json.clone(),
         }));
       }
 
       Err(ValidationError::JSON(JSONError {
         expected: ident.to_string(),
-        actual: json.to_string(),
+        actual: json.clone(),
       }))
     }
     _ => Err(ValidationError::JSON(JSONError {
       expected: ident.to_string(),
-      actual: json.to_string(),
+      actual: json.clone(),
     })),
   }
 }
@@ -328,21 +376,21 @@ fn validate_numeric_value(v: &token::Value, json: &Value) -> Result {
         Some(n64) if n64 == i as i64 => Ok(()),
         _ => Err(ValidationError::JSON(JSONError {
           expected: v.to_string(),
-          actual: json.to_string(),
+          actual: json.clone(),
         })),
       },
       token::Value::FLOAT(f) => match n.as_f64() {
         Some(n64) if (n64 - f as f64).abs() < std::f64::EPSILON => Ok(()),
         _ => Err(ValidationError::JSON(JSONError {
           expected: v.to_string(),
-          actual: json.to_string(),
+          actual: json.clone(),
         })),
       },
       _ => Ok(()),
     },
     _ => Err(ValidationError::JSON(JSONError {
       expected: v.to_string(),
-      actual: json.to_string(),
+      actual: json.clone(),
     })),
   }
 }
@@ -355,7 +403,7 @@ fn validate_numeric_data_type(ident: &str, json: &Value) -> Result {
         .ok_or_else(|| {
           ValidationError::JSON(JSONError {
             expected: ident.to_string(),
-            actual: json.to_string(),
+            actual: json.clone(),
           })
         })
         .map(|_| ()),
@@ -363,7 +411,7 @@ fn validate_numeric_data_type(ident: &str, json: &Value) -> Result {
         Some(n64) if n64 < 0 => Ok(()),
         _ => Err(ValidationError::JSON(JSONError {
           expected: ident.to_string(),
-          actual: json.to_string(),
+          actual: json.clone(),
         })),
       },
       "int" => n
@@ -371,7 +419,7 @@ fn validate_numeric_data_type(ident: &str, json: &Value) -> Result {
         .ok_or_else(|| {
           ValidationError::JSON(JSONError {
             expected: ident.to_string(),
-            actual: json.to_string(),
+            actual: json.clone(),
           })
         })
         .map(|_| ()),
@@ -380,7 +428,7 @@ fn validate_numeric_data_type(ident: &str, json: &Value) -> Result {
         Some(_) => Ok(()),
         _ => Err(ValidationError::JSON(JSONError {
           expected: ident.to_string(),
-          actual: json.to_string(),
+          actual: json.clone(),
         })),
       },
       // TODO: Finish rest of numerical data types
@@ -388,18 +436,18 @@ fn validate_numeric_data_type(ident: &str, json: &Value) -> Result {
         Some(_) => Ok(()),
         _ => Err(ValidationError::JSON(JSONError {
           expected: ident.to_string(),
-          actual: json.to_string(),
+          actual: json.clone(),
         })),
       },
       // TODO: Finish rest of numerical data types
       _ => Err(ValidationError::JSON(JSONError {
         expected: ident.to_string(),
-        actual: json.to_string(),
+        actual: json.clone(),
       })),
     },
     _ => Err(ValidationError::JSON(JSONError {
       expected: ident.to_string(),
-      actual: json.to_string(),
+      actual: json.clone(),
     })),
   }
 }
@@ -409,14 +457,13 @@ fn validate_string_value(v: &token::Value, s: &str) -> Result {
     token::Value::TEXT(t) if t == s => Ok(()),
     _ => Err(ValidationError::JSON(JSONError {
       expected: v.to_string(),
-      actual: Value::String(s.to_string()).to_string(),
+      actual: Value::String(s.to_string()),
     })),
   }
 }
 
 fn validate_array_values(cddl: &CDDL, g: &Group, occur: Option<&Occur>, json: &Value) -> Result {
   if let Value::Array(values) = json {
-    // TODO: Add occurrence error handling
     if let Some(o) = occur {
       match o {
         Occur::ZeroOrMore => return cddl.validate_group(g, occur, json),
@@ -424,20 +471,25 @@ fn validate_array_values(cddl: &CDDL, g: &Group, occur: Option<&Occur>, json: &V
           if let Some(li) = l {
             if let Some(ui) = u {
               if values.len() < *li || values.len() > *ui {
-                return Err(ValidationError::JSON(JSONError {
-                  expected: g.to_string(),
-                  actual: json.to_string(),
-                }));
+                return Err(ValidationError::Occurrence(format!(
+                  "Expecting between {} and {} values of group {}. Got {} values instead",
+                  li,
+                  ui,
+                  g,
+                  values.len()
+                )));
               }
 
               return cddl.validate_group(g, occur, json);
             }
 
             if values.len() < *li {
-              return Err(ValidationError::JSON(JSONError {
-                expected: g.to_string(),
-                actual: json.to_string(),
-              }));
+              return Err(ValidationError::Occurrence(format!(
+                "Expecting at least {} values of group {}. Got {} values instead",
+                li,
+                g,
+                values.len()
+              )));
             }
 
             return cddl.validate_group(g, occur, json);
@@ -445,10 +497,12 @@ fn validate_array_values(cddl: &CDDL, g: &Group, occur: Option<&Occur>, json: &V
 
           if let Some(ui) = u {
             if values.len() > *ui {
-              return Err(ValidationError::JSON(JSONError {
-                expected: g.to_string(),
-                actual: json.to_string(),
-              }));
+              return Err(ValidationError::Occurrence(format!(
+                "Expecting no more than {} values of group {}. Got {} values instead",
+                ui,
+                g,
+                values.len()
+              )));
             }
 
             return cddl.validate_group(g, occur, json);
@@ -456,20 +510,21 @@ fn validate_array_values(cddl: &CDDL, g: &Group, occur: Option<&Occur>, json: &V
         }
         Occur::OneOrMore => {
           if values.is_empty() {
-            return Err(ValidationError::JSON(JSONError {
-              expected: g.to_string(),
-              actual: json.to_string(),
-            }));
+            return Err(ValidationError::Occurrence(format!(
+              "Expecting one or more of {}. Got none",
+              g
+            )));
           } else {
             return cddl.validate_group(g, occur, json);
           }
         }
         Occur::Optional => {
           if values.len() > 1 {
-            return Err(ValidationError::JSON(JSONError {
-              expected: g.to_string(),
-              actual: json.to_string(),
-            }));
+            return Err(ValidationError::Occurrence(format!(
+              "Expecting an optional {}. Got {} values",
+              g,
+              values.len()
+            )));
           } else {
             return cddl.validate_group(g, occur, json);
           }
@@ -482,7 +537,7 @@ fn validate_array_values(cddl: &CDDL, g: &Group, occur: Option<&Occur>, json: &V
 
   Err(ValidationError::JSON(JSONError {
     expected: g.to_string(),
-    actual: json.to_string(),
+    actual: json.clone(),
   }))
 }
 

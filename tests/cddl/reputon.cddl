@@ -26,7 +26,7 @@ reputon = {
   * ext-value,
 }
 
-rater-value = ( rater: text )
+rater-value = ( rater: uint )
 assertion-value = ( assertion: text )
 rated-value = ( rated: text )
 rating-value = ( rating: float16 )
