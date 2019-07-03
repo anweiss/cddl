@@ -343,8 +343,13 @@ impl<'a> Parser<'a> {
         if let Some(s) = self.cur_token.in_standard_prelude() {
           Ok(Type2::Typename((Identifier((s, None)), None)))
         } else {
-          println!("Unknown token: {:#?}", self.cur_token);
-          Err("Unknown type2 alternative".into())
+          Err(
+            format!(
+              "Unknown type2 alternative. Unknown token: {:#?}",
+              self.cur_token
+            )
+            .into(),
+          )
         }
       }
     };
@@ -410,7 +415,12 @@ impl<'a> Parser<'a> {
     let occur = self.parse_occur(true)?;
 
     if occur.is_some() {
-      self.next_token()?;
+      while self.cur_token_is(Token::INTLITERAL(0))
+        || self.cur_token_is(Token::ASTERISK)
+        || self.cur_token_is(Token::OPTIONAL)
+      {
+        self.next_token()?;
+      }
     }
 
     while let Token::COMMENT(_) = self.cur_token {
@@ -779,6 +789,7 @@ secondrule = thirdrule"#;
       r#"#6.997(tstr)"#,
       r#"9.9"#,
       r#"#"#,
+      r#"[*3 reputon]"#,
     ];
 
     let expected_outputs = [
@@ -801,6 +812,13 @@ secondrule = thirdrule"#;
       Type2::TaggedData((Some(997), "tstr")),
       Type2::TaggedDataMajorType((9, Some(9))),
       Type2::Any,
+      Type2::Array(Group(vec![GroupChoice(vec![GroupEntry::TypeGroupname(
+        TypeGroupnameEntry {
+          occur: Some(Occur::Exact((None, Some(3)))),
+          name: Identifier(("reputon", None)),
+          generic_arg: None,
+        },
+      )])])),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -810,7 +828,6 @@ secondrule = thirdrule"#;
       let t2 = p.parse_type2()?;
       check_parser_errors(&p)?;
 
-      println!("{}", expected_output.to_string());
       assert_eq!(t2.to_string(), expected_output.to_string());
     }
 
