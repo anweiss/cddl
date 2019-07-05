@@ -83,21 +83,22 @@ impl<'a> Parser<'a> {
       self.next_token()?;
     }
 
-    if self.cur_token_is(Token::LPAREN) {
-      return Ok(Rule::Group(Box::from(GroupRule {
+    match self.cur_token {
+      Token::LPAREN | Token::ASTERISK | Token::RANGE(_) | Token::OPTIONAL => {
+        Ok(Rule::Group(Box::from(GroupRule {
+          name: Identifier(ident),
+          generic_param: gp,
+          is_group_choice_alternate,
+          entry: self.parse_grpent()?,
+        })))
+      }
+      _ => Ok(Rule::Type(TypeRule {
         name: Identifier(ident),
         generic_param: gp,
-        is_group_choice_alternate,
-        entry: self.parse_grpent()?,
-      })));
+        is_type_choice_alternate,
+        value: self.parse_type()?,
+      })),
     }
-
-    Ok(Rule::Type(TypeRule {
-      name: Identifier(ident),
-      generic_param: gp,
-      is_type_choice_alternate,
-      value: self.parse_type()?,
-    }))
   }
 
   fn parse_genericparm(&mut self) -> Result<GenericParm<'a>, Box<Error>> {
