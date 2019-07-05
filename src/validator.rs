@@ -134,7 +134,6 @@ impl<'a> CDDL<'a> {
     Err(ValidationError::MultiError(validation_errors))
   }
 
-  // TODO: support range and control operator evaluation
   fn validate_type1(&self, t1: &Type1, occur: Option<&Occur>, json: &Value) -> Result {
     self.validate_type2(&t1.type2, occur, json)
   }
@@ -165,7 +164,7 @@ impl<'a> CDDL<'a> {
         Value::Array(_) => self.validate_rule_for_ident(tn, occur, json),
       },
       Type2::Array(g) => match json {
-        Value::Array(_) => validate_array_values(self, g, occur, json),
+        Value::Array(_) => self.validate_group(g, occur, json),
         _ => Err(ValidationError::JSON(JSONError {
           expected: t2.to_string(),
           actual: json.clone(),
@@ -207,19 +206,32 @@ impl<'a> CDDL<'a> {
   }
 
   fn validate_group_choice(&self, gc: &GroupChoice, occur: Option<&Occur>, json: &Value) -> Result {
-    for ge in gc.0.iter() {
+    'geiter: for ge in gc.0.iter() {
       match json {
         Value::Array(values) => {
-          if values
-            .iter()
-            .any(|v| self.validate_group_entry(ge, occur, v).is_ok())
-          {
-            continue;
-          } else {
-            return Err(ValidationError::JSON(JSONError {
-              expected: gc.to_string(),
-              actual: json.clone(),
-            }));
+          if let GroupEntry::TypeGroupname(tge) = ge {
+            if let Some(o) = &tge.occur {
+              validate_array_occurrence(o, &tge.name.to_string(), values)?;
+            }
+          }
+
+          if let GroupEntry::InlineGroup((geo, g)) = ge {
+            if let Some(o) = geo {
+              validate_array_occurrence(o, &g.to_string(), values)?;
+            }
+          }
+
+          let mut errors: Vec<ValidationError> = Vec::new();
+
+          for v in values.iter() {
+            match self.validate_group_entry(ge, occur, v) {
+              Ok(()) => continue 'geiter,
+              Err(e) => errors.push(e),
+            }
+          }
+
+          if !errors.is_empty() {
+            return Err(ValidationError::MultiError(errors));
           }
         }
         Value::Object(_) => match self.validate_group_entry(ge, occur, json) {
@@ -279,38 +291,37 @@ impl<'a> CDDL<'a> {
                   .to_string(),
               )),
             },
-            MemberKey::Bareword(ident) => {
-              match json {
-                Value::Object(om) => {
-                  if !is_type_json_prelude(&vmke.entry_type.to_string()) {
-                    if let Some(v) = om.get((ident.0).0) {
-                      return self.validate_type(&vmke.entry_type, occur, v);
-                    }
-
-                    return self.validate_type(&vmke.entry_type, occur, json);
+            MemberKey::Bareword(ident) => match json {
+              Value::Object(om) => {
+                if !is_type_json_prelude(&vmke.entry_type.to_string()) {
+                  if let Some(v) = om.get((ident.0).0) {
+                    return self.validate_type(&vmke.entry_type, vmke.occur.as_ref(), v);
                   }
 
-                  if let Some(v) = om.get((ident.0).0) {
-                    self.validate_type(&vmke.entry_type, occur, v)
-                  } else if let Some(o) = occur {
-                    match o {
-                      // If optional occurence, return Ok
-                      Occur::Optional => Ok(()),
-                      _ => Err(ValidationError::JSON(JSONError {
+                  return self.validate_type(&vmke.entry_type, vmke.occur.as_ref(), json);
+                }
+
+                if let Some(v) = om.get((ident.0).0) {
+                  return self.validate_type(&vmke.entry_type, vmke.occur.as_ref(), v);
+                }
+
+                if let Some(o) = occur {
+                  match o {
+                    // If optional occurence, return Ok
+                    Occur::Optional | Occur::ZeroOrMore => return Ok(()),
+                    _ => {
+                      return Err(ValidationError::JSON(JSONError {
                         expected: ge.to_string(),
                         actual: json.clone(),
-                      })),
+                      }))
                     }
-                  } else {
-                    Err(ValidationError::JSON(JSONError {
-                      expected: ge.to_string(),
-                      actual: json.clone(),
-                    }))
                   }
                 }
-                _ => self.validate_type(&vmke.entry_type, occur, json),
+
+                self.validate_type(&vmke.entry_type, vmke.occur.as_ref(), json)
               }
-            }
+              _ => self.validate_type(&vmke.entry_type, vmke.occur.as_ref(), json),
+            },
             _ => Err(ValidationError::CDDL(
               "CDDL member key must be quoted string or bareword for validating JSON objects"
                 .to_string(),
@@ -324,7 +335,75 @@ impl<'a> CDDL<'a> {
       GroupEntry::TypeGroupname(tge) => {
         self.validate_rule_for_ident(&tge.name, tge.occur.as_ref(), json)
       }
-      GroupEntry::InlineGroup((_, g)) => self.validate_group(g, occur, json),
+      GroupEntry::InlineGroup((igo, g)) => {
+        if let Some(_) = igo {
+          self.validate_group(g, igo.as_ref(), json)
+        } else {
+          self.validate_group(g, occur, json)
+        }
+      }
+    }
+  }
+}
+
+fn validate_array_occurrence(occur: &Occur, group: &str, values: &[Value]) -> Result {
+  match occur {
+    Occur::ZeroOrMore | Occur::Optional => Ok(()),
+    Occur::OneOrMore => {
+      if values.is_empty() {
+        return Err(ValidationError::Occurrence(format!(
+          "Expecting one or more values of group {}",
+          group
+        )));
+      } else {
+        Ok(())
+      }
+    }
+    Occur::Exact((l, u)) => {
+      if let Some(li) = l {
+        if let Some(ui) = u {
+          if values.len() < *li || values.len() > *ui {
+            if li == ui {
+              return Err(ValidationError::Occurrence(format!(
+                "Expecting exactly {} values of group {}. Got {} values",
+                li,
+                group,
+                values.len()
+              )));
+            }
+
+            return Err(ValidationError::Occurrence(format!(
+              "Expecting between {} and {} values of group {}. Got {} values",
+              li,
+              ui,
+              group,
+              values.len()
+            )));
+          }
+        }
+
+        if values.len() < *li {
+          return Err(ValidationError::Occurrence(format!(
+            "Expecting at least {} values of group {}. Got {} values",
+            li,
+            group,
+            values.len()
+          )));
+        }
+      }
+
+      if let Some(ui) = u {
+        if values.len() > *ui {
+          return Err(ValidationError::Occurrence(format!(
+            "Expecting no more than {} values of group {}. Got {} values",
+            ui,
+            group,
+            values.len()
+          )));
+        }
+      }
+
+      Ok(())
     }
   }
 }
@@ -460,85 +539,6 @@ fn validate_string_value(v: &token::Value, s: &str) -> Result {
       actual: Value::String(s.to_string()),
     })),
   }
-}
-
-fn validate_array_values(cddl: &CDDL, g: &Group, occur: Option<&Occur>, json: &Value) -> Result {
-  if let Value::Array(values) = json {
-    if let Some(o) = occur {
-      match o {
-        Occur::ZeroOrMore => return cddl.validate_group(g, occur, json),
-        Occur::Exact((l, u)) => {
-          if let Some(li) = l {
-            if let Some(ui) = u {
-              if values.len() < *li || values.len() > *ui {
-                return Err(ValidationError::Occurrence(format!(
-                  "Expecting between {} and {} values of group {}. Got {} values instead",
-                  li,
-                  ui,
-                  g,
-                  values.len()
-                )));
-              }
-
-              return cddl.validate_group(g, occur, json);
-            }
-
-            if values.len() < *li {
-              return Err(ValidationError::Occurrence(format!(
-                "Expecting at least {} values of group {}. Got {} values instead",
-                li,
-                g,
-                values.len()
-              )));
-            }
-
-            return cddl.validate_group(g, occur, json);
-          }
-
-          if let Some(ui) = u {
-            if values.len() > *ui {
-              return Err(ValidationError::Occurrence(format!(
-                "Expecting no more than {} values of group {}. Got {} values instead",
-                ui,
-                g,
-                values.len()
-              )));
-            }
-
-            return cddl.validate_group(g, occur, json);
-          }
-        }
-        Occur::OneOrMore => {
-          if values.is_empty() {
-            return Err(ValidationError::Occurrence(format!(
-              "Expecting one or more of {}. Got none",
-              g
-            )));
-          } else {
-            return cddl.validate_group(g, occur, json);
-          }
-        }
-        Occur::Optional => {
-          if values.len() > 1 {
-            return Err(ValidationError::Occurrence(format!(
-              "Expecting an optional {}. Got {} values",
-              g,
-              values.len()
-            )));
-          } else {
-            return cddl.validate_group(g, occur, json);
-          }
-        }
-      }
-    }
-
-    return cddl.validate_group(g, occur, json);
-  }
-
-  Err(ValidationError::JSON(JSONError {
-    expected: g.to_string(),
-    actual: json.clone(),
-  }))
 }
 
 fn is_type_json_prelude(t: &str) -> bool {
