@@ -88,3 +88,29 @@ bool = false / true
 nil = #7.22
 null = nil
 ```
+
+The first non-group rule defined by a CDDL data structure definition determines the root type, which is subsequently used for validating the top-level JSON data type.
+
+### Supported JSON validation features
+
+The following types and features of CDDL are supported by this library for validating JSON:
+
+|CDDL|JSON|
+|----|----|
+|structs|objects|
+|arrays|arrays|
+|text / tstr|string|
+|number / int / float|number*|
+|bool / true / false|boolean|
+|null / nil|null|
+|any|any valid JSON|
+
+Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed into their full representations before being evaluated for JSON validation.
+
+All CDDL control operators can be used for validating JSON, with the exception of the `.cbor` and `.cborseq` operators.
+
+*Note: While JSON itself does not distinguish between integers and floating-point numbers, this library does provide the ability to validate numbers against a more specific numerical CBOR type, providing that its equivalent representation is allowed by JSON.
+
+### Comparing with JSON schema
+
+Both CDDL and JSON schema can be used to define JSON data structures. However, the approaches taken to develop these are vastly different. One can refer to the IETF mail archive for more in-depth discussion on the differences between the two.
