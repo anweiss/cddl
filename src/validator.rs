@@ -336,7 +336,7 @@ impl<'a> CDDL<'a> {
         self.validate_rule_for_ident(&tge.name, tge.occur.as_ref(), json)
       }
       GroupEntry::InlineGroup((igo, g)) => {
-        if let Some(_) = igo {
+        if igo.is_some() {
           self.validate_group(g, igo.as_ref(), json)
         } else {
           self.validate_group(g, occur, json)
@@ -351,10 +351,10 @@ fn validate_array_occurrence(occur: &Occur, group: &str, values: &[Value]) -> Re
     Occur::ZeroOrMore | Occur::Optional => Ok(()),
     Occur::OneOrMore => {
       if values.is_empty() {
-        return Err(ValidationError::Occurrence(format!(
+        Err(ValidationError::Occurrence(format!(
           "Expecting one or more values of group {}",
           group
-        )));
+        )))
       } else {
         Ok(())
       }
