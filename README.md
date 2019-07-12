@@ -19,6 +19,7 @@ I'm currently only focused on using CDDL as a means for validating JSON data, an
 - Generate dummy JSON from conformant CDDL
 - Close to zero-copy as possible
 - Compile for use in the browser with WebAssembly
+- `no_std` support
 
 ## Non-goals
 
@@ -26,7 +27,6 @@ I'm currently only focused on using CDDL as a means for validating JSON data, an
 - Performance (if this library gains enough traction, it may be prudent to explore using a parser-combinator framework like [nom](https://github.com/Geal/nom))
 - Support CBOR diagnostic notation
 - I-JSON compatibility
-- Support for `no_std` (although this would certainly be interesting given both CBOR's and Rust's use in embedded systems)
 
 ## Why Rust?
 
