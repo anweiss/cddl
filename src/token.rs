@@ -1,3 +1,7 @@
+use super::lexer::LexerError;
+#[cfg(not(feature = "std"))]
+use core::{convert::TryFrom, fmt};
+#[cfg(feature = "std")]
 use std::{convert::TryFrom, fmt};
 
 #[derive(PartialEq, Debug)]
@@ -190,7 +194,7 @@ pub enum RangeValue<'a> {
 }
 
 impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
-  type Error = Box<std::error::Error>;
+  type Error = LexerError;
 
   fn try_from(t: Token<'a>) -> Result<Self, Self::Error> {
     match t {

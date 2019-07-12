@@ -1,6 +1,7 @@
 use super::{ast::*, lexer::Lexer, parser::Parser, token};
 use serde_json;
 use serde_json::Value;
+#[cfg(feature = "std")]
 use std::{error::Error, fmt};
 
 pub type Result = std::result::Result<(), ValidationError>;

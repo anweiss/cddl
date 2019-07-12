@@ -1,7 +1,7 @@
 use super::ast::*;
-use super::lexer::Lexer;
+use super::lexer::{Lexer, LexerError};
 use super::token::{RangeValue, Tag, Token, Value};
-use std::{error::Error, mem};
+use std::{error::Error, fmt, mem, result};
 
 pub struct Parser<'a> {
   l: &'a mut Lexer<'a>,
@@ -10,8 +10,59 @@ pub struct Parser<'a> {
   errors: Vec<Box<Error>>,
 }
 
+#[derive(Debug)]
+pub enum ParserError {
+  #[cfg(feature = "std")]
+  PARSER(String),
+  #[cfg(not(feature = "std"))]
+  PARSER(&'static str),
+  LEXER(LexerError),
+}
+
+impl fmt::Display for ParserError {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      ParserError::PARSER(e) => write!(f, "{}", e),
+      ParserError::LEXER(e) => write!(f, "{}", e),
+    }
+  }
+}
+
+impl Error for ParserError {
+  fn description(&self) -> &str {
+    "ParserError"
+  }
+
+  fn cause(&self) -> Option<&Error> {
+    None
+  }
+}
+
+#[cfg(feature = "std")]
+impl From<String> for ParserError {
+  fn from(e: String) -> Self {
+    ParserError::PARSER(e)
+  }
+}
+
+#[cfg(feature = "std")]
+impl From<&'static str> for ParserError {
+  fn from(e: &'static str) -> Self {
+    ParserError::PARSER(e.to_string())
+  }
+}
+
+#[cfg(not(feature = "std"))]
+impl From<&'static str> for ParserError {
+  fn from(e: &'static str) -> Self {
+    ParserError::PARSER(e)
+  }
+}
+
+pub type Result<T> = result::Result<T, ParserError>;
+
 impl<'a> Parser<'a> {
-  pub fn new(l: &'a mut Lexer<'a>) -> Result<Parser, Box<Error>> {
+  pub fn new(l: &'a mut Lexer<'a>) -> Result<Parser> {
     let mut p = Parser {
       l,
       cur_token: Token::EOF,
@@ -25,13 +76,13 @@ impl<'a> Parser<'a> {
     Ok(p)
   }
 
-  fn next_token(&mut self) -> Result<(), Box<Error>> {
+  fn next_token(&mut self) -> Result<()> {
     mem::swap(&mut self.cur_token, &mut self.peek_token);
-    self.peek_token = self.l.next_token()?;
+    self.peek_token = self.l.next_token().map_err(|e| ParserError::LEXER(e))?;
     Ok(())
   }
 
-  pub fn parse_cddl(&mut self) -> Result<CDDL<'a>, Box<Error>> {
+  pub fn parse_cddl(&mut self) -> Result<CDDL<'a>> {
     let mut c = CDDL::default();
 
     while self.cur_token != Token::EOF {
@@ -41,14 +92,17 @@ impl<'a> Parser<'a> {
     Ok(c)
   }
 
-  fn parse_rule(&mut self) -> Result<Rule<'a>, Box<Error>> {
+  fn parse_rule(&mut self) -> Result<Rule<'a>> {
     while let Token::COMMENT(_) = self.cur_token {
       self.next_token()?;
     }
 
     let ident = match &self.cur_token {
       Token::IDENT(i) => *i,
+      #[cfg(feature = "std")]
       _ => return Err(format!("expected IDENT. Got {:#?}", self.cur_token).into()),
+      #[cfg(not(feature = "std"))]
+      _ => return Err("expected IDENT".into()),
     };
 
     let gp = if self.peek_token_is(&Token::LANGLEBRACKET) {
@@ -101,7 +155,7 @@ impl<'a> Parser<'a> {
     }
   }
 
-  fn parse_genericparm(&mut self) -> Result<GenericParm<'a>, Box<Error>> {
+  fn parse_genericparm(&mut self) -> Result<GenericParm<'a>> {
     self.next_token()?;
 
     let mut generic_params = GenericParm(Vec::new());
@@ -114,6 +168,7 @@ impl<'a> Parser<'a> {
         }
         Token::COMMA => self.next_token()?,
         Token::COMMENT(_) => self.next_token()?,
+        #[cfg(feature = "std")]
         _ => return Err("Illegal token".into()),
       }
     }
@@ -123,7 +178,7 @@ impl<'a> Parser<'a> {
     Ok(generic_params)
   }
 
-  fn parse_genericarg(&mut self) -> Result<GenericArg<'a>, Box<Error>> {
+  fn parse_genericarg(&mut self) -> Result<GenericArg<'a>> {
     self.next_token()?;
 
     // Required for type2 mutual recursion
@@ -145,7 +200,7 @@ impl<'a> Parser<'a> {
     Ok(generic_args)
   }
 
-  fn parse_type(&mut self) -> Result<Type<'a>, Box<Error>> {
+  fn parse_type(&mut self) -> Result<Type<'a>> {
     let mut t = Type(Vec::new());
 
     t.0.push(self.parse_type1()?);
@@ -167,7 +222,7 @@ impl<'a> Parser<'a> {
     Ok(t)
   }
 
-  fn parse_type1(&mut self) -> Result<Type1<'a>, Box<Error>> {
+  fn parse_type1(&mut self) -> Result<Type1<'a>> {
     match &self.cur_token {
       Token::RANGE((lower, upper, inclusive)) => {
         let (lower_ident, upper_ident) = if let RangeValue::IDENT(li) = lower {
@@ -241,7 +296,7 @@ impl<'a> Parser<'a> {
     }
   }
 
-  fn parse_type2(&mut self) -> Result<Type2<'a>, Box<Error>> {
+  fn parse_type2(&mut self) -> Result<Type2<'a>> {
     let t2 = match &self.cur_token {
       // value
       Token::VALUE(value) => match value {
@@ -341,16 +396,18 @@ impl<'a> Parser<'a> {
           self.next_token()?;
         }
 
-        if let Some(s) = self.cur_token.in_standard_prelude() {
-          Ok(Type2::Typename((Identifier((s, None)), None)))
-        } else {
-          Err(
+        match self.cur_token.in_standard_prelude() {
+          Some(s) => Ok(Type2::Typename((Identifier((s, None)), None))),
+          #[cfg(feature = "std")]
+          None => Err(
             format!(
               "Unknown type2 alternative. Unknown token: {:#?}",
               self.cur_token
             )
             .into(),
-          )
+          ),
+          #[cfg(not(feature = "std"))]
+          None => Err("Unknown type2 alternative".into()),
         }
       }
     };
@@ -360,7 +417,7 @@ impl<'a> Parser<'a> {
     t2
   }
 
-  fn parse_group(&mut self) -> Result<Group<'a>, Box<Error>> {
+  fn parse_group(&mut self) -> Result<Group<'a>> {
     let mut group = Group(Vec::new());
 
     group.0.push(self.parse_grpchoice()?);
@@ -380,7 +437,7 @@ impl<'a> Parser<'a> {
     Ok(group)
   }
 
-  fn parse_grpchoice(&mut self) -> Result<GroupChoice<'a>, Box<Error>> {
+  fn parse_grpchoice(&mut self) -> Result<GroupChoice<'a>> {
     let mut grpchoice = GroupChoice(Vec::new());
 
     while !self.cur_token_is(Token::RBRACE)
@@ -412,7 +469,7 @@ impl<'a> Parser<'a> {
     Ok(grpchoice)
   }
 
-  fn parse_grpent(&mut self) -> Result<GroupEntry<'a>, Box<Error>> {
+  fn parse_grpent(&mut self) -> Result<GroupEntry<'a>> {
     let occur = self.parse_occur(true)?;
 
     if occur.is_some() {
@@ -497,7 +554,7 @@ impl<'a> Parser<'a> {
     }
   }
 
-  fn parse_memberkey(&mut self, is_optional: bool) -> Result<Option<MemberKey<'a>>, Box<Error>> {
+  fn parse_memberkey(&mut self, is_optional: bool) -> Result<Option<MemberKey<'a>>> {
     match &self.peek_token {
       Token::ARROWMAP | Token::CUT => {
         let t1 = self.parse_type1()?;
@@ -554,7 +611,7 @@ impl<'a> Parser<'a> {
     }
   }
 
-  fn parse_occur(&mut self, is_optional: bool) -> Result<Option<Occur>, Box<Error>> {
+  fn parse_occur(&mut self, is_optional: bool) -> Result<Option<Occur>> {
     match &self.cur_token {
       Token::OPTIONAL => Ok(Some(Occur::Optional)),
       Token::ONEORMORE => Ok(Some(Occur::OneOrMore)),
@@ -630,7 +687,7 @@ mod tests {
   use super::*;
 
   #[test]
-  fn verify_rule() -> Result<(), Box<Error>> {
+  fn verify_rule() -> Result<()> {
     let input = r#"myrule = myotherrule
 
 secondrule = thirdrule"#;
@@ -682,7 +739,7 @@ secondrule = thirdrule"#;
   }
 
   #[test]
-  fn verify_genericparm() -> Result<(), Box<Error>> {
+  fn verify_genericparm() -> Result<()> {
     let input = r#"<t, v>"#;
 
     let mut l = Lexer::new(input);
@@ -709,7 +766,7 @@ secondrule = thirdrule"#;
   }
 
   #[test]
-  fn verify_genericarg() -> Result<(), Box<Error>> {
+  fn verify_genericarg() -> Result<()> {
     let input = r#"<"reboot", "now">"#;
 
     let mut l = Lexer::new(input);
@@ -736,7 +793,7 @@ secondrule = thirdrule"#;
   }
 
   #[test]
-  fn verify_type() -> Result<(), Box<Error>> {
+  fn verify_type() -> Result<()> {
     let input = r#"tchoice1 / tchoice2"#;
 
     let mut l = Lexer::new(input);
@@ -763,7 +820,7 @@ secondrule = thirdrule"#;
   }
 
   #[test]
-  fn verify_type1() -> Result<(), Box<Error>> {
+  fn verify_type1() -> Result<()> {
     let input = r#"mynumber..100.5"#;
 
     let mut l = Lexer::new(input);
@@ -781,7 +838,7 @@ secondrule = thirdrule"#;
   }
 
   #[test]
-  fn verify_type2() -> Result<(), Box<Error>> {
+  fn verify_type2() -> Result<()> {
     let inputs = [
       r#""myvalue""#,
       r#"message<"reboot", "now">"#,
@@ -836,7 +893,7 @@ secondrule = thirdrule"#;
   }
 
   #[test]
-  fn verify_grpent() -> Result<(), Box<Error>> {
+  fn verify_grpent() -> Result<()> {
     let inputs = [r#"* type1 => "value""#, r#"type1: type2"#, r#"typename"#];
 
     let expected_outputs = [
@@ -886,7 +943,7 @@ secondrule = thirdrule"#;
   }
 
   #[test]
-  fn verify_memberkey() -> Result<(), Box<Error>> {
+  fn verify_memberkey() -> Result<()> {
     let inputs = [
       r#"type1 =>"#,
       r#""mytype1" ^ =>"#,
@@ -927,7 +984,7 @@ secondrule = thirdrule"#;
   }
 
   #[test]
-  fn verify_occur() -> Result<(), Box<Error>> {
+  fn verify_occur() -> Result<()> {
     let inputs = [r#"1*3"#, r#"*"#, r#"+"#, r#"5*"#, r#"*3"#, r#"?"#];
 
     let expected_outputs = [
@@ -952,7 +1009,7 @@ secondrule = thirdrule"#;
     Ok(())
   }
 
-  fn check_parser_errors(p: &Parser) -> Result<(), Box<Error>> {
+  fn check_parser_errors(p: &Parser) -> Result<()> {
     if p.errors.is_empty() {
       return Ok(());
     }
