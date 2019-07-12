@@ -1,7 +1,54 @@
 use super::token;
 use super::token::{RangeValue, Tag, Token, Value};
+#[cfg(not(feature = "std"))]
+use core::{convert::TryFrom, fmt, iter::Peekable, num, result, str, str::CharIndices};
 use lexical_core;
-use std::{convert::TryFrom, error::Error, iter::Peekable, str::CharIndices};
+#[cfg(feature = "std")]
+use std::{
+  convert::TryFrom, error::Error, fmt, iter::Peekable, num, result, str, str::CharIndices,
+};
+
+pub type Result<T> = result::Result<T, LexerError>;
+
+#[derive(Debug)]
+pub enum LexerError {
+  UTF8(str::Utf8Error),
+  LEXER(&'static str),
+  PARSEINT(num::ParseIntError),
+}
+
+#[cfg(feature = "std")]
+impl Error for LexerError {
+  fn description(&self) -> &str {
+    "LexerError"
+  }
+
+  fn cause(&self) -> Option<&Error> {
+    None
+  }
+}
+
+impl fmt::Display for LexerError {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      LexerError::LEXER(e) => write!(f, "{}", e),
+      LexerError::UTF8(e) => write!(f, "{}", e),
+      LexerError::PARSEINT(e) => write!(f, "{}", e),
+    }
+  }
+}
+
+impl From<&'static str> for LexerError {
+  fn from(e: &'static str) -> Self {
+    LexerError::LEXER(e)
+  }
+}
+
+impl From<str::Utf8Error> for LexerError {
+  fn from(e: str::Utf8Error) -> Self {
+    LexerError::UTF8(e)
+  }
+}
 
 pub struct Lexer<'a> {
   str_input: &'a [u8],
@@ -16,14 +63,14 @@ impl<'a> Lexer<'a> {
     }
   }
 
-  fn read_char(&mut self) -> Result<(usize, char), Box<Error>> {
+  fn read_char(&mut self) -> Result<(usize, char)> {
     self
       .input
       .next()
       .ok_or_else(|| "Unable to advance to the next token".into())
   }
 
-  pub fn next_token(&mut self) -> Result<Token<'a>, Box<Error>> {
+  pub fn next_token(&mut self) -> Result<Token<'a>> {
     self.skip_whitespace();
 
     if let Ok(c) = self.read_char() {
@@ -116,7 +163,7 @@ impl<'a> Lexer<'a> {
     }
   }
 
-  fn read_identifier(&mut self, idx: usize) -> Result<&'a str, Box<Error>> {
+  fn read_identifier(&mut self, idx: usize) -> Result<&'a str> {
     let mut end_idx = idx;
 
     while let Some(&c) = self.peek_char() {
@@ -128,7 +175,9 @@ impl<'a> Lexer<'a> {
 
             if let Some(&c) = self.peek_char() {
               if c.1 == '.' {
-                return Ok(std::str::from_utf8(&self.str_input[idx..end_idx])?);
+                return Ok(
+                  str::from_utf8(&self.str_input[idx..end_idx]).map_err(|e| LexerError::UTF8(e))?,
+                );
               }
             }
           }
@@ -138,10 +187,10 @@ impl<'a> Lexer<'a> {
         break;
       }
     }
-    Ok(std::str::from_utf8(&self.str_input[idx..=end_idx])?)
+    Ok(str::from_utf8(&self.str_input[idx..=end_idx]).map_err(|e| LexerError::UTF8(e))?)
   }
 
-  fn read_text_value(&mut self, idx: usize) -> Result<&'a str, Box<Error>> {
+  fn read_text_value(&mut self, idx: usize) -> Result<&'a str> {
     while let Some(&(_, ch)) = self.peek_char() {
       // TODO: support SESC = "\" (%x20-7E / %x80-10FFFD)
       if ch == '\x21'
@@ -154,9 +203,10 @@ impl<'a> Lexer<'a> {
         match self.peek_char() {
           Some(&(_, ch)) if ch != '"' => return Err("Expecting closing \" in text value".into()),
           _ => {
-            return Ok(std::str::from_utf8(
-              &self.str_input[idx + 1..self.read_char()?.0],
-            )?)
+            return Ok(
+              str::from_utf8(&self.str_input[idx + 1..self.read_char()?.0])
+                .map_err(|e| LexerError::UTF8(e))?,
+            )
           }
         }
       }
@@ -165,14 +215,15 @@ impl<'a> Lexer<'a> {
     Ok("")
   }
 
-  fn read_comment(&mut self, idx: usize) -> Result<&'a str, Box<Error>> {
+  fn read_comment(&mut self, idx: usize) -> Result<&'a str> {
     while let Some(&(_, ch)) = self.peek_char() {
       if ch != '\x0a' && ch != '\x0d' {
         let _ = self.read_char()?;
       } else {
-        return Ok(std::str::from_utf8(
-          &self.str_input[idx + 1..self.read_char()?.0],
-        )?);
+        return Ok(
+          str::from_utf8(&self.str_input[idx + 1..self.read_char()?.0])
+            .map_err(|e| LexerError::UTF8(e))?,
+        );
       }
     }
 
@@ -189,8 +240,8 @@ impl<'a> Lexer<'a> {
     }
   }
 
-  fn read_int_or_float(&mut self, idx: usize) -> Result<Token<'a>, Box<Error>> {
-    let i = self.read_number(idx)?;
+  fn read_int_or_float(&mut self, idx: usize) -> Result<Token<'a>> {
+    let (_, i) = self.read_number(idx)?;
 
     if let Some(&c) = self.peek_char() {
       if c.1 == '.' {
@@ -198,8 +249,10 @@ impl<'a> Lexer<'a> {
 
         if let Some(&c) = self.peek_char() {
           if is_digit(c.1) {
+            let (fraction_idx, _) = self.read_number(c.0)?;
+
             return Ok(Token::FLOATLITERAL(lexical_core::atof64_slice(
-              format!("{}.{}", i, self.read_number(c.0)?).as_bytes(),
+              &self.str_input[idx..=fraction_idx],
             )));
           }
         }
@@ -209,7 +262,7 @@ impl<'a> Lexer<'a> {
     Ok(Token::INTLITERAL(i))
   }
 
-  fn read_number(&mut self, idx: usize) -> Result<usize, Box<Error>> {
+  fn read_number(&mut self, idx: usize) -> Result<(usize, usize)> {
     let mut end_index = idx;
 
     while let Some(&c) = self.peek_char() {
@@ -222,14 +275,20 @@ impl<'a> Lexer<'a> {
       }
     }
 
-    Ok(std::str::from_utf8(&self.str_input[idx..=end_index])?.parse::<usize>()?)
+    Ok((
+      end_index,
+      str::from_utf8(&self.str_input[idx..=end_index])
+        .map_err(|e| LexerError::UTF8(e))?
+        .parse::<usize>()
+        .map_err(|e| LexerError::PARSEINT(e))?,
+    ))
   }
 
   fn peek_char(&mut self) -> Option<&(usize, char)> {
     self.input.peek()
   }
 
-  fn read_tag(&mut self) -> Result<Tag<'a>, Box<Error>> {
+  fn read_tag(&mut self) -> Result<Tag<'a>> {
     match self.read_char() {
       Ok(c) if c.1 == '6' => {
         let (_, ch) = self.read_char()?;
@@ -237,7 +296,7 @@ impl<'a> Lexer<'a> {
         if ch == '.' {
           let (idx, _) = self.read_char()?;
 
-          let t = self.read_number(idx)?;
+          let (_, t) = self.read_number(idx)?;
 
           if let Ok(c) = self.read_char() {
             if c.1 == '(' {
@@ -262,14 +321,14 @@ impl<'a> Lexer<'a> {
         Ok(Tag::DATA((None, self.read_identifier(idx)?)))
       }
       Ok(c) if is_digit(c.1) => {
-        let mt = self.read_number(c.0)? as u8;
+        let mt = self.read_number(c.0)?.1 as u8;
 
         let (_, ch) = self.read_char()?;
 
         if ch == '.' {
           let (idx, _) = self.read_char()?;
 
-          let t = self.read_number(idx)?;
+          let (_, t) = self.read_number(idx)?;
           return Ok(Tag::MAJORTYPE((mt, Some(t))));
         }
 
@@ -279,7 +338,7 @@ impl<'a> Lexer<'a> {
     }
   }
 
-  fn read_range(&mut self, lower: Token<'a>) -> Result<Token<'a>, Box<Error>> {
+  fn read_range(&mut self, lower: Token<'a>) -> Result<Token<'a>> {
     let mut is_inclusive = true;
 
     if let Some(&c) = self.peek_char() {
