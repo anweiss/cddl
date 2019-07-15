@@ -58,6 +58,18 @@ impl<'a> fmt::Display for Identifier<'a> {
   }
 }
 
+impl<'a> From<(&'a str, Option<&'a SocketPlug>)> for Identifier<'a> {
+  fn from(ident: (&'a str, Option<&'a SocketPlug>)) -> Self {
+    Identifier(ident)
+  }
+}
+
+impl<'a> From<&'static str> for Identifier<'a> {
+  fn from(ident: &'static str) -> Self {
+    unimplemented!()
+  }
+}
+
 #[derive(Debug)]
 pub enum Rule<'a> {
   Type(TypeRule<'a>),
@@ -273,11 +285,20 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", tn)
       }
+      Type2::ParenthesizedType(_t) => unimplemented!(),
       Type2::Map(g) => write!(f, "{{{}}}", g),
       Type2::Array(g) => write!(f, "[{}]", g),
       Type2::Unwrap((ident, ga)) => {
         if let Some(args) = ga {
           return write!(f, "{}{}", ident, args);
+        }
+
+        write!(f, "{}", ident)
+      }
+      Type2::ChoiceFromInlineGroup(g) => write!(f, "{}", g),
+      Type2::ChoiceFromGroup((ident, generic_arg)) => {
+        if let Some(ga) = generic_arg {
+          return write!(f, "{}{}", ident, ga);
         }
 
         write!(f, "{}", ident)
@@ -297,7 +318,6 @@ impl<'a> fmt::Display for Type2<'a> {
         write!(f, "{}", major_type)
       }
       Type2::Any => write!(f, "#"),
-      _ => write!(f, ""),
     }
   }
 }

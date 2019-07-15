@@ -13,6 +13,9 @@ use alloc::{
   vec::Vec,
 };
 
+/// Alias for `Result` with an error of type `cddl::ParserError`
+pub type Result<T> = result::Result<T, ParserError>;
+
 pub struct Parser<'a> {
   l: &'a mut Lexer<'a>,
   cur_token: Token<'a>,
@@ -42,6 +45,10 @@ impl Error for ParserError {
   }
 
   fn cause(&self) -> Option<&Error> {
+    if let ParserError::LEXER(le) = self {
+      return Some(le);
+    }
+
     None
   }
 }
@@ -57,8 +64,6 @@ impl From<&'static str> for ParserError {
     ParserError::PARSER(e.to_string())
   }
 }
-
-pub type Result<T> = result::Result<T, ParserError>;
 
 impl<'a> Parser<'a> {
   pub fn new(l: &'a mut Lexer<'a>) -> Result<Parser> {
@@ -136,14 +141,14 @@ impl<'a> Parser<'a> {
     match self.cur_token {
       Token::LPAREN | Token::ASTERISK | Token::RANGE(_) | Token::OPTIONAL => {
         Ok(Rule::Group(Box::from(GroupRule {
-          name: Identifier(ident),
+          name: ident.into(),
           generic_param: gp,
           is_group_choice_alternate,
           entry: self.parse_grpent()?,
         })))
       }
       _ => Ok(Rule::Type(TypeRule {
-        name: Identifier(ident),
+        name: ident.into(),
         generic_param: gp,
         is_type_choice_alternate,
         value: self.parse_type()?,
@@ -159,7 +164,7 @@ impl<'a> Parser<'a> {
     while !self.cur_token_is(Token::RANGLEBRACKET) {
       match &self.cur_token {
         Token::IDENT(i) => {
-          generic_params.0.push(Identifier(*i));
+          generic_params.0.push((*i).into());
           self.next_token()?;
         }
         Token::COMMA => self.next_token()?,
@@ -234,14 +239,14 @@ impl<'a> Parser<'a> {
 
         if let Some(Token::IDENT(li)) = lower_ident {
           let mut t1 = Type1 {
-            type2: Type2::Typename((Identifier(li), None)),
+            type2: Type2::Typename((li.into(), None)),
             operator: None,
           };
 
           if let Some(Token::IDENT(ui)) = upper_ident {
             t1.operator = Some((
               RangeCtlOp::RangeOp(*inclusive),
-              Type2::Typename((Identifier(ui), None)),
+              Type2::Typename((ui.into(), None)),
             ));
           } else {
             t1.operator = Some((
@@ -268,7 +273,7 @@ impl<'a> Parser<'a> {
           if let Some(Token::IDENT(ui)) = upper_ident {
             t1.operator = Some((
               RangeCtlOp::RangeOp(*inclusive),
-              Type2::Typename((Identifier(ui), None)),
+              Type2::Typename((ui.into(), None)),
             ));
           } else {
             t1.operator = Some((
@@ -310,12 +315,12 @@ impl<'a> Parser<'a> {
         // optional genericarg detected
         if self.peek_token_is(&Token::LANGLEBRACKET) {
           return Ok(Type2::Typename((
-            Identifier(*ident),
+            (*ident).into(),
             Some(self.parse_genericarg()?),
           )));
         }
 
-        Ok(Type2::Typename((Identifier(*ident), None)))
+        Ok(Type2::Typename(((*ident).into(), None)))
       }
 
       // ( type )
@@ -362,12 +367,12 @@ impl<'a> Parser<'a> {
 
           if self.cur_token_is(Token::LANGLEBRACKET) {
             return Ok(Type2::Unwrap((
-              Identifier(ident),
+              ident.into(),
               Some(self.parse_genericarg()?),
             )));
           }
 
-          return Ok(Type2::Unwrap((Identifier(ident), None)));
+          return Ok(Type2::Unwrap((ident.into(), None)));
         }
 
         Err("Invalid unwrap".into())
@@ -375,7 +380,30 @@ impl<'a> Parser<'a> {
 
       // & ( group )
       // & groupname [genericarg]
-      Token::GTOCHOICE => unimplemented!(),
+      Token::GTOCHOICE => {
+        self.next_token()?;
+
+        match self.cur_token {
+          Token::LPAREN => {
+            self.next_token()?;
+
+            Ok(Type2::ChoiceFromInlineGroup(self.parse_group()?))
+          }
+          Token::IDENT(ident) => {
+            self.next_token()?;
+
+            if self.cur_token_is(Token::LANGLEBRACKET) {
+              return Ok(Type2::ChoiceFromGroup((
+                ident.into(),
+                Some(self.parse_genericarg()?),
+              )));
+            }
+
+            Ok(Type2::ChoiceFromGroup((ident.into(), None)))
+          }
+          _ => Err("Invalid group to choice enumeration syntax".into()),
+        }
+      }
 
       // # 6 ["." uint] ( type )
       // # DIGIT ["." uint]   ; major/ai
@@ -392,7 +420,7 @@ impl<'a> Parser<'a> {
         }
 
         match self.cur_token.in_standard_prelude() {
-          Some(s) => Ok(Type2::Typename((Identifier((s, None)), None))),
+          Some(s) => Ok(Type2::Typename(((s, None).into(), None))),
           None => Err(
             format!(
               "Unknown type2 alternative. Unknown token: {:#?}",
@@ -534,7 +562,7 @@ impl<'a> Parser<'a> {
         // [occur S] groupname [genericarg]  ; preempted by above
         Ok(GroupEntry::TypeGroupname(TypeGroupnameEntry {
           occur,
-          name: Identifier(*ident),
+          name: (*ident).into(),
           generic_arg: ga,
         }))
       }
@@ -577,7 +605,7 @@ impl<'a> Parser<'a> {
       }
       Token::COLON => {
         let mk = match &self.cur_token {
-          Token::IDENT(ident) => Some(MemberKey::Bareword(Identifier(*ident))),
+          Token::IDENT(ident) => Some(MemberKey::Bareword((*ident).into())),
           Token::VALUE(value) => Some(MemberKey::Value(*value)),
           _ => return Err("Malformed memberkey".into()),
         };
@@ -871,6 +899,8 @@ secondrule = thirdrule"#;
       r#"9.9"#,
       r#"#"#,
       r#"[*3 reputon]"#,
+      r#"&groupname"#,
+      r#"&( inlinegroup )"#,
     ];
 
     let expected_outputs = [
@@ -897,6 +927,14 @@ secondrule = thirdrule"#;
         TypeGroupnameEntry {
           occur: Some(Occur::Exact((None, Some(3)))),
           name: Identifier(("reputon", None)),
+          generic_arg: None,
+        },
+      )])])),
+      Type2::ChoiceFromGroup((Identifier(("groupname", None)), None)),
+      Type2::ChoiceFromInlineGroup(Group(vec![GroupChoice(vec![GroupEntry::TypeGroupname(
+        TypeGroupnameEntry {
+          occur: None,
+          name: Identifier(("inlinegroup", None)),
           generic_arg: None,
         },
       )])])),

@@ -43,7 +43,7 @@ Rust is a systems programming language designed around safety and is ideally-sui
 - [x] values
 - [x] choices
 - [x] ranges
-- [ ] enumeration (building a choice from a group)
+- [x] enumeration (building a choice from a group)
 - [x] root type
 - [x] occurrence
 - [x] predefined types
