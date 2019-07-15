@@ -5,8 +5,10 @@ use serde_json;
 use serde_json::Value;
 use std::{error::Error, f64, fmt, result};
 
+/// Alias for `Result` with an error of type `cddl::ValidationError`
 pub type Result = result::Result<(), ValidationError>;
 
+/// Represents the various JSON validation errors that can occur
 #[derive(Debug)]
 pub enum ValidationError {
   CDDL(String),
