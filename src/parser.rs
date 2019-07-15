@@ -1,29 +1,28 @@
 use super::ast::*;
 use super::lexer::{Lexer, LexerError};
 use super::token::{RangeValue, Tag, Token, Value};
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
-#[cfg(not(feature = "std"))]
-use core::{fmt, mem, result};
+use std::{fmt, mem, result};
+
 #[cfg(feature = "std")]
-use std::{error::Error, fmt, mem, result};
+use std::error::Error;
+
+#[cfg(not(feature = "std"))]
+use alloc::{
+  boxed::Box,
+  string::{String, ToString},
+  vec::Vec,
+};
 
 pub struct Parser<'a> {
   l: &'a mut Lexer<'a>,
   cur_token: Token<'a>,
   peek_token: Token<'a>,
-  #[cfg(feature = "std")]
-  errors: Vec<Box<Error>>,
-  #[cfg(not(feature = "std"))]
-  errors: Option<ParserError>,
+  errors: Vec<ParserError>,
 }
 
 #[derive(Debug)]
 pub enum ParserError {
-  #[cfg(feature = "std")]
   PARSER(String),
-  #[cfg(not(feature = "std"))]
-  PARSER(&'static str),
   LEXER(LexerError),
 }
 
@@ -47,24 +46,15 @@ impl Error for ParserError {
   }
 }
 
-#[cfg(feature = "std")]
 impl From<String> for ParserError {
   fn from(e: String) -> Self {
     ParserError::PARSER(e)
   }
 }
 
-#[cfg(feature = "std")]
 impl From<&'static str> for ParserError {
   fn from(e: &'static str) -> Self {
     ParserError::PARSER(e.to_string())
-  }
-}
-
-#[cfg(not(feature = "std"))]
-impl From<&'static str> for ParserError {
-  fn from(e: &'static str) -> Self {
-    ParserError::PARSER(e)
   }
 }
 
@@ -76,10 +66,7 @@ impl<'a> Parser<'a> {
       l,
       cur_token: Token::EOF,
       peek_token: Token::EOF,
-      #[cfg(feature = "std")]
       errors: Vec::default(),
-      #[cfg(not(feature = "std"))]
-      errors: None,
     };
 
     p.next_token()?;
@@ -111,10 +98,7 @@ impl<'a> Parser<'a> {
 
     let ident = match &self.cur_token {
       Token::IDENT(i) => *i,
-      #[cfg(feature = "std")]
       _ => return Err(format!("expected IDENT. Got {:#?}", self.cur_token).into()),
-      #[cfg(not(feature = "std"))]
-      _ => return Err("expected IDENT".into()),
     };
 
     let gp = if self.peek_token_is(&Token::LANGLEBRACKET) {
@@ -150,7 +134,6 @@ impl<'a> Parser<'a> {
     }
 
     match self.cur_token {
-      #[cfg(feature = "std")]
       Token::LPAREN | Token::ASTERISK | Token::RANGE(_) | Token::OPTIONAL => {
         Ok(Rule::Group(Box::from(GroupRule {
           name: Identifier(ident),
@@ -158,15 +141,6 @@ impl<'a> Parser<'a> {
           is_group_choice_alternate,
           entry: self.parse_grpent()?,
         })))
-      }
-      #[cfg(not(feature = "std"))]
-      Token::LPAREN | Token::ASTERISK | Token::RANGE(_) | Token::OPTIONAL => {
-        Ok(Rule::Group(GroupRule {
-          name: Identifier(ident),
-          generic_param: gp,
-          is_group_choice_alternate,
-          entry: self.parse_grpent()?,
-        }))
       }
       _ => Ok(Rule::Type(TypeRule {
         name: Identifier(ident),
@@ -419,7 +393,6 @@ impl<'a> Parser<'a> {
 
         match self.cur_token.in_standard_prelude() {
           Some(s) => Ok(Type2::Typename((Identifier((s, None)), None))),
-          #[cfg(feature = "std")]
           None => Err(
             format!(
               "Unknown type2 alternative. Unknown token: {:#?}",
@@ -427,8 +400,6 @@ impl<'a> Parser<'a> {
             )
             .into(),
           ),
-          #[cfg(not(feature = "std"))]
-          None => Err("Unknown type2 alternative".into()),
         }
       }
     };
@@ -542,40 +513,20 @@ impl<'a> Parser<'a> {
       Token::IDENT(ident) => {
         // [occur S] [memberkey S] type
         if member_key.is_some() {
-          #[cfg(feature = "std")]
-          let vmke = Box::from(ValueMemberKeyEntry {
+          return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
             occur,
             member_key,
             entry_type: self.parse_type()?,
-          });
-
-          #[cfg(not(feature = "std"))]
-          let vmke = ValueMemberKeyEntry {
-            occur,
-            member_key,
-            entry_type: self.parse_type()?,
-          };
-
-          return Ok(GroupEntry::ValueMemberKey(vmke));
+          })));
         }
 
         // Check for type choices in a group entry
         if self.peek_token_is(&Token::TCHOICE) {
-          #[cfg(feature = "std")]
-          let vmke = Box::from(ValueMemberKeyEntry {
+          return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
             occur,
             member_key,
             entry_type: self.parse_type()?,
-          });
-
-          #[cfg(not(feature = "std"))]
-          let vmke = ValueMemberKeyEntry {
-            occur,
-            member_key,
-            entry_type: self.parse_type()?,
-          };
-
-          return Ok(GroupEntry::ValueMemberKey(vmke));
+          })));
         }
 
         // Otherwise it could be either typename or groupname. Requires context.
@@ -587,18 +538,11 @@ impl<'a> Parser<'a> {
           generic_arg: ga,
         }))
       }
-      #[cfg(feature = "std")]
       _ => Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
         occur,
         member_key,
         entry_type: self.parse_type()?,
       }))),
-      #[cfg(not(feature = "std"))]
-      _ => Ok(GroupEntry::ValueMemberKey(ValueMemberKeyEntry {
-        occur,
-        member_key,
-        entry_type: self.parse_type()?,
-      })),
     }
   }
 
@@ -618,22 +562,14 @@ impl<'a> Parser<'a> {
             self.next_token()?;
           }
 
-          #[cfg(feature = "std")]
           let t1 = Some(MemberKey::Type1(Box::from((t1, true))));
-
-          #[cfg(not(feature = "std"))]
-          let t1 = Some(MemberKey::Type1((t1, true)));
 
           self.next_token()?;
 
           return Ok(t1);
         }
 
-        #[cfg(feature = "std")]
         let t1 = Some(MemberKey::Type1(Box::from((t1, false))));
-
-        #[cfg(not(feature = "std"))]
-        let t1 = Some(MemberKey::Type1((t1, false)));
 
         self.next_token()?;
 
@@ -725,7 +661,6 @@ impl<'a> Parser<'a> {
     false
   }
 
-  #[cfg(feature = "std")]
   fn peek_error(&mut self, t: &Token) {
     self.errors.push(
       format!(
@@ -735,16 +670,10 @@ impl<'a> Parser<'a> {
       .into(),
     )
   }
-
-  #[cfg(not(feature = "std"))]
-  fn peek_error(&mut self, _t: &Token) {
-    self.errors = Some(ParserError::PARSER("expecting next token"));
-  }
 }
 
 #[cfg(test)]
 #[allow(unused_imports)]
-#[cfg(feature = "std")]
 mod tests {
   use super::super::{ast, lexer::Lexer, token::SocketPlug, token::Tag};
   use super::*;
@@ -762,9 +691,12 @@ secondrule = thirdrule"#;
     check_parser_errors(&p)?;
 
     if cddl.rules.len() != 2 {
-      eprintln!(
-        "cddl.rules does not contain 2 statements. got='{}'",
-        cddl.rules.len()
+      return Err(
+        format!(
+          "cddl.rules does not contain 2 statements. got='{}'",
+          cddl.rules.len()
+        )
+        .into(),
       );
     }
 
@@ -778,6 +710,7 @@ secondrule = thirdrule"#;
     Ok(())
   }
 
+  #[cfg(feature = "std")]
   fn test_rule(r: &Rule, name: &str) -> bool {
     match r {
       Rule::Type(tr) => {
@@ -801,6 +734,24 @@ secondrule = thirdrule"#;
     }
   }
 
+  #[cfg(not(feature = "std"))]
+  fn test_rule(r: &Rule, name: &str) -> bool {
+    match r {
+      Rule::Type(tr) => {
+        if (tr.name.0).0 != name {
+          return false;
+        }
+
+        if tr.name.token_literal().unwrap() != Identifier((name, None)).token_literal().unwrap() {
+          return false;
+        }
+
+        true
+      }
+      _ => false,
+    }
+  }
+
   #[test]
   fn verify_genericparm() -> Result<()> {
     let input = r#"<t, v>"#;
@@ -812,9 +763,12 @@ secondrule = thirdrule"#;
     check_parser_errors(&p)?;
 
     if gps.0.len() != 2 {
-      eprintln!(
-        "GenericParm does not contain 2 generic parameters. got='{}'",
-        gps.0.len()
+      return Err(
+        format!(
+          "GenericParm does not contain 2 generic parameters. got='{}'",
+          gps.0.len()
+        )
+        .into(),
       );
     }
 
@@ -839,9 +793,12 @@ secondrule = thirdrule"#;
     check_parser_errors(&p)?;
 
     if generic_args.0.len() != 2 {
-      eprintln!(
-        "generic_args does not contain 2 generic args. got='{}'",
-        generic_args.0.len()
+      return Err(
+        format!(
+          "generic_args does not contain 2 generic args. got='{}'",
+          generic_args.0.len()
+        )
+        .into(),
       );
     }
 
@@ -866,9 +823,12 @@ secondrule = thirdrule"#;
     check_parser_errors(&p)?;
 
     if t.0.len() != 2 {
-      eprintln!(
-        "type.0 does not contain 2 type choices. got='{}'",
-        t.0.len()
+      return Err(
+        format!(
+          "type.0 does not contain 2 type choices. got='{}'",
+          t.0.len()
+        )
+        .into(),
       );
     }
 
@@ -1077,10 +1037,12 @@ secondrule = thirdrule"#;
       return Ok(());
     }
 
+    let mut errors = String::new();
+
     for err in p.errors.iter() {
-      eprintln!("parser error: {}", err.to_string());
+      errors.push_str(&format!("parser error: {}\n", err));
     }
 
-    Err("Parser has errors".into())
+    Err(errors.into())
   }
 }

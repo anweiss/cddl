@@ -1,12 +1,10 @@
 use super::token;
 use super::token::{RangeValue, Tag, Token, Value};
-#[cfg(not(feature = "std"))]
-use core::{convert::TryFrom, fmt, iter::Peekable, num, result, str, str::CharIndices};
 use lexical_core;
+use std::{convert::TryFrom, fmt, iter::Peekable, num, result, str, str::CharIndices};
+
 #[cfg(feature = "std")]
-use std::{
-  convert::TryFrom, error::Error, fmt, iter::Peekable, num, result, str, str::CharIndices,
-};
+use std::error::Error;
 
 pub type Result<T> = result::Result<T, LexerError>;
 
@@ -410,10 +408,12 @@ fn is_digit(ch: char) -> bool {
 }
 
 #[cfg(test)]
-#[cfg(feature = "std")]
 mod tests {
   use super::super::token::{SocketPlug, Token::*};
   use super::*;
+
+  #[cfg(not(feature = "std"))]
+  use super::super::alloc::string::ToString;
 
   #[test]
   fn verify_next_token() {

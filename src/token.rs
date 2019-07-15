@@ -1,7 +1,4 @@
 use super::lexer::LexerError;
-#[cfg(not(feature = "std"))]
-use core::{convert::TryFrom, fmt};
-#[cfg(feature = "std")]
 use std::{convert::TryFrom, fmt};
 
 #[derive(PartialEq, Debug)]
