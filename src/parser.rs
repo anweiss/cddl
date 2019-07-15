@@ -1,13 +1,21 @@
 use super::ast::*;
 use super::lexer::{Lexer, LexerError};
 use super::token::{RangeValue, Tag, Token, Value};
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+#[cfg(not(feature = "std"))]
+use core::{fmt, mem, result};
+#[cfg(feature = "std")]
 use std::{error::Error, fmt, mem, result};
 
 pub struct Parser<'a> {
   l: &'a mut Lexer<'a>,
   cur_token: Token<'a>,
   peek_token: Token<'a>,
+  #[cfg(feature = "std")]
   errors: Vec<Box<Error>>,
+  #[cfg(not(feature = "std"))]
+  errors: Option<ParserError>,
 }
 
 #[derive(Debug)]
@@ -28,6 +36,7 @@ impl fmt::Display for ParserError {
   }
 }
 
+#[cfg(feature = "std")]
 impl Error for ParserError {
   fn description(&self) -> &str {
     "ParserError"
@@ -67,7 +76,10 @@ impl<'a> Parser<'a> {
       l,
       cur_token: Token::EOF,
       peek_token: Token::EOF,
+      #[cfg(feature = "std")]
       errors: Vec::default(),
+      #[cfg(not(feature = "std"))]
+      errors: None,
     };
 
     p.next_token()?;
@@ -78,7 +90,7 @@ impl<'a> Parser<'a> {
 
   fn next_token(&mut self) -> Result<()> {
     mem::swap(&mut self.cur_token, &mut self.peek_token);
-    self.peek_token = self.l.next_token().map_err(|e| ParserError::LEXER(e))?;
+    self.peek_token = self.l.next_token().map_err(ParserError::LEXER)?;
     Ok(())
   }
 
@@ -138,6 +150,7 @@ impl<'a> Parser<'a> {
     }
 
     match self.cur_token {
+      #[cfg(feature = "std")]
       Token::LPAREN | Token::ASTERISK | Token::RANGE(_) | Token::OPTIONAL => {
         Ok(Rule::Group(Box::from(GroupRule {
           name: Identifier(ident),
@@ -145,6 +158,15 @@ impl<'a> Parser<'a> {
           is_group_choice_alternate,
           entry: self.parse_grpent()?,
         })))
+      }
+      #[cfg(not(feature = "std"))]
+      Token::LPAREN | Token::ASTERISK | Token::RANGE(_) | Token::OPTIONAL => {
+        Ok(Rule::Group(GroupRule {
+          name: Identifier(ident),
+          generic_param: gp,
+          is_group_choice_alternate,
+          entry: self.parse_grpent()?,
+        }))
       }
       _ => Ok(Rule::Type(TypeRule {
         name: Identifier(ident),
@@ -168,7 +190,6 @@ impl<'a> Parser<'a> {
         }
         Token::COMMA => self.next_token()?,
         Token::COMMENT(_) => self.next_token()?,
-        #[cfg(feature = "std")]
         _ => return Err("Illegal token".into()),
       }
     }
@@ -521,20 +542,40 @@ impl<'a> Parser<'a> {
       Token::IDENT(ident) => {
         // [occur S] [memberkey S] type
         if member_key.is_some() {
-          return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+          #[cfg(feature = "std")]
+          let vmke = Box::from(ValueMemberKeyEntry {
             occur,
             member_key,
             entry_type: self.parse_type()?,
-          })));
+          });
+
+          #[cfg(not(feature = "std"))]
+          let vmke = ValueMemberKeyEntry {
+            occur,
+            member_key,
+            entry_type: self.parse_type()?,
+          };
+
+          return Ok(GroupEntry::ValueMemberKey(vmke));
         }
 
         // Check for type choices in a group entry
         if self.peek_token_is(&Token::TCHOICE) {
-          return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+          #[cfg(feature = "std")]
+          let vmke = Box::from(ValueMemberKeyEntry {
             occur,
             member_key,
             entry_type: self.parse_type()?,
-          })));
+          });
+
+          #[cfg(not(feature = "std"))]
+          let vmke = ValueMemberKeyEntry {
+            occur,
+            member_key,
+            entry_type: self.parse_type()?,
+          };
+
+          return Ok(GroupEntry::ValueMemberKey(vmke));
         }
 
         // Otherwise it could be either typename or groupname. Requires context.
@@ -546,11 +587,18 @@ impl<'a> Parser<'a> {
           generic_arg: ga,
         }))
       }
+      #[cfg(feature = "std")]
       _ => Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
         occur,
         member_key,
         entry_type: self.parse_type()?,
       }))),
+      #[cfg(not(feature = "std"))]
+      _ => Ok(GroupEntry::ValueMemberKey(ValueMemberKeyEntry {
+        occur,
+        member_key,
+        entry_type: self.parse_type()?,
+      })),
     }
   }
 
@@ -570,14 +618,22 @@ impl<'a> Parser<'a> {
             self.next_token()?;
           }
 
+          #[cfg(feature = "std")]
           let t1 = Some(MemberKey::Type1(Box::from((t1, true))));
+
+          #[cfg(not(feature = "std"))]
+          let t1 = Some(MemberKey::Type1((t1, true)));
 
           self.next_token()?;
 
           return Ok(t1);
         }
 
+        #[cfg(feature = "std")]
         let t1 = Some(MemberKey::Type1(Box::from((t1, false))));
+
+        #[cfg(not(feature = "std"))]
+        let t1 = Some(MemberKey::Type1((t1, false)));
 
         self.next_token()?;
 
@@ -669,6 +725,7 @@ impl<'a> Parser<'a> {
     false
   }
 
+  #[cfg(feature = "std")]
   fn peek_error(&mut self, t: &Token) {
     self.errors.push(
       format!(
@@ -678,10 +735,16 @@ impl<'a> Parser<'a> {
       .into(),
     )
   }
+
+  #[cfg(not(feature = "std"))]
+  fn peek_error(&mut self, _t: &Token) {
+    self.errors = Some(ParserError::PARSER("expecting next token"));
+  }
 }
 
 #[cfg(test)]
 #[allow(unused_imports)]
+#[cfg(feature = "std")]
 mod tests {
   use super::super::{ast, lexer::Lexer, token::SocketPlug, token::Tag};
   use super::*;

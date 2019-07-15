@@ -1,5 +1,8 @@
+#![cfg(feature = "std")]
+
 extern crate cddl;
 
+#[cfg(feature = "std")]
 use cddl::{
   lexer::Lexer,
   parser::Parser,

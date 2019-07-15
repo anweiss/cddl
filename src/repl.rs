@@ -1,3 +1,5 @@
+#![cfg(feature = "std")]
+
 use super::{lexer::Lexer, parser::Parser};
 use crossterm::{terminal, ClearType};
 use std::{

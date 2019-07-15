@@ -176,7 +176,7 @@ impl<'a> Lexer<'a> {
             if let Some(&c) = self.peek_char() {
               if c.1 == '.' {
                 return Ok(
-                  str::from_utf8(&self.str_input[idx..end_idx]).map_err(|e| LexerError::UTF8(e))?,
+                  str::from_utf8(&self.str_input[idx..end_idx]).map_err(LexerError::UTF8)?,
                 );
               }
             }
@@ -187,7 +187,7 @@ impl<'a> Lexer<'a> {
         break;
       }
     }
-    Ok(str::from_utf8(&self.str_input[idx..=end_idx]).map_err(|e| LexerError::UTF8(e))?)
+    Ok(str::from_utf8(&self.str_input[idx..=end_idx]).map_err(LexerError::UTF8)?)
   }
 
   fn read_text_value(&mut self, idx: usize) -> Result<&'a str> {
@@ -205,7 +205,7 @@ impl<'a> Lexer<'a> {
           _ => {
             return Ok(
               str::from_utf8(&self.str_input[idx + 1..self.read_char()?.0])
-                .map_err(|e| LexerError::UTF8(e))?,
+                .map_err(LexerError::UTF8)?,
             )
           }
         }
@@ -222,7 +222,7 @@ impl<'a> Lexer<'a> {
       } else {
         return Ok(
           str::from_utf8(&self.str_input[idx + 1..self.read_char()?.0])
-            .map_err(|e| LexerError::UTF8(e))?,
+            .map_err(LexerError::UTF8)?,
         );
       }
     }
@@ -278,9 +278,9 @@ impl<'a> Lexer<'a> {
     Ok((
       end_index,
       str::from_utf8(&self.str_input[idx..=end_index])
-        .map_err(|e| LexerError::UTF8(e))?
+        .map_err(LexerError::UTF8)?
         .parse::<usize>()
-        .map_err(|e| LexerError::PARSEINT(e))?,
+        .map_err(LexerError::PARSEINT)?,
     ))
   }
 
@@ -410,6 +410,7 @@ fn is_digit(ch: char) -> bool {
 }
 
 #[cfg(test)]
+#[cfg(feature = "std")]
 mod tests {
   use super::super::token::{SocketPlug, Token::*};
   use super::*;

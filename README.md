@@ -19,7 +19,7 @@ I'm currently only focused on using CDDL as a means for validating JSON data, an
 - Generate dummy JSON from conformant CDDL
 - Close to zero-copy as possible
 - Compile for use in the browser with WebAssembly
-- `no_std` support
+- `no_std` support (lexing and parsing only)
 
 ## Non-goals
 
@@ -109,8 +109,19 @@ Occurrence indicators can be used to validate key/value pairs in a JSON object a
 
 All CDDL control operators can be used for validating JSON, with the exception of the `.cbor` and `.cborseq` operators.
 
-*Note: While JSON itself does not distinguish between integers and floating-point numbers, this library does provide the ability to validate numbers against a more specific numerical CBOR type, providing that its equivalent representation is allowed by JSON.
+*Note: While JSON itself does not distinguish between integers and floating-point numbers, this library does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON.
 
 ### Comparing with JSON schema
 
 Both CDDL and JSON schema can be used to define JSON data structures. However, the approaches taken to develop these are vastly different. One can refer to the IETF mail archive for more in-depth discussion on the differences between the two.
+
+## `no_std` support
+
+Only the lexer and parser can be used in a `no_std` context provided that a heap allocator is available. This can be enabled by opting out of the default features in your `Cargo.toml` file as follows:
+
+```toml
+[dependencies]
+cddl = { version = "<version>", default-features = false }
+```
+
+JSON validation is dependent on the heap allocated [`Value`](https://docs.rs/serde_json/1.0.40/serde_json/value/index.html) type, but since this type isn't supported in a `no_std` context per https://japaric.github.io/serde-json-core/serde_json_core/index.html#non-features, the JSON validation module does not support `no_std`.

@@ -1,4 +1,12 @@
 use super::token::{SocketPlug, Value};
+#[cfg(not(feature = "std"))]
+use alloc::{
+  string::{String, ToString},
+  vec::Vec,
+};
+#[cfg(not(feature = "std"))]
+use core::fmt;
+#[cfg(feature = "std")]
 use std::fmt;
 
 pub trait Node {
@@ -54,7 +62,10 @@ impl<'a> fmt::Display for Identifier<'a> {
 #[derive(Debug)]
 pub enum Rule<'a> {
   Type(TypeRule<'a>),
+  #[cfg(feature = "std")]
   Group(Box<GroupRule<'a>>),
+  #[cfg(not(feature = "std"))]
+  Group(GroupRule<'a>),
 }
 
 impl<'a> fmt::Display for Rule<'a> {
@@ -227,7 +238,7 @@ impl<'a> fmt::Display for Type1<'a> {
 #[derive(Debug, PartialEq)]
 pub enum RangeCtlOp {
   RangeOp(bool),
-  CtlOp(String),
+  CtlOp(&'static str),
 }
 
 impl<'a> fmt::Display for RangeCtlOp {
@@ -332,7 +343,10 @@ impl<'a> fmt::Display for GroupChoice<'a> {
 
 #[derive(Debug)]
 pub enum GroupEntry<'a> {
+  #[cfg(feature = "std")]
   ValueMemberKey(Box<ValueMemberKeyEntry<'a>>),
+  #[cfg(not(feature = "std"))]
+  ValueMemberKey(ValueMemberKeyEntry<'a>),
   TypeGroupname(TypeGroupnameEntry<'a>),
   InlineGroup((Option<Occur>, Group<'a>)),
 }
@@ -406,7 +420,10 @@ impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
 #[derive(Debug)]
 pub enum MemberKey<'a> {
   // if true, cut is present
+  #[cfg(feature = "std")]
   Type1(Box<(Type1<'a>, bool)>),
+  #[cfg(not(feature = "std"))]
+  Type1((Type1<'a>, bool)),
   Bareword(Identifier<'a>),
   Value(Value<'a>),
 }

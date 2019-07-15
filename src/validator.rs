@@ -1,10 +1,11 @@
+#![cfg(feature = "std")]
+
 use super::{ast::*, lexer::Lexer, parser::Parser, token};
 use serde_json;
 use serde_json::Value;
-#[cfg(feature = "std")]
-use std::{error::Error, fmt};
+use std::{error::Error, f64, fmt, result};
 
-pub type Result = std::result::Result<(), ValidationError>;
+pub type Result = result::Result<(), ValidationError>;
 
 #[derive(Debug)]
 pub enum ValidationError {
@@ -62,6 +63,7 @@ impl Error for ValidationError {
 
 pub fn validate_json_from_str(cddl: &str, json: &str) -> Result {
   let mut l = Lexer::new(cddl);
+
   let mut p = Parser::new(&mut l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
 
   validate_json(
@@ -460,7 +462,7 @@ fn validate_numeric_value(v: &token::Value, json: &Value) -> Result {
         })),
       },
       token::Value::FLOAT(f) => match n.as_f64() {
-        Some(n64) if (n64 - f as f64).abs() < std::f64::EPSILON => Ok(()),
+        Some(n64) if (n64 - f as f64).abs() < f64::EPSILON => Ok(()),
         _ => Err(ValidationError::JSON(JSONError {
           expected: v.to_string(),
           actual: json.clone(),

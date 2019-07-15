@@ -1,3 +1,5 @@
+#![cfg(feature = "std")]
+
 use cddl::repl;
 use std::{error::Error, io};
 
