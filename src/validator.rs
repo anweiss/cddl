@@ -1,8 +1,7 @@
 #![cfg(feature = "std")]
 
-use super::{ast::*, lexer::Lexer, parser::Parser, token};
-use serde_json;
-use serde_json::Value;
+use super::{ast::*, parser, token};
+use serde_json::{self, Value};
 use std::{error::Error, f64, fmt, result};
 
 /// Alias for `Result` with an error of type `cddl::ValidationError`
@@ -63,15 +62,10 @@ impl Error for ValidationError {
   }
 }
 
-pub fn validate_json_from_str(cddl: &str, json: &str) -> Result {
-  let mut l = Lexer::new(cddl);
-
-  let mut p = Parser::new(&mut l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
+pub fn validate_json_from_str(cddl_input: &str, json_input: &str) -> Result {
   validate_json(
-    &p.parse_cddl()
-      .map_err(|e| ValidationError::Compilation(e.to_string()))?,
-    &serde_json::from_str(json).map_err(|e| ValidationError::Compilation(e.to_string()))?,
+    &parser::cddl_from_str(cddl_input).map_err(|e| ValidationError::Compilation(e.to_string()))?,
+    &serde_json::from_str(json_input).map_err(|e| ValidationError::Compilation(e.to_string()))?,
   )
 }
 
@@ -567,7 +561,7 @@ mod tests {
     let cddl_input = r#"mynullrule = null"#;
 
     let mut l = Lexer::new(cddl_input);
-    let mut p = Parser::new(&mut l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
+    let mut p = Parser::new(l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
 
     let cddl = p
       .parse_cddl()
@@ -588,7 +582,7 @@ mod tests {
     let cddl_input = r#"myboolrule = true"#;
 
     let mut l = Lexer::new(cddl_input);
-    let mut p = Parser::new(&mut l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
+    let mut p = Parser::new(l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
 
     let cddl = p
       .parse_cddl()
@@ -609,7 +603,7 @@ mod tests {
     let cddl_input = r#"mynumericrule = 3 / 1.5 / 10"#;
 
     let mut l = Lexer::new(cddl_input);
-    let mut p = Parser::new(&mut l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
+    let mut p = Parser::new(l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
 
     let cddl = p
       .parse_cddl()
@@ -632,7 +626,7 @@ mod tests {
     let cddl_input = r#"mystringrule = "mystring""#;
 
     let mut l = Lexer::new(cddl_input);
-    let mut p = Parser::new(&mut l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
+    let mut p = Parser::new(l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
 
     let cddl = p
       .parse_cddl()
@@ -667,7 +661,7 @@ mod tests {
     }"#;
 
     let mut l = Lexer::new(cddl_input);
-    let mut p = Parser::new(&mut l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
+    let mut p = Parser::new(l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
 
     let cddl = p
       .parse_cddl()
@@ -702,7 +696,7 @@ mod tests {
     }"#;
 
     let mut l = Lexer::new(cddl_input);
-    let mut p = Parser::new(&mut l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
+    let mut p = Parser::new(l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
 
     let cddl = p
       .parse_cddl()

@@ -17,7 +17,7 @@ use alloc::{
 pub type Result<T> = result::Result<T, ParserError>;
 
 pub struct Parser<'a> {
-  l: &'a mut Lexer<'a>,
+  l: Lexer<'a>,
   cur_token: Token<'a>,
   peek_token: Token<'a>,
   errors: Vec<ParserError>,
@@ -66,7 +66,7 @@ impl From<&'static str> for ParserError {
 }
 
 impl<'a> Parser<'a> {
-  pub fn new(l: &'a mut Lexer<'a>) -> Result<Parser> {
+  pub fn new(l: Lexer<'a>) -> Result<Parser> {
     let mut p = Parser {
       l,
       cur_token: Token::EOF,
@@ -713,7 +713,7 @@ mod tests {
 secondrule = thirdrule"#;
 
     let mut l = Lexer::new(input);
-    let mut p = Parser::new(&mut l)?;
+    let mut p = Parser::new(l)?;
 
     let cddl = p.parse_cddl()?;
     check_parser_errors(&p)?;
@@ -785,7 +785,7 @@ secondrule = thirdrule"#;
     let input = r#"<t, v>"#;
 
     let mut l = Lexer::new(input);
-    let mut p = Parser::new(&mut l)?;
+    let mut p = Parser::new(l)?;
 
     let gps = p.parse_genericparm()?;
     check_parser_errors(&p)?;
@@ -815,7 +815,7 @@ secondrule = thirdrule"#;
     let input = r#"<"reboot", "now">"#;
 
     let mut l = Lexer::new(input);
-    let mut p = Parser::new(&mut l)?;
+    let mut p = Parser::new(l)?;
 
     let generic_args = p.parse_genericarg()?;
     check_parser_errors(&p)?;
@@ -845,7 +845,7 @@ secondrule = thirdrule"#;
     let input = r#"tchoice1 / tchoice2"#;
 
     let mut l = Lexer::new(input);
-    let mut p = Parser::new(&mut l)?;
+    let mut p = Parser::new(l)?;
 
     let t = p.parse_type()?;
     check_parser_errors(&p)?;
@@ -875,7 +875,7 @@ secondrule = thirdrule"#;
     let input = r#"mynumber..100.5"#;
 
     let mut l = Lexer::new(input);
-    let mut p = Parser::new(&mut l)?;
+    let mut p = Parser::new(l)?;
 
     let t1 = p.parse_type1()?;
     check_parser_errors(&p)?;
@@ -942,7 +942,7 @@ secondrule = thirdrule"#;
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
       let mut l = Lexer::new(&inputs[idx]);
-      let mut p = Parser::new(&mut l)?;
+      let mut p = Parser::new(l)?;
 
       let t2 = p.parse_type2()?;
       check_parser_errors(&p)?;
@@ -992,7 +992,7 @@ secondrule = thirdrule"#;
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
       let mut l = Lexer::new(&inputs[idx]);
-      let mut p = Parser::new(&mut l)?;
+      let mut p = Parser::new(l)?;
 
       let grpent = p.parse_grpent()?;
       check_parser_errors(&p)?;
@@ -1033,7 +1033,7 @@ secondrule = thirdrule"#;
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
       let mut l = Lexer::new(&inputs[idx]);
-      let mut p = Parser::new(&mut l)?;
+      let mut p = Parser::new(l)?;
 
       let mk = p.parse_memberkey(false)?;
       check_parser_errors(&p)?;
@@ -1059,7 +1059,7 @@ secondrule = thirdrule"#;
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
       let mut l = Lexer::new(&inputs[idx]);
-      let mut p = Parser::new(&mut l)?;
+      let mut p = Parser::new(l)?;
 
       let o = p.parse_occur(false)?;
       check_parser_errors(&p)?;
@@ -1083,4 +1083,9 @@ secondrule = thirdrule"#;
 
     Err(errors.into())
   }
+}
+
+/// Returns a CDDL AST `Result` from a `&str`
+pub fn cddl_from_str<'a>(input: &'a str) -> Result<CDDL<'a>> {
+  Parser::new(Lexer::new(input))?.parse_cddl()
 }

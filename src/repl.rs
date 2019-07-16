@@ -1,6 +1,6 @@
 #![cfg(feature = "std")]
 
-use super::{lexer::Lexer, parser::Parser};
+use super::parser;
 use crossterm::{terminal, ClearType};
 use std::{
   error,
@@ -20,12 +20,7 @@ pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<(), B
     if let Ok(Some(_)) = control(&line) {
       writer.flush()?;
     } else {
-      let mut l = Lexer::new(&line);
-      let mut p = Parser::new(&mut l)?;
-
-      let cddl = p.parse_cddl()?;
-
-      writer.write_all(format!("{:#?}\n", cddl).as_bytes())?;
+      writer.write_all(format!("{:#?}\n", parser::cddl_from_str(&line)?).as_bytes())?;
 
       writer.flush()?;
     }
