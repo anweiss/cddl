@@ -1,7 +1,12 @@
-use super::token;
-use super::token::{RangeValue, Tag, Token, Value};
+use super::token::{self, RangeValue, Tag, Token, Value};
 use lexical_core;
-use std::{convert::TryFrom, fmt, iter::Peekable, num, result, str, str::CharIndices};
+use std::{
+  convert::TryFrom,
+  fmt,
+  iter::Peekable,
+  num, result,
+  str::{self, CharIndices},
+};
 
 #[cfg(feature = "std")]
 use std::error::Error;
@@ -54,6 +59,7 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
+  /// Creates a new `Lexer` from a given `&str` input
   pub fn new(input: &'a str) -> Lexer<'a> {
     Lexer {
       str_input: input.as_bytes(),
@@ -68,6 +74,8 @@ impl<'a> Lexer<'a> {
       .ok_or_else(|| "Unable to advance to the next token".into())
   }
 
+  /// Advances the index of the str iterator over the input and returns a
+  /// `Token`
   pub fn next_token(&mut self) -> Result<Token<'a>> {
     self.skip_whitespace();
 
@@ -139,7 +147,7 @@ impl<'a> Lexer<'a> {
               }
               _ => return Ok(ident),
             }
-          } else if is_digit(ch) {
+          } else if is_digit(ch) || ch == '-' {
             let number = self.read_int_or_float(idx)?;
 
             match self.peek_char() {
@@ -238,8 +246,18 @@ impl<'a> Lexer<'a> {
     }
   }
 
-  fn read_int_or_float(&mut self, idx: usize) -> Result<Token<'a>> {
-    let (_, i) = self.read_number(idx)?;
+  fn read_int_or_float(&mut self, mut idx: usize) -> Result<Token<'a>> {
+    let mut is_signed = false;
+    let mut signed_idx = 0;
+
+    if self.str_input[idx] == b'-' {
+      is_signed = true;
+      signed_idx = idx;
+
+      idx = self.read_char()?.0;
+    }
+
+    let (end_idx, i) = self.read_number(idx)?;
 
     if let Some(&c) = self.peek_char() {
       if c.1 == '.' {
@@ -249,6 +267,12 @@ impl<'a> Lexer<'a> {
           if is_digit(c.1) {
             let (fraction_idx, _) = self.read_number(c.0)?;
 
+            if is_signed {
+              return Ok(Token::FLOATLITERAL(lexical_core::atof64_slice(
+                &self.str_input[signed_idx..=fraction_idx],
+              )));
+            }
+
             return Ok(Token::FLOATLITERAL(lexical_core::atof64_slice(
               &self.str_input[idx..=fraction_idx],
             )));
@@ -257,7 +281,16 @@ impl<'a> Lexer<'a> {
       }
     }
 
-    Ok(Token::INTLITERAL(i))
+    if is_signed {
+      return Ok(Token::INTLITERAL(
+        str::from_utf8(&self.str_input[signed_idx..=end_idx])
+          .map_err(LexerError::UTF8)?
+          .parse()
+          .map_err(LexerError::PARSEINT)?,
+      ));
+    }
+
+    Ok(Token::UINTLITERAL(i))
   }
 
   fn read_number(&mut self, idx: usize) -> Result<(usize, usize)> {
@@ -277,7 +310,7 @@ impl<'a> Lexer<'a> {
       end_index,
       str::from_utf8(&self.str_input[idx..=end_index])
         .map_err(LexerError::UTF8)?
-        .parse::<usize>()
+        .parse()
         .map_err(LexerError::PARSEINT)?,
     ))
   }
@@ -353,11 +386,11 @@ impl<'a> Lexer<'a> {
       let upper = self.read_int_or_float(c.0)?;
 
       match lower {
-        Token::INTLITERAL(li) => {
-          if let Token::INTLITERAL(ui) = upper {
+        Token::UINTLITERAL(li) => {
+          if let Token::UINTLITERAL(ui) = upper {
             return Ok(Token::RANGE((
-              RangeValue::INT(li),
-              RangeValue::INT(ui),
+              RangeValue::UINT(li),
+              RangeValue::UINT(ui),
               is_inclusive,
             )));
           } else {
@@ -428,6 +461,10 @@ myfirstrule = "myotherrule"
 
 mysecondrule = mynumber..100.5
 
+myintrule = -10
+
+mysignedfloat = -10.5
+
 @terminal-color = basecolors / othercolors ; an inline comment
     
 messages = message<"reboot", "now">
@@ -471,6 +508,12 @@ city = (
         )),
         "mynumber..100.5",
       ),
+      (IDENT(("myintrule", None)), "myintrule"),
+      (ASSIGN, "="),
+      (INTLITERAL(-10), "-10"),
+      (IDENT(("mysignedfloat", None)), "mysignedfloat"),
+      (ASSIGN, "="),
+      (FLOATLITERAL(-10.5), "-10.5"),
       (IDENT(("@terminal-color", None)), "@terminal-color"),
       (ASSIGN, "="),
       (IDENT(("basecolors", None)), "basecolors"),
@@ -526,9 +569,9 @@ city = (
       (COLON, ":"),
       (UINT, "uint"),
       (COMMA, ","),
-      (INTLITERAL(1), "1"),
+      (UINTLITERAL(1), "1"),
       (ASTERISK, "*"),
-      (INTLITERAL(3), "3"),
+      (UINTLITERAL(3), "3"),
       (
         IDENT(("tcp-option", Some(&SocketPlug::GROUP))),
         "$$tcp-option",

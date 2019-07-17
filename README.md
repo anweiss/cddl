@@ -54,6 +54,9 @@ Rust is a systems programming language designed around safety and is ideally-sui
 - [x] generics
 - [ ] operator precedence
 - [x] comments
+- [x] numerical int/uint values
+- [ ] numerical hexfloat values
+- [ ] numerical values with exponents
 
 ## Validating JSON
 

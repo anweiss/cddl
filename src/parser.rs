@@ -66,6 +66,7 @@ impl From<&'static str> for ParserError {
 }
 
 impl<'a> Parser<'a> {
+  /// Create a new `Parser` from a given `Lexer`
   pub fn new(l: Lexer<'a>) -> Result<Parser> {
     let mut p = Parser {
       l,
@@ -308,6 +309,7 @@ impl<'a> Parser<'a> {
       // TODO: return Value type from lexer instead of these tokens. Duplicate
       // code
       Token::INTLITERAL(il) => Ok(Type2::Value(Value::INT(*il))),
+      Token::UINTLITERAL(ui) => Ok(Type2::Value(Value::UINT(*ui))),
       Token::FLOATLITERAL(fl) => Ok(Type2::Value(Value::FLOAT(*fl))),
 
       // typename [genericarg]
@@ -493,7 +495,7 @@ impl<'a> Parser<'a> {
     let occur = self.parse_occur(true)?;
 
     if occur.is_some() {
-      while self.cur_token_is(Token::INTLITERAL(0))
+      while self.cur_token_is(Token::UINTLITERAL(0))
         || self.cur_token_is(Token::ASTERISK)
         || self.cur_token_is(Token::OPTIONAL)
       {
@@ -636,14 +638,14 @@ impl<'a> Parser<'a> {
       Token::OPTIONAL => Ok(Some(Occur::Optional)),
       Token::ONEORMORE => Ok(Some(Occur::OneOrMore)),
       Token::ASTERISK => {
-        if let Token::INTLITERAL(u) = &self.peek_token {
+        if let Token::UINTLITERAL(u) = &self.peek_token {
           return Ok(Some(Occur::Exact((None, Some(*u)))));
         }
 
         Ok(Some(Occur::ZeroOrMore))
       }
       _ => {
-        let lower = if let Token::INTLITERAL(li) = &self.cur_token {
+        let lower = if let Token::UINTLITERAL(li) = &self.cur_token {
           Some(*li)
         } else {
           None
@@ -660,7 +662,7 @@ impl<'a> Parser<'a> {
         self.next_token()?;
         self.next_token()?;
 
-        let upper = if let Token::INTLITERAL(ui) = &self.cur_token {
+        let upper = if let Token::UINTLITERAL(ui) = &self.cur_token {
           Some(*ui)
         } else {
           None

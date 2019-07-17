@@ -8,7 +8,8 @@ pub enum Token<'a> {
 
   IDENT((&'a str, Option<&'a SocketPlug>)),
   VALUE(Value<'a>),
-  INTLITERAL(usize),
+  INTLITERAL(isize),
+  UINTLITERAL(usize),
   FLOATLITERAL(f64),
   TAG(Tag<'a>),
 
@@ -186,7 +187,7 @@ impl<'a> fmt::Display for Tag<'a> {
 #[derive(Debug, PartialEq)]
 pub enum RangeValue<'a> {
   IDENT((&'a str, Option<&'a SocketPlug>)),
-  INT(usize),
+  UINT(usize),
   FLOAT(f64),
 }
 
@@ -196,7 +197,7 @@ impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
   fn try_from(t: Token<'a>) -> Result<Self, Self::Error> {
     match t {
       Token::IDENT(ident) => Ok(RangeValue::IDENT(ident)),
-      Token::INTLITERAL(i) => Ok(RangeValue::INT(i)),
+      Token::UINTLITERAL(i) => Ok(RangeValue::UINT(i)),
       Token::FLOATLITERAL(f) => Ok(RangeValue::FLOAT(f)),
       _ => Err("Invalid range token".into()),
     }
@@ -206,7 +207,7 @@ impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
 impl<'a> RangeValue<'a> {
   pub fn as_value(&self) -> Option<Value<'a>> {
     match &self {
-      RangeValue::INT(i) => Some(Value::INT(*i)),
+      RangeValue::UINT(ui) => Some(Value::UINT(*ui)),
       RangeValue::FLOAT(f) => Some(Value::FLOAT(*f)),
       _ => None,
     }
@@ -217,7 +218,7 @@ impl<'a> fmt::Display for RangeValue<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       RangeValue::IDENT(ident) => write!(f, "{}", ident.0),
-      RangeValue::INT(i) => write!(f, "{}", i),
+      RangeValue::UINT(i) => write!(f, "{}", i),
       RangeValue::FLOAT(fl) => write!(f, "{}", fl),
     }
   }
@@ -225,8 +226,9 @@ impl<'a> fmt::Display for RangeValue<'a> {
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Value<'a> {
-  // TODO: verify HEXFLOAT works
-  INT(usize),
+  // TODO: support hexfloat and exponent
+  INT(isize),
+  UINT(usize),
   FLOAT(f64),
   TEXT(&'a str),
 
@@ -272,6 +274,7 @@ impl<'a> fmt::Display for Value<'a> {
     match self {
       Value::TEXT(text) => write!(f, "{}", text),
       Value::INT(i) => write!(f, "{}", i),
+      Value::UINT(ui) => write!(f, "{}", ui),
       Value::FLOAT(float) => write!(f, "{}", float),
       Value::BYTES(b) => write!(f, "{}", b),
     }
@@ -311,6 +314,7 @@ impl<'a> fmt::Display for Token<'a> {
       Token::INT => write!(f, "int"),
       Token::UINT => write!(f, "uint"),
       Token::INTLITERAL(i) => write!(f, "{}", i),
+      Token::UINTLITERAL(ui) => write!(f, "{}", ui),
       Token::FLOATLITERAL(fl) => write!(f, "{}", fl),
       Token::ARROWMAP => write!(f, "=>"),
       Token::SIZE => write!(f, ".size"),
