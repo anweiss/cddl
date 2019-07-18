@@ -1087,7 +1087,12 @@ secondrule = thirdrule"#;
   }
 }
 
-/// Returns a CDDL AST `Result` from a `&str`
+/// Returns a `ast::CDDL` from a `&str`
 pub fn cddl_from_str<'a>(input: &'a str) -> Result<CDDL<'a>> {
   Parser::new(Lexer::new(input))?.parse_cddl()
+}
+
+/// Validates CDDL input against RFC 8610
+pub fn compile<'a>(input: &'a str) -> Result<()> {
+  Parser::new(Lexer::new(input))?.parse_cddl().map(|_| ())
 }

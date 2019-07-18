@@ -65,7 +65,7 @@ impl<'a> From<(&'a str, Option<&'a SocketPlug>)> for Identifier<'a> {
 }
 
 impl<'a> From<&'static str> for Identifier<'a> {
-  fn from(ident: &'static str) -> Self {
+  fn from(_ident: &'static str) -> Self {
     unimplemented!()
   }
 }

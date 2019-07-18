@@ -4,21 +4,26 @@ extern crate cddl;
 
 #[cfg(feature = "std")]
 use cddl::{
-  lexer::Lexer,
-  parser::Parser,
+  parser::ParserError,
   validator::{validate_json_from_str, ValidationError},
 };
 use std::fs;
 
 #[test]
-fn verify_cddl_compiles() {
+fn verify_cddl_compiles() -> Result<(), ParserError> {
   for file in fs::read_dir("tests/cddl/").unwrap() {
     let file = file.unwrap();
+
+    if file.path().extension().unwrap() != "cddl" {
+      continue;
+    }
+
     let cddl_contents = fs::read_to_string(file.path()).unwrap();
-    let mut l = Lexer::new(&cddl_contents);
-    let mut p = Parser::new(&mut l).unwrap();
-    println!("{:#?}", p.parse_cddl().unwrap());
+    println!("file: {:#?}", file.path());
+    println!("{:#?}", cddl::cddl_from_str(&cddl_contents)?);
   }
+
+  Ok(())
 }
 
 #[test]

@@ -4,7 +4,7 @@
 //! CBOR and JSON data structures." As of 2019-06-12, it is published as RFC
 //! 8610 (Proposed Standard) at https://tools.ietf.org/html/rfc8610.
 //!
-//! ```
+//! ```cddl
 //! reputation-object = {
 //!   reputation-context,
 //!   reputon-list
@@ -62,3 +62,6 @@ pub mod parser;
 pub mod repl;
 mod token;
 pub mod validator;
+
+#[doc(inline)]
+pub use self::parser::{cddl_from_str, compile};
