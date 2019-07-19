@@ -1,6 +1,10 @@
 #![cfg(feature = "std")]
 
-use super::{ast::*, parser, token};
+use super::{
+  ast::*,
+  parser::{self, ParserError},
+  token,
+};
 use serde_json::{self, Value};
 use std::{error::Error, f64, fmt, result};
 
@@ -12,9 +16,40 @@ pub type Result = result::Result<(), ValidationError>;
 pub enum ValidationError {
   CDDL(String),
   JSON(JSONError),
-  Compilation(String),
+  Compilation(CompilationError),
   Occurrence(String),
   MultiError(Vec<ValidationError>),
+}
+
+#[derive(Debug)]
+pub enum CompilationError {
+  CDDL(ParserError),
+  JSON(serde_json::error::Error),
+}
+
+impl fmt::Display for CompilationError {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      CompilationError::CDDL(pe) => write!(f, "{}", pe),
+      CompilationError::JSON(je) => write!(f, "{}", je),
+    }
+  }
+}
+
+impl Error for CompilationError {
+  fn description(&self) -> &str {
+    match self {
+      CompilationError::CDDL(pe) => pe.description(),
+      CompilationError::JSON(je) => je.description(),
+    }
+  }
+
+  fn cause(&self) -> Option<&Error> {
+    match self {
+      CompilationError::CDDL(pe) => Some(pe),
+      CompilationError::JSON(je) => Some(je),
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -64,8 +99,10 @@ impl Error for ValidationError {
 
 pub fn validate_json_from_str(cddl_input: &str, json_input: &str) -> Result {
   validate_json(
-    &parser::cddl_from_str(cddl_input).map_err(|e| ValidationError::Compilation(e.to_string()))?,
-    &serde_json::from_str(json_input).map_err(|e| ValidationError::Compilation(e.to_string()))?,
+    &parser::cddl_from_str(cddl_input)
+      .map_err(|e| ValidationError::Compilation(CompilationError::CDDL(e)))?,
+    &serde_json::from_str(json_input)
+      .map_err(|e| ValidationError::Compilation(CompilationError::JSON(e)))?,
   )
 }
 
@@ -73,7 +110,7 @@ fn validate_json(cddl: &CDDL, json: &Value) -> Result {
   for rule in cddl.rules.iter() {
     // First type rule is root
     if let Rule::Type(tr) = rule {
-      return cddl.validate_type_rule(tr, None, json);
+      return cddl.validate_type_rule(tr, None, None, json);
     }
   }
 
@@ -85,17 +122,33 @@ impl<'a> CDDL<'a> {
   fn validate_rule_for_ident(
     &self,
     ident: &Identifier,
+    associated_memberkey: Option<&MemberKey>,
     occur: Option<&Occur>,
     json: &Value,
   ) -> Result {
+    if is_type_json_prelude((ident.0).0) {
+      if let Some(mk) = associated_memberkey {
+        return Err(ValidationError::JSON(JSONError {
+          expected: format!("{} {}", mk, (ident.0).0),
+          actual: json!({ mk.to_string(): json }),
+        }));
+      }
+
+      return Err(ValidationError::JSON(JSONError {
+        expected: (ident.0).0.to_string(),
+        actual: json.clone(),
+      }));
+    }
+
     for rule in self.rules.iter() {
       match rule {
-        Rule::Type(tr) if tr.name == *ident => return self.validate_type_rule(tr, occur, json),
+        Rule::Type(tr) if tr.name == *ident => {
+          return self.validate_type_rule(tr, associated_memberkey, occur, json)
+        }
         Rule::Group(gr) if gr.name == *ident => return self.validate_group_rule(gr, occur, json),
         _ => continue,
       }
     }
-
     Err(ValidationError::CDDL(format!(
       "No rule with name {} defined\n",
       (ident.0).0
@@ -103,8 +156,14 @@ impl<'a> CDDL<'a> {
   }
 
   // TODO: support generic parameter and type choice alternative evaluation
-  fn validate_type_rule(&self, tr: &TypeRule, occur: Option<&Occur>, json: &Value) -> Result {
-    self.validate_type(&tr.value, occur, json)
+  fn validate_type_rule(
+    &self,
+    tr: &TypeRule,
+    associated_memberkey: Option<&MemberKey>,
+    occur: Option<&Occur>,
+    json: &Value,
+  ) -> Result {
+    self.validate_type(&tr.value, associated_memberkey, occur, json)
   }
 
   // TODO: support generic parameter and group choice alternative evaluation
@@ -112,32 +171,48 @@ impl<'a> CDDL<'a> {
     self.validate_group_entry(&gr.entry, occur, json)
   }
 
-  fn validate_type(&self, t: &Type, occur: Option<&Occur>, json: &Value) -> Result {
+  fn validate_type(
+    &self,
+    t: &Type,
+    associated_memberkey: Option<&MemberKey>,
+    occur: Option<&Occur>,
+    json: &Value,
+  ) -> Result {
     let mut validation_errors: Vec<ValidationError> = Vec::new();
 
     // Find the first type choice that validates to true
-    if t
-      .0
-      .iter()
-      .any(|t1| match self.validate_type1(t1, occur, json) {
+    if t.0.iter().any(
+      |t1| match self.validate_type1(t1, associated_memberkey, occur, json) {
         Ok(()) => true,
         Err(e) => {
           validation_errors.push(e);
           false
         }
-      })
-    {
+      },
+    ) {
       return Ok(());
     }
 
     Err(ValidationError::MultiError(validation_errors))
   }
 
-  fn validate_type1(&self, t1: &Type1, occur: Option<&Occur>, json: &Value) -> Result {
-    self.validate_type2(&t1.type2, occur, json)
+  fn validate_type1(
+    &self,
+    t1: &Type1,
+    associated_memberkey: Option<&MemberKey>,
+    occur: Option<&Occur>,
+    json: &Value,
+  ) -> Result {
+    self.validate_type2(&t1.type2, associated_memberkey, occur, json)
   }
 
-  fn validate_type2(&self, t2: &Type2, occur: Option<&Occur>, json: &Value) -> Result {
+  fn validate_type2(
+    &self,
+    t2: &Type2,
+    associated_memberkey: Option<&MemberKey>,
+    occur: Option<&Occur>,
+    json: &Value,
+  ) -> Result {
     match t2 {
       Type2::Value(v) => match json {
         Value::Number(_) => validate_numeric_value(v, json),
@@ -155,12 +230,12 @@ impl<'a> CDDL<'a> {
           if (tn.0).0 == "tstr" || (tn.0).0 == "text" {
             Ok(())
           } else {
-            self.validate_rule_for_ident(tn, occur, json)
+            self.validate_rule_for_ident(tn, associated_memberkey, occur, json)
           }
         }
         Value::Number(_) => validate_numeric_data_type((tn.0).0, json),
-        Value::Object(_) => self.validate_rule_for_ident(tn, occur, json),
-        Value::Array(_) => self.validate_rule_for_ident(tn, occur, json),
+        Value::Object(_) => self.validate_rule_for_ident(tn, associated_memberkey, occur, json),
+        Value::Array(_) => self.validate_rule_for_ident(tn, associated_memberkey, occur, json),
       },
       Type2::Array(g) => match json {
         Value::Array(_) => self.validate_group(g, occur, json),
@@ -222,11 +297,43 @@ impl<'a> CDDL<'a> {
 
           let mut errors: Vec<ValidationError> = Vec::new();
 
-          for v in values.iter() {
-            match self.validate_group_entry(ge, occur, v) {
-              Ok(()) => continue 'geiter,
-              Err(e) => errors.push(e),
+          if let GroupEntry::TypeGroupname(tge) = ge {
+            if self.rules.iter().any(|r| match r {
+              Rule::Type(tr) if tr.name == tge.name => true,
+              _ => false,
+            }) {
+              if values
+                .iter()
+                .all(|v| match self.validate_group_entry(ge, occur, v) {
+                  Ok(()) => true,
+                  Err(e) => {
+                    errors.push(e);
+
+                    false
+                  }
+                })
+              {
+                return Ok(());
+              }
+
+              if !errors.is_empty() {
+                return Err(ValidationError::MultiError(errors));
+              }
             }
+          }
+
+          if values
+            .iter()
+            .any(|v| match self.validate_group_entry(ge, occur, v) {
+              Ok(()) => true,
+              Err(e) => {
+                errors.push(e);
+
+                false
+              }
+            })
+          {
+            continue 'geiter;
           }
 
           if !errors.is_empty() {
@@ -260,14 +367,14 @@ impl<'a> CDDL<'a> {
                 Value::Object(om) => {
                   if !is_type_json_prelude(&vmke.entry_type.to_string()) {
                     if let Some(v) = om.get(*t) {
-                      return self.validate_type(&vmke.entry_type, occur, v);
+                      return self.validate_type(&vmke.entry_type, Some(mk), occur, v);
                     }
 
-                    return self.validate_type(&vmke.entry_type, occur, json);
+                    return self.validate_type(&vmke.entry_type, Some(mk), occur, json);
                   }
 
                   if let Some(v) = om.get(*t) {
-                    self.validate_type(&vmke.entry_type, occur, v)
+                    self.validate_type(&vmke.entry_type, Some(mk), occur, v)
                   } else {
                     Err(ValidationError::JSON(JSONError {
                       expected: ge.to_string(),
@@ -279,7 +386,7 @@ impl<'a> CDDL<'a> {
                 // Matched when in an array and the key for the group entry is
                 // ignored.
                 // CDDL [ city: tstr, ] validates JSON [ "city" ]
-                _ => self.validate_type(&vmke.entry_type, occur, json),
+                _ => self.validate_type(&vmke.entry_type, Some(mk), occur, json),
               },
               // CDDL { * tstr => any } validates { "otherkey1": "anyvalue", "otherkey2": true }
               Type2::Typename((ident, _)) if (ident.0).0 == "tstr" || (ident.0).0 == "text" => {
@@ -294,32 +401,38 @@ impl<'a> CDDL<'a> {
               Value::Object(om) => {
                 if !is_type_json_prelude(&vmke.entry_type.to_string()) {
                   if let Some(v) = om.get((ident.0).0) {
-                    return self.validate_type(&vmke.entry_type, vmke.occur.as_ref(), v);
+                    return self.validate_type(&vmke.entry_type, Some(mk), vmke.occur.as_ref(), v);
                   }
 
-                  return self.validate_type(&vmke.entry_type, vmke.occur.as_ref(), json);
+                  return self.validate_type(&vmke.entry_type, Some(mk), vmke.occur.as_ref(), json);
                 }
 
-                if let Some(v) = om.get((ident.0).0) {
-                  return self.validate_type(&vmke.entry_type, vmke.occur.as_ref(), v);
-                }
-
-                if let Some(o) = occur {
-                  match o {
-                    // If optional occurence, return Ok
-                    Occur::Optional | Occur::ZeroOrMore => return Ok(()),
-                    _ => {
+                match om.get((ident.0).0) {
+                  Some(v) => {
+                    return self.validate_type(&vmke.entry_type, Some(mk), vmke.occur.as_ref(), v)
+                  }
+                  None => match occur {
+                    Some(o) => match o {
+                      Occur::Optional | Occur::OneOrMore => {
+                        return Ok(());
+                      }
+                      _ => {
+                        return Err(ValidationError::JSON(JSONError {
+                          expected: format!("{} {}", mk, vmke.entry_type),
+                          actual: json.clone(),
+                        }))
+                      }
+                    },
+                    None => {
                       return Err(ValidationError::JSON(JSONError {
-                        expected: ge.to_string(),
+                        expected: format!("{} {}", mk, vmke.entry_type),
                         actual: json.clone(),
                       }))
                     }
-                  }
+                  },
                 }
-
-                self.validate_type(&vmke.entry_type, vmke.occur.as_ref(), json)
               }
-              _ => self.validate_type(&vmke.entry_type, vmke.occur.as_ref(), json),
+              _ => self.validate_type(&vmke.entry_type, Some(mk), vmke.occur.as_ref(), json),
             },
             _ => Err(ValidationError::CDDL(
               "CDDL member key must be quoted string or bareword for validating JSON objects"
@@ -332,7 +445,7 @@ impl<'a> CDDL<'a> {
         }
       }
       GroupEntry::TypeGroupname(tge) => {
-        self.validate_rule_for_ident(&tge.name, tge.occur.as_ref(), json)
+        self.validate_rule_for_ident(&tge.name, None, tge.occur.as_ref(), json)
       }
       GroupEntry::InlineGroup((igo, g)) => {
         if igo.is_some() {
@@ -560,19 +673,7 @@ mod tests {
 
     let cddl_input = r#"mynullrule = null"#;
 
-    let mut l = Lexer::new(cddl_input);
-    let mut p = Parser::new(l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
-    let cddl = p
-      .parse_cddl()
-      .map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
-    validate_json(
-      &cddl,
-      &serde_json::from_str(json_input).map_err(|e| ValidationError::Compilation(e.to_string()))?,
-    )?;
-
-    Ok(())
+    validate_json_from_str(cddl_input, json_input)
   }
 
   #[test]
@@ -581,19 +682,7 @@ mod tests {
 
     let cddl_input = r#"myboolrule = true"#;
 
-    let mut l = Lexer::new(cddl_input);
-    let mut p = Parser::new(l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
-    let cddl = p
-      .parse_cddl()
-      .map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
-    validate_json(
-      &cddl,
-      &serde_json::from_str(json_input).map_err(|e| ValidationError::Compilation(e.to_string()))?,
-    )?;
-
-    Ok(())
+    validate_json_from_str(cddl_input, json_input)
   }
 
   #[test]
@@ -602,18 +691,8 @@ mod tests {
 
     let cddl_input = r#"mynumericrule = 3 / 1.5 / 10"#;
 
-    let mut l = Lexer::new(cddl_input);
-    let mut p = Parser::new(l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
-    let cddl = p
-      .parse_cddl()
-      .map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
     for ji in json_inputs.iter() {
-      validate_json(
-        &cddl,
-        &serde_json::from_str(ji).map_err(|e| ValidationError::Compilation(e.to_string()))?,
-      )?;
+      validate_json_from_str(cddl_input, ji)?;
     }
 
     Ok(())
@@ -625,19 +704,7 @@ mod tests {
 
     let cddl_input = r#"mystringrule = "mystring""#;
 
-    let mut l = Lexer::new(cddl_input);
-    let mut p = Parser::new(l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
-    let cddl = p
-      .parse_cddl()
-      .map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
-    validate_json(
-      &cddl,
-      &serde_json::from_str(json_input).map_err(|e| ValidationError::Compilation(e.to_string()))?,
-    )?;
-
-    Ok(())
+    validate_json_from_str(cddl_input, json_input)
   }
 
   #[test]
@@ -653,32 +720,20 @@ mod tests {
 
     let cddl_input = r#"myobject = {
       mykey: tstr,
-      myarray: [* arraytype],
+      myarray: [1* arraytype],
     }
     
     arraytype = {
       myotherkey: tstr,
     }"#;
 
-    let mut l = Lexer::new(cddl_input);
-    let mut p = Parser::new(l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
-    let cddl = p
-      .parse_cddl()
-      .map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
-    validate_json(
-      &cddl,
-      &serde_json::from_str(json_input).map_err(|e| ValidationError::Compilation(e.to_string()))?,
-    )?;
-
-    Ok(())
+    validate_json_from_str(cddl_input, json_input)
   }
 
   #[test]
   fn validate_json_array() -> Result {
     let json_input = r#"[
-      "item1",
+      "washington",
       {
         "longitude": 1234,
         "latitude": 3947
@@ -695,18 +750,6 @@ mod tests {
       latitude       : uint,            ; degrees, scaled by 10^7
     }"#;
 
-    let mut l = Lexer::new(cddl_input);
-    let mut p = Parser::new(l).map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
-    let cddl = p
-      .parse_cddl()
-      .map_err(|e| ValidationError::Compilation(e.to_string()))?;
-
-    validate_json(
-      &cddl,
-      &serde_json::from_str(json_input).map_err(|e| ValidationError::Compilation(e.to_string()))?,
-    )?;
-
-    Ok(())
+    validate_json_from_str(cddl_input, json_input)
   }
 }

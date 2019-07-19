@@ -1093,6 +1093,6 @@ pub fn cddl_from_str<'a>(input: &'a str) -> Result<CDDL<'a>> {
 }
 
 /// Validates CDDL input against RFC 8610
-pub fn compile<'a>(input: &'a str) -> Result<()> {
+pub fn compile(input: &str) -> Result<()> {
   Parser::new(Lexer::new(input))?.parse_cddl().map(|_| ())
 }

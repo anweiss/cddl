@@ -56,6 +56,9 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate core as std;
 
+#[macro_use]
+extern crate serde_json;
+
 pub mod ast;
 pub mod lexer;
 pub mod parser;
