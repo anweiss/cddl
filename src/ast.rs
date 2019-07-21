@@ -65,8 +65,9 @@ impl<'a> From<(&'a str, Option<&'a SocketPlug>)> for Identifier<'a> {
 }
 
 impl<'a> From<&'static str> for Identifier<'a> {
-  fn from(_ident: &'static str) -> Self {
-    unimplemented!()
+  fn from(ident: &'static str) -> Self {
+    // TODO: support socketplug
+    Identifier((ident, None))
   }
 }
 
@@ -347,10 +348,14 @@ pub struct GroupChoice<'a>(pub Vec<GroupEntry<'a>>);
 
 impl<'a> fmt::Display for GroupChoice<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    if self.0.len() == 1 {
+      return write!(f, "{}", self.0[0]);
+    }
+
     let mut group_entries = String::new();
 
     for ge in self.0.iter() {
-      group_entries.push_str(&ge.to_string());
+      group_entries.push_str(&format!("\t{},\n", ge));
     }
 
     write!(f, "{}", group_entries)
@@ -391,17 +396,17 @@ impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if let Some(o) = &self.occur {
       if let Some(mk) = &self.member_key {
-        return writeln!(f, "{} {} {},", o, mk, self.entry_type);
+        return write!(f, "{} {} {}", o, mk, self.entry_type);
       }
 
-      return writeln!(f, "{} {},", o, self.entry_type);
+      return write!(f, "{} {}", o, self.entry_type);
     }
 
     if let Some(mk) = &self.member_key {
-      return writeln!(f, "{} {},", mk, self.entry_type);
+      return write!(f, "{} {}", mk, self.entry_type);
     }
 
-    writeln!(f, "{},", self.entry_type)
+    write!(f, "{}", self.entry_type)
   }
 }
 
@@ -416,25 +421,33 @@ impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if let Some(o) = &self.occur {
       if let Some(ga) = &self.generic_arg {
-        return writeln!(f, "{} {} {},", o, self.name, ga);
+        return write!(f, "{} {} {}", o, self.name, ga);
       }
 
-      return writeln!(f, "{} {},", o, self.name);
+      return write!(f, "{} {}", o, self.name);
     }
 
     if let Some(ga) = &self.generic_arg {
-      return writeln!(f, "{} {},", self.name, ga);
+      return write!(f, "{} {}", self.name, ga);
     }
 
-    writeln!(f, "{},", self.name)
+    write!(f, "{}", self.name)
   }
 }
 
+/// Member key
+/// ```abnf
+/// memberkey = type1 S ["^" S] "=>"
+///           / bareword S ":"
+///           / value S ":"
+/// ```
 #[derive(Debug)]
 pub enum MemberKey<'a> {
-  // if true, cut is present
+  /// Type expression. If second value in tuple is `true`, a cut is present
   Type1(Box<(Type1<'a>, bool)>),
+  /// Bareword string type
   Bareword(Identifier<'a>),
+  /// Value type
   Value(Value<'a>),
 }
 
@@ -454,11 +467,22 @@ impl<'a> fmt::Display for MemberKey<'a> {
   }
 }
 
+/// Occurrence indicator
+/// ```abnf
+/// occur = [uint] "*" [uint]
+///       / "+"
+///       / "?"
+/// ```
 #[derive(Debug)]
 pub enum Occur {
+  /// Occurrence indicator in the form n*m, where n is an optional lower limit
+  /// and m is an optional upper limit
   Exact((Option<usize>, Option<usize>)),
+  /// Occurrence indicator in the form *, allowing zero or more occurrences
   ZeroOrMore,
+  /// Occurrence indicator in the form +, allowing one or more occurrences
   OneOrMore,
+  /// Occurrence indicator in the form ?, allowing an optional occurrence
   Optional,
 }
 
@@ -484,5 +508,50 @@ impl fmt::Display for Occur {
       Occur::OneOrMore => write!(f, "+"),
       Occur::Optional => write!(f, "?"),
     }
+  }
+}
+
+#[cfg(test)]
+#[allow(unused_imports)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn verify_groupentry_output() {
+    assert_eq!(
+      GroupEntry::TypeGroupname(TypeGroupnameEntry {
+        occur: None,
+        name: Identifier::from("entry1"),
+        generic_arg: None,
+      })
+      .to_string(),
+      "entry1".to_string()
+    )
+  }
+
+  #[test]
+  fn verify_group_output() {
+    assert_eq!(
+      Group(vec![GroupChoice(vec![
+        GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+          occur: None,
+          member_key: Some(MemberKey::Bareword("key1".into())),
+          entry_type: Type(vec![Type1 {
+            type2: Type2::Value(Value::TEXT("value1")),
+            operator: None,
+          }]),
+        })),
+        GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+          occur: None,
+          member_key: Some(MemberKey::Bareword("key2".into())),
+          entry_type: Type(vec![Type1 {
+            type2: Type2::Value(Value::TEXT("value2")),
+            operator: None,
+          }]),
+        })),
+      ])])
+      .to_string(),
+      "\tkey1: \"value1\",\n\tkey2: \"value2\",\n".to_string()
+    )
   }
 }
