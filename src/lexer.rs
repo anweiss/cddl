@@ -442,8 +442,10 @@ fn is_digit(ch: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-  use super::super::token::{SocketPlug, Token::*};
-  use super::*;
+  use super::{
+    super::token::{SocketPlug, Token::*},
+    *,
+  };
 
   #[cfg(not(feature = "std"))]
   use super::super::alloc::string::ToString;
@@ -497,7 +499,7 @@ city = (
       (TAG(Tag::DATA((Some(1234), "tstr"))), "#6.1234(tstr)"),
       (IDENT(("myfirstrule", None)), "myfirstrule"),
       (ASSIGN, "="),
-      (VALUE(Value::TEXT("myotherrule")), "myotherrule"),
+      (VALUE(Value::TEXT("myotherrule")), "\"myotherrule\""),
       (IDENT(("mysecondrule", None)), "mysecondrule"),
       (ASSIGN, "="),
       (
@@ -524,9 +526,9 @@ city = (
       (ASSIGN, "="),
       (IDENT(("message", None)), "message"),
       (LANGLEBRACKET, "<"),
-      (VALUE(Value::TEXT("reboot")), "reboot"),
+      (VALUE(Value::TEXT("reboot")), "\"reboot\""),
       (COMMA, ","),
-      (VALUE(Value::TEXT("now")), "now"),
+      (VALUE(Value::TEXT("now")), "\"now\""),
       (RANGLEBRACKET, ">"),
       (IDENT(("address", None)), "address"),
       (ASSIGN, "="),

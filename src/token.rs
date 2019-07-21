@@ -236,6 +236,24 @@ pub enum Value<'a> {
   BYTES(&'a str),
 }
 
+impl<'a> fmt::Display for Value<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      Value::TEXT(text) => write!(f, "\"{}\"", text),
+      Value::INT(i) => write!(f, "{}", i),
+      Value::UINT(ui) => write!(f, "{}", ui),
+      Value::FLOAT(float) => write!(f, "{}", float),
+      Value::BYTES(b) => write!(f, "{}", b),
+    }
+  }
+}
+
+impl<'a> From<&'static str> for Value<'a> {
+  fn from(value: &'static str) -> Self {
+    Value::TEXT(value)
+  }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum SocketPlug {
   TYPE,
@@ -265,18 +283,6 @@ impl<'a> fmt::Display for SocketPlug {
     match self {
       SocketPlug::TYPE => write!(f, "$"),
       SocketPlug::GROUP => write!(f, "$$"),
-    }
-  }
-}
-
-impl<'a> fmt::Display for Value<'a> {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    match self {
-      Value::TEXT(text) => write!(f, "{}", text),
-      Value::INT(i) => write!(f, "{}", i),
-      Value::UINT(ui) => write!(f, "{}", ui),
-      Value::FLOAT(float) => write!(f, "{}", float),
-      Value::BYTES(b) => write!(f, "{}", b),
     }
   }
 }
