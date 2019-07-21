@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<Error>> {
       Ok(())
     }
     Err(e) => {
-      println!("{}{}", Colored::Fg(Color::Red), e);
+      println!("{}failed to validate JSON against CDDL\n\n{}", Colored::Fg(Color::Red), e);
       Ok(())
     }
   }

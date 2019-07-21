@@ -1,0 +1,11 @@
+stages:
+ - template: azure/stages.yml@templates
+   parameters:
+    minrust: 1.36.0
+
+resources:
+  repositories:
+    - repository: templates
+      type: github
+      name: crate-ci/azure-pipelines
+      endpoint: anweiss

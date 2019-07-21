@@ -9,6 +9,7 @@ use std::{
 
 const PROMPT: &[u8] = b">> ";
 
+/// Instantiates a new REPL with a given `io::BufRead` and `io::Write`
 pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<(), Box<error::Error>> {
   loop {
     writer.write_all(PROMPT)?;

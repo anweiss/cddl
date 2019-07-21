@@ -1,6 +1,6 @@
 # cddl-rs
 
-[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl)
+[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Build Status](https://dev.azure.com/anweiss/anweiss/_apis/build/status/cddl-CI?branchName=master)](https://dev.azure.com/anweiss/anweiss/_build/latest?definitionId=1&branchName=master)
 
 > This library is very much experimental and is being developed as a personal learning exercise for getting acquainted with Rust and about parsing in general. It is far from complete. There are likely more performant and stable libraries out there for parsing CDDL. This one should not be used in production in any form or fashion.
 
