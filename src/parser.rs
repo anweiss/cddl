@@ -87,6 +87,7 @@ impl<'a> Parser<'a> {
     Ok(())
   }
 
+  /// Parses into a `CDDL` AST
   pub fn parse_cddl(&mut self) -> Result<CDDL<'a>> {
     let mut c = CDDL::default();
 
@@ -702,11 +703,23 @@ impl<'a> Parser<'a> {
   }
 }
 
+/// Returns a `ast::CDDL` from a `&str`
+pub fn cddl_from_str<'a>(input: &'a str) -> Result<CDDL<'a>> {
+  Parser::new(Lexer::new(input))?.parse_cddl()
+}
+
+/// Validates CDDL input against RFC 8610
+pub fn compile_from_str(input: &str) -> Result<()> {
+  Parser::new(Lexer::new(input))?.parse_cddl().map(|_| ())
+}
+
 #[cfg(test)]
 #[allow(unused_imports)]
 mod tests {
-  use super::super::{ast, lexer::Lexer, token::SocketPlug, token::Tag};
-  use super::*;
+  use super::{
+    super::{ast, lexer::Lexer, token::SocketPlug, token::Tag},
+    *,
+  };
 
   #[test]
   fn verify_rule() -> Result<()> {
@@ -714,7 +727,7 @@ mod tests {
 
 secondrule = thirdrule"#;
 
-    let mut l = Lexer::new(input);
+    let l = Lexer::new(input);
     let mut p = Parser::new(l)?;
 
     let cddl = p.parse_cddl()?;
@@ -786,7 +799,7 @@ secondrule = thirdrule"#;
   fn verify_genericparm() -> Result<()> {
     let input = r#"<t, v>"#;
 
-    let mut l = Lexer::new(input);
+    let l = Lexer::new(input);
     let mut p = Parser::new(l)?;
 
     let gps = p.parse_genericparm()?;
@@ -816,7 +829,7 @@ secondrule = thirdrule"#;
   fn verify_genericarg() -> Result<()> {
     let input = r#"<"reboot", "now">"#;
 
-    let mut l = Lexer::new(input);
+    let l = Lexer::new(input);
     let mut p = Parser::new(l)?;
 
     let generic_args = p.parse_genericarg()?;
@@ -832,7 +845,7 @@ secondrule = thirdrule"#;
       );
     }
 
-    let expected_generic_args = ["reboot", "now"];
+    let expected_generic_args = ["\"reboot\"", "\"now\""];
 
     for (idx, expected_generic_arg) in expected_generic_args.iter().enumerate() {
       let ga = &generic_args.0[idx];
@@ -846,7 +859,7 @@ secondrule = thirdrule"#;
   fn verify_type() -> Result<()> {
     let input = r#"tchoice1 / tchoice2"#;
 
-    let mut l = Lexer::new(input);
+    let l = Lexer::new(input);
     let mut p = Parser::new(l)?;
 
     let t = p.parse_type()?;
@@ -876,7 +889,7 @@ secondrule = thirdrule"#;
   fn verify_type1() -> Result<()> {
     let input = r#"mynumber..100.5"#;
 
-    let mut l = Lexer::new(input);
+    let l = Lexer::new(input);
     let mut p = Parser::new(l)?;
 
     let t1 = p.parse_type1()?;
@@ -943,7 +956,7 @@ secondrule = thirdrule"#;
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let mut l = Lexer::new(&inputs[idx]);
+      let l = Lexer::new(&inputs[idx]);
       let mut p = Parser::new(l)?;
 
       let t2 = p.parse_type2()?;
@@ -993,7 +1006,7 @@ secondrule = thirdrule"#;
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let mut l = Lexer::new(&inputs[idx]);
+      let l = Lexer::new(&inputs[idx]);
       let mut p = Parser::new(l)?;
 
       let grpent = p.parse_grpent()?;
@@ -1034,7 +1047,7 @@ secondrule = thirdrule"#;
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let mut l = Lexer::new(&inputs[idx]);
+      let l = Lexer::new(&inputs[idx]);
       let mut p = Parser::new(l)?;
 
       let mk = p.parse_memberkey(false)?;
@@ -1060,7 +1073,7 @@ secondrule = thirdrule"#;
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let mut l = Lexer::new(&inputs[idx]);
+      let l = Lexer::new(&inputs[idx]);
       let mut p = Parser::new(l)?;
 
       let o = p.parse_occur(false)?;
@@ -1085,14 +1098,4 @@ secondrule = thirdrule"#;
 
     Err(errors.into())
   }
-}
-
-/// Returns a `ast::CDDL` from a `&str`
-pub fn cddl_from_str<'a>(input: &'a str) -> Result<CDDL<'a>> {
-  Parser::new(Lexer::new(input))?.parse_cddl()
-}
-
-/// Validates CDDL input against RFC 8610
-pub fn compile(input: &str) -> Result<()> {
-  Parser::new(Lexer::new(input))?.parse_cddl().map(|_| ())
 }
