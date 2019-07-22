@@ -105,7 +105,7 @@ impl<'a> Parser<'a> {
 
     let ident = match &self.cur_token {
       Token::IDENT(i) => *i,
-      _ => return Err(format!("expected IDENT. Got {:#?}", self.cur_token).into()),
+      _ => return Err(format!("expected IDENT. Got {}", self.cur_token).into()),
     };
 
     let gp = if self.peek_token_is(&Token::LANGLEBRACKET) {
@@ -709,7 +709,7 @@ pub fn cddl_from_str<'a>(input: &'a str) -> Result<CDDL<'a>> {
 }
 
 /// Validates CDDL input against RFC 8610
-pub fn compile_from_str(input: &str) -> Result<()> {
+pub fn compile_cddl_from_str(input: &str) -> Result<()> {
   Parser::new(Lexer::new(input))?.parse_cddl().map(|_| ())
 }
 

@@ -3,7 +3,7 @@ use std::{convert::TryFrom, fmt};
 
 #[derive(PartialEq, Debug)]
 pub enum Token<'a> {
-  ILLEGAL,
+  ILLEGAL(&'a str),
   EOF,
 
   IDENT((&'a str, Option<&'a SocketPlug>)),
@@ -297,7 +297,7 @@ impl<'a> fmt::Display for Token<'a> {
 
         write!(f, "{}", ident)
       }
-      Token::ILLEGAL => write!(f, ""),
+      Token::ILLEGAL(s) => write!(f, "ILLEGAL({})", s),
       Token::ASSIGN => write!(f, "="),
       Token::ONEORMORE => write!(f, "+"),
       Token::OPTIONAL => write!(f, "?"),
@@ -372,7 +372,7 @@ pub fn lookup_control(ident: &str) -> Token {
     "eq" => Token::EQ,
     "ne" => Token::NE,
     "default" => Token::DEFAULT,
-    _ => Token::ILLEGAL,
+    _ => Token::ILLEGAL(ident),
   }
 }
 

@@ -124,10 +124,12 @@ impl<'a> Lexer<'a> {
           }
           _ => Ok(Token::TCHOICE),
         },
-        (_, '#') => match self.peek_char() {
+        (idx, '#') => match self.peek_char() {
           Some(&c) if is_digit(c.1) => Ok(Token::TAG(self.read_tag()?)),
           None => Ok(Token::TAG(Tag::ANY)),
-          _ => Ok(Token::ILLEGAL),
+          _ => Ok(Token::ILLEGAL(
+            str::from_utf8(&self.str_input[idx..=idx + 1]).map_err(LexerError::UTF8)?,
+          )),
         },
         (_, '.') => {
           let (idx, _) = self.read_char()?;
@@ -161,7 +163,9 @@ impl<'a> Lexer<'a> {
             }
           }
 
-          Ok(Token::ILLEGAL)
+          Ok(Token::ILLEGAL(
+            str::from_utf8(&self.str_input[idx..=idx]).map_err(LexerError::UTF8)?,
+          ))
         }
       }
     } else {
