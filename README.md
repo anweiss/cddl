@@ -1,6 +1,6 @@
 # cddl-rs
 
-[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Build Status](https://dev.azure.com/anweiss/anweiss/_apis/build/status/cddl-CI?branchName=master)](https://dev.azure.com/anweiss/anweiss/_build/latest?definitionId=1&branchName=master)
+[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Build Status](https://dev.azure.com/anweiss/anweiss/_apis/build/status/cddl-CI?branchName=master)](https://dev.azure.com/anweiss/anweiss/_build/latest?definitionId=1&branchName=master) [![codecov](https://codecov.io/gh/anweiss/cddl/branch/master/graph/badge.svg)](https://codecov.io/gh/anweiss/cddl)
 
 > This library is very much experimental and is being developed as a personal learning exercise for getting acquainted with Rust and about parsing in general. It is far from complete. There are likely more performant and stable libraries out there for parsing CDDL. This one should not be used in production in any form or fashion.
 
@@ -128,3 +128,9 @@ cddl = { version = "<version>", default-features = false }
 ```
 
 JSON validation is dependent on the heap allocated [`Value`](https://docs.rs/serde_json/1.0.40/serde_json/value/index.html) type, but since this type isn't supported in a `no_std` context per https://japaric.github.io/serde-json-core/serde_json_core/index.html#non-features, the JSON validation module does not support `no_std`.
+
+## Dependency graph
+
+Below is a graph of the dependencies used by this project:
+
+![cddl dependencies](dep-graph.png)
