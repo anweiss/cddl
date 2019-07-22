@@ -18,5 +18,13 @@ clap = "2.33"
 default = ["std"]
 std = ["serde_json"]
 
+[[bin]]
+name = "cddl"
+required-features = ["std"]
+
+[[bin]]
+name = "repl"
+required-features = ["std"]
+
 [badges]
 azure-devops = { project = "anweiss/cddl", pipeline = "cddl-CI", build = "1" }
