@@ -28,3 +28,4 @@ required-features = ["std"]
 
 [badges]
 azure-devops = { project = "anweiss/cddl", pipeline = "cddl-CI", build = "1" }
+codecov = { repository = "anweiss/cddl", branch = "master", service = "github" }
