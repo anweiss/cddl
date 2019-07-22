@@ -4,7 +4,7 @@ extern crate cddl;
 
 #[cfg(feature = "std")]
 use cddl::{
-  parser::ParserError,
+  parser::{self, ParserError},
   validator::{validate_json_from_str, ValidationError},
 };
 use std::fs;
@@ -18,9 +18,11 @@ fn verify_cddl_compiles() -> Result<(), ParserError> {
       continue;
     }
 
-    let cddl_contents = fs::read_to_string(file.path()).unwrap();
     println!("file: {:#?}", file.path());
-    println!("{:#?}", cddl::cddl_from_str(&cddl_contents)?);
+    println!(
+      "{:#?}",
+      parser::cddl_from_str(&fs::read_to_string(file.path()).unwrap())?
+    );
   }
 
   Ok(())
@@ -28,8 +30,8 @@ fn verify_cddl_compiles() -> Result<(), ParserError> {
 
 #[test]
 fn verify_json_validation() -> Result<(), ValidationError> {
-  let reputon_cddl = fs::read_to_string("tests/cddl/reputon.cddl").unwrap();
-  let reputon_json = fs::read_to_string("tests/json/reputon.json").unwrap();
-
-  validate_json_from_str(&reputon_cddl, &reputon_json)
+  validate_json_from_str(
+    &fs::read_to_string("tests/cddl/reputon.cddl").unwrap(),
+    &fs::read_to_string("tests/json/reputon.json").unwrap(),
+  )
 }

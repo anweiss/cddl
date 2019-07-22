@@ -2,15 +2,12 @@
 
 use super::parser;
 use crossterm::{terminal, ClearType};
-use std::{
-  error,
-  io::{BufRead, Write},
-};
+use std::io::{BufRead, Result, Write};
 
 const PROMPT: &[u8] = b">> ";
 
 /// Instantiates a new REPL with a given `io::BufRead` and `io::Write`
-pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<(), Box<error::Error>> {
+pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<()> {
   loop {
     writer.write_all(PROMPT)?;
     writer.flush()?;
@@ -21,14 +18,21 @@ pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<(), B
     if let Ok(Some(_)) = control(&line) {
       writer.flush()?;
     } else {
-      writer.write_all(format!("{:#?}\n", parser::cddl_from_str(&line)?).as_bytes())?;
+      writer.write_all(
+        format!(
+          "{:#?}\n",
+          parser::cddl_from_str(&line)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+        )
+        .as_bytes(),
+      )?;
 
       writer.flush()?;
     }
   }
 }
 
-fn control(line: &str) -> Result<Option<()>, Box<error::Error>> {
+fn control(line: &str) -> Result<Option<()>> {
   match line {
     "clear\n" => {
       let terminal = terminal();
