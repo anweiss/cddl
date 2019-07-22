@@ -3,7 +3,7 @@ name = "cddl"
 description = "Parser for the Concise data definition language (CDDL)"
 repository = "https://github.com/anweiss/cddl"
 license = "MIT"
-version = "0.3.2"
+version = "0.3.3"
 authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
 edition = "2018"
 
