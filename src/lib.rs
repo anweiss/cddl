@@ -70,7 +70,12 @@ pub mod repl;
 /// CDDL tokens for lexing
 pub mod token;
 /// JSON validation
+#[cfg(feature = "std")]
 pub mod validator;
 
 #[doc(inline)]
-pub use self::{parser::compile_cddl_from_str, validator::validate_json_from_str};
+pub use self::parser::compile_cddl_from_str;
+
+#[doc(inline)]
+#[cfg(feature = "std")]
+pub use self::validator::validate_json_from_str;
