@@ -178,6 +178,9 @@ extern crate core as std;
 #[cfg(feature = "std")]
 extern crate serde_json;
 
+#[cfg(feature = "std")]
+extern crate serde_cbor;
+
 /// Abstract syntax tree representing a CDDL definition
 pub mod ast;
 /// Lexer for CDDL
@@ -188,13 +191,13 @@ pub mod parser;
 pub mod repl;
 /// CDDL tokens for lexing
 pub mod token;
-/// JSON validation
+/// Validation against various data structures (e.g. JSON, CBOR)
 #[cfg(feature = "std")]
-pub mod validator;
+pub mod validation;
 
 #[doc(inline)]
 pub use self::parser::compile_cddl_from_str;
 
 #[doc(inline)]
 #[cfg(feature = "std")]
-pub use self::validator::validate_json_from_str;
+pub use self::validation::json::{self as json_validator, validate_json_from_str};

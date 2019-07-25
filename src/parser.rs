@@ -40,11 +40,7 @@ impl fmt::Display for ParserError {
 
 #[cfg(feature = "std")]
 impl Error for ParserError {
-  fn description(&self) -> &str {
-    "ParserError"
-  }
-
-  fn cause(&self) -> Option<&Error> {
+  fn source(&self) -> Option<&(dyn Error + 'static)> {
     if let ParserError::LEXER(le) = self {
       return Some(le);
     }
