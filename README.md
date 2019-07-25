@@ -133,4 +133,4 @@ JSON validation is dependent on the heap allocated [`Value`](https://docs.rs/ser
 
 Below is a graph of the dependencies used by this project:
 
-![cddl dependencies](dep-graph.png)
+![cddl dependencies](https://github.com/anweiss/cddl/raw/master/dep-graph.png)
