@@ -22,12 +22,12 @@ pub enum LexerError {
 
 #[cfg(feature = "std")]
 impl Error for LexerError {
-  fn description(&self) -> &str {
-    "LexerError"
-  }
-
-  fn cause(&self) -> Option<&Error> {
-    None
+  fn source(&self) -> Option<&(dyn Error + 'static)> {
+    match self {
+      LexerError::UTF8(utf8e) => Some(utf8e),
+      LexerError::PARSEINT(pie) => Some(pie),
+      _ => None,
+    }
   }
 }
 
@@ -53,6 +53,7 @@ impl From<str::Utf8Error> for LexerError {
   }
 }
 
+/// Lexer which holds a byte slice and iterator over the byte slice
 pub struct Lexer<'a> {
   str_input: &'a [u8],
   input: Peekable<CharIndices<'a>>,

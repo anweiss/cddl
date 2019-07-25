@@ -260,21 +260,23 @@ pub enum SocketPlug {
   GROUP,
 }
 
-impl SocketPlug {
-  pub fn from_str(s: &str) -> Option<&Self> {
+impl std::str::FromStr for SocketPlug {
+  type Err = &'static str;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
     if let Some(c) = s.chars().next() {
       if c == '$' {
         if let Some(c) = s.chars().nth(1) {
           if c == '$' {
-            return Some(&SocketPlug::GROUP);
+            return Ok(SocketPlug::GROUP);
           }
         }
 
-        return Some(&SocketPlug::TYPE);
+        return Ok(SocketPlug::TYPE);
       }
     }
 
-    None
+    Err("Malformed socket plug string")
   }
 }
 

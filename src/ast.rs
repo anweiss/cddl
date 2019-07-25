@@ -8,12 +8,20 @@ use alloc::{
   vec::Vec,
 };
 
+/// Describes the literal formatting of an AST node
 pub trait Node {
+  /// Returns an optional formatted token literal string of the AST node
   fn token_literal(&self) -> Option<String>;
 }
 
+/// CDDL AST
+///
+/// ```abnf
+/// cddl = S 1*(rule S)
+/// ```
 #[derive(Default, Debug)]
 pub struct CDDL<'a> {
+  /// Zero or more production rules
   pub rules: Vec<Rule<'a>>,
 }
 
@@ -39,6 +47,14 @@ impl<'a> Node for CDDL<'a> {
   }
 }
 
+/// Identifier for a type name, group name or bareword, with an optional socket
+///
+/// ```abnf
+/// id = EALPHA *(*("-" / ".") (EALPHA / DIGIT))
+/// ALPHA = %x41-5A / %x61-7A
+/// EALPHA = ALPHA / "@" / "_" / "$"
+/// DIGIT = %x30-39
+/// ```
 #[derive(Debug, PartialEq)]
 pub struct Identifier<'a>(pub (&'a str, Option<&'a SocketPlug>));
 
@@ -71,9 +87,17 @@ impl<'a> From<&'static str> for Identifier<'a> {
   }
 }
 
+/// Type or group expression
+///
+/// ```abnf
+/// rule = typename [genericparm] S assignt S type
+///     / groupname [genericparm] S assigng S grpent
+/// ```
 #[derive(Debug)]
 pub enum Rule<'a> {
+  /// Type expression
   Type(TypeRule<'a>),
+  /// Group expression
   Group(Box<GroupRule<'a>>),
 }
 
@@ -95,11 +119,20 @@ impl<'a> Node for Rule<'a> {
   }
 }
 
+/// Type expression
+///
+/// ```abnf
+/// typename [genericparm] S assignt S type
+/// ```
 #[derive(Debug)]
 pub struct TypeRule<'a> {
+  /// Type name identifier
   pub name: Identifier<'a>,
+  /// Optional generic parameters
   pub generic_param: Option<GenericParm<'a>>,
+  /// Extends an existing type choice
   pub is_type_choice_alternate: bool,
+  /// Type value
   pub value: Type<'a>,
 }
 
@@ -129,11 +162,20 @@ impl<'a> Node for TypeRule<'a> {
   }
 }
 
+/// Group expression
+///
+/// ```abnf
+/// groupname [genericparm] S assigng S grpent
+/// ```
 #[derive(Debug)]
 pub struct GroupRule<'a> {
+  /// Group name identifier
   pub name: Identifier<'a>,
+  /// Optional generic parameters
   pub generic_param: Option<GenericParm<'a>>,
+  /// Extends an existing group choice
   pub is_group_choice_alternate: bool,
+  /// Group entry
   pub entry: GroupEntry<'a>,
 }
 
@@ -163,6 +205,11 @@ impl<'a> Node for GroupRule<'a> {
   }
 }
 
+/// Generic parameters
+///
+/// ```abnf
+/// genericparm =  "<" S id S *("," S id S ) ">"
+/// ```
 #[derive(Default, Debug)]
 pub struct GenericParm<'a>(pub Vec<Identifier<'a>>);
 
@@ -183,6 +230,11 @@ impl<'a> fmt::Display for GenericParm<'a> {
   }
 }
 
+/// Generic arguments
+///
+/// ```abnf
+/// genericarg = "<" S type1 S *("," S type1 S )  ">"
+/// ```
 #[derive(Debug)]
 pub struct GenericArg<'a>(pub Vec<Type1<'a>>);
 
@@ -203,6 +255,11 @@ impl<'a> fmt::Display for GenericArg<'a> {
   }
 }
 
+/// Type choices
+///
+/// ```abnf
+/// type = type1 *(S "/" S  type1)
+/// ```
 #[derive(Debug)]
 pub struct Type<'a>(pub Vec<Type1<'a>>);
 
@@ -223,9 +280,16 @@ impl<'a> fmt::Display for Type<'a> {
   }
 }
 
+/// Type with optional range or control operator
+///
+/// ```abnf
+/// type1 = type2 [S (rangeop / ctlop) S type2]
+/// ```
 #[derive(Debug)]
 pub struct Type1<'a> {
+  /// Type
   pub type2: Type2<'a>,
+  /// Range or control operator over a second type
   pub operator: Option<(RangeCtlOp, Type2<'a>)>,
 }
 
@@ -244,9 +308,17 @@ impl<'a> fmt::Display for Type1<'a> {
   }
 }
 
+/// Range or control operator
+///
+/// ```abnf
+/// rangeop = "..." / ".."
+/// ctlop = "." id
+/// ```
 #[derive(Debug, PartialEq)]
 pub enum RangeCtlOp {
+  /// Range operator where value is `true` if inclusive
   RangeOp(bool),
+  /// Control operator where value is the identifier of the operator
   CtlOp(&'static str),
 }
 
@@ -260,18 +332,44 @@ impl<'a> fmt::Display for RangeCtlOp {
   }
 }
 
+/// Type
+///
+/// ```abnf
+/// type2 = value
+///     / typename [genericarg]
+///     / "(" S type S ")"
+///     / "{" S group S "}"
+///     / "[" S group S "]"
+///     / "~" S typename [genericarg]
+///     / "&" S "(" S group S ")"
+///     / "&" S groupname [genericarg]
+///     / "#" "6" ["." uint] "(" S type S ")"
+///     / "#" DIGIT ["." uint]                ; major/ai
+///     / "#"                                 ; any
+/// ```
 #[derive(Debug)]
 pub enum Type2<'a> {
+  /// Single value
   Value(Value<'a>),
+  /// Type name identifier with optional generic arguments
   Typename((Identifier<'a>, Option<GenericArg<'a>>)),
+  /// Parenthesized type expression (for operator precedence)
   ParenthesizedType(Type<'a>),
+  /// Map expression
   Map(Group<'a>),
+  /// Array expression
   Array(Group<'a>),
+  /// Unwrapped group
   Unwrap((Identifier<'a>, Option<GenericArg<'a>>)),
+  /// Enumeration expression over an inline group
   ChoiceFromInlineGroup(Group<'a>),
+  /// Enumeration expression over previously defined group
   ChoiceFromGroup((Identifier<'a>, Option<GenericArg<'a>>)),
+  /// Tagged data item
   TaggedData((Option<usize>, &'a str)),
+  /// Data item of a major type with optional data constraint
   TaggedDataMajorType((u8, Option<usize>)),
+  /// Any data item
   Any,
 }
 
@@ -323,6 +421,11 @@ impl<'a> fmt::Display for Type2<'a> {
   }
 }
 
+/// Group choices
+///
+/// ```abnf
+/// group = grpchoice * (S "//" S grpchoice)
+/// ```
 #[derive(Debug)]
 pub struct Group<'a>(pub Vec<GroupChoice<'a>>);
 
@@ -343,6 +446,11 @@ impl<'a> fmt::Display for Group<'a> {
   }
 }
 
+/// Group entries
+///
+/// ```abnf
+/// grpchoice = *(grpent optcom)
+/// ```
 #[derive(Debug)]
 pub struct GroupChoice<'a>(pub Vec<GroupEntry<'a>>);
 
@@ -362,10 +470,20 @@ impl<'a> fmt::Display for GroupChoice<'a> {
   }
 }
 
+/// Group entry
+///
+/// ```abnf
+/// grpent = [occur S] [memberkey S] type
+///       / [occur S] groupname [genericarg]  ; preempted by above
+///       / [occur S] "(" S group S ")"
+/// ```
 #[derive(Debug)]
 pub enum GroupEntry<'a> {
+  /// Value group entry type
   ValueMemberKey(Box<ValueMemberKeyEntry<'a>>),
+  /// Group entry from a named group or type
   TypeGroupname(TypeGroupnameEntry<'a>),
+  /// Parenthesized group with optional occurrence indicator
   InlineGroup((Option<Occur>, Group<'a>)),
 }
 
@@ -385,10 +503,19 @@ impl<'a> fmt::Display for GroupEntry<'a> {
   }
 }
 
+/// Value group entry type with optional occurrence indicator and optional
+/// member key
+///
+/// ```abnf
+/// [occur S] [memberkey S] type
+/// ```
 #[derive(Debug)]
 pub struct ValueMemberKeyEntry<'a> {
+  /// Optional occurrence indicator
   pub occur: Option<Occur>,
+  /// Optional member key
   pub member_key: Option<MemberKey<'a>>,
+  /// Entry type
   pub entry_type: Type<'a>,
 }
 
@@ -410,10 +537,14 @@ impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
   }
 }
 
+/// Group entry from a named type or group
 #[derive(Debug)]
 pub struct TypeGroupnameEntry<'a> {
+  /// Optional occurrence indicator
   pub occur: Option<Occur>,
+  /// Type or group name identifier
   pub name: Identifier<'a>,
+  /// Optional generic arguments
   pub generic_arg: Option<GenericArg<'a>>,
 }
 
