@@ -149,9 +149,9 @@
 //!
 //! *Note: While JSON itself does not distinguish between integers and floating-point numbers, this library does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON.
 //!
-//! ### Comparing with JSON schema
-//!
-//! Both CDDL and JSON schema can be used to define JSON data structures. However, the approaches taken to develop these are vastly different. One can refer to the IETF mail archive for more in-depth discussion on the differences between the two.
+//! ### Comparing with JSON schema and JSON schema language
+
+//! [CDDL](https://www.rfc-editor.org/rfc/rfc8610.html), [JSON schema](https://json-schema.org/) and [JSON schema language](https://tools.ietf.org/html/draft-json-schema-language-02) can all be used to define JSON data structures. However, the approaches taken to develop each of these are vastly different. A good place to find past discussions on the differences between thse formats is the [IETF mail archive](https://mailarchive.ietf.org/arch/), specifically in the JSON and CBOR lists. The purpose of this library is not to argue for the use of CDDL over any one of these formats, but simply to provide an example implementation in Rust.
 //!
 //! ## `no_std` support
 //!

@@ -140,8 +140,6 @@ pub trait Validator<T> {
 
   fn validate_array_occurrence(&self, occur: &Occur, group: &str, values: &[T]) -> Result;
 
-  fn expect_null(&self, ident: &str) -> Result;
-
   fn expect_bool(&self, ident: &str, value: &T) -> Result;
 
   fn validate_numeric_value(&self, v: &token::Value, value: &T) -> Result;
@@ -153,6 +151,4 @@ pub trait Validator<T> {
     ident: &str,
     value: &T,
   ) -> Result;
-
-  fn validate_string_value(&self, v: &token::Value, s: &str) -> Result;
 }

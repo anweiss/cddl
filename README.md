@@ -8,13 +8,14 @@ A Rust implementation of the Concise data definition language (CDDL). CDDL is an
 
 This library includes a handwritten parser and lexer for CDDL and is heavily inspired by Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec.
 
-I'm currently only focused on using CDDL as a means for validating JSON data, and as such, work is being done to build a JSON validation component into the library and to distribute a CLI binary. An extremely basic REPL is included as well, with plans to compile for use in the browser with WebAssembly. Furthermore, there are a number of improvements to error handling and validation that need to be made.
+This library supports validation of both CBOR and JSON data structures. An extremely basic REPL is included as well, with plans to compile it for use in the browser with WebAssembly.
 
 ## Goals
 
 - Parse CDDL documents into an AST
 - Verify conformance of CDDL documents against RFC 8610
-- Validate JSON documents using CDDL (only interested in the JSON subset of the CBOR generic data model for now)
+- Validate CBOR data structures
+- Validate JSON documents
 - Basic REPL
 - Generate dummy JSON from conformant CDDL
 - Close to zero-copy as possible
@@ -23,7 +24,6 @@ I'm currently only focused on using CDDL as a means for validating JSON data, an
 
 ## Non-goals
 
-- Validate CBOR data structures (might eventually support this given it's one of the primary goals for CDDL, but not focused on this at the moment)
 - Performance (if this library gains enough traction, it may be prudent to explore using a parser-combinator framework like [nom](https://github.com/Geal/nom))
 - Support CBOR diagnostic notation
 - I-JSON compatibility
@@ -60,7 +60,7 @@ Rust is a systems programming language designed around safety and is ideally-sui
 
 ## Validating JSON
 
-> Incomplete
+> Incomplete. Under development
 
 This library uses the [Serde](https://serde.rs/) framework, and more specifically, the [serde_json](https://crates.io/crates/serde_json) crate, for parsing and validating JSON. Serde was chosen due to its maturity in the ecosystem and its support for serializing and deserializing CBOR via the [serde_cbor](https://crates.io/crates/serde_cbor) crate.
 
@@ -114,9 +114,13 @@ All CDDL control operators can be used for validating JSON, with the exception o
 
 *Note: While JSON itself does not distinguish between integers and floating-point numbers, this library does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON.
 
-### Comparing with JSON schema
+### Comparing with JSON schema and JSON schema language
 
-Both CDDL and JSON schema can be used to define JSON data structures. However, the approaches taken to develop these are vastly different. One can refer to the IETF mail archive for more in-depth discussion on the differences between the two.
+[CDDL](https://www.rfc-editor.org/rfc/rfc8610.html), [JSON schema](https://json-schema.org/) and [JSON schema language](https://tools.ietf.org/html/draft-json-schema-language-02) can all be used to define JSON data structures. However, the approaches taken to develop each of these are vastly different. A good place to find past discussions on the differences between thse formats is the [IETF mail archive](https://mailarchive.ietf.org/arch/), specifically in the JSON and CBOR lists. The purpose of this library is not to argue for the use of CDDL over any one of these formats, but simply to provide an example implementation in Rust.
+
+## Validating CBOR
+
+> Incomplete. Under development
 
 ## `no_std` support
 
@@ -131,6 +135,6 @@ JSON validation is dependent on the heap allocated [`Value`](https://docs.rs/ser
 
 ## Dependency graph
 
-Below is a graph of the dependencies used by this project:
+Below is a graph of the dependencies used by this project. It was generated using [`cargo-deps`](https://github.com/m-cat/cargo-deps).
 
 ![cddl dependencies](https://github.com/anweiss/cddl/raw/master/dep-graph.png)

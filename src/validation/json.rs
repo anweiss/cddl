@@ -6,6 +6,7 @@ use crate::{
 use serde_json::{self, Value};
 use std::{f64, fmt};
 
+/// Error type when validating JSON
 #[derive(Debug)]
 pub struct JSONError {
   expected_memberkey: Option<String>,
@@ -91,6 +92,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
         _ => continue,
       }
     }
+
     Err(Error::Syntax(format!(
       "No rule with name {} defined\n",
       (ident.0).0
@@ -178,7 +180,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     match t2 {
       Type2::Value(v) => match value {
         Value::Number(_) => self.validate_numeric_value(v, value),
-        Value::String(s) => self.validate_string_value(v, s),
+        Value::String(s) => validate_string_value(v, s),
         _ => Err(
           JSONError {
             expected_memberkey,
@@ -191,7 +193,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
       },
       // TODO: evaluate genericarg
       Type2::Typename((tn, _)) => match value {
-        Value::Null => self.expect_null((tn.0).0),
+        Value::Null => expect_null((tn.0).0),
         Value::Bool(_) => self.expect_bool((tn.0).0, value),
         Value::String(_) => {
           if (tn.0).0 == "tstr" || (tn.0).0 == "text" {
@@ -594,21 +596,6 @@ impl<'a> Validator<Value> for CDDL<'a> {
     }
   }
 
-  fn expect_null(&self, ident: &str) -> Result {
-    match ident {
-      "null" | "nil" => Ok(()),
-      _ => Err(
-        JSONError {
-          expected_memberkey: None,
-          expected_value: ident.to_string(),
-          actual_memberkey: None,
-          actual_value: Value::Null,
-        }
-        .into(),
-      ),
-    }
-  }
-
   fn expect_bool(&self, ident: &str, value: &Value) -> Result {
     match value {
       Value::Bool(b) => {
@@ -789,20 +776,35 @@ impl<'a> Validator<Value> for CDDL<'a> {
       ),
     }
   }
+}
 
-  fn validate_string_value(&self, v: &token::Value, s: &str) -> Result {
-    match *v {
-      token::Value::TEXT(t) if t == s => Ok(()),
-      _ => Err(
-        JSONError {
-          expected_memberkey: None,
-          expected_value: v.to_string(),
-          actual_memberkey: None,
-          actual_value: Value::String(s.to_string()),
-        }
-        .into(),
-      ),
-    }
+fn expect_null(ident: &str) -> Result {
+  match ident {
+    "null" | "nil" => Ok(()),
+    _ => Err(
+      JSONError {
+        expected_memberkey: None,
+        expected_value: ident.to_string(),
+        actual_memberkey: None,
+        actual_value: Value::Null,
+      }
+      .into(),
+    ),
+  }
+}
+
+fn validate_string_value(v: &token::Value, s: &str) -> Result {
+  match *v {
+    token::Value::TEXT(t) if t == s => Ok(()),
+    _ => Err(
+      JSONError {
+        expected_memberkey: None,
+        expected_value: v.to_string(),
+        actual_memberkey: None,
+        actual_value: Value::String(s.to_string()),
+      }
+      .into(),
+    ),
   }
 }
 
