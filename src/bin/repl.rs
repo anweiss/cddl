@@ -1,9 +1,7 @@
-#![cfg(feature = "std")]
-
 use cddl::repl;
 use std::{error::Error, io};
 
-fn main() -> Result<(), Box<Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
   println!("CDDL REPL");
 
   let input = io::stdin();

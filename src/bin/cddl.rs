@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 #[macro_use]
 extern crate clap;
 
@@ -8,7 +6,7 @@ use clap::{App, AppSettings, SubCommand};
 use crossterm::{Color, Colored};
 use std::{error::Error, fs};
 
-fn main() -> Result<(), Box<Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
   let app = App::new("cddl")
                     .version(crate_version!())
                     .author(crate_authors!())
