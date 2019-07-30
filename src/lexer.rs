@@ -272,6 +272,7 @@ impl<'a> Lexer<'a> {
 
   fn read_byte_string(&mut self, idx: usize) -> Result<&'a [u8]> {
     while let Some(&(_, ch)) = self.peek_char() {
+      println!("{}", ch);
       match ch {
         // BCHAR
         '\x20'...'\x26' | '\x28'...'\x5b' | '\x5d'...'\u{10FFFD}' => {
@@ -292,10 +293,14 @@ impl<'a> Lexer<'a> {
         // Closing '
         '\x27' => return Ok(&self.str_input[idx..self.read_char()?.0]),
         // CRLF
-        _ => if ch.is_ascii_whitespace() {
-          let _ = self.read_char()?;
-        } else {
-          return Err("Unexpected char in byte string. Expected closing '".into());
+        _ => {
+          // TODO: if user forgets closing "'", but another "'" is found later
+          // in the string, the error emitted here can be confusing
+          if ch.is_ascii_whitespace() {
+            let _ = self.read_char()?;
+          } else {
+            return Err("Unexpected char in byte string. Expected closing '".into());
+          }
         }
       }
     }
@@ -543,7 +548,7 @@ mytag = #6.1234(tstr)
     
 myfirstrule = "myotherrule"
 
-mybase16rule = h'68656c6c6f20776f726c64
+mybase16rule = h'68656c6c6f20776f726c64'
 
 mybase64rule = b64'aGVsbG8gd29ybGQ='
 
