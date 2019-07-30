@@ -199,7 +199,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
           if (tn.0).0 == "tstr" || (tn.0).0 == "text" {
             Ok(())
           } else if is_type_prelude((tn.0).0) {
-            // Expecting non-string type but got JSON string
+            // Expecting non-text type but got text
             Err(
               CBORError {
                 expected_memberkey,
@@ -221,6 +221,24 @@ impl<'a> Validator<Value> for CDDL<'a> {
         }
         Value::Array(_) => {
           self.validate_rule_for_ident(tn, expected_memberkey, actual_memberkey, occur, value)
+        }
+        Value::Bytes(_) => {
+          if (tn.0).0 == "bstr" || (tn.0).0 == "bytes" {
+            Ok(())
+          } else if is_type_prelude((tn.0).0) {
+            // Expecting non-bytes type but got bytes
+            Err(
+              CBORError {
+                expected_memberkey,
+                expected_value: (tn.0).0.to_string(),
+                actual_memberkey,
+                actual_value: value.clone(),
+              }
+              .into(),
+            )
+          } else {
+            self.validate_rule_for_ident(tn, expected_memberkey, actual_memberkey, occur, value)
+          }
         }
         _ => unimplemented!(),
       },
@@ -817,7 +835,18 @@ fn validate_string_value(v: &token::Value, s: &str) -> Result {
 }
 
 fn validate_bytes_value(v: &token::Value, b: &[u8]) -> Result {
-  unimplemented!()
+  match *v {
+    token::Value::B16BYTESTRING(bs) if bs == b => Ok(()),
+    _ => Err(
+      CBORError {
+        expected_memberkey: None,
+        expected_value: v.to_string(),
+        actual_memberkey: None,
+        actual_value: Value::Bytes(b.to_vec()),
+      }
+      .into(),
+    ),
+  }
 }
 
 fn is_type_prelude(t: &str) -> bool {
@@ -853,8 +882,15 @@ mod tests {
   #[test]
   fn validate_cbor_null() -> Result {
     let cbor_value = Value::Null;
-
     let cddl_input = r#"mynullrule = null"#;
+
+    validate_cbor_from_slice(cddl_input, &serde_cbor::to_vec(&cbor_value).unwrap())
+  }
+
+  #[test]
+  fn validate_cbor_bytes_value() -> Result {
+    let cbor_value = Value::Bytes("68656c6c6f20776f726c64".as_bytes().to_vec());
+    let cddl_input = r#"mybytesstring = h'68656c6c6f20776f726c64'"#;
 
     validate_cbor_from_slice(cddl_input, &serde_cbor::to_vec(&cbor_value).unwrap())
   }

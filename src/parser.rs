@@ -298,8 +298,9 @@ impl<'a> Parser<'a> {
     let t2 = match &self.cur_token {
       // value
       Token::VALUE(value) => match value {
-        // TODO: fix workaround for double escaping string literal values
-        Value::TEXT(_) => Ok(Type2::Value(*value)),
+        Value::TEXT(_) | Value::B16BYTESTRING(_) | Value::B64BYTESTRING(_) => {
+          Ok(Type2::Value(*value))
+        }
         _ => Err("bad value".into()),
       },
 

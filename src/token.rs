@@ -231,9 +231,8 @@ pub enum Value<'a> {
   UINT(usize),
   FLOAT(f64),
   TEXT(&'a str),
-
-  // TODO: support raw byte string
-  BYTES(&'a str),
+  B16BYTESTRING(&'a [u8]),
+  B64BYTESTRING(&'a [u8]),
 }
 
 impl<'a> fmt::Display for Value<'a> {
@@ -243,7 +242,14 @@ impl<'a> fmt::Display for Value<'a> {
       Value::INT(i) => write!(f, "{}", i),
       Value::UINT(ui) => write!(f, "{}", ui),
       Value::FLOAT(float) => write!(f, "{}", float),
-      Value::BYTES(b) => write!(f, "{}", b),
+      Value::B16BYTESTRING(b) => {
+        write!(f, "h'{}'", std::str::from_utf8(b).map_err(|_| fmt::Error)?)
+      }
+      Value::B64BYTESTRING(b) => write!(
+        f,
+        "b64'{}'",
+        std::str::from_utf8(b).map_err(|_| fmt::Error)?
+      ),
     }
   }
 }
@@ -341,6 +347,7 @@ impl<'a> fmt::Display for Token<'a> {
       Token::DEFAULT => write!(f, ".default"),
       Token::NUMBER => write!(f, "number"),
       Token::BSTR => write!(f, "bstr"),
+      Token::BYTES => write!(f, "bytes"),
       Token::GCHOICE => write!(f, "//"),
       Token::TRUE => write!(f, "true"),
       Token::GTOCHOICE => write!(f, "&"),

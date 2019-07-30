@@ -139,6 +139,42 @@ impl<'a> Lexer<'a> {
         }
         (idx, ch) => {
           if is_ealpha(ch) {
+            if ch == 'h' {
+              if let Some(&c) = self.peek_char() {
+                if c.1 == '\'' {
+                  let _ = self.read_char()?;
+                  let (idx, _) = self.read_char()?;
+
+                  return Ok(Token::VALUE(Value::B16BYTESTRING(
+                    self.read_byte_string(idx)?,
+                  )));
+                }
+              }
+            }
+
+            if ch == 'b' {
+              if let Some(&c) = self.peek_char() {
+                if c.1 == '6' {
+                  let _ = self.read_char()?;
+                  if let Some(&c) = self.peek_char() {
+                    if c.1 == '4' {
+                      let _ = self.read_char()?;
+                      if let Some(&c) = self.peek_char() {
+                        if c.1 == '\'' {
+                          let _ = self.read_char()?;
+                          let (idx, _) = self.read_char()?;
+
+                          return Ok(Token::VALUE(Value::B64BYTESTRING(
+                            self.read_byte_string(idx)?,
+                          )));
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
             let ident = token::lookup_ident(self.read_identifier(idx)?);
 
             // Range detected
@@ -203,27 +239,68 @@ impl<'a> Lexer<'a> {
 
   fn read_text_value(&mut self, idx: usize) -> Result<&'a str> {
     while let Some(&(_, ch)) = self.peek_char() {
-      // TODO: support SESC = "\" (%x20-7E / %x80-10FFFD)
-      if ch == '\x21'
-        || (ch >= '\x23' && ch <= '\x5b')
-        || (ch >= '\x5d' && ch <= '\x7e')
-        || (ch >= '\u{0128}' && ch <= '\u{10FFFD}')
-      {
-        let _ = self.read_char()?;
-      } else {
-        match self.peek_char() {
-          Some(&(_, ch)) if ch != '"' => return Err("Expecting closing \" in text value".into()),
-          _ => {
-            return Ok(
-              str::from_utf8(&self.str_input[idx + 1..self.read_char()?.0])
-                .map_err(LexerError::UTF8)?,
-            )
+      match ch {
+        // SCHAR
+        '\x20'...'\x21' | '\x23'...'\x5b' | '\x5d'...'\x7e' | '\u{0128}'...'\u{10FFFD}' => {
+          let _ = self.read_char()?;
+        }
+        // SESC
+        '\\' => {
+          let _ = self.read_char();
+          if let Some(&(_, ch)) = self.peek_char() {
+            match ch {
+              '\x20'...'\x7e' | '\u{0128}'...'\u{10FFFD}' => {
+                let _ = self.read_char()?;
+              }
+              _ => return Err("Unexpected escape character in text string".into()),
+            }
           }
+        }
+        // Closing "
+        '\x22' => {
+          return Ok(
+            str::from_utf8(&self.str_input[idx + 1..self.read_char()?.0])
+              .map_err(LexerError::UTF8)?,
+          )
+        }
+        _ => return Err("Unexpected char in text string. Expected closing \"".into()),
+      }
+    }
+
+    Err("Empty text value".into())
+  }
+
+  fn read_byte_string(&mut self, idx: usize) -> Result<&'a [u8]> {
+    while let Some(&(_, ch)) = self.peek_char() {
+      match ch {
+        // BCHAR
+        '\x20'...'\x26' | '\x28'...'\x5b' | '\x5d'...'\u{10FFFD}' => {
+          let _ = self.read_char();
+        }
+        // SESC
+        '\\' => {
+          let _ = self.read_char();
+          if let Some(&(_, ch)) = self.peek_char() {
+            match ch {
+              '\x20'...'\x7e' | '\u{0128}'...'\u{10FFFD}' => {
+                let _ = self.read_char()?;
+              }
+              _ => return Err("Unexpected escape character in byte string".into()),
+            }
+          }
+        }
+        // Closing '
+        '\x27' => return Ok(&self.str_input[idx..self.read_char()?.0]),
+        // CRLF
+        _ => if ch.is_ascii_whitespace() {
+          let _ = self.read_char()?;
+        } else {
+          return Err("Unexpected char in byte string. Expected closing '".into());
         }
       }
     }
 
-    Ok("")
+    Err("Empty byte string".into())
   }
 
   fn read_comment(&mut self, idx: usize) -> Result<&'a str> {
@@ -466,6 +543,10 @@ mytag = #6.1234(tstr)
     
 myfirstrule = "myotherrule"
 
+mybase16rule = h'68656c6c6f20776f726c64
+
+mybase64rule = b64'aGVsbG8gd29ybGQ='
+
 mysecondrule = mynumber..100.5
 
 myintrule = -10
@@ -505,6 +586,18 @@ city = (
       (IDENT(("myfirstrule", None)), "myfirstrule"),
       (ASSIGN, "="),
       (VALUE(Value::TEXT("myotherrule")), "\"myotherrule\""),
+      (IDENT(("mybase16rule", None)), "mybase16rule"),
+      (ASSIGN, "="),
+      (
+        VALUE(Value::B16BYTESTRING(b"68656c6c6f20776f726c64")),
+        "h'68656c6c6f20776f726c64'",
+      ),
+      (IDENT(("mybase64rule", None)), "mybase64rule"),
+      (ASSIGN, "="),
+      (
+        VALUE(Value::B64BYTESTRING(b"aGVsbG8gd29ybGQ=")),
+        "b64'aGVsbG8gd29ybGQ='",
+      ),
       (IDENT(("mysecondrule", None)), "mysecondrule"),
       (ASSIGN, "="),
       (
