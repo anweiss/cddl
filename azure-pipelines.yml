@@ -4,7 +4,7 @@ stages:
       minrust: 1.36.0
       codecov_token: $(CODECOV_TOKEN_SECRET)
   - stage: build_and_push
-    displayName: Push Docker image
+    displayName: Build and Push Docker image
     dependsOn: test
     jobs:
       - job: build_and_push
