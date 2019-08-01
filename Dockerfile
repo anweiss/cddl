@@ -1,6 +1,5 @@
 FROM ekidd/rust-musl-builder:stable AS builder
 COPY . ./
-RUN sudo chown -R rust:rust /home/rust
 RUN cargo b --release --bin cddl
 
 FROM scratch
