@@ -3,8 +3,8 @@ pub mod cbor;
 /// JSON validation implementation
 pub mod json;
 
-use crate::{ast::*, parser::ParserError, token};
-use std::{self, fmt, result};
+use crate::{ast::*, parser::ParserError};
+use std::{fmt, result};
 
 /// Alias for `Result` with an error of type `validator::ValidationError`
 pub type Result = result::Result<(), Error>;
@@ -141,8 +141,6 @@ pub trait Validator<T> {
   fn validate_array_occurrence(&self, occur: &Occur, group: &str, values: &[T]) -> Result;
 
   fn expect_bool(&self, ident: &str, value: &T) -> Result;
-
-  fn validate_numeric_value(&self, v: &token::Value, value: &T) -> Result;
 
   fn validate_numeric_data_type(
     &self,

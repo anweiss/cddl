@@ -8,9 +8,8 @@ pub enum Token<'a> {
 
   IDENT((&'a str, Option<&'a SocketPlug>)),
   VALUE(Value<'a>),
-  INTLITERAL(isize),
-  UINTLITERAL(usize),
-  FLOATLITERAL(f64),
+  BYTESLICEVALUE(ByteSliceValue<'a>),
+  BYTEVECVALUE(ByteVecValue),
   TAG(Tag<'a>),
 
   // Operators
@@ -184,7 +183,7 @@ impl<'a> fmt::Display for Tag<'a> {
   }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum RangeValue<'a> {
   IDENT((&'a str, Option<&'a SocketPlug>)),
   UINT(usize),
@@ -197,8 +196,11 @@ impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
   fn try_from(t: Token<'a>) -> Result<Self, Self::Error> {
     match t {
       Token::IDENT(ident) => Ok(RangeValue::IDENT(ident)),
-      Token::UINTLITERAL(i) => Ok(RangeValue::UINT(i)),
-      Token::FLOATLITERAL(f) => Ok(RangeValue::FLOAT(f)),
+      Token::VALUE(value) => match value {
+        Value::UINT(ui) => Ok(RangeValue::UINT(ui)),
+        Value::FLOAT(f) => Ok(RangeValue::FLOAT(f)),
+        _ => Err("Invalid range token".into()),
+      },
       _ => Err("Invalid range token".into()),
     }
   }
@@ -231,8 +233,6 @@ pub enum Value<'a> {
   UINT(usize),
   FLOAT(f64),
   TEXT(&'a str),
-  B16BYTESTRING(&'a [u8]),
-  B64BYTESTRING(&'a [u8]),
 }
 
 impl<'a> fmt::Display for Value<'a> {
@@ -242,14 +242,6 @@ impl<'a> fmt::Display for Value<'a> {
       Value::INT(i) => write!(f, "{}", i),
       Value::UINT(ui) => write!(f, "{}", ui),
       Value::FLOAT(float) => write!(f, "{}", float),
-      Value::B16BYTESTRING(b) => {
-        write!(f, "h'{}'", std::str::from_utf8(b).map_err(|_| fmt::Error)?)
-      }
-      Value::B64BYTESTRING(b) => write!(
-        f,
-        "b64'{}'",
-        std::str::from_utf8(b).map_err(|_| fmt::Error)?
-      ),
     }
   }
 }
@@ -257,6 +249,60 @@ impl<'a> fmt::Display for Value<'a> {
 impl<'a> From<&'static str> for Value<'a> {
   fn from(value: &'static str) -> Self {
     Value::TEXT(value)
+  }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ByteSliceValue<'a> {
+  B16(&'a [u8]),
+  B64(&'a [u8]),
+}
+
+impl<'a> fmt::Display for ByteSliceValue<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      ByteSliceValue::B16(b) => write!(
+        f,
+        "h'{}'",
+        std::str::from_utf8(b)
+          .map_err(|_| fmt::Error)?
+          .replace(" ", "")
+      ),
+      ByteSliceValue::B64(b) => write!(
+        f,
+        "b64'{}'",
+        std::str::from_utf8(b)
+          .map_err(|_| fmt::Error)?
+          .replace(" ", "")
+      ),
+    }
+  }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum ByteVecValue {
+  B16(Vec<u8>),
+  B64(Vec<u8>),
+}
+
+impl fmt::Display for ByteVecValue {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      ByteVecValue::B16(b) => write!(
+        f,
+        "h'{}'",
+        String::from_utf8(b.to_vec())
+          .map_err(|_| fmt::Error)?
+          .replace(" ", "")
+      ),
+      ByteVecValue::B64(b) => write!(
+        f,
+        "b64'{}'",
+        String::from_utf8(b.to_vec())
+          .map_err(|_| fmt::Error)?
+          .replace(" ", "")
+      ),
+    }
   }
 }
 
@@ -327,9 +373,6 @@ impl<'a> fmt::Display for Token<'a> {
       Token::RANGLEBRACKET => write!(f, ">"),
       Token::INT => write!(f, "int"),
       Token::UINT => write!(f, "uint"),
-      Token::INTLITERAL(i) => write!(f, "{}", i),
-      Token::UINTLITERAL(ui) => write!(f, "{}", ui),
-      Token::FLOATLITERAL(fl) => write!(f, "{}", fl),
       Token::ARROWMAP => write!(f, "=>"),
       Token::SIZE => write!(f, ".size"),
       Token::BITS => write!(f, ".bits"),
@@ -352,6 +395,8 @@ impl<'a> fmt::Display for Token<'a> {
       Token::TRUE => write!(f, "true"),
       Token::GTOCHOICE => write!(f, "&"),
       Token::VALUE(value) => write!(f, "{}", value),
+      Token::BYTESLICEVALUE(value) => write!(f, "{}", value),
+      Token::BYTEVECVALUE(value) => write!(f, "{}", value),
       Token::RANGE((l, u, i)) => {
         if *i {
           return write!(f, "{}..{}", l, u);

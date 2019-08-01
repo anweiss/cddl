@@ -1,5 +1,5 @@
-use super::token::{SocketPlug, Value};
-use std::fmt;
+use super::token::{ByteSliceValue, ByteVecValue, RangeValue, SocketPlug, Value};
+use std::{borrow::Cow, fmt};
 
 #[cfg(not(feature = "std"))]
 use alloc::{
@@ -350,7 +350,13 @@ impl<'a> fmt::Display for RangeCtlOp {
 #[derive(Debug)]
 pub enum Type2<'a> {
   /// Single value
-  Value(Value<'a>),
+  IntValue(isize),
+  UintValue(usize),
+  FloatValue(f64),
+  TextValue(&'a str),
+  B16ByteString(Cow<'a, [u8]>),
+  B64ByteString(Cow<'a, [u8]>),
+
   /// Type name identifier with optional generic arguments
   Typename((Identifier<'a>, Option<GenericArg<'a>>)),
   /// Parenthesized type expression (for operator precedence)
@@ -376,7 +382,16 @@ pub enum Type2<'a> {
 impl<'a> fmt::Display for Type2<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      Type2::Value(value) => write!(f, "{}", value),
+      Type2::IntValue(value) => write!(f, "{}", value),
+      Type2::UintValue(value) => write!(f, "{}", value),
+      Type2::FloatValue(value) => write!(f, "{}", value),
+      Type2::TextValue(value) => write!(f, "\"{}\"", value),
+      Type2::B16ByteString(value) => {
+        write!(f, "{}", std::str::from_utf8(value).map_err(|_| fmt::Error)?)
+      }
+      Type2::B64ByteString(value) => {
+        write!(f, "{}", std::str::from_utf8(value).map_err(|_| fmt::Error)?)
+      }
       Type2::Typename((tn, ga)) => {
         if let Some(args) = ga {
           return write!(f, "{}{}", tn, args);
@@ -417,6 +432,45 @@ impl<'a> fmt::Display for Type2<'a> {
         write!(f, "{}", major_type)
       }
       Type2::Any => write!(f, "#"),
+    }
+  }
+}
+
+impl<'a> From<Value<'a>> for Type2<'a> {
+  fn from(value: Value<'a>) -> Self {
+    match value {
+      Value::TEXT(t) => Type2::TextValue(t),
+      Value::INT(i) => Type2::IntValue(i),
+      Value::UINT(ui) => Type2::UintValue(ui),
+      Value::FLOAT(f) => Type2::FloatValue(f),
+    }
+  }
+}
+
+impl<'a> From<RangeValue<'a>> for Type2<'a> {
+  fn from(rv: RangeValue<'a>) -> Self {
+    match rv {
+      RangeValue::IDENT(ident) => Type2::Typename((ident.into(), None)),
+      RangeValue::UINT(ui) => Type2::UintValue(ui),
+      RangeValue::FLOAT(f) => Type2::FloatValue(f),
+    }
+  }
+}
+
+impl<'a> From<&ByteSliceValue<'a>> for Type2<'a> {
+  fn from(value: &ByteSliceValue<'a>) -> Self {
+    match value {
+      ByteSliceValue::B16(b16) => Type2::B16ByteString(Cow::from(*b16)),
+      ByteSliceValue::B64(b64) => Type2::B64ByteString(Cow::from(*b64)),
+    }
+  }
+}
+
+impl<'a> From<ByteVecValue> for Type2<'a> {
+  fn from(value: ByteVecValue) -> Self {
+    match value {
+      ByteVecValue::B16(b16) => Type2::B16ByteString(Cow::from(b16)),
+      ByteVecValue::B64(b64) => Type2::B64ByteString(Cow::from(b64)),
     }
   }
 }
@@ -668,7 +722,7 @@ mod tests {
           occur: None,
           member_key: Some(MemberKey::Bareword("key1".into())),
           entry_type: Type(vec![Type1 {
-            type2: Type2::Value(Value::TEXT("value1")),
+            type2: Type2::TextValue("value1"),
             operator: None,
           }]),
         })),
@@ -676,7 +730,7 @@ mod tests {
           occur: None,
           member_key: Some(MemberKey::Bareword("key2".into())),
           entry_type: Type(vec![Type1 {
-            type2: Type2::Value(Value::TEXT("value2")),
+            type2: Type2::TextValue("value2"),
             operator: None,
           }]),
         })),

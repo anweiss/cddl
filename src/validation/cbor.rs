@@ -1,6 +1,6 @@
 use crate::{
   ast::*,
-  parser, token,
+  parser,
   validation::{CompilationError, Error, Result, Validator},
 };
 use serde_cbor::{self, Value};
@@ -177,10 +177,68 @@ impl<'a> Validator<Value> for CDDL<'a> {
     value: &Value,
   ) -> Result {
     match t2 {
-      Type2::Value(v) => match value {
-        Value::Integer(_) | Value::Float(_) => self.validate_numeric_value(v, value),
-        Value::Bytes(b) => validate_bytes_value(v, b),
-        Value::Text(s) => validate_string_value(v, s),
+      Type2::TextValue(t) => match value {
+        Value::Text(s) if t == s => Ok(()),
+        _ => Err(
+          CBORError {
+            expected_memberkey,
+            expected_value: t2.to_string(),
+            actual_memberkey,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Type2::IntValue(iv) => match value {
+        Value::Integer(i) if *iv as i128 == *i => Ok(()),
+        _ => Err(
+          CBORError {
+            expected_memberkey,
+            expected_value: t2.to_string(),
+            actual_memberkey,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Type2::UintValue(uiv) => match value {
+        Value::Integer(i) if *uiv as u128 == *i as u128 => Ok(()),
+        _ => Err(
+          CBORError {
+            expected_memberkey,
+            expected_value: t2.to_string(),
+            actual_memberkey,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Type2::FloatValue(fv) => match value {
+        Value::Float(f) if (fv - f).abs() < f64::EPSILON => Ok(()),
+        _ => Err(
+          CBORError {
+            expected_memberkey,
+            expected_value: t2.to_string(),
+            actual_memberkey,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Type2::B16ByteString(bs) => match value {
+        Value::Bytes(b) if b == &bs.as_ref() => Ok(()),
+        _ => Err(
+          CBORError {
+            expected_memberkey,
+            expected_value: t2.to_string(),
+            actual_memberkey,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Type2::B64ByteString(bs) => match value {
+        Value::Bytes(b) if b == &bs.as_ref() => Ok(()),
         _ => Err(
           CBORError {
             expected_memberkey,
@@ -401,7 +459,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
         if let Some(mk) = &vmke.member_key {
           match mk {
             MemberKey::Type1(t1) => match &t1.0.type2 {
-              Type2::Value(token::Value::TEXT(t)) => match value {
+              Type2::TextValue(t) => match value {
                 // CDDL { "my-key" => tstr, } validates JSON { "my-key": "myvalue" }
                 Value::Map(om) => {
                   if !is_type_prelude(&vmke.entry_type.to_string()) {
@@ -660,73 +718,6 @@ impl<'a> Validator<Value> for CDDL<'a> {
     }
   }
 
-  fn validate_numeric_value(&self, v: &token::Value, value: &Value) -> Result {
-    match value {
-      Value::Integer(n) => match *v {
-        token::Value::INT(i) => {
-          if i as i128 == *n {
-            Ok(())
-          } else {
-            Err(
-              CBORError {
-                expected_memberkey: None,
-                expected_value: v.to_string(),
-                actual_memberkey: None,
-                actual_value: value.clone(),
-              }
-              .into(),
-            )
-          }
-        }
-        _ => Err(
-          CBORError {
-            expected_memberkey: None,
-            expected_value: v.to_string(),
-            actual_memberkey: None,
-            actual_value: value.clone(),
-          }
-          .into(),
-        ),
-      },
-      Value::Float(n) => match *v {
-        token::Value::FLOAT(f) => {
-          if (f - *n).abs() < f64::EPSILON {
-            Ok(())
-          } else {
-            Err(
-              CBORError {
-                expected_memberkey: None,
-                expected_value: v.to_string(),
-                actual_memberkey: None,
-                actual_value: value.clone(),
-              }
-              .into(),
-            )
-          }
-        }
-        _ => Err(
-          CBORError {
-            expected_memberkey: None,
-            expected_value: v.to_string(),
-            actual_memberkey: None,
-            actual_value: value.clone(),
-          }
-          .into(),
-        ),
-      },
-      // Expecting a numerical value but got different type
-      _ => Err(
-        CBORError {
-          expected_memberkey: None,
-          expected_value: v.to_string(),
-          actual_memberkey: None,
-          actual_value: value.clone(),
-        }
-        .into(),
-      ),
-    }
-  }
-
   fn validate_numeric_data_type(
     &self,
     expected_memberkey: Option<String>,
@@ -778,7 +769,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
           .into(),
         ),
       },
-      Value::Float(n) => match ident {
+      Value::Float(_n) => match ident {
         "number" | "float16" | "float32" => Ok(()),
         // TODO: Finish rest of numerical data types
         _ => Err(
@@ -819,36 +810,6 @@ fn expect_null(ident: &str) -> Result {
   }
 }
 
-fn validate_string_value(v: &token::Value, s: &str) -> Result {
-  match *v {
-    token::Value::TEXT(t) if t == s => Ok(()),
-    _ => Err(
-      CBORError {
-        expected_memberkey: None,
-        expected_value: v.to_string(),
-        actual_memberkey: None,
-        actual_value: Value::Text(s.to_string()),
-      }
-      .into(),
-    ),
-  }
-}
-
-fn validate_bytes_value(v: &token::Value, b: &[u8]) -> Result {
-  match *v {
-    token::Value::B16BYTESTRING(bs) if bs == b => Ok(()),
-    _ => Err(
-      CBORError {
-        expected_memberkey: None,
-        expected_value: v.to_string(),
-        actual_memberkey: None,
-        actual_value: Value::Bytes(b.to_vec()),
-      }
-      .into(),
-    ),
-  }
-}
-
 fn is_type_prelude(t: &str) -> bool {
   match t {
     "any" | "uint" | "nint" | "int" | "bstr" | "bytes" | "tstr" | "text" | "tdate" | "time"
@@ -876,7 +837,6 @@ fn validate_cbor<V: Validator<Value>>(cddl: &V, cbor: &Value) -> Result {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use serde::Serialize;
   use serde_cbor;
 
   #[test]

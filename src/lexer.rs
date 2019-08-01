@@ -1,6 +1,7 @@
-use super::token::{self, RangeValue, Tag, Token, Value};
+use super::token::{self, ByteSliceValue, ByteVecValue, RangeValue, Tag, Token, Value};
 use lexical_core;
 use std::{
+  borrow::Cow,
   convert::TryFrom,
   fmt,
   iter::Peekable,
@@ -145,9 +146,14 @@ impl<'a> Lexer<'a> {
                   let _ = self.read_char()?;
                   let (idx, _) = self.read_char()?;
 
-                  return Ok(Token::VALUE(Value::B16BYTESTRING(
-                    self.read_byte_string(idx)?,
-                  )));
+                  match self.read_prefixed_byte_string(idx)? {
+                    Cow::Borrowed(bs) => {
+                      return Ok(Token::BYTESLICEVALUE(ByteSliceValue::B16(bs.as_bytes())))
+                    }
+                    Cow::Owned(bs) => {
+                      return Ok(Token::BYTEVECVALUE(ByteVecValue::B16(bs.into_bytes())))
+                    }
+                  }
                 }
               }
             }
@@ -164,9 +170,14 @@ impl<'a> Lexer<'a> {
                           let _ = self.read_char()?;
                           let (idx, _) = self.read_char()?;
 
-                          return Ok(Token::VALUE(Value::B64BYTESTRING(
-                            self.read_byte_string(idx)?,
-                          )));
+                          match self.read_prefixed_byte_string(idx)? {
+                            Cow::Borrowed(bs) => {
+                              return Ok(Token::BYTESLICEVALUE(ByteSliceValue::B64(bs.as_bytes())))
+                            }
+                            Cow::Owned(bs) => {
+                              return Ok(Token::BYTEVECVALUE(ByteVecValue::B64(bs.into_bytes())))
+                            }
+                          }
                         }
                       }
                     }
@@ -270,9 +281,10 @@ impl<'a> Lexer<'a> {
     Err("Empty text value".into())
   }
 
-  fn read_byte_string(&mut self, idx: usize) -> Result<&'a [u8]> {
+  fn read_prefixed_byte_string(&mut self, idx: usize) -> Result<Cow<'a, str>> {
+    let mut has_whitespace = false;
+
     while let Some(&(_, ch)) = self.peek_char() {
-      println!("{}", ch);
       match ch {
         // BCHAR
         '\x20'...'\x26' | '\x28'...'\x5b' | '\x5d'...'\u{10FFFD}' => {
@@ -291,12 +303,29 @@ impl<'a> Lexer<'a> {
           }
         }
         // Closing '
-        '\x27' => return Ok(&self.str_input[idx..self.read_char()?.0]),
+        '\x27' => {
+          // Whitespace is ignored for prefixed byte strings and requires allocation
+          if has_whitespace {
+            return Ok(
+              str::from_utf8(&self.str_input[idx..self.read_char()?.0])
+                .map_err(LexerError::UTF8)?
+                .replace(" ", "")
+                .into(),
+            );
+          }
+
+          return Ok(
+            str::from_utf8(&self.str_input[idx..self.read_char()?.0])
+              .map_err(LexerError::UTF8)?
+              .into(),
+          );
+        }
         // CRLF
         _ => {
           // TODO: if user forgets closing "'", but another "'" is found later
           // in the string, the error emitted here can be confusing
           if ch.is_ascii_whitespace() {
+            has_whitespace = true;
             let _ = self.read_char()?;
           } else {
             return Err("Unexpected char in byte string. Expected closing '".into());
@@ -355,29 +384,29 @@ impl<'a> Lexer<'a> {
             let (fraction_idx, _) = self.read_number(c.0)?;
 
             if is_signed {
-              return Ok(Token::FLOATLITERAL(lexical_core::atof64_slice(
+              return Ok(Token::VALUE(Value::FLOAT(lexical_core::atof64_slice(
                 &self.str_input[signed_idx..=fraction_idx],
-              )));
+              ))));
             }
 
-            return Ok(Token::FLOATLITERAL(lexical_core::atof64_slice(
+            return Ok(Token::VALUE(Value::FLOAT(lexical_core::atof64_slice(
               &self.str_input[idx..=fraction_idx],
-            )));
+            ))));
           }
         }
       }
     }
 
     if is_signed {
-      return Ok(Token::INTLITERAL(
+      return Ok(Token::VALUE(Value::INT(
         str::from_utf8(&self.str_input[signed_idx..=end_idx])
           .map_err(LexerError::UTF8)?
           .parse()
           .map_err(LexerError::PARSEINT)?,
-      ));
+      )));
     }
 
-    Ok(Token::UINTLITERAL(i))
+    Ok(Token::VALUE(Value::UINT(i)))
   }
 
   fn read_number(&mut self, idx: usize) -> Result<(usize, usize)> {
@@ -473,32 +502,45 @@ impl<'a> Lexer<'a> {
       let upper = self.read_int_or_float(c.0)?;
 
       match lower {
-        Token::UINTLITERAL(li) => {
-          if let Token::UINTLITERAL(ui) = upper {
-            return Ok(Token::RANGE((
-              RangeValue::UINT(li),
-              RangeValue::UINT(ui),
-              is_inclusive,
-            )));
-          } else {
+        Token::VALUE(value) => match value {
+          Value::UINT(li) => {
+            if let Token::VALUE(value) = upper {
+              if let Value::UINT(ui) = value {
+                return Ok(Token::RANGE((
+                  RangeValue::UINT(li),
+                  RangeValue::UINT(ui),
+                  is_inclusive,
+                )));
+              }
+            } else {
+              return Err(
+                "Only numerical ranges between integers or floating point values are allowed"
+                  .into(),
+              );
+            }
+          }
+          Value::FLOAT(lf) => {
+            if let Token::VALUE(value) = upper {
+              if let Value::FLOAT(uf) = value {
+                return Ok(Token::RANGE((
+                  RangeValue::FLOAT(lf),
+                  RangeValue::FLOAT(uf),
+                  is_inclusive,
+                )));
+              }
+            } else {
+              return Err(
+                "Only numerical ranges between integers or floating point values are allowed"
+                  .into(),
+              );
+            }
+          }
+          _ => {
             return Err(
               "Only numerical ranges between integers or floating point values are allowed".into(),
-            );
+            )
           }
-        }
-        Token::FLOATLITERAL(lf) => {
-          if let Token::FLOATLITERAL(uf) = upper {
-            return Ok(Token::RANGE((
-              RangeValue::FLOAT(lf),
-              RangeValue::FLOAT(uf),
-              is_inclusive,
-            )));
-          } else {
-            return Err(
-              "Only numerical ranges between integers or floating point values are allowed".into(),
-            );
-          }
-        }
+        },
         _ => {
           return Ok(Token::RANGE((
             RangeValue::try_from(lower)?,
@@ -584,7 +626,7 @@ city = (
       ),
       (IDENT(("mynumber", None)), "mynumber"),
       (ASSIGN, "="),
-      (FLOATLITERAL(10.5), "10.5"),
+      (VALUE(Value::FLOAT(10.5)), "10.5"),
       (IDENT(("mytag", None)), "mytag"),
       (ASSIGN, "="),
       (TAG(Tag::DATA((Some(1234), "tstr"))), "#6.1234(tstr)"),
@@ -594,13 +636,13 @@ city = (
       (IDENT(("mybase16rule", None)), "mybase16rule"),
       (ASSIGN, "="),
       (
-        VALUE(Value::B16BYTESTRING(b"68656c6c6f20776f726c64")),
+        BYTESLICEVALUE(ByteSliceValue::B16(b"68656c6c6f20776f726c64")),
         "h'68656c6c6f20776f726c64'",
       ),
       (IDENT(("mybase64rule", None)), "mybase64rule"),
       (ASSIGN, "="),
       (
-        VALUE(Value::B64BYTESTRING(b"aGVsbG8gd29ybGQ=")),
+        BYTESLICEVALUE(ByteSliceValue::B64(b"aGVsbG8gd29ybGQ=")),
         "b64'aGVsbG8gd29ybGQ='",
       ),
       (IDENT(("mysecondrule", None)), "mysecondrule"),
@@ -615,10 +657,10 @@ city = (
       ),
       (IDENT(("myintrule", None)), "myintrule"),
       (ASSIGN, "="),
-      (INTLITERAL(-10), "-10"),
+      (VALUE(Value::INT(-10)), "-10"),
       (IDENT(("mysignedfloat", None)), "mysignedfloat"),
       (ASSIGN, "="),
-      (FLOATLITERAL(-10.5), "-10.5"),
+      (VALUE(Value::FLOAT(-10.5)), "-10.5"),
       (IDENT(("@terminal-color", None)), "@terminal-color"),
       (ASSIGN, "="),
       (IDENT(("basecolors", None)), "basecolors"),
@@ -674,9 +716,9 @@ city = (
       (COLON, ":"),
       (UINT, "uint"),
       (COMMA, ","),
-      (UINTLITERAL(1), "1"),
+      (VALUE(Value::UINT(1)), "1"),
       (ASTERISK, "*"),
-      (UINTLITERAL(3), "3"),
+      (VALUE(Value::UINT(3)), "3"),
       (
         IDENT(("tcp-option", Some(&SocketPlug::GROUP))),
         "$$tcp-option",

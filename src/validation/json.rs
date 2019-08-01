@@ -1,6 +1,6 @@
 use crate::{
   ast::*,
-  parser, token,
+  parser,
   validation::{CompilationError, Error, Result, Validator},
 };
 use serde_json::{self, Value};
@@ -178,9 +178,20 @@ impl<'a> Validator<Value> for CDDL<'a> {
     value: &Value,
   ) -> Result {
     match t2 {
-      Type2::Value(v) => match value {
-        Value::Number(_) => self.validate_numeric_value(v, value),
-        Value::String(s) => validate_string_value(v, s),
+      Type2::TextValue(t) => match value {
+        Value::String(s) if t == s => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey,
+            expected_value: t2.to_string(),
+            actual_memberkey,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Type2::IntValue(_) | Type2::UintValue(_) | Type2::FloatValue(_) => match value {
+        Value::Number(_) => validate_numeric_value(t2, value),
         _ => Err(
           JSONError {
             expected_memberkey,
@@ -382,7 +393,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
         if let Some(mk) = &vmke.member_key {
           match mk {
             MemberKey::Type1(t1) => match &t1.0.type2 {
-              Type2::Value(token::Value::TEXT(t)) => match value {
+              Type2::TextValue(t) => match value {
                 // CDDL { "my-key" => tstr, } validates JSON { "my-key": "myvalue" }
                 Value::Object(om) => {
                   if !is_type_json_prelude(&vmke.entry_type.to_string()) {
@@ -641,48 +652,6 @@ impl<'a> Validator<Value> for CDDL<'a> {
     }
   }
 
-  fn validate_numeric_value(&self, v: &token::Value, value: &Value) -> Result {
-    match value {
-      Value::Number(n) => match *v {
-        token::Value::INT(i) => match n.as_i64() {
-          Some(n64) if n64 == i as i64 => Ok(()),
-          _ => Err(
-            JSONError {
-              expected_memberkey: None,
-              expected_value: v.to_string(),
-              actual_memberkey: None,
-              actual_value: value.clone(),
-            }
-            .into(),
-          ),
-        },
-        token::Value::FLOAT(f) => match n.as_f64() {
-          Some(n64) if (n64 - f as f64).abs() < f64::EPSILON => Ok(()),
-          _ => Err(
-            JSONError {
-              expected_memberkey: None,
-              expected_value: v.to_string(),
-              actual_memberkey: None,
-              actual_value: value.clone(),
-            }
-            .into(),
-          ),
-        },
-        _ => Ok(()),
-      },
-      // Expecting a numerical value but got different type
-      _ => Err(
-        JSONError {
-          expected_memberkey: None,
-          expected_value: v.to_string(),
-          actual_memberkey: None,
-          actual_value: value.clone(),
-        }
-        .into(),
-      ),
-    }
-  }
-
   fn validate_numeric_data_type(
     &self,
     expected_memberkey: Option<String>,
@@ -778,6 +747,48 @@ impl<'a> Validator<Value> for CDDL<'a> {
   }
 }
 
+fn validate_numeric_value(t2: &Type2, value: &Value) -> Result {
+  match value {
+    Value::Number(n) => match *t2 {
+      Type2::IntValue(i) => match n.as_i64() {
+        Some(n64) if n64 == i as i64 => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: t2.to_string(),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Type2::FloatValue(f) => match n.as_f64() {
+        Some(n64) if (n64 - f as f64).abs() < f64::EPSILON => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: t2.to_string(),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      _ => Ok(()),
+    },
+    // Expecting a numerical value but got different type
+    _ => Err(
+      JSONError {
+        expected_memberkey: None,
+        expected_value: t2.to_string(),
+        actual_memberkey: None,
+        actual_value: value.clone(),
+      }
+      .into(),
+    ),
+  }
+}
+
 fn expect_null(ident: &str) -> Result {
   match ident {
     "null" | "nil" => Ok(()),
@@ -787,21 +798,6 @@ fn expect_null(ident: &str) -> Result {
         expected_value: ident.to_string(),
         actual_memberkey: None,
         actual_value: Value::Null,
-      }
-      .into(),
-    ),
-  }
-}
-
-fn validate_string_value(v: &token::Value, s: &str) -> Result {
-  match *v {
-    token::Value::TEXT(t) if t == s => Ok(()),
-    _ => Err(
-      JSONError {
-        expected_memberkey: None,
-        expected_value: v.to_string(),
-        actual_memberkey: None,
-        actual_value: Value::String(s.to_string()),
       }
       .into(),
     ),

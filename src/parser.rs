@@ -1,6 +1,8 @@
-use super::ast::*;
-use super::lexer::{Lexer, LexerError};
-use super::token::{RangeValue, Tag, Token, Value};
+use super::{
+  ast::*,
+  lexer::{Lexer, LexerError},
+  token::{Tag, Token, Value},
+};
 use std::{fmt, mem, result};
 
 #[cfg(feature = "std")]
@@ -222,71 +224,10 @@ impl<'a> Parser<'a> {
 
   fn parse_type1(&mut self) -> Result<Type1<'a>> {
     match &self.cur_token {
-      Token::RANGE((lower, upper, inclusive)) => {
-        let (lower_ident, upper_ident) = if let RangeValue::IDENT(li) = lower {
-          if let RangeValue::IDENT(ui) = upper {
-            (Some(Token::IDENT(*li)), Some(Token::IDENT(*ui)))
-          } else {
-            (Some(Token::IDENT(*li)), None)
-          }
-        } else if let RangeValue::IDENT(ui) = upper {
-          (None, Some(Token::IDENT(*ui)))
-        } else {
-          (None, None)
-        };
-
-        if let Some(Token::IDENT(li)) = lower_ident {
-          let mut t1 = Type1 {
-            type2: Type2::Typename((li.into(), None)),
-            operator: None,
-          };
-
-          if let Some(Token::IDENT(ui)) = upper_ident {
-            t1.operator = Some((
-              RangeCtlOp::RangeOp(*inclusive),
-              Type2::Typename((ui.into(), None)),
-            ));
-          } else {
-            t1.operator = Some((
-              RangeCtlOp::RangeOp(*inclusive),
-              Type2::Value(
-                upper
-                  .as_value()
-                  .ok_or_else(|| "Illegal upper range value")?,
-              ),
-            ));
-          }
-
-          Ok(t1)
-        } else {
-          let mut t1 = Type1 {
-            type2: Type2::Value(
-              lower
-                .as_value()
-                .ok_or_else(|| "Illegal lower range value")?,
-            ),
-            operator: None,
-          };
-
-          if let Some(Token::IDENT(ui)) = upper_ident {
-            t1.operator = Some((
-              RangeCtlOp::RangeOp(*inclusive),
-              Type2::Typename((ui.into(), None)),
-            ));
-          } else {
-            t1.operator = Some((
-              RangeCtlOp::RangeOp(*inclusive),
-              Type2::Value(
-                upper
-                  .as_value()
-                  .ok_or_else(|| "Illegal upper range value")?,
-              ),
-            ));
-          }
-
-          Ok(t1)
-        }
-      }
+      Token::RANGE((lower, upper, inclusive)) => Ok(Type1 {
+        type2: (*lower).into(),
+        operator: Some((RangeCtlOp::RangeOp(*inclusive), (*upper).into())),
+      }),
       _ => Ok(Type1 {
         type2: self.parse_type2()?,
         operator: None,
@@ -297,18 +238,9 @@ impl<'a> Parser<'a> {
   fn parse_type2(&mut self) -> Result<Type2<'a>> {
     let t2 = match &self.cur_token {
       // value
-      Token::VALUE(value) => match value {
-        Value::TEXT(_) | Value::B16BYTESTRING(_) | Value::B64BYTESTRING(_) => {
-          Ok(Type2::Value(*value))
-        }
-        _ => Err("bad value".into()),
-      },
-
-      // TODO: return Value type from lexer instead of these tokens. Duplicate
-      // code
-      Token::INTLITERAL(il) => Ok(Type2::Value(Value::INT(*il))),
-      Token::UINTLITERAL(ui) => Ok(Type2::Value(Value::UINT(*ui))),
-      Token::FLOATLITERAL(fl) => Ok(Type2::Value(Value::FLOAT(*fl))),
+      Token::VALUE(value) => Ok((*value).into()),
+      Token::BYTESLICEVALUE(value) => Ok(value.into()),
+      Token::BYTEVECVALUE(value) => Ok(value.clone().into()),
 
       // typename [genericarg]
       Token::IDENT(ident) => {
@@ -493,7 +425,7 @@ impl<'a> Parser<'a> {
     let occur = self.parse_occur(true)?;
 
     if occur.is_some() {
-      while self.cur_token_is(Token::UINTLITERAL(0))
+      while self.cur_token_is(Token::VALUE(Value::INT(0)))
         || self.cur_token_is(Token::ASTERISK)
         || self.cur_token_is(Token::OPTIONAL)
       {
@@ -606,7 +538,9 @@ impl<'a> Parser<'a> {
       Token::COLON => {
         let mk = match &self.cur_token {
           Token::IDENT(ident) => Some(MemberKey::Bareword((*ident).into())),
-          Token::VALUE(value) => Some(MemberKey::Value(*value)),
+          Token::VALUE(value) => match value {
+            v => Some(MemberKey::Value(*v)),
+          },
           _ => return Err("Malformed memberkey".into()),
         };
 
@@ -636,15 +570,21 @@ impl<'a> Parser<'a> {
       Token::OPTIONAL => Ok(Some(Occur::Optional)),
       Token::ONEORMORE => Ok(Some(Occur::OneOrMore)),
       Token::ASTERISK => {
-        if let Token::UINTLITERAL(u) = &self.peek_token {
-          return Ok(Some(Occur::Exact((None, Some(*u)))));
+        if let Token::VALUE(value) = &self.peek_token {
+          if let Value::UINT(u) = value {
+            return Ok(Some(Occur::Exact((None, Some(*u)))));
+          }
         }
 
         Ok(Some(Occur::ZeroOrMore))
       }
       _ => {
-        let lower = if let Token::UINTLITERAL(li) = &self.cur_token {
-          Some(*li)
+        let lower = if let Token::VALUE(value) = &self.cur_token {
+          if let Value::UINT(li) = value {
+            Some(*li)
+          } else {
+            None
+          }
         } else {
           None
         };
@@ -660,8 +600,12 @@ impl<'a> Parser<'a> {
         self.next_token()?;
         self.next_token()?;
 
-        let upper = if let Token::UINTLITERAL(ui) = &self.cur_token {
-          Some(*ui)
+        let upper = if let Token::VALUE(value) = &self.cur_token {
+          if let Value::UINT(ui) = value {
+            Some(*ui)
+          } else {
+            None
+          }
         } else {
           None
         };
@@ -916,16 +860,16 @@ secondrule = thirdrule"#;
     ];
 
     let expected_outputs = [
-      Type2::Value(Value::TEXT("myvalue")),
+      Type2::TextValue("myvalue"),
       Type2::Typename((
         Identifier(("message", None)),
         Some(GenericArg(vec![
           Type1 {
-            type2: Type2::Value(Value::TEXT("reboot")),
+            type2: Type2::TextValue("reboot"),
             operator: None,
           },
           Type1 {
-            type2: Type2::Value(Value::TEXT("now")),
+            type2: Type2::TextValue("now"),
             operator: None,
           },
         ])),
@@ -980,7 +924,7 @@ secondrule = thirdrule"#;
           false,
         )))),
         entry_type: Type(vec![Type1 {
-          type2: Type2::Value(Value::TEXT("value")),
+          type2: Type2::TextValue("value"),
           operator: None,
         }]),
       })),
@@ -1034,7 +978,7 @@ secondrule = thirdrule"#;
       ))),
       MemberKey::Type1(Box::from((
         Type1 {
-          type2: Type2::Value(Value::TEXT("mytype1")),
+          type2: Type2::TextValue("mytype1"),
           operator: None,
         },
         true,
