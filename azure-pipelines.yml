@@ -1,8 +1,8 @@
 stages:
   - template: azure/stages.yml@templates
     parameters:
-    minrust: 1.36.0
-    codecov_token: $(CODECOV_TOKEN_SECRET)
+      minrust: 1.36.0
+      codecov_token: $(CODECOV_TOKEN_SECRET)
   - stage: Build and push Docker image
     displayName: Push Docker image
     dependsOn: Test suite
