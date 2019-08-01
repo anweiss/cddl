@@ -1,7 +1,6 @@
 use super::token::{self, ByteSliceValue, ByteVecValue, RangeValue, Tag, Token, Value};
 use lexical_core;
 use std::{
-  borrow::Cow,
   convert::TryFrom,
   fmt,
   iter::Peekable,
@@ -10,7 +9,10 @@ use std::{
 };
 
 #[cfg(feature = "std")]
-use std::error::Error;
+use std::{borrow::Cow, error::Error};
+
+#[cfg(not(feature = "std"))]
+use alloc::borrow::Cow;
 
 pub type Result<T> = result::Result<T, LexerError>;
 

@@ -1,6 +1,9 @@
 use super::lexer::LexerError;
 use std::{convert::TryFrom, fmt};
 
+#[cfg(not(feature = "std"))]
+use alloc::{string::String, vec::Vec};
+
 #[derive(PartialEq, Debug)]
 pub enum Token<'a> {
   ILLEGAL(&'a str),

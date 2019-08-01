@@ -166,7 +166,7 @@
 
 #![allow(dead_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
-// #![warn(missing_docs)]
+#![warn(missing_docs)]
 
 #[macro_use]
 #[cfg(not(feature = "std"))]

@@ -1,8 +1,12 @@
 use super::token::{ByteSliceValue, ByteVecValue, RangeValue, SocketPlug, Value};
-use std::{borrow::Cow, fmt};
+use std::fmt;
+
+#[cfg(feature = "std")]
+use std::borrow::Cow;
 
 #[cfg(not(feature = "std"))]
 use alloc::{
+  borrow::Cow,
   boxed::Box,
   string::{String, ToString},
   vec::Vec,
