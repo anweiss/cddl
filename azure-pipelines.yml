@@ -14,12 +14,12 @@ stages:
         steps:
           - script: TAG=`git describe --tags` && docker build -t docker.pkg.github.com/$GPR_USER/cddl:$TAG .
             displayName: Build image
-          - script: docker login docker.pkg.github.com -u $GPR_USER -p $GPR_PASS
+          - script: docker login docker.pkg.github.com -u $GPR_USER -p $GPR_PAT
             displayName: Login to GitHub Package Registry
             env:
               GPR_USER: $(GPR_USER)
               GPR_PAT: $(GPR_PAT)
-          - script: TAG=`git describe --tags` docker push docker.pkg.github.com/$GPR_USER/cddl:$TAG
+          - script: TAG=`git describe --tags` && docker push docker.pkg.github.com/$GPR_USER/cddl:$TAG
             displayName: Push image
 
             
