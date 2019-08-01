@@ -14,6 +14,8 @@ stages:
         steps:
           - script: TAG=`git describe --tags` && docker build -t docker.pkg.github.com/$GPR_USER/cddl:$TAG .
             displayName: Build image
+            env:
+              GPR_USER: $(GPR_USER)
           - script: docker login docker.pkg.github.com -u $GPR_USER -p $GPR_PAT
             displayName: Login to GitHub Package Registry
             env:
