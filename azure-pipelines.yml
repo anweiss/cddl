@@ -3,11 +3,11 @@ stages:
     parameters:
       minrust: 1.36.0
       codecov_token: $(CODECOV_TOKEN_SECRET)
-  - stage: Build and push Docker image
+  - stage: build_and_push
     displayName: Push Docker image
-    dependsOn: Test suite
+    dependsOn: test
     jobs:
-      - job: Build and push image
+      - job: build_and_push
         displayName: Build and push image
         pool:
           vmImage: ubuntu-16.04
