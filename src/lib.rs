@@ -79,7 +79,7 @@
 //! validation. The limited prelude from the spec has been included below for
 //! brevity:
 //!
-//! ```
+//! ```cddl
 //! any = #
 //!
 //! uint = #0

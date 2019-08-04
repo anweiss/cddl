@@ -68,7 +68,7 @@ This crate uses the [Serde](https://serde.rs/) framework, and more specifically,
 
 As outlined in [Appendix E.](https://tools.ietf.org/html/rfc8610#appendix-E) of the standard, only the JSON data model subset of CBOR can be used for validation. The limited prelude from the spec has been included below for brevity:
 
-```
+```cddl
 any = #
 
 uint = #0
