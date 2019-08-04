@@ -1,61 +1,29 @@
 //! # cddl
 //!
-//! > This library is very much experimental and is being developed as a personal learning exercise for getting acquainted with Rust and about parsing in general. It is far from complete. There are likely more performant and stable libraries out there for parsing CDDL. This one should not be used in production in any form or fashion.
+//! > This crate is very much experimental and is being developed as a personal
+//! > learning exercise for getting acquainted with Rust and about parsing in
+//! > general. It is far from complete. There are likely more performant and
+//! > stable libraries out there for parsing CDDL. This one should not be used
+//! > in production in any form or fashion.
 //!
-//! CDDL is an IETF standard that "proposes a notational convention to express
-//! CBOR and JSON data structures." As of 2019-06-12, it is published as RFC
-//! 8610 (Proposed Standard) at [https://tools.ietf.org/html/rfc8610](https://tools.ietf.org/html/rfc8610).
+//! An implementation of the Concise data definition language (CDDL). CDDL is an
+//! IETF standard that "proposes a notational convention to express CBOR and
+//! JSON data structures." As of 2019-06-12, it is published as RFC 8610
+//! (Proposed Standard) at https://tools.ietf.org/html/rfc8610.
 //!
-//! ```cddl
-//! reputation-object = {
-//!   reputation-context,
-//!   reputon-list
-//! }
-//!
-//! reputation-context = (
-//!   application: text
-//! )
-//!
-//! reputon-list = (
-//!   reputons: reputon-array
-//! )
-//!
-//! reputon-array = [* reputon]
-//!
-//! reputon = {
-//!   rater-value,
-//!   assertion-value,
-//!   rated-value,
-//!   rating-value,
-//!   ? conf-value,
-//!   ? normal-value,
-//!   ? sample-value,
-//!   ? gen-value,
-//!   ? expire-value,
-//!   * ext-value,
-//! }
-//!
-//! rater-value = ( rater: text )
-//! assertion-value = ( assertion: text )
-//! rated-value = ( rated: text )
-//! rating-value = ( rating: float16 )
-//! conf-value = ( confidence: float16 )
-//! normal-value = ( normal-rating: float16 )
-//! sample-value = ( sample-size: uint )
-//! gen-value = ( generated: uint )
-//! expire-value = ( expires: uint )
-//! ext-value = ( text => any )
-//! ```
-//!
-//! This library includes a handwritten parser and lexer for CDDL and is heavily inspired by Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec.
-//!
-//! I'm currently only focused on using CDDL as a means for validating JSON data, and as such, work is being done to build a JSON validation component into the library and to distribute a CLI binary. An extremely basic REPL is included as well, with plans to compile for use in the browser with WebAssembly. Furthermore, there are a number of improvements to error handling and validation that need to be made.
+//! This crate includes a handwritten parser and lexer for CDDL and is heavily
+//! inspired by Thorsten Ball's book ["Writing An Interpretor In
+//! Go"](https://interpreterbook.com/). The AST has been built to closely match
+//! the rules defined by the ABNF grammar in [Appendix
+//! B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. It also
+//! supports validation of both CBOR and JSON data structures.
 //!
 //! ## Goals
 //!
 //! - Parse CDDL documents into an AST
 //! - Verify conformance of CDDL documents against RFC 8610
-//! - Validate JSON documents using CDDL (only interested in the JSON subset of the CBOR generic data model for now)
+//! - Validate CBOR data structures
+//! - Validate JSON documents
 //! - Basic REPL
 //! - Generate dummy JSON from conformant CDDL
 //! - Close to zero-copy as possible
@@ -64,8 +32,9 @@
 //!
 //! ## Non-goals
 //!
-//! - Validate CBOR data structures (might eventually support this given it's one of the primary goals for CDDL, but not focused on this at the moment)
-//! - Performance (if this library gains enough traction, it may be prudent to explore using a parser-combinator framework like [nom](https://github.com/Geal/nom))
+//! - Performance (if this crate gains enough traction, it may be prudent to
+//!   explore using a parser-combinator framework like
+//!   [nom](https://github.com/Geal/nom))
 //! - Support CBOR diagnostic notation
 //! - I-JSON compatibility
 //!
@@ -97,11 +66,20 @@
 //!
 //! ## Validating JSON
 //!
-//! This library uses the [Serde](https://serde.rs/) framework, and more specifically, the [serde_json](https://crates.io/crates/serde_json) crate, for parsing and validating JSON. Serde was chosen due to its maturity in the ecosystem and its support for serializing and deserializing CBOR via the [serde_cbor](https://crates.io/crates/serde_cbor) crate.
+//! > Incomplete. Under development
 //!
-//! As outlined in [Appendix E.](https://tools.ietf.org/html/rfc8610#appendix-E) of the standard, only the JSON data model subset of CBOR can be used for validation. The limited prelude from the spec has been included below for brevity:
+//! This crate uses the [Serde](https://serde.rs/) framework, and more
+//! specifically, the [serde_json](https://crates.io/crates/serde_json) crate,
+//! for parsing and validating JSON. Serde was chosen due to its maturity in the
+//! ecosystem and its support for serializing and deserializing CBOR via the
+//! [serde_cbor](https://crates.io/crates/serde_cbor) crate.
 //!
-//! ```cddl
+//! As outlined in [Appendix E.](https://tools.ietf.org/html/rfc8610#appendix-E)
+//! of the standard, only the JSON data model subset of CBOR can be used for
+//! validation. The limited prelude from the spec has been included below for
+//! brevity:
+//!
+//! ```
 //! any = #
 //!
 //! uint = #0
@@ -127,11 +105,14 @@
 //! null = nil
 //! ```
 //!
-//! The first non-group rule defined by a CDDL data structure definition determines the root type, which is subsequently used for validating the top-level JSON data type.
+//! The first non-group rule defined by a CDDL data structure definition
+//! determines the root type, which is subsequently used for validating the
+//! top-level JSON data type.
 //!
 //! ### Supported JSON validation features
 //!
-//! The following types and features of CDDL are supported by this library for validating JSON:
+//! The following types and features of CDDL are supported by this crate for
+//! validating JSON:
 //!
 //! |CDDL|JSON|
 //! |----|----|
@@ -143,26 +124,65 @@
 //! |null / nil|null|
 //! |any|any valid JSON|
 //!
-//! Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed into their full representations before being evaluated for JSON validation.
+//! Occurrence indicators can be used to validate key/value pairs in a JSON
+//! object and the number of elements in a JSON array; depending on how the
+//! indicators are defined in a CDDL data definition. CDDL groups, generics,
+//! sockets/plugs and group-to-choice enumerations are all parsed into their
+//! full representations before being evaluated for JSON validation.
 //!
-//! All CDDL control operators can be used for validating JSON, with the exception of the `.cbor` and `.cborseq` operators.
+//! All CDDL control operators can be used for validating JSON, with the
+//! exception of the `.cbor` and `.cborseq` operators.
 //!
-//! *Note: While JSON itself does not distinguish between integers and floating-point numbers, this library does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON.
+//! *Note: While JSON itself does not distinguish between integers and
+//! floating-point numbers, this crate does provide the ability to validate
+//! numbers against a more specific numerical CBOR type, provided that its
+//! equivalent representation is allowed by JSON.
 //!
 //! ### Comparing with JSON schema and JSON schema language
-
-//! [CDDL](https://www.rfc-editor.org/rfc/rfc8610.html), [JSON schema](https://json-schema.org/) and [JSON schema language](https://tools.ietf.org/html/draft-json-schema-language-02) can all be used to define JSON data structures. However, the approaches taken to develop each of these are vastly different. A good place to find past discussions on the differences between thse formats is the [IETF mail archive](https://mailarchive.ietf.org/arch/), specifically in the JSON and CBOR lists. The purpose of this library is not to argue for the use of CDDL over any one of these formats, but simply to provide an example implementation in Rust.
+//!
+//! [CDDL](https://www.rfc-editor.org/rfc/rfc8610.html), [JSON
+//! schema](https://json-schema.org/) and [JSON schema
+//! language](https://tools.ietf.org/html/draft-json-schema-language-02) can all
+//! be used to define JSON data structures. However, the approaches taken to
+//! develop each of these are vastly different. A good place to find past
+//! discussions on the differences between thse formats is the [IETF mail
+//! archive](https://mailarchive.ietf.org/arch/), specifically in the JSON and
+//! CBOR lists. The purpose of this crate is not to argue for the use of CDDL
+//! over any one of these formats, but simply to provide an example
+//! implementation in Rust.
+//!
+//! ## Validating CBOR
+//!
+//! > Incomplete. Under development
+//!
+//! This crate also uses [Serde](https://serde.rs/) and
+//! [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data
+//! structures. Similary to the JSON validation implementation, CBOR Validation
+//! is done via the loosely typed
+//! [`Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html)
+//! enum. Unfortunately, due to a [limitation of
+//! Serde](https://github.com/pyfisch/cbor/issues/3), CBOR tags are ignored
+//! during deserialization.
 //!
 //! ## `no_std` support
 //!
-//! Only the lexer and parser can be used in a `no_std` context provided that a heap allocator is available. This can be enabled by opting out of the default features in your `Cargo.toml` file as follows:
+//! Only the lexer and parser can be used in a `no_std` context provided that a
+//! heap allocator is available. This can be enabled by opting out of the
+//! default features in your `Cargo.toml` file as follows:
 //!
 //! ```toml
 //! [dependencies]
 //! cddl = { version = "<version>", default-features = false }
 //! ```
 //!
-//! JSON validation is dependent on the heap allocated [`Value`](https://docs.rs/serde_json/1.0.40/serde_json/value/index.html) type, but since this type isn't supported in a `no_std` context per https://japaric.github.io/serde-json-core/serde_json_core/index.html#non-features, the JSON validation module does not support `no_std`.
+//! Zero-copy parsing is implemented to the extent that is possible, with
+//! prefixed byte strings containing whitespace being one of the few exceptions
+//! where allocation is required.
+//!
+//! Both JSON and CBOR validation are dependent on their respective heap
+//! allocated `Value` types, but since these types aren't supported in a
+//! `no_std` context, they subsequently aren't supported in a `no_std` context
+//! in this crate.f
 
 #![allow(dead_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
