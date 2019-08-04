@@ -6,7 +6,7 @@
 
 A Rust implementation of the Concise data definition language (CDDL). CDDL is an IETF standard that "proposes a notational convention to express CBOR and JSON data structures." As of 2019-06-12, it is published as RFC 8610 (Proposed Standard) at https://tools.ietf.org/html/rfc8610.
 
-This crate includes a handwritten parser and lexer for CDDL and is heavily inspired by Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec.
+This crate includes a handwritten parser and lexer for CDDL and is heavily inspired by Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
 This crate supports validation of both CBOR and JSON data structures. An extremely basic REPL is included as well, with plans to compile it for use in the browser with WebAssembly.
 
@@ -57,6 +57,8 @@ Rust is a systems programming language designed around safety and is ideally-sui
 - [x] numerical int/uint values
 - [ ] numerical hexfloat values
 - [ ] numerical values with exponents
+- [x] unprefixed byte strings
+- [x] prefixed byte strings
 
 ## Validating JSON
 

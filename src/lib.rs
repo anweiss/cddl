@@ -15,8 +15,8 @@
 //! inspired by Thorsten Ball's book ["Writing An Interpretor In
 //! Go"](https://interpreterbook.com/). The AST has been built to closely match
 //! the rules defined by the ABNF grammar in [Appendix
-//! B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. It also
-//! supports validation of both CBOR and JSON data structures.
+//! B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL
+//! must use UTF-8 for its encoding per the spec.
 //!
 //! ## Goals
 //!
