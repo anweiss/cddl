@@ -122,7 +122,7 @@ All CDDL control operators can be used for validating JSON, with the exception o
 
 > Incomplete. Under development
 
-This crate also uses [Serde](https://serde.rs/) and [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data structures. Similary to the JSON validation implementation, CBOR Validation is done via the loosely typed [`Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html) enum. Unfortunately, due to a [limitation of Serde](https://github.com/pyfisch/cbor/issues/3), CBOR tags are ignored during deserialization.
+This crate also uses [Serde](https://serde.rs/) and [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data structures. Similary to the JSON validation implementation, CBOR validation is done via the loosely typed [`Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html) enum. Unfortunately, due to a [limitation of Serde](https://github.com/pyfisch/cbor/issues/3), CBOR tags are ignored during deserialization.
 
 ## `no_std` support
 
