@@ -78,6 +78,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
   fn validate_rule_for_ident(
     &self,
     ident: &Identifier,
+    is_enumeration: bool,
     expected_memberkey: Option<String>,
     actual_memberkey: Option<String>,
     occur: Option<&Occur>,
@@ -88,7 +89,9 @@ impl<'a> Validator<Value> for CDDL<'a> {
         Rule::Type(tr) if tr.name == *ident => {
           return self.validate_type_rule(&tr, expected_memberkey, actual_memberkey, occur, value)
         }
-        Rule::Group(gr) if gr.name == *ident => return self.validate_group_rule(&gr, occur, value),
+        Rule::Group(gr) if gr.name == *ident => {
+          return self.validate_group_rule(&gr, is_enumeration, occur, value)
+        }
         _ => continue,
       }
     }
@@ -116,8 +119,14 @@ impl<'a> Validator<Value> for CDDL<'a> {
     )
   }
 
-  fn validate_group_rule(&self, gr: &GroupRule, occur: Option<&Occur>, value: &Value) -> Result {
-    self.validate_group_entry(&gr.entry, occur, value)
+  fn validate_group_rule(
+    &self,
+    gr: &GroupRule,
+    is_enumeration: bool,
+    occur: Option<&Occur>,
+    value: &Value,
+  ) -> Result {
+    self.validate_group_entry(&gr.entry, is_enumeration, occur, value)
   }
 
   fn validate_type(
@@ -221,18 +230,35 @@ impl<'a> Validator<Value> for CDDL<'a> {
               .into(),
             )
           } else {
-            self.validate_rule_for_ident(tn, expected_memberkey, actual_memberkey, occur, value)
+            self.validate_rule_for_ident(
+              tn,
+              false,
+              expected_memberkey,
+              actual_memberkey,
+              occur,
+              value,
+            )
           }
         }
         Value::Number(_) => {
           self.validate_numeric_data_type(expected_memberkey, actual_memberkey, (tn.0).0, value)
         }
-        Value::Object(_) => {
-          self.validate_rule_for_ident(tn, expected_memberkey, actual_memberkey, occur, value)
-        }
-        Value::Array(_) => {
-          self.validate_rule_for_ident(tn, expected_memberkey, actual_memberkey, occur, value)
-        }
+        Value::Object(_) => self.validate_rule_for_ident(
+          tn,
+          false,
+          expected_memberkey,
+          actual_memberkey,
+          occur,
+          value,
+        ),
+        Value::Array(_) => self.validate_rule_for_ident(
+          tn,
+          false,
+          expected_memberkey,
+          actual_memberkey,
+          occur,
+          value,
+        ),
       },
       Type2::Array(g) => match value {
         Value::Array(_) => self.validate_group(g, occur, value),
@@ -258,11 +284,52 @@ impl<'a> Validator<Value> for CDDL<'a> {
           .into(),
         ),
       },
+      Type2::ChoiceFromInlineGroup(g) => self.validate_group_to_choice_enum(g, occur, value),
+      Type2::ChoiceFromGroup((ident, _)) => self.validate_rule_for_ident(
+        ident,
+        true,
+        expected_memberkey,
+        actual_memberkey,
+        occur,
+        value,
+      ),
       _ => Err(Error::Syntax(format!(
         "CDDL type {} can't be used to validate JSON {}",
         t2, value
       ))),
     }
+  }
+
+  fn validate_group_to_choice_enum(
+    &self,
+    g: &Group,
+    occur: Option<&Occur>,
+    value: &Value,
+  ) -> Result {
+    let mut validation_errors: Vec<Error> = Vec::new();
+
+    let validate_type_from_group_entry = |gc: &GroupChoice| {
+      gc.0.iter().any(|ge| match ge {
+        // Member names have only "documentary value" when evaluating an
+        // enumeration expression
+        GroupEntry::ValueMemberKey(vmke) => {
+          match self.validate_type(&vmke.entry_type, None, None, occur, value) {
+            Ok(()) => true,
+            Err(e) => {
+              validation_errors.push(e);
+              false
+            }
+          }
+        }
+        _ => false,
+      })
+    };
+
+    if g.0.iter().any(validate_type_from_group_entry) {
+      return Ok(());
+    };
+
+    Err(Error::MultiError(validation_errors))
   }
 
   fn validate_group(&self, g: &Group, occur: Option<&Occur>, value: &Value) -> Result {
@@ -315,7 +382,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
               _ => false,
             }) && values
               .iter()
-              .all(|v| match self.validate_group_entry(ge, occur, v) {
+              .all(|v| match self.validate_group_entry(ge, false, occur, v) {
                 Ok(()) => true,
                 Err(e) => {
                   errors.push(e);
@@ -334,7 +401,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
 
           if values
             .iter()
-            .any(|v| match self.validate_group_entry(ge, occur, v) {
+            .any(|v| match self.validate_group_entry(ge, false, occur, v) {
               Ok(()) => true,
               Err(e) => {
                 errors.push(e);
@@ -361,7 +428,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
         Value::Object(_) => {
           // Validate the object key/value pairs against each group entry,
           // collecting errors along the way
-          match self.validate_group_entry(ge, occur, value) {
+          match self.validate_group_entry(ge, false, occur, value) {
             Ok(()) => continue,
             Err(e) => errors.push(e),
           }
@@ -387,7 +454,13 @@ impl<'a> Validator<Value> for CDDL<'a> {
     Ok(())
   }
 
-  fn validate_group_entry(&self, ge: &GroupEntry, occur: Option<&Occur>, value: &Value) -> Result {
+  fn validate_group_entry(
+    &self,
+    ge: &GroupEntry,
+    is_enumeration: bool,
+    occur: Option<&Occur>,
+    value: &Value,
+  ) -> Result {
     match ge {
       GroupEntry::ValueMemberKey(vmke) => {
         if let Some(mk) = &vmke.member_key {
@@ -532,13 +605,25 @@ impl<'a> Validator<Value> for CDDL<'a> {
           unimplemented!()
         }
       }
-      GroupEntry::TypeGroupname(tge) => {
-        self.validate_rule_for_ident(&tge.name, None, None, tge.occur.as_ref(), value)
-      }
+      GroupEntry::TypeGroupname(tge) => self.validate_rule_for_ident(
+        &tge.name,
+        is_enumeration,
+        None,
+        None,
+        tge.occur.as_ref(),
+        value,
+      ),
       GroupEntry::InlineGroup((igo, g)) => {
         if igo.is_some() {
+          if is_enumeration {
+            return self.validate_group_to_choice_enum(g, igo.as_ref(), value);
+          }
+
           self.validate_group(g, igo.as_ref(), value)
         } else {
+          if is_enumeration {
+            return self.validate_group_to_choice_enum(g, occur, value);
+          }
           self.validate_group(g, occur, value)
         }
       }
@@ -912,6 +997,19 @@ mod tests {
       longitude      : uint,            ; degrees, scaled by 10^7
       latitude       : uint,            ; degrees, scaled by 10^7
     }"#;
+
+    validate_json_from_str(cddl_input, json_input)
+  }
+
+  #[test]
+  fn validate_with_group_enum() -> Result {
+    let json_input = r#""blue""#;
+
+    let cddl_input = r#"color = &colors
+
+    colors = (
+      red: "red", blue: "blue", green: "green",
+    )"#;
 
     validate_json_from_str(cddl_input, json_input)
   }

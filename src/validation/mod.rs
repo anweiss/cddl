@@ -88,6 +88,7 @@ pub trait Validator<T> {
   fn validate_rule_for_ident(
     &self,
     ident: &Identifier,
+    is_enumeration: bool,
     expected_memberkey: Option<String>,
     actual_memberkey: Option<String>,
     occur: Option<&Occur>,
@@ -103,7 +104,13 @@ pub trait Validator<T> {
     value: &T,
   ) -> Result;
 
-  fn validate_group_rule(&self, gr: &GroupRule, occur: Option<&Occur>, value: &T) -> Result;
+  fn validate_group_rule(
+    &self,
+    gr: &GroupRule,
+    is_enumeration: bool,
+    occur: Option<&Occur>,
+    value: &T,
+  ) -> Result;
 
   fn validate_type(
     &self,
@@ -134,9 +141,17 @@ pub trait Validator<T> {
 
   fn validate_group(&self, g: &Group, occur: Option<&Occur>, value: &T) -> Result;
 
+  fn validate_group_to_choice_enum(&self, g: &Group, occur: Option<&Occur>, value: &T) -> Result;
+
   fn validate_group_choice(&self, gc: &GroupChoice, occur: Option<&Occur>, value: &T) -> Result;
 
-  fn validate_group_entry(&self, ge: &GroupEntry, occur: Option<&Occur>, value: &T) -> Result;
+  fn validate_group_entry(
+    &self,
+    ge: &GroupEntry,
+    is_enumeration: bool,
+    occur: Option<&Occur>,
+    value: &T,
+  ) -> Result;
 
   fn validate_array_occurrence(&self, occur: &Occur, group: &str, values: &[T]) -> Result;
 
