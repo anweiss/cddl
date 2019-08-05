@@ -295,9 +295,9 @@ impl<'a> Parser<'a> {
         self.next_token()?;
 
         if let Token::IDENT(ident) = self.cur_token {
-          self.next_token()?;
+          if self.peek_token_is(&Token::LANGLEBRACKET) {
+            self.next_token()?;
 
-          if self.cur_token_is(Token::LANGLEBRACKET) {
             return Ok(Type2::Unwrap((
               ident.into(),
               Some(self.parse_genericarg()?),
@@ -315,6 +315,10 @@ impl<'a> Parser<'a> {
       Token::GTOCHOICE => {
         self.next_token()?;
 
+        while let Token::COMMENT(_) = self.cur_token {
+          self.next_token()?;
+        }
+
         match self.cur_token {
           Token::LPAREN => {
             self.next_token()?;
@@ -322,9 +326,9 @@ impl<'a> Parser<'a> {
             Ok(Type2::ChoiceFromInlineGroup(self.parse_group()?))
           }
           Token::IDENT(ident) => {
-            self.next_token()?;
+            if self.peek_token_is(&Token::LANGLEBRACKET) {
+              self.next_token()?;
 
-            if self.cur_token_is(Token::LANGLEBRACKET) {
               return Ok(Type2::ChoiceFromGroup((
                 ident.into(),
                 Some(self.parse_genericarg()?),
@@ -664,7 +668,7 @@ mod tests {
 
   #[test]
   fn verify_rule() -> Result<()> {
-    let input = r#"myrule = myotherrule
+    let input = r#"myrule = secondrule
 
 secondrule = thirdrule"#;
 

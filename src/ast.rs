@@ -413,13 +413,13 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", ident)
       }
-      Type2::ChoiceFromInlineGroup(g) => write!(f, "{}", g),
+      Type2::ChoiceFromInlineGroup(g) => write!(f, "&({})", g),
       Type2::ChoiceFromGroup((ident, generic_arg)) => {
         if let Some(ga) = generic_arg {
-          return write!(f, "{}{}", ident, ga);
+          return write!(f, "&{}{}", ident, ga);
         }
 
-        write!(f, "{}", ident)
+        write!(f, "&{}", ident)
       }
       Type2::TaggedData((tag_uint, tagged_value)) => {
         if let Some(t) = tag_uint {
