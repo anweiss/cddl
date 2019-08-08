@@ -139,7 +139,7 @@ impl<'a> Parser<'a> {
     }
 
     match self.cur_token {
-      Token::LPAREN | Token::ASTERISK | Token::RANGE(_) | Token::OPTIONAL => {
+      Token::LPAREN | Token::ASTERISK | Token::ONEORMORE | Token::OPTIONAL => {
         Ok(Rule::Group(Box::from(GroupRule {
           name: ident.into(),
           generic_param: gp,
@@ -147,12 +147,24 @@ impl<'a> Parser<'a> {
           entry: self.parse_grpent()?,
         })))
       }
-      _ => Ok(Rule::Type(TypeRule {
-        name: ident.into(),
-        generic_param: gp,
-        is_type_choice_alternate,
-        value: self.parse_type()?,
-      })),
+      _ => {
+        let r = Rule::Type(TypeRule {
+          name: ident.into(),
+          generic_param: gp,
+          is_type_choice_alternate,
+          value: self.parse_type()?,
+        });
+
+        match self.cur_token {
+          // If last (or only) type choice is a rangeop, advance token
+          Token::RANGE(_) => {
+            self.next_token()?;
+
+            Ok(r)
+          }
+          _ => Ok(r),
+        }
+      }
     }
   }
 
@@ -832,18 +844,28 @@ secondrule = thirdrule"#;
 
   #[test]
   fn verify_type1() -> Result<()> {
-    let input = r#"mynumber..100.5"#;
+    let inputs = [r#"5..10"#, r#"-10.5...10.1"#];
 
-    let l = Lexer::new(input);
-    let mut p = Parser::new(l)?;
+    let expected_outputs = [
+      Type1 {
+        type2: Type2::UintValue(5),
+        operator: Some((RangeCtlOp::RangeOp(true), Type2::UintValue(10))),
+      },
+      Type1 {
+        type2: Type2::FloatValue(-10.5),
+        operator: Some((RangeCtlOp::RangeOp(false), Type2::FloatValue(10.1))),
+      },
+    ];
 
-    let t1 = p.parse_type1()?;
-    check_parser_errors(&p)?;
+    for (idx, expected_output) in expected_outputs.iter().enumerate() {
+      let l = Lexer::new(&inputs[idx]);
+      let mut p = Parser::new(l)?;
 
-    assert_eq!(t1.type2.to_string(), "mynumber");
+      let t1 = p.parse_type1()?;
+      check_parser_errors(&p)?;
 
-    let (op, t2) = t1.operator.unwrap();
-    assert_eq!((op, &*t2.to_string()), (RangeCtlOp::RangeOp(true), "100.5"));
+      assert_eq!(t1.to_string(), expected_output.to_string());
+    }
 
     Ok(())
   }

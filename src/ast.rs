@@ -353,14 +353,18 @@ impl<'a> fmt::Display for RangeCtlOp {
 /// ```
 #[derive(Debug)]
 pub enum Type2<'a> {
-  /// Single value
+  /// Integer value
   IntValue(isize),
+  /// Unsigned integer value
   UintValue(usize),
+  /// Float value
   FloatValue(f64),
+  /// Text string value (enclosed by '"')
   TextValue(&'a str),
+  /// Base 16 encoded prefixed byte string
   B16ByteString(Cow<'a, [u8]>),
+  /// Base 64 encoded (URL safe) prefixed byte string
   B64ByteString(Cow<'a, [u8]>),
-
   /// Type name identifier with optional generic arguments
   Typename((Identifier<'a>, Option<GenericArg<'a>>)),
   /// Parenthesized type expression (for operator precedence)
@@ -455,6 +459,7 @@ impl<'a> From<RangeValue<'a>> for Type2<'a> {
   fn from(rv: RangeValue<'a>) -> Self {
     match rv {
       RangeValue::IDENT(ident) => Type2::Typename((ident.into(), None)),
+      RangeValue::INT(i) => Type2::IntValue(i),
       RangeValue::UINT(ui) => Type2::UintValue(ui),
       RangeValue::FLOAT(f) => Type2::FloatValue(f),
     }

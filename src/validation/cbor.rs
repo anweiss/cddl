@@ -177,6 +177,16 @@ impl<'a> Validator<Value> for CDDL<'a> {
     )
   }
 
+  fn validate_range(
+    &self,
+    lower: &Type2,
+    upper: &Type2,
+    is_inclusive: bool,
+    value: &Value,
+  ) -> Result {
+    unimplemented!()
+  }
+
   fn validate_type2(
     &self,
     t2: &Type2,

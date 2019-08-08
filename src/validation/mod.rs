@@ -130,6 +130,8 @@ pub trait Validator<T> {
     value: &T,
   ) -> Result;
 
+  fn validate_range(&self, lower: &Type2, upper: &Type2, is_inclusive: bool, value: &T) -> Result;
+
   fn validate_type2(
     &self,
     t2: &Type2,
@@ -164,4 +166,27 @@ pub trait Validator<T> {
     ident: &str,
     value: &T,
   ) -> Result;
+}
+
+impl<'a> CDDL<'a> {
+  pub fn numerical_type_from_ident(&self, ident: &Identifier) -> Option<&Type2> {
+    for rule in self.rules.iter() {
+      match rule {
+        Rule::Type(tr) if tr.name == *ident => {
+          for tc in tr.value.0.iter() {
+            match &tc.type2 {
+              Type2::IntValue(_) | Type2::UintValue(_) | Type2::FloatValue(_) => {
+                return Some(&tc.type2)
+              }
+              Type2::Typename((ident, _)) => return self.numerical_type_from_ident(ident),
+              _ => continue,
+            }
+          }
+        }
+        _ => continue,
+      }
+    }
+
+    None
+  }
 }

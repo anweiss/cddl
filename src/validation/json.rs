@@ -169,6 +169,13 @@ impl<'a> Validator<Value> for CDDL<'a> {
     occur: Option<&Occur>,
     value: &Value,
   ) -> Result {
+    if let Some((rco, t2)) = &t1.operator {
+      match rco {
+        RangeCtlOp::RangeOp(i) => return self.validate_range(&t1.type2, t2, *i, value),
+        RangeCtlOp::CtlOp(ctrl) => unimplemented!(), // return self.validate_control(&t1.type2, &t2, ctrl, value),
+      }
+    }
+
     self.validate_type2(
       &t1.type2,
       expected_memberkey,
@@ -176,6 +183,191 @@ impl<'a> Validator<Value> for CDDL<'a> {
       occur,
       value,
     )
+  }
+
+  fn validate_range(
+    &self,
+    lower: &Type2,
+    upper: &Type2,
+    is_inclusive: bool,
+    value: &Value,
+  ) -> Result {
+    if let Value::Number(n) = value {
+      // TODO: Per spec, if lower bound exceeds upper bound, resulting type is
+      // empty set. Not sure how this translates to numerical JSON validation.
+      match lower {
+        Type2::IntValue(li) => match upper {
+          Type2::IntValue(ui) => match n.as_i64() {
+            Some(ni) if is_inclusive => {
+              if ni >= *li as i64 && ni <= *ui as i64 {
+                Ok(())
+              } else {
+                Err(
+                  JSONError {
+                    expected_memberkey: None,
+                    expected_value: format!("Range: {}<=value<={}", li, ui),
+                    actual_memberkey: None,
+                    actual_value: value.clone(),
+                  }
+                  .into(),
+                )
+              }
+            }
+            Some(ni) => {
+              if ni >= *li as i64 && ni < *ui as i64 {
+                Ok(())
+              } else {
+                Err(
+                  JSONError {
+                    expected_memberkey: None,
+                    expected_value: format!("Range: {}<=value<{}", li, ui),
+                    actual_memberkey: None,
+                    actual_value: value.clone(),
+                  }
+                  .into(),
+                )
+              }
+            }
+            None => Err(
+              JSONError {
+                expected_memberkey: None,
+                expected_value: format!("Range: {}<=value<={}", li, ui),
+                actual_memberkey: None,
+                actual_value: value.clone(),
+              }
+              .into(),
+            ),
+          },
+          Type2::UintValue(ui) => match n.as_i64() {
+            Some(ni) if is_inclusive => {
+              if ni >= *li as i64 && ni <= *ui as i64 {
+                Ok(())
+              } else {
+                Err(
+                  JSONError {
+                    expected_memberkey: None,
+                    expected_value: format!("Range: {}<=value<={}", li, ui),
+                    actual_memberkey: None,
+                    actual_value: value.clone(),
+                  }
+                  .into(),
+                )
+              }
+            }
+            Some(ni) => {
+              if ni >= *li as i64 && ni < *ui as i64 {
+                Ok(())
+              } else {
+                Err(
+                  JSONError {
+                    expected_memberkey: None,
+                    expected_value: format!("Range: {}<=value<{}", li, ui),
+                    actual_memberkey: None,
+                    actual_value: value.clone(),
+                  }
+                  .into(),
+                )
+              }
+            }
+            None => Err(
+              JSONError {
+                expected_memberkey: None,
+                expected_value: format!("Range between {} and {}", li, ui),
+                actual_memberkey: None,
+                actual_value: value.clone(),
+              }
+              .into(),
+            ),
+          },
+          Type2::Typename((ident, _)) => match self.numerical_type_from_ident(ident) {
+            Some(t2) => self.validate_range(lower, t2, is_inclusive, value),
+            None => Err(Error::Syntax(format!(
+              "Invalid upper range value. Type {} not defined",
+              ident
+            ))),
+          },
+          _ => Err(Error::Syntax(format!(
+            "Invalid upper range value: Got {}",
+            upper
+          ))),
+        },
+        Type2::UintValue(li) => match upper {
+          Type2::UintValue(ui) => match n.as_u64() {
+            Some(ni) if is_inclusive => {
+              if ni >= *li as u64 && ni <= *ui as u64 {
+                Ok(())
+              } else {
+                Err(
+                  JSONError {
+                    expected_memberkey: None,
+                    expected_value: format!("Range: {} <= value <= {}", li, ui),
+                    actual_memberkey: None,
+                    actual_value: value.clone(),
+                  }
+                  .into(),
+                )
+              }
+            }
+            Some(ni) => {
+              if ni >= *li as u64 && ni < *ui as u64 {
+                Ok(())
+              } else {
+                Err(
+                  JSONError {
+                    expected_memberkey: None,
+                    expected_value: format!("Range: {} <= value < {}", li, ui),
+                    actual_memberkey: None,
+                    actual_value: value.clone(),
+                  }
+                  .into(),
+                )
+              }
+            }
+            None => Err(
+              JSONError {
+                expected_memberkey: None,
+                expected_value: format!("Range between {} and {}", li, ui),
+                actual_memberkey: None,
+                actual_value: value.clone(),
+              }
+              .into(),
+            ),
+          },
+          Type2::Typename((ident, _)) => match self.numerical_type_from_ident(ident) {
+            Some(t2) => self.validate_range(lower, t2, is_inclusive, value),
+            None => Err(Error::Syntax(format!(
+              "Invalid upper range value. Type {} not defined",
+              ident
+            ))),
+          },
+          _ => Err(Error::Syntax(format!(
+            "Invalid upper range value: Got {}",
+            upper
+          ))),
+        },
+        Type2::Typename((ident, _)) => match self.numerical_type_from_ident(ident) {
+          Some(t2) => self.validate_range(t2, upper, is_inclusive, value),
+          None => Err(Error::Syntax(format!(
+            "Invalid lower range value. Type with name {} not defined",
+            lower
+          ))),
+        },
+        _ => Err(Error::Syntax(format!(
+          "Invalid lower range value: Got {}",
+          lower
+        ))),
+      }
+    } else {
+      Err(
+        JSONError {
+          expected_memberkey: None,
+          expected_value: format!("Expected numerical value between {} and {}", lower, upper),
+          actual_memberkey: None,
+          actual_value: value.clone(),
+        }
+        .into(),
+      )
+    }
   }
 
   fn validate_type2(
@@ -1010,6 +1202,17 @@ mod tests {
     colors = (
       red: "red", blue: "blue", green: "green",
     )"#;
+
+    validate_json_from_str(cddl_input, json_input)
+  }
+
+  #[test]
+  fn validate_number_int_range() -> Result {
+    let json_input = r#"3"#;
+    let cddl_input = r#"myrange = lower..upper
+    
+    lower = -1
+    upper = 3"#;
 
     validate_json_from_str(cddl_input, json_input)
   }

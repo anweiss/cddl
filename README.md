@@ -110,7 +110,7 @@ The following types and features of CDDL are supported by this crate for validat
 |null / nil|null|
 |any|any valid JSON|
 
-Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed into their full representations before being evaluated for JSON validation.
+Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed and monomorphized into their full representations before being evaluated for JSON validation.
 
 All CDDL control operators can be used for validating JSON, with the exception of the `.cbor` and `.cborseq` operators.
 

@@ -189,6 +189,7 @@ impl<'a> fmt::Display for Tag<'a> {
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum RangeValue<'a> {
   IDENT((&'a str, Option<&'a SocketPlug>)),
+  INT(isize),
   UINT(usize),
   FLOAT(f64),
 }
@@ -200,6 +201,7 @@ impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
     match t {
       Token::IDENT(ident) => Ok(RangeValue::IDENT(ident)),
       Token::VALUE(value) => match value {
+        Value::INT(i) => Ok(RangeValue::INT(i)),
         Value::UINT(ui) => Ok(RangeValue::UINT(ui)),
         Value::FLOAT(f) => Ok(RangeValue::FLOAT(f)),
         _ => Err("Invalid range token".into()),
@@ -223,6 +225,7 @@ impl<'a> fmt::Display for RangeValue<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       RangeValue::IDENT(ident) => write!(f, "{}", ident.0),
+      RangeValue::INT(i) => write!(f, "{}", i),
       RangeValue::UINT(i) => write!(f, "{}", i),
       RangeValue::FLOAT(fl) => write!(f, "{}", fl),
     }

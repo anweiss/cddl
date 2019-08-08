@@ -1,4 +1,6 @@
 use super::token::{self, ByteSliceValue, ByteVecValue, RangeValue, Tag, Token, Value};
+use base16;
+use base64;
 use lexical_core;
 use std::{
   convert::TryFrom,
@@ -19,6 +21,8 @@ pub type Result<T> = result::Result<T, LexerError>;
 #[derive(Debug)]
 pub enum LexerError {
   UTF8(str::Utf8Error),
+  BASE16(base16::DecodeError),
+  BASE64(base64::DecodeError),
   LEXER(&'static str),
   PARSEINT(num::ParseIntError),
 }
@@ -28,6 +32,8 @@ impl Error for LexerError {
   fn source(&self) -> Option<&(dyn Error + 'static)> {
     match self {
       LexerError::UTF8(utf8e) => Some(utf8e),
+      LexerError::BASE16(b16e) => Some(b16e),
+      LexerError::BASE64(b64e) => Some(b64e),
       LexerError::PARSEINT(pie) => Some(pie),
       _ => None,
     }
@@ -39,6 +45,8 @@ impl fmt::Display for LexerError {
     match self {
       LexerError::LEXER(e) => write!(f, "{}", e),
       LexerError::UTF8(e) => write!(f, "{}", e),
+      LexerError::BASE16(e) => write!(f, "{}", e),
+      LexerError::BASE64(e) => write!(f, "{}", e),
       LexerError::PARSEINT(e) => write!(f, "{}", e),
     }
   }
@@ -148,12 +156,21 @@ impl<'a> Lexer<'a> {
                   let _ = self.read_char()?;
                   let (idx, _) = self.read_char()?;
 
+                  // Ensure that the byte string has been properly encoded.
                   match self.read_prefixed_byte_string(idx)? {
                     Cow::Borrowed(bs) => {
-                      return Ok(Token::BYTESLICEVALUE(ByteSliceValue::B16(bs.as_bytes())))
+                      let mut buf = [0u8; 1024];
+                      return base16::decode_slice(&bs[..], &mut buf)
+                        .map_err(LexerError::BASE16)
+                        .and_then(|_| {
+                          Ok(Token::BYTESLICEVALUE(ByteSliceValue::B16(bs.as_bytes())))
+                        });
                     }
                     Cow::Owned(bs) => {
-                      return Ok(Token::BYTEVECVALUE(ByteVecValue::B16(bs.into_bytes())))
+                      let b = bs.as_bytes();
+                      return base16::decode(b)
+                        .map_err(LexerError::BASE16)
+                        .and_then(|_| Ok(Token::BYTEVECVALUE(ByteVecValue::B16(b.to_owned()))));
                     }
                   }
                 }
@@ -172,12 +189,22 @@ impl<'a> Lexer<'a> {
                           let _ = self.read_char()?;
                           let (idx, _) = self.read_char()?;
 
+                          // Ensure that the byte string has been properly
+                          // encoded
                           match self.read_prefixed_byte_string(idx)? {
                             Cow::Borrowed(bs) => {
-                              return Ok(Token::BYTESLICEVALUE(ByteSliceValue::B64(bs.as_bytes())))
+                              return base64::decode_config(bs, base64::URL_SAFE)
+                                .map_err(LexerError::BASE64)
+                                .and_then(|_| {
+                                  Ok(Token::BYTESLICEVALUE(ByteSliceValue::B64(bs.as_bytes())))
+                                });
                             }
                             Cow::Owned(bs) => {
-                              return Ok(Token::BYTEVECVALUE(ByteVecValue::B64(bs.into_bytes())))
+                              return base64::decode_config(&bs, base64::URL_SAFE)
+                                .map_err(LexerError::BASE64)
+                                .and_then(|_| {
+                                  Ok(Token::BYTEVECVALUE(ByteVecValue::B64(bs.into_bytes())))
+                                });
                             }
                           }
                         }
@@ -490,21 +517,57 @@ impl<'a> Lexer<'a> {
   fn read_range(&mut self, lower: Token<'a>) -> Result<Token<'a>> {
     let mut is_inclusive = true;
 
+    // TODO: Remove this workaround for lexing float as the lower bound in a
+    // range.
+    if let Token::VALUE(Value::FLOAT(_)) = lower {
+      if let Some(&c) = self.peek_char() {
+        if c.1 == '.' {
+          let _ = self.read_char()?;
+        }
+      }
+    }
+
     if let Some(&c) = self.peek_char() {
       if c.1 == '.' {
-        is_inclusive = false;
-
         let _ = self.read_char()?;
+
+        is_inclusive = false;
       }
     }
 
     let c = self.read_char()?;
 
-    if is_digit(c.1) {
+    if is_digit(c.1) || c.1 == '-' {
       let upper = self.read_int_or_float(c.0)?;
 
       match lower {
         Token::VALUE(value) => match value {
+          Value::INT(li) => {
+            if let Token::VALUE(value) = upper {
+              match value {
+                Value::INT(ui) => {
+                  return Ok(Token::RANGE((
+                    RangeValue::INT(li),
+                    RangeValue::INT(ui),
+                    is_inclusive,
+                  )))
+                }
+                Value::UINT(ui) => {
+                  return Ok(Token::RANGE((
+                    RangeValue::INT(li),
+                    RangeValue::UINT(ui),
+                    is_inclusive,
+                  )))
+                }
+                _ => {
+                  return Err(
+                    "Only numerical ranges between integers or floating point values are allowed"
+                      .into(),
+                  )
+                }
+              }
+            }
+          }
           Value::UINT(li) => {
             if let Token::VALUE(value) = upper {
               if let Value::UINT(ui) = value {
@@ -602,6 +665,8 @@ myintrule = -10
 
 mysignedfloat = -10.5
 
+myintrange = -10..10
+
 @terminal-color = basecolors / othercolors ; an inline comment
     
 messages = message<"reboot", "now">
@@ -663,6 +728,12 @@ city = (
       (IDENT(("mysignedfloat", None)), "mysignedfloat"),
       (ASSIGN, "="),
       (VALUE(Value::FLOAT(-10.5)), "-10.5"),
+      (IDENT(("myintrange", None)), "myintrange"),
+      (ASSIGN, "="),
+      (
+        RANGE((RangeValue::INT(-10), RangeValue::UINT(10), true)),
+        "-10..10",
+      ),
       (IDENT(("@terminal-color", None)), "@terminal-color"),
       (ASSIGN, "="),
       (IDENT(("basecolors", None)), "basecolors"),
