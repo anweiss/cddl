@@ -681,8 +681,10 @@ mod tests {
   #[test]
   fn verify_rule() -> Result<()> {
     let input = r#"myrule = secondrule
-
-secondrule = thirdrule"#;
+    
+    myrange = 10..upper
+    
+    upper = 500 / 600"#;
 
     let l = Lexer::new(input);
     let mut p = Parser::new(l)?;
@@ -690,66 +692,52 @@ secondrule = thirdrule"#;
     let cddl = p.parse_cddl()?;
     check_parser_errors(&p)?;
 
-    if cddl.rules.len() != 2 {
-      return Err(
-        format!(
-          "cddl.rules does not contain 2 statements. got='{}'",
-          cddl.rules.len()
-        )
-        .into(),
-      );
-    }
+    assert!(cddl.rules.len() == 3);
 
-    let expected_identifiers = ["myrule", "secondrule"];
+    let expected_outputs = [
+      Rule::Type(TypeRule {
+        name: Identifier(("myrule", None)),
+        generic_param: None,
+        is_type_choice_alternate: false,
+        value: Type(vec![Type1 {
+          type2: Type2::Typename((Identifier(("secondrule", None)), None)),
+          operator: None,
+        }]),
+      }),
+      Rule::Type(TypeRule {
+        name: Identifier(("myrange", None)),
+        generic_param: None,
+        is_type_choice_alternate: false,
+        value: Type(vec![Type1 {
+          type2: Type2::UintValue(10),
+          operator: Some((
+            RangeCtlOp::RangeOp(true),
+            Type2::Typename((Identifier(("upper", None)), None)),
+          )),
+        }]),
+      }),
+      Rule::Type(TypeRule {
+        name: Identifier(("upper", None)),
+        generic_param: None,
+        is_type_choice_alternate: false,
+        value: Type(vec![
+          Type1 {
+            type2: Type2::UintValue(500),
+            operator: None,
+          },
+          Type1 {
+            type2: Type2::UintValue(600),
+            operator: None,
+          },
+        ]),
+      }),
+    ];
 
-    for (idx, expected_identifier) in expected_identifiers.iter().enumerate() {
-      let rule = &cddl.rules[idx];
-      assert!(test_rule(rule, expected_identifier));
+    for (idx, expected_output) in expected_outputs.iter().enumerate() {
+      assert_eq!(cddl.rules[idx].to_string(), expected_output.to_string());
     }
 
     Ok(())
-  }
-
-  #[cfg(feature = "std")]
-  fn test_rule(r: &Rule, name: &str) -> bool {
-    match r {
-      Rule::Type(tr) => {
-        if (tr.name.0).0 != name {
-          eprintln!("rule.name.value not '{}'. got={}", name, tr.name,);
-          return false;
-        }
-
-        if tr.name.token_literal().unwrap() != Identifier((name, None)).token_literal().unwrap() {
-          eprintln!(
-            "rule.value not '{}'. got={}",
-            name,
-            tr.name.token_literal().unwrap()
-          );
-          return false;
-        }
-
-        true
-      }
-      _ => false,
-    }
-  }
-
-  #[cfg(not(feature = "std"))]
-  fn test_rule(r: &Rule, name: &str) -> bool {
-    match r {
-      Rule::Type(tr) => {
-        if (tr.name.0).0 != name {
-          return false;
-        }
-
-        if tr.name.token_literal().unwrap() != Identifier((name, None)).token_literal().unwrap() {
-          return false;
-        }
-
-        true
-      }
-      _ => false,
-    }
   }
 
   #[test]
@@ -762,21 +750,12 @@ secondrule = thirdrule"#;
     let gps = p.parse_genericparm()?;
     check_parser_errors(&p)?;
 
-    if gps.0.len() != 2 {
-      return Err(
-        format!(
-          "GenericParm does not contain 2 generic parameters. got='{}'",
-          gps.0.len()
-        )
-        .into(),
-      );
-    }
+    assert!(gps.0.len() == 2);
 
     let expected_generic_params = ["t", "v"];
 
     for (idx, expected_generic_param) in expected_generic_params.iter().enumerate() {
-      let gp = &gps.0[idx];
-      assert_eq!(gp.to_string(), *expected_generic_param);
+      assert_eq!(&gps.0[idx].to_string(), expected_generic_param);
     }
 
     Ok(())
@@ -792,21 +771,12 @@ secondrule = thirdrule"#;
     let generic_args = p.parse_genericarg()?;
     check_parser_errors(&p)?;
 
-    if generic_args.0.len() != 2 {
-      return Err(
-        format!(
-          "generic_args does not contain 2 generic args. got='{}'",
-          generic_args.0.len()
-        )
-        .into(),
-      );
-    }
+    assert!(generic_args.0.len() == 2);
 
     let expected_generic_args = ["\"reboot\"", "\"now\""];
 
     for (idx, expected_generic_arg) in expected_generic_args.iter().enumerate() {
-      let ga = &generic_args.0[idx];
-      assert_eq!(ga.to_string(), *expected_generic_arg);
+      assert_eq!(&generic_args.0[idx].to_string(), expected_generic_arg);
     }
 
     Ok(())
@@ -822,21 +792,12 @@ secondrule = thirdrule"#;
     let t = p.parse_type()?;
     check_parser_errors(&p)?;
 
-    if t.0.len() != 2 {
-      return Err(
-        format!(
-          "type.0 does not contain 2 type choices. got='{}'",
-          t.0.len()
-        )
-        .into(),
-      );
-    }
+    assert!(t.0.len() == 2);
 
     let expected_t1_identifiers = ["tchoice1", "tchoice2"];
 
     for (idx, expected_t1_identifier) in expected_t1_identifiers.iter().enumerate() {
-      let t_choice = &t.0[idx];
-      assert_eq!(t_choice.type2.to_string(), *expected_t1_identifier);
+      assert_eq!(&t.0[idx].to_string(), expected_t1_identifier);
     }
 
     Ok(())
