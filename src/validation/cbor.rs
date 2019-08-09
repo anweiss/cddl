@@ -179,10 +179,10 @@ impl<'a> Validator<Value> for CDDL<'a> {
 
   fn validate_range(
     &self,
-    lower: &Type2,
-    upper: &Type2,
-    is_inclusive: bool,
-    value: &Value,
+    _lower: &Type2,
+    _upper: &Type2,
+    _is_inclusive: bool,
+    _value: &Value,
   ) -> Result {
     unimplemented!()
   }
@@ -406,9 +406,9 @@ impl<'a> Validator<Value> for CDDL<'a> {
 
   fn validate_group_to_choice_enum(
     &self,
-    g: &Group,
-    occur: Option<&Occur>,
-    value: &Value,
+    _g: &Group,
+    _occur: Option<&Occur>,
+    _value: &Value,
   ) -> Result {
     unimplemented!()
   }

@@ -172,7 +172,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     if let Some((rco, t2)) = &t1.operator {
       match rco {
         RangeCtlOp::RangeOp(i) => return self.validate_range(&t1.type2, t2, *i, value),
-        RangeCtlOp::CtlOp(ctrl) => unimplemented!(), // return self.validate_control(&t1.type2, &t2, ctrl, value),
+        RangeCtlOp::CtlOp(_ctrl) => unimplemented!(), // return self.validate_control(&t1.type2, &t2, ctrl, value),
       }
     }
 
@@ -205,7 +205,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
                 Err(
                   JSONError {
                     expected_memberkey: None,
-                    expected_value: format!("Range: {}<=value<={}", li, ui),
+                    expected_value: format!("Range: {} <= value <= {}", li, ui),
                     actual_memberkey: None,
                     actual_value: value.clone(),
                   }
@@ -220,7 +220,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
                 Err(
                   JSONError {
                     expected_memberkey: None,
-                    expected_value: format!("Range: {}<=value<{}", li, ui),
+                    expected_value: format!("Range: {} <= value < {}", li, ui),
                     actual_memberkey: None,
                     actual_value: value.clone(),
                   }
@@ -231,7 +231,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
             None => Err(
               JSONError {
                 expected_memberkey: None,
-                expected_value: format!("Range: {}<=value<={}", li, ui),
+                expected_value: format!("Range: {} <= value <= {}", li, ui),
                 actual_memberkey: None,
                 actual_value: value.clone(),
               }
@@ -246,7 +246,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
                 Err(
                   JSONError {
                     expected_memberkey: None,
-                    expected_value: format!("Range: {}<=value<={}", li, ui),
+                    expected_value: format!("Range: {} <= value <= {}", li, ui),
                     actual_memberkey: None,
                     actual_value: value.clone(),
                   }
@@ -261,7 +261,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
                 Err(
                   JSONError {
                     expected_memberkey: None,
-                    expected_value: format!("Range: {}<=value<{}", li, ui),
+                    expected_value: format!("Range: {} <= value < {}", li, ui),
                     actual_memberkey: None,
                     actual_value: value.clone(),
                   }
@@ -280,7 +280,23 @@ impl<'a> Validator<Value> for CDDL<'a> {
             ),
           },
           Type2::Typename((ident, _)) => match self.numerical_type_from_ident(ident) {
-            Some(t2) => self.validate_range(lower, t2, is_inclusive, value),
+            Some(t2) => {
+              let mut validation_errors: Vec<Error> = Vec::new();
+
+              if t2.iter().any(
+                |tc| match self.validate_range(lower, tc, is_inclusive, value) {
+                  Ok(()) => true,
+                  Err(e) => {
+                    validation_errors.push(e);
+                    false
+                  }
+                },
+              ) {
+                Ok(())
+              } else {
+                Err(Error::MultiError(validation_errors))
+              }
+            }
             None => Err(Error::Syntax(format!(
               "Invalid upper range value. Type {} not defined",
               ident
@@ -334,7 +350,23 @@ impl<'a> Validator<Value> for CDDL<'a> {
             ),
           },
           Type2::Typename((ident, _)) => match self.numerical_type_from_ident(ident) {
-            Some(t2) => self.validate_range(lower, t2, is_inclusive, value),
+            Some(t2) => {
+              let mut validation_errors: Vec<Error> = Vec::new();
+
+              if t2.iter().any(
+                |tc| match self.validate_range(lower, tc, is_inclusive, value) {
+                  Ok(()) => true,
+                  Err(e) => {
+                    validation_errors.push(e);
+                    false
+                  }
+                },
+              ) {
+                Ok(())
+              } else {
+                Err(Error::MultiError(validation_errors))
+              }
+            }
             None => Err(Error::Syntax(format!(
               "Invalid upper range value. Type {} not defined",
               ident
@@ -346,7 +378,23 @@ impl<'a> Validator<Value> for CDDL<'a> {
           ))),
         },
         Type2::Typename((ident, _)) => match self.numerical_type_from_ident(ident) {
-          Some(t2) => self.validate_range(t2, upper, is_inclusive, value),
+          Some(t2) => {
+            let mut validation_errors: Vec<Error> = Vec::new();
+
+            if t2.iter().any(
+              |tc| match self.validate_range(tc, upper, is_inclusive, value) {
+                Ok(()) => true,
+                Err(e) => {
+                  validation_errors.push(e);
+                  false
+                }
+              },
+            ) {
+              Ok(())
+            } else {
+              Err(Error::MultiError(validation_errors))
+            }
+          }
           None => Err(Error::Syntax(format!(
             "Invalid lower range value. Type with name {} not defined",
             lower
@@ -1212,7 +1260,7 @@ mod tests {
     let cddl_input = r#"myrange = lower..upper
     
     lower = -1
-    upper = 3"#;
+    upper = 1 / 2"#;
 
     validate_json_from_str(cddl_input, json_input)
   }

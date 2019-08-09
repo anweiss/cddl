@@ -169,14 +169,16 @@ pub trait Validator<T> {
 }
 
 impl<'a> CDDL<'a> {
-  pub fn numerical_type_from_ident(&self, ident: &Identifier) -> Option<&Type2> {
+  pub fn numerical_type_from_ident(&self, ident: &Identifier) -> Option<Vec<&Type2>> {
+    let mut type_choices = Vec::new();
+
     for rule in self.rules.iter() {
       match rule {
         Rule::Type(tr) if tr.name == *ident => {
           for tc in tr.value.0.iter() {
             match &tc.type2 {
               Type2::IntValue(_) | Type2::UintValue(_) | Type2::FloatValue(_) => {
-                return Some(&tc.type2)
+                type_choices.push(&tc.type2);
               }
               Type2::Typename((ident, _)) => return self.numerical_type_from_ident(ident),
               _ => continue,
@@ -185,6 +187,10 @@ impl<'a> CDDL<'a> {
         }
         _ => continue,
       }
+    }
+
+    if !type_choices.is_empty() {
+      return Some(type_choices);
     }
 
     None
