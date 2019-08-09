@@ -281,7 +281,7 @@ impl<'a> Lexer<'a> {
     while let Some(&(_, ch)) = self.peek_char() {
       match ch {
         // SCHAR
-        '\x20'...'\x21' | '\x23'...'\x5b' | '\x5d'...'\x7e' | '\u{0128}'...'\u{10FFFD}' => {
+        '\x20'..='\x21' | '\x23'..='\x5b' | '\x5d'..='\x7e' | '\u{0128}'..='\u{10FFFD}' => {
           let _ = self.read_char()?;
         }
         // SESC
@@ -289,7 +289,7 @@ impl<'a> Lexer<'a> {
           let _ = self.read_char();
           if let Some(&(_, ch)) = self.peek_char() {
             match ch {
-              '\x20'...'\x7e' | '\u{0128}'...'\u{10FFFD}' => {
+              '\x20'..='\x7e' | '\u{0128}'..='\u{10FFFD}' => {
                 let _ = self.read_char()?;
               }
               _ => return Err("Unexpected escape character in text string".into()),
@@ -316,7 +316,7 @@ impl<'a> Lexer<'a> {
     while let Some(&(_, ch)) = self.peek_char() {
       match ch {
         // BCHAR
-        '\x20'...'\x26' | '\x28'...'\x5b' | '\x5d'...'\u{10FFFD}' => {
+        '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\u{10FFFD}' => {
           let _ = self.read_char();
         }
         // SESC
@@ -324,7 +324,7 @@ impl<'a> Lexer<'a> {
           let _ = self.read_char();
           if let Some(&(_, ch)) = self.peek_char() {
             match ch {
-              '\x20'...'\x7e' | '\u{0128}'...'\u{10FFFD}' => {
+              '\x20'..='\x7e' | '\u{0128}'..='\u{10FFFD}' => {
                 let _ = self.read_char()?;
               }
               _ => return Err("Unexpected escape character in byte string".into()),

@@ -126,7 +126,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     occur: Option<&Occur>,
     value: &Value,
   ) -> Result {
-    self.validate_group_entry(&gr.entry, is_enumeration, occur, value)
+    self.validate_group_entry(&gr.entry, is_enumeration, None, occur, value)
   }
 
   fn validate_type(
@@ -616,20 +616,21 @@ impl<'a> Validator<Value> for CDDL<'a> {
             }
           }
 
+          let validate_all_entries =
+            |v: &Value| match self.validate_group_entry(ge, false, None, occur, v) {
+              Ok(()) => true,
+              Err(e) => {
+                errors.push(e);
+
+                false
+              }
+            };
+
           if let GroupEntry::TypeGroupname(tge) = ge {
             if self.rules.iter().any(|r| match r {
               Rule::Type(tr) if tr.name == tge.name => true,
               _ => false,
-            }) && values
-              .iter()
-              .all(|v| match self.validate_group_entry(ge, false, occur, v) {
-                Ok(()) => true,
-                Err(e) => {
-                  errors.push(e);
-
-                  false
-                }
-              })
+            }) && values.iter().all(validate_all_entries)
             {
               return Ok(());
             }
@@ -639,17 +640,16 @@ impl<'a> Validator<Value> for CDDL<'a> {
           // return scoped errors
           let mut errors: Vec<Error> = Vec::new();
 
-          if values
-            .iter()
-            .any(|v| match self.validate_group_entry(ge, false, occur, v) {
+          if values.iter().any(
+            |v| match self.validate_group_entry(ge, false, None, occur, v) {
               Ok(()) => true,
               Err(e) => {
                 errors.push(e);
 
                 false
               }
-            })
-          {
+            },
+          ) {
             continue;
           }
 
@@ -668,7 +668,17 @@ impl<'a> Validator<Value> for CDDL<'a> {
         Value::Object(_) => {
           // Validate the object key/value pairs against each group entry,
           // collecting errors along the way
-          match self.validate_group_entry(ge, false, occur, value) {
+          // if let GroupEntry::ValueMemberKey(vmke) = ge {
+          //   if let Some(MemberKey::Type1(box (
+          //     Type1 {
+          //       type2: Type2::Typename((Identifier(("tstr", None)), None)),
+          //       operator: _,
+          //     },
+          //     false,
+          //   ))) = vmke.member_key
+          //   {}
+          // }
+          match self.validate_group_entry(ge, false, None, occur, value) {
             Ok(()) => continue,
             Err(e) => errors.push(e),
           }
@@ -698,6 +708,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     &self,
     ge: &GroupEntry,
     is_enumeration: bool,
+    _wildcard_entry: Option<&Type>,
     occur: Option<&Occur>,
     value: &Value,
   ) -> Result {
@@ -706,8 +717,12 @@ impl<'a> Validator<Value> for CDDL<'a> {
         if let Some(mk) = &vmke.member_key {
           match mk {
             MemberKey::Type1(t1) => match &t1.0.type2 {
+              // CDDL { * tstr => any } validates { "otherkey1": "anyvalue", "otherkey2": true }
+              Type2::Typename((ident, _)) if (ident.0).0 == "tstr" || (ident.0).0 == "text" => {
+                Ok(())
+              }
+              // CDDL { "my-key" => tstr, } validates JSON { "my-key": "myvalue" }
               Type2::TextValue(t) => match value {
-                // CDDL { "my-key" => tstr, } validates JSON { "my-key": "myvalue" }
                 Value::Object(om) => {
                   if !is_type_json_prelude(&vmke.entry_type.to_string()) {
                     if let Some(v) = om.get(*t) {
@@ -755,10 +770,6 @@ impl<'a> Validator<Value> for CDDL<'a> {
                 // CDDL [ city: tstr, ] validates JSON [ "city" ]
                 _ => self.validate_type(&vmke.entry_type, Some(mk.to_string()), None, occur, value),
               },
-              // CDDL { * tstr => any } validates { "otherkey1": "anyvalue", "otherkey2": true }
-              Type2::Typename((ident, _)) if (ident.0).0 == "tstr" || (ident.0).0 == "text" => {
-                Ok(())
-              }
               _ => Err(Error::Syntax(
                 "CDDL member key must be quoted string or bareword for validating JSON objects"
                   .to_string(),
@@ -1145,8 +1156,9 @@ fn validate_json<V: Validator<Value>>(cddl: &V, json: &Value) -> Result {
 
 fn is_type_json_prelude(t: &str) -> bool {
   match t {
-    "any" | "uint" | "nint" | "tstr" | "text" | "number" | "float16" | "float32" | "float64"
-    | "float16-32" | "float32-64" | "float" | "false" | "true" | "bool" | "nil" | "null" => true,
+    "any" | "uint" | "nint" | "int" | "tstr" | "text" | "number" | "float16" | "float32"
+    | "float64" | "float16-32" | "float32-64" | "float" | "false" | "true" | "bool" | "nil"
+    | "null" => true,
     _ => false,
   }
 }
@@ -1260,8 +1272,22 @@ mod tests {
     let cddl_input = r#"myrange = lower..upper
     
     lower = -1
-    upper = 1 / 2"#;
+    upper = 1 / 3"#;
 
     validate_json_from_str(cddl_input, json_input)
+  }
+
+  #[test]
+  fn validate_cut_in_map() -> Result {
+    let json_input = r#"{ "optional-key": "nonsense" }"#;
+    let cddl_input = r#"extensible-map-example = {
+      ? "optional-key" ^ => int,
+      * tstr => any
+    }"#;
+
+    // TODO: support wildcard entry with and without cuts
+    assert!(validate_json_from_str(cddl_input, json_input).is_err());
+
+    Ok(())
   }
 }

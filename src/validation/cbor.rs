@@ -125,7 +125,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     occur: Option<&Occur>,
     value: &Value,
   ) -> Result {
-    self.validate_group_entry(&gr.entry, is_enumeration, occur, value)
+    self.validate_group_entry(&gr.entry, is_enumeration, None, occur, value)
   }
 
   fn validate_type(
@@ -436,20 +436,21 @@ impl<'a> Validator<Value> for CDDL<'a> {
             }
           }
 
+          let validate_all_entries =
+            |v: &Value| match self.validate_group_entry(ge, false, None, occur, v) {
+              Ok(()) => true,
+              Err(e) => {
+                errors.push(e);
+
+                false
+              }
+            };
+
           if let GroupEntry::TypeGroupname(tge) = ge {
             if self.rules.iter().any(|r| match r {
               Rule::Type(tr) if tr.name == tge.name => true,
               _ => false,
-            }) && values
-              .iter()
-              .all(|v| match self.validate_group_entry(ge, false, occur, v) {
-                Ok(()) => true,
-                Err(e) => {
-                  errors.push(e);
-
-                  false
-                }
-              })
+            }) && values.iter().all(validate_all_entries)
             {
               return Ok(());
             }
@@ -459,17 +460,16 @@ impl<'a> Validator<Value> for CDDL<'a> {
           // return scoped errors
           let mut errors: Vec<Error> = Vec::new();
 
-          if values
-            .iter()
-            .any(|v| match self.validate_group_entry(ge, false, occur, v) {
+          if values.iter().any(
+            |v| match self.validate_group_entry(ge, false, None, occur, v) {
               Ok(()) => true,
               Err(e) => {
                 errors.push(e);
 
                 false
               }
-            })
-          {
+            },
+          ) {
             continue;
           }
 
@@ -488,7 +488,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
         Value::Map(_) => {
           // Validate the object key/value pairs against each group entry,
           // collecting errors along the way
-          match self.validate_group_entry(ge, false, occur, value) {
+          match self.validate_group_entry(ge, false, None, occur, value) {
             Ok(()) => continue,
             Err(e) => errors.push(e),
           }
@@ -518,6 +518,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     &self,
     ge: &GroupEntry,
     is_enumeration: bool,
+    _wildcard_entry: Option<&Type>,
     occur: Option<&Occur>,
     value: &Value,
   ) -> Result {

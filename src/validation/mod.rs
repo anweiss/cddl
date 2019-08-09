@@ -15,7 +15,7 @@ pub enum Error {
   /// CDDL syntax error, specific to the target data structure being validated
   Syntax(String),
   /// Error validating specific target data structure
-  Target(Box<std::error::Error>),
+  Target(Box<dyn std::error::Error>),
   /// Error compiling CDDL and/or target data structure
   Compilation(CompilationError),
   /// Occurrence error
@@ -61,7 +61,7 @@ impl std::error::Error for Error {
 #[derive(Debug)]
 pub enum CompilationError {
   CDDL(ParserError),
-  Target(Box<std::error::Error>),
+  Target(Box<dyn std::error::Error>),
 }
 
 impl fmt::Display for CompilationError {
@@ -151,6 +151,7 @@ pub trait Validator<T> {
     &self,
     ge: &GroupEntry,
     is_enumeration: bool,
+    wildcard_entry: Option<&Type>,
     occur: Option<&Occur>,
     value: &T,
   ) -> Result;

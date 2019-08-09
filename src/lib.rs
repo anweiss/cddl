@@ -186,7 +186,8 @@
 
 #![allow(dead_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
-#![warn(missing_docs)]
+// #![warn(missing_docs)]
+// #![feature(box_patterns)]
 
 #[macro_use]
 #[cfg(not(feature = "std"))]

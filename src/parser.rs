@@ -441,10 +441,7 @@ impl<'a> Parser<'a> {
     let occur = self.parse_occur(true)?;
 
     if occur.is_some() {
-      while self.cur_token_is(Token::VALUE(Value::INT(0)))
-        || self.cur_token_is(Token::ASTERISK)
-        || self.cur_token_is(Token::OPTIONAL)
-      {
+      while let Token::VALUE(Value::UINT(_)) | Token::ASTERISK | Token::OPTIONAL = self.cur_token {
         self.next_token()?;
       }
     }
@@ -844,6 +841,7 @@ mod tests {
       r#"[*3 reputon]"#,
       r#"&groupname"#,
       r#"&( inlinegroup )"#,
+      r#"{ ? "optional-key" ^ => int, }"#,
     ];
 
     let expected_outputs = [
@@ -881,6 +879,22 @@ mod tests {
           generic_arg: None,
         },
       )])])),
+      Type2::Map(Group(vec![GroupChoice(vec![GroupEntry::ValueMemberKey(
+        Box::from(ValueMemberKeyEntry {
+          occur: Some(Occur::Optional),
+          member_key: Some(MemberKey::Type1(Box::from((
+            Type1 {
+              type2: Type2::TextValue("optional-key"),
+              operator: None,
+            },
+            true,
+          )))),
+          entry_type: Type(vec![Type1 {
+            type2: Type2::Typename((Identifier(("int", None)), None)),
+            operator: None,
+          }]),
+        }),
+      )])])),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -898,7 +912,7 @@ mod tests {
 
   #[test]
   fn verify_grpent() -> Result<()> {
-    let inputs = [r#"* type1 => "value""#, r#"type1: type2"#, r#"typename"#];
+    let inputs = [r#"* type1 ^ => "value""#, r#"type1: type2"#, r#"typename"#];
 
     let expected_outputs = [
       GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
@@ -908,7 +922,7 @@ mod tests {
             type2: Type2::Typename((Identifier(("type1", None)), None)),
             operator: None,
           },
-          false,
+          true,
         )))),
         entry_type: Type(vec![Type1 {
           type2: Type2::TextValue("value"),
