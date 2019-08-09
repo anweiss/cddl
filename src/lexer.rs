@@ -14,7 +14,7 @@ use std::{
 use std::{borrow::Cow, error::Error};
 
 #[cfg(not(feature = "std"))]
-use alloc::borrow::Cow;
+use alloc::borrow::{Cow, ToOwned};
 
 pub type Result<T> = result::Result<T, LexerError>;
 
