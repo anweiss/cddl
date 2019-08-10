@@ -451,6 +451,8 @@ impl<'a> Validator<Value> for CDDL<'a> {
           .into(),
         ),
       },
+      // If type name identifier is 'any'
+      Type2::Typename((Identifier((ident, _)), _)) if *ident == "any" => Ok(()),
       // TODO: evaluate genericarg
       Type2::Typename((tn, _)) => match value {
         Value::Null => expect_null((tn.0).0),
@@ -601,6 +603,20 @@ impl<'a> Validator<Value> for CDDL<'a> {
   ) -> Result {
     let mut errors: Vec<Error> = Vec::new();
 
+    // Check for a wildcard entry
+    let wildcard_entry = gc.0.iter().find_map(|ge| match ge {
+      GroupEntry::ValueMemberKey(vmke) => match &vmke.member_key {
+        Some(MemberKey::Type1(t1)) if !t1.1 => match t1.0.type2 {
+          Type2::Typename((Identifier(("tstr", None)), None)) => Some(&vmke.entry_type),
+          _ => None,
+        },
+        _ => None,
+      },
+      _ => None,
+    });
+
+    println!("wildcard_entry: {:?}", wildcard_entry);
+
     for ge in gc.0.iter() {
       match value {
         Value::Array(values) => {
@@ -665,20 +681,10 @@ impl<'a> Validator<Value> for CDDL<'a> {
             );
           }
         }
+        // Validate the object key/value pairs against each group entry,
+        // collecting errors along the way
         Value::Object(_) => {
-          // Validate the object key/value pairs against each group entry,
-          // collecting errors along the way
-          // if let GroupEntry::ValueMemberKey(vmke) = ge {
-          //   if let Some(MemberKey::Type1(box (
-          //     Type1 {
-          //       type2: Type2::Typename((Identifier(("tstr", None)), None)),
-          //       operator: _,
-          //     },
-          //     false,
-          //   ))) = vmke.member_key
-          //   {}
-          // }
-          match self.validate_group_entry(ge, false, None, occur, value) {
+          match self.validate_group_entry(ge, false, wildcard_entry, occur, value) {
             Ok(()) => continue,
             Err(e) => errors.push(e),
           }
@@ -708,7 +714,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     &self,
     ge: &GroupEntry,
     is_enumeration: bool,
-    _wildcard_entry: Option<&Type>,
+    wildcard_entry: Option<&Type>,
     occur: Option<&Occur>,
     value: &Value,
   ) -> Result {
@@ -717,10 +723,6 @@ impl<'a> Validator<Value> for CDDL<'a> {
         if let Some(mk) = &vmke.member_key {
           match mk {
             MemberKey::Type1(t1) => match &t1.0.type2 {
-              // CDDL { * tstr => any } validates { "otherkey1": "anyvalue", "otherkey2": true }
-              Type2::Typename((ident, _)) if (ident.0).0 == "tstr" || (ident.0).0 == "text" => {
-                Ok(())
-              }
               // CDDL { "my-key" => tstr, } validates JSON { "my-key": "myvalue" }
               Type2::TextValue(t) => match value {
                 Value::Object(om) => {
@@ -745,13 +747,27 @@ impl<'a> Validator<Value> for CDDL<'a> {
                   }
 
                   if let Some(v) = om.get(*t) {
-                    self.validate_type(
+                    let r = self.validate_type(
                       &vmke.entry_type,
                       Some(mk.to_string()),
                       Some(t.to_string()),
                       occur,
                       v,
-                    )
+                    );
+
+                    if r.is_err() && !t1.1 {
+                      if let Some(entry_type) = wildcard_entry {
+                        return self.validate_type(
+                          entry_type,
+                          Some(mk.to_string()),
+                          Some(t.to_string()),
+                          occur,
+                          v,
+                        );
+                      }
+                    }
+
+                    r
                   } else {
                     Err(
                       JSONError {
@@ -770,6 +786,11 @@ impl<'a> Validator<Value> for CDDL<'a> {
                 // CDDL [ city: tstr, ] validates JSON [ "city" ]
                 _ => self.validate_type(&vmke.entry_type, Some(mk.to_string()), None, occur, value),
               },
+
+              // CDDL { * tstr => any } validates { "otherkey1": "anyvalue", "otherkey2": true }
+              Type2::Typename((ident, _)) if (ident.0).0 == "tstr" || (ident.0).0 == "text" => {
+                Ok(())
+              }
               _ => Err(Error::Syntax(
                 "CDDL member key must be quoted string or bareword for validating JSON objects"
                   .to_string(),
@@ -1279,15 +1300,12 @@ mod tests {
 
   #[test]
   fn validate_cut_in_map() -> Result {
-    let json_input = r#"{ "optional-key": "nonsense" }"#;
+    let json_input = r#"{ "optional-key": 10 }"#;
     let cddl_input = r#"extensible-map-example = {
       ? "optional-key" ^ => int,
       * tstr => any
     }"#;
 
-    // TODO: support wildcard entry with and without cuts
-    assert!(validate_json_from_str(cddl_input, json_input).is_err());
-
-    Ok(())
+    validate_json_from_str(cddl_input, json_input)
   }
 }
