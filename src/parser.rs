@@ -18,6 +18,7 @@ use alloc::{
 /// Alias for `Result` with an error of type `cddl::ParserError`
 pub type Result<T> = result::Result<T, ParserError>;
 
+/// Parser type
 pub struct Parser<'a> {
   l: Lexer<'a>,
   cur_token: Token<'a>,
@@ -25,9 +26,12 @@ pub struct Parser<'a> {
   errors: Vec<ParserError>,
 }
 
+/// Parsing error types
 #[derive(Debug)]
 pub enum ParserError {
+  /// Parsing error
   PARSER(String),
+  /// Lexing error
   LEXER(LexerError),
 }
 
@@ -116,11 +120,11 @@ impl<'a> Parser<'a> {
       self.next_token()?;
     }
 
-    if !self.expect_peek(&Token::ASSIGN)
-      && !self.expect_peek(&Token::TCHOICEALT)
-      && !self.expect_peek(&Token::GCHOICEALT)
+    if !self.expect_peek(&Token::ASSIGN)?
+      && !self.expect_peek(&Token::TCHOICEALT)?
+      && !self.expect_peek(&Token::GCHOICEALT)?
     {
-      return Err("Expected ASSIGN".into());
+      return Err("Expected ASSIGN. Got {}".into());
     }
 
     let mut is_type_choice_alternate = false;
@@ -202,7 +206,7 @@ impl<'a> Parser<'a> {
 
     while !self.cur_token_is(Token::RANGLEBRACKET) {
       generic_args.0.push(self.parse_type1()?);
-      if self.cur_token_is(Token::COMMA) || self.cur_token_is(Token::COMMENT("")) {
+      if let Token::COMMA | Token::COMMENT(_) = self.cur_token {
         self.next_token()?;
       }
     }
@@ -636,14 +640,14 @@ impl<'a> Parser<'a> {
     mem::discriminant(&self.peek_token) == mem::discriminant(&t)
   }
 
-  fn expect_peek(&mut self, t: &Token) -> bool {
+  fn expect_peek(&mut self, t: &Token) -> Result<bool> {
     if self.peek_token_is(t) {
-      return self.next_token().is_ok();
+      return self.next_token().map(|_| true);
     }
 
     self.peek_error(t);
 
-    false
+    Ok(false)
   }
 
   fn peek_error(&mut self, t: &Token) {
@@ -802,7 +806,7 @@ mod tests {
 
   #[test]
   fn verify_type1() -> Result<()> {
-    let inputs = [r#"5..10"#, r#"-10.5...10.1"#];
+    let inputs = [r#"5..10"#, r#"-10.5...10.1"#, r#"1.5..4.5"#];
 
     let expected_outputs = [
       Type1 {
@@ -812,6 +816,10 @@ mod tests {
       Type1 {
         type2: Type2::FloatValue(-10.5),
         operator: Some((RangeCtlOp::RangeOp(false), Type2::FloatValue(10.1))),
+      },
+      Type1 {
+        type2: Type2::FloatValue(1.5),
+        operator: Some((RangeCtlOp::RangeOp(true), Type2::FloatValue(4.5))),
       },
     ];
 

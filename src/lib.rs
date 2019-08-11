@@ -217,8 +217,14 @@ pub mod token;
 pub mod validation;
 
 #[doc(inline)]
-pub use self::parser::compile_cddl_from_str;
+pub use self::{
+  lexer::LexerError, parser::compile_cddl_from_str, parser::ParserError, token::Token,
+};
 
 #[doc(inline)]
 #[cfg(feature = "std")]
-pub use self::validation::json::{self as json_validator, validate_json_from_str};
+pub use self::validation::{
+  cbor::{self as cbor_validator, validate_cbor_from_slice},
+  json::{self as json_validator, validate_json_from_str},
+  Error as ValidationError, Validator,
+};

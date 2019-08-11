@@ -4,39 +4,63 @@ use std::{convert::TryFrom, fmt};
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 
+/// Token which represents a valids CDDL character or sequence
 #[derive(PartialEq, Debug)]
 pub enum Token<'a> {
+  /// Illegal sequence of characters
   ILLEGAL(&'a str),
+  /// End of file
   EOF,
 
+  /// Identifier with optional `SocketPlug`
   IDENT((&'a str, Option<&'a SocketPlug>)),
+  /// Value
   VALUE(Value<'a>),
+  /// Borrowed byte value
   BYTESLICEVALUE(ByteSliceValue<'a>),
+  /// Owned byte values
   BYTEVECVALUE(ByteVecValue),
+  /// CBOR tag
   TAG(Tag<'a>),
 
   // Operators
+  /// Assignment operator '='
   ASSIGN,
+  /// Optional occurrence indicator '?'
   OPTIONAL,
+  /// Zero or more occurrence indicator '*'
   ASTERISK,
+  /// One or more occurrence indicator '+'
   ONEORMORE,
+  /// Unwrap operator '~'
   UNWRAP,
+  /// Control operator
   CONTROL(&'a str),
 
   // Delimiters
+  /// Comma ','
   COMMA,
+  /// Colon ':'
   COLON,
 
+  /// Comment text
   COMMENT(&'a str),
 
+  /// Type choice indicator '/'
   TCHOICE,
+  /// Group choice indicator '//'
   GCHOICE,
+  /// Type choice alternative '/='
   TCHOICEALT,
+  /// Group choice alternative '//='
   GCHOICEALT,
+  /// Arrow map '=>'
   ARROWMAP,
+  /// Cut '^'
   CUT,
 
-  // lower, upper and is_inclusive
+  /// Range tuple with lower bound, upper bound, and bool indicating whether or
+  /// not the range is inclusive
   RANGE((RangeValue<'a>, RangeValue<'a>, bool)),
 
   LPAREN,

@@ -16,14 +16,21 @@ use std::{borrow::Cow, error::Error};
 #[cfg(not(feature = "std"))]
 use alloc::borrow::{Cow, ToOwned};
 
+/// Alias for `Result` with an error of type `cddl::LexerError`
 pub type Result<T> = result::Result<T, LexerError>;
 
+/// Lexer error types
 #[derive(Debug)]
 pub enum LexerError {
+  /// UTF-8 parsing error
   UTF8(str::Utf8Error),
+  /// Byte string not properly encoded as base 16
   BASE16(base16::DecodeError),
+  /// Byte string not properly encoded as base 64
   BASE64(base64::DecodeError),
+  /// CDDL lexing syntax error
   LEXER(&'static str),
+  /// Error parsing integer
   PARSEINT(num::ParseIntError),
 }
 
@@ -622,7 +629,7 @@ impl<'a> Lexer<'a> {
       )));
     }
 
-    Err("invalid range syntax".into())
+    Err("Invalid range syntax. Ranges must be between integers (matching integer values) or between floating-point values (matching floating-point values)".into())
   }
 }
 

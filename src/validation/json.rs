@@ -377,6 +377,76 @@ impl<'a> Validator<Value> for CDDL<'a> {
             upper
           ))),
         },
+        Type2::FloatValue(lf) => match upper {
+          Type2::FloatValue(uf) => match n.as_f64() {
+            Some(nf) if is_inclusive => {
+              if nf >= *lf && nf <= *uf {
+                Ok(())
+              } else {
+                Err(
+                  JSONError {
+                    expected_memberkey: None,
+                    expected_value: format!("Range: {} <= value <= {}", lf, uf),
+                    actual_memberkey: None,
+                    actual_value: value.clone(),
+                  }
+                  .into(),
+                )
+              }
+            }
+            Some(nf) => {
+              if nf >= *lf && nf < *uf {
+                Ok(())
+              } else {
+                Err(
+                  JSONError {
+                    expected_memberkey: None,
+                    expected_value: format!("Range: {} <= value < {}", lf, uf),
+                    actual_memberkey: None,
+                    actual_value: value.clone(),
+                  }
+                  .into(),
+                )
+              }
+            }
+            None => Err(
+              JSONError {
+                expected_memberkey: None,
+                expected_value: format!("Range between {} and {}", lf, uf),
+                actual_memberkey: None,
+                actual_value: value.clone(),
+              }
+              .into(),
+            ),
+          },
+          Type2::Typename((ident, _)) => match self.numerical_type_from_ident(ident) {
+            Some(t2) => {
+              let mut validation_errors: Vec<Error> = Vec::new();
+
+              if t2.iter().any(
+                |tc| match self.validate_range(lower, tc, is_inclusive, value) {
+                  Ok(()) => true,
+                  Err(e) => {
+                    validation_errors.push(e);
+                    false
+                  }
+                },
+              ) {
+                Ok(())
+              } else {
+                Err(Error::MultiError(validation_errors))
+              }
+            }
+            None => Err(Error::Syntax(format!(
+              "Invalid upper range value. Type {} not defined",
+              ident
+            ))),
+          },
+          _ => Err(Error::Syntax(format!(
+            "Invalid upper range value: Got {}",
+            upper
+          ))),
+        },
         Type2::Typename((ident, _)) => match self.numerical_type_from_ident(ident) {
           Some(t2) => {
             let mut validation_errors: Vec<Error> = Vec::new();
@@ -1307,5 +1377,15 @@ mod tests {
     }"#;
 
     validate_json_from_str(cddl_input, json_input)
+  }
+
+  #[test]
+  fn validate_bad_range() -> Result {
+    let json_input = r#"3"#;
+    let cddl_input = r#"badrange = 1.5...4"#;
+
+    assert!(validate_json_from_str(cddl_input, json_input).is_err());
+
+    Ok(())
   }
 }
