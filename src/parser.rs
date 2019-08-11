@@ -806,7 +806,12 @@ mod tests {
 
   #[test]
   fn verify_type1() -> Result<()> {
-    let inputs = [r#"5..10"#, r#"-10.5...10.1"#, r#"1.5..4.5"#];
+    let inputs = [
+      r#"5..10"#,
+      r#"-10.5...10.1"#,
+      r#"1.5..4.5"#,
+      r#"my..lower ... upper"#,
+    ];
 
     let expected_outputs = [
       Type1 {
@@ -820,6 +825,13 @@ mod tests {
       Type1 {
         type2: Type2::FloatValue(1.5),
         operator: Some((RangeCtlOp::RangeOp(true), Type2::FloatValue(4.5))),
+      },
+      Type1 {
+        type2: Type2::Typename((Identifier(("my..lower", None)), None)),
+        operator: Some((
+          RangeCtlOp::RangeOp(false),
+          Type2::Typename((Identifier(("upper", None)), None)),
+        )),
       },
     ];
 
@@ -974,6 +986,7 @@ mod tests {
       r#"type1 =>"#,
       r#""mytype1" ^ =>"#,
       r#"mybareword:"#,
+      r#"my..bareword:"#,
       r#""myvalue": "#,
     ];
 
@@ -993,6 +1006,7 @@ mod tests {
         true,
       ))),
       MemberKey::Bareword(Identifier(("mybareword", None))),
+      MemberKey::Bareword(Identifier(("my..bareword", None))),
       MemberKey::Value(Value::TEXT("myvalue")),
     ];
 

@@ -427,13 +427,17 @@ impl<'a> fmt::Display for Token<'a> {
       Token::VALUE(value) => write!(f, "{}", value),
       Token::BYTESLICEVALUE(value) => write!(f, "{}", value),
       Token::BYTEVECVALUE(value) => write!(f, "{}", value),
-      Token::RANGE((l, u, i)) => {
-        if *i {
-          return write!(f, "{}..{}", l, u);
+      Token::RANGE((l, u, i)) => match l {
+        RangeValue::IDENT(_) if *i => write!(f, "{} .. {}", l, u),
+        RangeValue::IDENT(_) => write!(f, "{} ... {}", l, u),
+        _ => {
+          if *i {
+            write!(f, "{}..{}", l, u)
+          } else {
+            write!(f, "{}...{}", l, u)
+          }
         }
-
-        write!(f, "{}...{}", l, u)
-      }
+      },
       Token::TAG(tag) => write!(f, "{}", tag),
       _ => write!(f, ""),
     }

@@ -185,6 +185,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     )
   }
 
+  // TODO: Reduce cognitive complexity of this function
   fn validate_range(
     &self,
     lower: &Type2,
@@ -1360,9 +1361,9 @@ mod tests {
   #[test]
   fn validate_number_int_range() -> Result {
     let json_input = r#"3"#;
-    let cddl_input = r#"myrange = lower..upper
+    let cddl_input = r#"myrange = my.lower .. upper
     
-    lower = -1
+    my.lower = -1
     upper = 1 / 3"#;
 
     validate_json_from_str(cddl_input, json_input)

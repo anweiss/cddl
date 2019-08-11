@@ -224,12 +224,19 @@ impl<'a> Lexer<'a> {
 
             let ident = token::lookup_ident(self.read_identifier(idx)?);
 
-            // Range detected
             match self.peek_char() {
-              Some(&c) if c.1 == '.' => {
+              Some(&c) if c.1 == '\u{0020}' => {
                 let _ = self.read_char()?;
 
-                return self.read_range(ident);
+                // Range detected
+                match self.peek_char() {
+                  Some(&c) if c.1 == '.' => {
+                    let _ = self.read_char()?;
+
+                    return self.read_range(ident);
+                  }
+                  _ => return Ok(ident),
+                }
               }
               _ => return Ok(ident),
             }
@@ -268,7 +275,7 @@ impl<'a> Lexer<'a> {
             end_idx = self.read_char()?.0;
 
             if let Some(&c) = self.peek_char() {
-              if c.1 == '.' {
+              if c.1 == '\u{0020}' {
                 return Ok(
                   str::from_utf8(&self.str_input[idx..end_idx]).map_err(LexerError::UTF8)?,
                 );
@@ -524,21 +531,23 @@ impl<'a> Lexer<'a> {
   fn read_range(&mut self, lower: Token<'a>) -> Result<Token<'a>> {
     let mut is_inclusive = true;
 
-    // TODO: Remove this workaround for lexing float as the lower bound in a
-    // range.
-    if let Token::VALUE(Value::FLOAT(_)) = lower {
-      if let Some(&c) = self.peek_char() {
-        if c.1 == '.' {
-          let _ = self.read_char()?;
+    if let Some(&c) = self.peek_char() {
+      if c.1 == '.' {
+        let _ = self.read_char()?;
+
+        if let Some(&c) = self.peek_char() {
+          if c.1 == '.' {
+            let _ = self.read_char()?;
+
+            is_inclusive = false;
+          }
         }
       }
     }
 
     if let Some(&c) = self.peek_char() {
-      if c.1 == '.' {
+      if c.1 == '\u{0020}' {
         let _ = self.read_char()?;
-
-        is_inclusive = false;
       }
     }
 
@@ -666,7 +675,7 @@ mybase16rule = h'68656c6c6f20776f726c64'
 
 mybase64rule = b64'aGVsbG8gd29ybGQ='
 
-mysecondrule = mynumber..100.5
+mysecondrule = mynumber .. 100.5
 
 myintrule = -10
 
@@ -727,7 +736,7 @@ city = (
           RangeValue::FLOAT(100.5),
           true,
         )),
-        "mynumber..100.5",
+        "mynumber .. 100.5",
       ),
       (IDENT(("myintrule", None)), "myintrule"),
       (ASSIGN, "="),
