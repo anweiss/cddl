@@ -155,6 +155,13 @@ impl<'a> Lexer<'a> {
 
           Ok(token::lookup_control(self.read_identifier(idx)?))
         }
+        (_, '\'') => {
+          let (idx, _) = self.read_char()?;
+
+          Ok(Token::BYTESLICEVALUE(ByteSliceValue::UTF8(
+            self.read_byte_string(idx)?,
+          )))
+        }
         (idx, ch) => {
           if is_ealpha(ch) {
             if ch == 'h' {
@@ -322,6 +329,22 @@ impl<'a> Lexer<'a> {
     }
 
     Err("Empty text value".into())
+  }
+
+  fn read_byte_string(&mut self, idx: usize) -> Result<&'a [u8]> {
+    while let Some(&(_, ch)) = self.peek_char() {
+      match ch {
+        // BCHAR
+        '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\u{10FFFD}' => {
+          let _ = self.read_char();
+        }
+        // Closing '
+        '\x27' => return Ok(&self.str_input[idx..self.read_char()?.0]),
+        _ => return Err("Unexpected character in byte string. Expected closing '".into()),
+      }
+    }
+
+    Err("Empty byte string".into())
   }
 
   fn read_prefixed_byte_string(&mut self, idx: usize) -> Result<Cow<'a, str>> {
@@ -671,6 +694,8 @@ mytag = #6.1234(tstr)
     
 myfirstrule = "myotherrule"
 
+mybytestring = 'hello there'
+
 mybase16rule = h'68656c6c6f20776f726c64'
 
 mybase64rule = b64'aGVsbG8gd29ybGQ='
@@ -716,6 +741,12 @@ city = (
       (IDENT(("myfirstrule", None)), "myfirstrule"),
       (ASSIGN, "="),
       (VALUE(Value::TEXT("myotherrule")), "\"myotherrule\""),
+      (IDENT(("mybytestring", None)), "mybytestring"),
+      (ASSIGN, "="),
+      (
+        BYTESLICEVALUE(ByteSliceValue::UTF8(b"hello there")),
+        "'hello there'",
+      ),
       (IDENT(("mybase16rule", None)), "mybase16rule"),
       (ASSIGN, "="),
       (

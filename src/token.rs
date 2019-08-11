@@ -284,6 +284,7 @@ impl<'a> From<&'static str> for Value<'a> {
 
 #[derive(Debug, PartialEq)]
 pub enum ByteSliceValue<'a> {
+  UTF8(&'a [u8]),
   B16(&'a [u8]),
   B64(&'a [u8]),
 }
@@ -291,6 +292,7 @@ pub enum ByteSliceValue<'a> {
 impl<'a> fmt::Display for ByteSliceValue<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
+      ByteSliceValue::UTF8(b) => write!(f, "'{}'", std::str::from_utf8(b).map_err(|_| fmt::Error)?),
       ByteSliceValue::B16(b) => write!(
         f,
         "h'{}'",

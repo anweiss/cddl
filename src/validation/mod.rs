@@ -58,9 +58,12 @@ impl std::error::Error for Error {
   }
 }
 
+/// Compilation errors
 #[derive(Debug)]
 pub enum CompilationError {
+  /// Error compiling CDDL data definition
   CDDL(ParserError),
+  /// Error compiling data target (i.e. JSON or CBOR)
   Target(Box<dyn std::error::Error>),
 }
 
@@ -82,9 +85,12 @@ impl std::error::Error for CompilationError {
   }
 }
 
+/// Required behavior of a validator over different data types
 pub trait Validator<T> {
+  /// Initiate validation
   fn validate(&self, value: &T) -> Result;
 
+  /// Validate data against the rule with the given identifier
   fn validate_rule_for_ident(
     &self,
     ident: &Identifier,
@@ -95,6 +101,7 @@ pub trait Validator<T> {
     value: &T,
   ) -> Result;
 
+  /// Validate data against a given type rule
   fn validate_type_rule(
     &self,
     tr: &TypeRule,
@@ -104,6 +111,7 @@ pub trait Validator<T> {
     value: &T,
   ) -> Result;
 
+  /// Validate data against a given group rule
   fn validate_group_rule(
     &self,
     gr: &GroupRule,
@@ -112,6 +120,7 @@ pub trait Validator<T> {
     value: &T,
   ) -> Result;
 
+  /// Validate data against a given type
   fn validate_type(
     &self,
     t: &Type,

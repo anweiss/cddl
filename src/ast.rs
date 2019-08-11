@@ -361,6 +361,8 @@ pub enum Type2<'a> {
   FloatValue(f64),
   /// Text string value (enclosed by '"')
   TextValue(&'a str),
+  /// UTF-8 encoded byte string (enclosed by '')
+  UTF8ByteString(&'a [u8]),
   /// Base 16 encoded prefixed byte string
   B16ByteString(Cow<'a, [u8]>),
   /// Base 64 encoded (URL safe) prefixed byte string
@@ -394,6 +396,11 @@ impl<'a> fmt::Display for Type2<'a> {
       Type2::UintValue(value) => write!(f, "{}", value),
       Type2::FloatValue(value) => write!(f, "{}", value),
       Type2::TextValue(value) => write!(f, "\"{}\"", value),
+      Type2::UTF8ByteString(value) => write!(
+        f,
+        "'{}'",
+        std::str::from_utf8(value).map_err(|_| fmt::Error)?
+      ),
       Type2::B16ByteString(value) => {
         write!(f, "{}", std::str::from_utf8(value).map_err(|_| fmt::Error)?)
       }
@@ -469,6 +476,7 @@ impl<'a> From<RangeValue<'a>> for Type2<'a> {
 impl<'a> From<&ByteSliceValue<'a>> for Type2<'a> {
   fn from(value: &ByteSliceValue<'a>) -> Self {
     match value {
+      ByteSliceValue::UTF8(utf8) => Type2::UTF8ByteString(utf8),
       ByteSliceValue::B16(b16) => Type2::B16ByteString(Cow::from(*b16)),
       ByteSliceValue::B64(b64) => Type2::B64ByteString(Cow::from(*b64)),
     }
