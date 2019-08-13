@@ -1,7 +1,7 @@
 use super::{
   ast::*,
   lexer::{Lexer, LexerError},
-  token::{Tag, Token, Value},
+  token::{self, Tag, Token, Value},
 };
 use std::{fmt, mem, result};
 
@@ -244,10 +244,24 @@ impl<'a> Parser<'a> {
         type2: (*lower).into(),
         operator: Some((RangeCtlOp::RangeOp(*inclusive), (*upper).into())),
       }),
-      _ => Ok(Type1 {
-        type2: self.parse_type2()?,
-        operator: None,
-      }),
+
+      _ => {
+        let target = self.parse_type2()?;
+
+        if let Some(ctrl) = token::control_str_from_token(&self.cur_token) {
+          self.next_token()?;
+
+          return Ok(Type1 {
+            type2: target,
+            operator: Some((RangeCtlOp::CtlOp(ctrl), self.parse_type2()?)),
+          });
+        }
+
+        Ok(Type1 {
+          type2: target,
+          operator: None,
+        })
+      }
     }
   }
 
@@ -811,6 +825,7 @@ mod tests {
       r#"-10.5...10.1"#,
       r#"1.5..4.5"#,
       r#"my..lower ... upper"#,
+      r#"target .lt controller"#,
     ];
 
     let expected_outputs = [
@@ -833,6 +848,13 @@ mod tests {
           Type2::Typename((Identifier(("upper", None)), None)),
         )),
       },
+      Type1 {
+        type2: Type2::Typename((Identifier(("target", None)), None)),
+        operator: Some((
+          RangeCtlOp::CtlOp("lt"),
+          Type2::Typename((Identifier(("controller", None)), None)),
+        )),
+      },
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -842,7 +864,7 @@ mod tests {
       let t1 = p.parse_type1()?;
       check_parser_errors(&p)?;
 
-      assert_eq!(t1.to_string(), expected_output.to_string());
+      assert_eq!(expected_output.to_string(), t1.to_string());
     }
 
     Ok(())

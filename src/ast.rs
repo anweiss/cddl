@@ -303,8 +303,19 @@ impl<'a> fmt::Display for Type1<'a> {
 
     t1.push_str(&self.type2.to_string());
 
+    if let Type2::Typename(_) = self.type2 {
+      if self.operator.is_some() {
+        t1.push_str(" ");
+      }
+    }
+
     if let Some((rco, t2)) = &self.operator {
       t1.push_str(&rco.to_string());
+
+      if let Type2::Typename(_) = self.type2 {
+        t1.push_str(" ");
+      }
+
       t1.push_str(&t2.to_string());
     }
 

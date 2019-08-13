@@ -489,6 +489,21 @@ impl<'a> Validator<Value> for CDDL<'a> {
     }
   }
 
+  fn validate_control_operator(
+    &self,
+    target: &Type2,
+    operator: &'static str,
+    controller: &Type2,
+    value: &Value,
+  ) -> Result {
+    match operator {
+      "size" => unimplemented!(),
+      "bits" => unimplemented!(),
+      "regexp" => unimplemented!(),
+      _ => unimplemented!(),
+    }
+  }
+
   fn validate_type2(
     &self,
     t2: &Type2,
@@ -1258,6 +1273,7 @@ fn is_type_json_prelude(t: &str) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use regex::Regex;
 
   #[test]
   fn validate_json_null() -> Result {
@@ -1386,6 +1402,14 @@ mod tests {
     let cddl_input = r#"badrange = 1.5...4"#;
 
     assert!(validate_json_from_str(cddl_input, json_input).is_err());
+
+    Ok(())
+  }
+
+  #[test]
+  fn regex_testing() -> Result {
+    let re = Regex::new(r"[A-Za-z0-9]+@[A-Za-z0-9]+(\.[A-Za-z0-9]+)+").unwrap();
+    assert!(re.is_match("N1@CH57HF.4Znqe0.dYJRN.igjf"));
 
     Ok(())
   }

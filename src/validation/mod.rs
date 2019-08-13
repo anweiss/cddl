@@ -141,6 +141,14 @@ pub trait Validator<T> {
 
   fn validate_range(&self, lower: &Type2, upper: &Type2, is_inclusive: bool, value: &T) -> Result;
 
+  fn validate_control_operator(
+    &self,
+    target: &Type2,
+    operator: &'static str,
+    controller: &Type2,
+    value: &T,
+  ) -> Result;
+
   fn validate_type2(
     &self,
     t2: &Type2,

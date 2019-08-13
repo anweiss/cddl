@@ -150,11 +150,6 @@ impl<'a> Lexer<'a> {
             str::from_utf8(&self.str_input[idx..=idx + 1]).map_err(LexerError::UTF8)?,
           )),
         },
-        (_, '.') => {
-          let (idx, _) = self.read_char()?;
-
-          Ok(token::lookup_control(self.read_identifier(idx)?))
-        }
         (_, '\'') => {
           let (idx, _) = self.read_char()?;
 
@@ -164,6 +159,7 @@ impl<'a> Lexer<'a> {
         }
         (idx, ch) => {
           if is_ealpha(ch) {
+            // base 16 (hex) encoded byte string
             if ch == 'h' {
               if let Some(&c) = self.peek_char() {
                 if c.1 == '\'' {
@@ -191,6 +187,7 @@ impl<'a> Lexer<'a> {
               }
             }
 
+            // base 64 encoded byte string
             if ch == 'b' {
               if let Some(&c) = self.peek_char() {
                 if c.1 == '6' {
@@ -229,18 +226,33 @@ impl<'a> Lexer<'a> {
               }
             }
 
-            let ident = token::lookup_ident(self.read_identifier(idx)?);
+            let ident_str = self.read_identifier(idx)?;
 
+            if let Some(control) = token::lookup_control(ident_str) {
+              return Ok(control);
+            }
+
+            let ident = token::lookup_ident(ident_str);
+
+            // TODO: Move range detection out of lexer and into parser.
+            // Otherwise, this is a kludgy function with range and control
+            // operators
             match self.peek_char() {
               Some(&c) if c.1 == '\u{0020}' => {
                 let _ = self.read_char()?;
 
-                // Range detected
                 match self.peek_char() {
                   Some(&c) if c.1 == '.' => {
                     let _ = self.read_char()?;
 
-                    return self.read_range(ident);
+                    match self.peek_char() {
+                      // Control operator detected
+                      Some(&c) if is_ealpha(c.1) => {
+                        return Ok(ident);
+                      }
+                      // Range detected
+                      _ => return self.read_range(ident),
+                    }
                   }
                   _ => return Ok(ident),
                 }
@@ -708,6 +720,8 @@ mysignedfloat = -10.5
 
 myintrange = -10..10
 
+mycontrol = mynumber .gt 0
+
 @terminal-color = basecolors / othercolors ; an inline comment
     
 messages = message<"reboot", "now">
@@ -781,6 +795,11 @@ city = (
         RANGE((RangeValue::INT(-10), RangeValue::UINT(10), true)),
         "-10..10",
       ),
+      (IDENT(("mycontrol", None)), "mycontrol"),
+      (ASSIGN, "="),
+      (IDENT(("mynumber", None)), "mynumber"),
+      (GT, ".gt"),
+      (VALUE(Value::UINT(0)), "0"),
       (IDENT(("@terminal-color", None)), "@terminal-color"),
       (ASSIGN, "="),
       (IDENT(("basecolors", None)), "basecolors"),
