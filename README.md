@@ -105,7 +105,7 @@ The following types and features of CDDL are supported by this crate for validat
 |structs|objects|
 |arrays|arrays|
 |text / tstr|string|
-|number / int / float|number[^number]|
+|number / int / float|number<sup>[1](#number)</sup>|
 |bool / true / false|boolean|
 |null / nil|null|
 |any|any valid JSON|
@@ -116,8 +116,8 @@ Below is the table of supported control operators and whether or not they've bee
 
 |Control operator|Implementation status|
 |----------------|---------------------|
-|.pcre|Implemented[^regex]|
-|.regex|Implemented[^regex]|
+|.pcre|Implemented<sup>[2](#regex)</sup>|
+|.regex|Implemented<sup>[2](#regex)</sup>|
 |.size|Incomplete|
 |.bits|Unsupported for JSON validation|
 |.cbor|Unsupported for JSON validation|
@@ -132,9 +132,9 @@ Below is the table of supported control operators and whether or not they've bee
 |.ne|Incomplete|
 |.default|Incomplete|
 
-[^number]: While JSON itself does not distinguish between integers and floating-point numbers, this crate does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON.
+<a name="number">1</a>: While JSON itself does not distinguish between integers and floating-point numbers, this crate does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON.
 
-[^regex]: Due to Perl-Compatible Regular Expressions (PCREs) being more widely used than XSD regular expressions, this crate also provides support for the proposed `.pcre` control extension in place of the `.regexp` operator (see [Discussion](https://tools.ietf.org/html/rfc8610#section-3.8.3.2) and [CDDL-Freezer proposal](https://tools.ietf.org/html/draft-bormann-cbor-cddl-freezer-02#section-5.1)). Ensure that your regex string is properly JSON escaped when using this control.
+<a name="regex">2</a>: Due to Perl-Compatible Regular Expressions (PCREs) being more widely used than XSD regular expressions, this crate also provides support for the proposed `.pcre` control extension in place of the `.regexp` operator (see [Discussion](https://tools.ietf.org/html/rfc8610#section-3.8.3.2) and [CDDL-Freezer proposal](https://tools.ietf.org/html/draft-bormann-cbor-cddl-freezer-02#section-5.1)). Ensure that your regex string is properly JSON escaped when using this control.
 
 ### Comparing with JSON schema and JSON schema language
 
