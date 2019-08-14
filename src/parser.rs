@@ -3,6 +3,7 @@ use super::{
   lexer::{Lexer, LexerError},
   token::{self, Tag, Token, Value},
 };
+use regex;
 use std::{fmt, mem, result};
 
 #[cfg(feature = "std")]
@@ -33,6 +34,8 @@ pub enum ParserError {
   PARSER(String),
   /// Lexing error
   LEXER(LexerError),
+  /// Regex error
+  REGEX(regex::Error),
 }
 
 impl fmt::Display for ParserError {
@@ -40,6 +43,7 @@ impl fmt::Display for ParserError {
     match self {
       ParserError::PARSER(e) => write!(f, "{}", e),
       ParserError::LEXER(e) => write!(f, "{}", e),
+      ParserError::REGEX(e) => write!(f, "{}", e),
     }
   }
 }
@@ -47,11 +51,11 @@ impl fmt::Display for ParserError {
 #[cfg(feature = "std")]
 impl Error for ParserError {
   fn source(&self) -> Option<&(dyn Error + 'static)> {
-    if let ParserError::LEXER(le) = self {
-      return Some(le);
+    match self {
+      ParserError::LEXER(le) => Some(le),
+      ParserError::REGEX(re) => Some(re),
+      _ => None,
     }
-
-    None
   }
 }
 

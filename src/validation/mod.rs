@@ -14,7 +14,7 @@ pub type Result = result::Result<(), Error>;
 pub enum Error {
   /// CDDL syntax error, specific to the target data structure being validated
   Syntax(String),
-  /// Error validating specific target data structure
+  /// Error validating specific target data structure (i.e. JSON or CBOR)
   Target(Box<dyn std::error::Error>),
   /// Error compiling CDDL and/or target data structure
   Compilation(CompilationError),
@@ -187,7 +187,7 @@ pub trait Validator<T> {
 }
 
 impl<'a> CDDL<'a> {
-  pub fn numerical_type_from_ident(&self, ident: &Identifier) -> Option<Vec<&Type2>> {
+  fn numerical_type_from_ident(&self, ident: &Identifier) -> Option<Vec<&Type2>> {
     let mut type_choices = Vec::new();
 
     for rule in self.rules.iter() {
@@ -212,5 +212,48 @@ impl<'a> CDDL<'a> {
     }
 
     None
+  }
+
+  // Checks whether or not a given type is a type name identifier and that it
+  // resolves to a text string data type (text | tstr | #3)
+  fn is_type_string_data_type(&self, ident: &Type2) -> bool {
+    match ident {
+      Type2::Typename((Identifier((ident, _)), _)) if *ident == "text" || *ident == "tstr" => true,
+      Type2::Typename((ident, _)) => self.rules.iter().any(|r| match r {
+        Rule::Type(tr) if tr.name == *ident => tr
+          .value
+          .0
+          .iter()
+          .any(|tc| self.is_type_string_data_type(&tc.type2)),
+        _ => false,
+      }),
+      _ => false,
+    }
+  }
+
+  // Returns the text value(s) from a given type
+  fn text_values_from_type(&'a self, ident: &'a Type2) -> result::Result<Vec<&'a str>, Error> {
+    match ident {
+      Type2::TextValue(t) => Ok(vec![t]),
+      Type2::Typename((ident, _)) => {
+        let mut text_values = Vec::new();
+
+        for r in self.rules.iter() {
+          match r {
+            Rule::Type(tr) if tr.name == *ident => {
+              for tc in tr.value.0.iter() {
+                text_values.append(&mut self.text_values_from_type(&tc.type2)?);
+              }
+            }
+            _ => continue,
+          }
+        }
+
+        Ok(text_values)
+      }
+      _ => Err(Error::Syntax(
+        "Talue can only be referrenced via another type name identifier".into(),
+      )),
+    }
   }
 }

@@ -87,6 +87,9 @@ pub enum Token<'a> {
   EQ,
   NE,
   DEFAULT,
+  /// Proposed control extension to support Perl-Compatible Regular Expressions
+  /// (PCREs). See https://tools.ietf.org/html/rfc8610#section-3.8.3.2
+  PCRE,
 
   GTOCHOICE,
 
@@ -409,6 +412,7 @@ impl<'a> fmt::Display for Token<'a> {
       Token::SIZE => write!(f, ".size"),
       Token::BITS => write!(f, ".bits"),
       Token::REGEXP => write!(f, ".regexp"),
+      Token::PCRE => write!(f, ".pcre"),
       Token::CBOR => write!(f, ".cbor"),
       Token::CBORSEQ => write!(f, ".cborseq"),
       Token::WITHIN => write!(f, ".within"),
@@ -462,6 +466,7 @@ pub fn lookup_control(ident: &str) -> Option<Token> {
     "eq" => Some(Token::EQ),
     "ne" => Some(Token::NE),
     "default" => Some(Token::DEFAULT),
+    "pcre" => Some(Token::PCRE),
     _ => None,
   }
 }
@@ -482,6 +487,7 @@ pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
     Token::EQ => Some("eq"),
     Token::NE => Some("ne"),
     Token::DEFAULT => Some("default"),
+    Token::PCRE => Some("pcre"),
     _ => None,
   }
 }

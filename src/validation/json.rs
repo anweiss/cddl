@@ -1,8 +1,9 @@
 use crate::{
   ast::*,
-  parser,
+  parser::{self, ParserError},
   validation::{CompilationError, Error, Result, Validator},
 };
+use regex::Regex;
 use serde_json::{self, Value};
 use std::{f64, fmt};
 
@@ -172,7 +173,9 @@ impl<'a> Validator<Value> for CDDL<'a> {
     if let Some((rco, t2)) = &t1.operator {
       match rco {
         RangeCtlOp::RangeOp(i) => return self.validate_range(&t1.type2, t2, *i, value),
-        RangeCtlOp::CtlOp(_ctrl) => unimplemented!(), // return self.validate_control(&t1.type2, &t2, ctrl, value),
+        RangeCtlOp::CtlOp(ctrl) => {
+          return self.validate_control_operator(&t1.type2, ctrl, t2, value)
+        }
       }
     }
 
@@ -497,9 +500,37 @@ impl<'a> Validator<Value> for CDDL<'a> {
     value: &Value,
   ) -> Result {
     match operator {
-      "size" => unimplemented!(),
-      "bits" => unimplemented!(),
-      "regexp" => unimplemented!(),
+      "pcre" | "regexp" => {
+        if !self.is_type_string_data_type(target) {
+          return Err(Error::Syntax(format!(
+            "the .pcre control operator is only defined for the text type. Got {}",
+            target
+          )));
+        }
+
+        let mut errors: Vec<Error> = Vec::new();
+
+        let find_valid_value = |c: &str| -> bool {
+          match validate_pcre_control(c, value) {
+            Ok(()) => true,
+            Err(e) => {
+              errors.push(e);
+
+              false
+            }
+          }
+        };
+
+        if self
+          .text_values_from_type(controller)?
+          .into_iter()
+          .any(find_valid_value)
+        {
+          Ok(())
+        } else {
+          Err(Error::MultiError(errors))
+        }
+      }
       _ => unimplemented!(),
     }
   }
@@ -700,8 +731,6 @@ impl<'a> Validator<Value> for CDDL<'a> {
       },
       _ => None,
     });
-
-    println!("wildcard_entry: {:?}", wildcard_entry);
 
     for ge in gc.0.iter() {
       match value {
@@ -1270,10 +1299,51 @@ fn is_type_json_prelude(t: &str) -> bool {
   }
 }
 
+fn validate_pcre_control(controller: &str, value: &Value) -> Result {
+  match value {
+    Value::String(s) => {
+      // Text strings must follow JSON string conventions per
+      // https://www.rfc-editor.org/rfc/rfc8610.html#section-3.1. Since the pcre
+      // control operates on text strings, it must be unescaped before being
+      // consumed by the regex crate.
+      let re = Regex::new(
+        serde_json::from_str::<Value>(&format!("\"{}\"", controller))
+          .map_err(|e| Error::Syntax(e.to_string()))?
+          .as_str()
+          .ok_or_else(|| Error::Syntax("Malformed regex".into()))?,
+      )
+      .map_err(|e| Error::Compilation(CompilationError::CDDL(ParserError::REGEX(e))))?;
+
+      if re.is_match(s) {
+        return Ok(());
+      }
+
+      Err(
+        JSONError {
+          expected_memberkey: None,
+          expected_value: format!("text .pcre {}", controller),
+          actual_memberkey: None,
+          actual_value: value.clone(),
+        }
+        .into(),
+      )
+    }
+    _ => Err(
+      JSONError {
+        expected_memberkey: None,
+        expected_value: format!("text .pcre {:?}", controller),
+        actual_memberkey: None,
+        actual_value: value.clone(),
+      }
+      .into(),
+    ),
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
-  use regex::Regex;
+  use serde_json;
 
   #[test]
   fn validate_json_null() -> Result {
@@ -1407,10 +1477,12 @@ mod tests {
   }
 
   #[test]
-  fn regex_testing() -> Result {
-    let re = Regex::new(r"[A-Za-z0-9]+@[A-Za-z0-9]+(\.[A-Za-z0-9]+)+").unwrap();
-    assert!(re.is_match("N1@CH57HF.4Znqe0.dYJRN.igjf"));
+  fn validate_pcre_control() -> Result {
+    let json_input = r#""N1@CH57HF.4Znqe0.dYJRN.igjf""#;
+    let cddl_input = r#"mypcre = tstr .pcre regexoptions
+    
+    regexoptions = "^[A-Z]$" / "[A-Za-z0-9]+@[A-Za-z0-9]+(\\.[A-Za-z0-9]+)+""#;
 
-    Ok(())
+    validate_json_from_str(cddl_input, json_input)
   }
 }

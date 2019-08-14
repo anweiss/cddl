@@ -105,26 +105,46 @@ The following types and features of CDDL are supported by this crate for validat
 |structs|objects|
 |arrays|arrays|
 |text / tstr|string|
-|number / int / float|number*|
+|number / int / float|number[^number]|
 |bool / true / false|boolean|
 |null / nil|null|
 |any|any valid JSON|
 
 Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed and monomorphized into their full representations before being evaluated for JSON validation.
 
-All CDDL control operators can be used for validating JSON, with the exception of the `.cbor` and `.cborseq` operators.
+Below is the table of supported control operators and whether or not they've been implemented as of the current release:
 
-*Note: While JSON itself does not distinguish between integers and floating-point numbers, this crate does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON.
+|Control operator|Implementation status|
+|----------------|---------------------|
+|.pcre|Implemented[^regex]|
+|.regex|Implemented[^regex]|
+|.size|Incomplete|
+|.bits|Unsupported for JSON validation|
+|.cbor|Unsupported for JSON validation|
+|.cborseq|Unsupported for JSON validation|
+|.within|Incomplete|
+|.and|Incomplete|
+|.lt|Incomplete|
+|.le|Incomplete|
+|.gt|Incomplete|
+|.ge|Incomplete|
+|.eq|Incomplete|
+|.ne|Incomplete|
+|.default|Incomplete|
+
+[^number]: While JSON itself does not distinguish between integers and floating-point numbers, this crate does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON.
+
+[^regex]: Due to Perl-Compatible Regular Expressions (PCREs) being more widely used than XSD regular expressions, this crate also provides support for the proposed `.pcre` control extension in place of the `.regexp` operator (see [Discussion](https://tools.ietf.org/html/rfc8610#section-3.8.3.2) and [CDDL-Freezer proposal](https://tools.ietf.org/html/draft-bormann-cbor-cddl-freezer-02#section-5.1)). Ensure that your regex string is properly JSON escaped when using this control.
 
 ### Comparing with JSON schema and JSON schema language
 
-[CDDL](https://www.rfc-editor.org/rfc/rfc8610.html), [JSON schema](https://json-schema.org/) and [JSON schema language](https://tools.ietf.org/html/draft-json-schema-language-02) can all be used to define JSON data structures. However, the approaches taken to develop each of these are vastly different. A good place to find past discussions on the differences between thse formats is the [IETF mail archive](https://mailarchive.ietf.org/arch/), specifically in the JSON and CBOR lists. The purpose of this crate is not to argue for the use of CDDL over any one of these formats, but simply to provide an example implementation in Rust.
+[CDDL](https://tools.ietf.org/html/rfc8610), [JSON schema](https://json-schema.org/) and [JSON schema language](https://tools.ietf.org/html/draft-json-schema-language-02) can all be used to define JSON data structures. However, the approaches taken to develop each of these are vastly different. A good place to find past discussions on the differences between thse formats is the [IETF mail archive](https://mailarchive.ietf.org/arch/), specifically in the JSON and CBOR lists. The purpose of this crate is not to argue for the use of CDDL over any one of these formats, but simply to provide an example implementation in Rust.
 
 ## Validating CBOR
 
 > Incomplete. Under development
 
-This crate also uses [Serde](https://serde.rs/) and [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data structures. Similary to the JSON validation implementation, CBOR validation is done via the loosely typed [`Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html) enum. Unfortunately, due to a [limitation of Serde](https://github.com/pyfisch/cbor/issues/3), CBOR tags are ignored during deserialization.
+This crate also uses [Serde](https://serde.rs/) and [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data structures. Similary to the JSON validation implementation, CBOR validation is done via the loosely typed [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html) enum. Unfortunately, due to a [limitation of Serde](https://github.com/pyfisch/cbor/issues/3), CBOR tags are ignored during deserialization.
 
 ## `no_std` support
 

@@ -228,15 +228,16 @@ impl<'a> Lexer<'a> {
 
             let ident_str = self.read_identifier(idx)?;
 
+            // TODO: Error handling for invalid control identifier
             if let Some(control) = token::lookup_control(ident_str) {
               return Ok(control);
             }
 
             let ident = token::lookup_ident(ident_str);
 
-            // TODO: Move range detection out of lexer and into parser.
-            // Otherwise, this is a kludgy function with range and control
-            // operators
+            // TODO: Move range detection out of lexer and into parser. This is
+            // kludgy otherwise due to the lexer processing ranges and the
+            // parser processing controls
             match self.peek_char() {
               Some(&c) if c.1 == '\u{0020}' => {
                 let _ = self.read_char()?;

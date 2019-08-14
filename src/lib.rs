@@ -1,14 +1,19 @@
 //! # cddl
 //!
+//! [![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl)
+//! [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Build
+//! Status](https://dev.azure.com/anweiss/cddl/_apis/build/status/cddl-CI?branchName=master)](https://dev.azure.com/anweiss/cddl/_build/latest?definitionId=1&branchName=master)
+//! [![codecov](https://codecov.io/gh/anweiss/cddl/branch/master/graph/badge.svg)](https://codecov.io/gh/anweiss/cddl)
+//!
 //! > This crate is very much experimental and is being developed as a personal
 //! > learning exercise for getting acquainted with Rust and about parsing in
 //! > general. It is far from complete. There are likely more performant and
 //! > stable libraries out there for parsing CDDL. This one should not be used
 //! > in production in any form or fashion.
 //!
-//! An implementation of the Concise data definition language (CDDL). CDDL is an
-//! IETF standard that "proposes a notational convention to express CBOR and
-//! JSON data structures." As of 2019-06-12, it is published as RFC 8610
+//! A Rust implementation of the Concise data definition language (CDDL). CDDL
+//! is an IETF standard that "proposes a notational convention to express CBOR
+//! and JSON data structures." As of 2019-06-12, it is published as RFC 8610
 //! (Proposed Standard) at https://tools.ietf.org/html/rfc8610.
 //!
 //! This crate includes a handwritten parser and lexer for CDDL and is heavily
@@ -17,6 +22,10 @@
 //! the rules defined by the ABNF grammar in [Appendix
 //! B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL
 //! must use UTF-8 for its encoding per the spec.
+//!
+//! This crate supports validation of both CBOR and JSON data structures. An
+//! extremely basic REPL is included as well, with plans to compile it for use
+//! in the browser with WebAssembly.
 //!
 //! ## Goals
 //!
@@ -37,6 +46,13 @@
 //!   [nom](https://github.com/Geal/nom))
 //! - Support CBOR diagnostic notation
 //! - I-JSON compatibility
+//!
+//! ## Why Rust?
+//!
+//! Rust is a systems programming language designed around safety and is
+//! ideally-suited for resource-constrained systems. CDDL and CBOR are designed
+//! around small code and message sizes and constrained nodes, scenarios that
+//! Rust has also been designed for.
 //!
 //! ## Features supported by the parser
 //!
@@ -63,6 +79,8 @@
 //! - [x] numerical int/uint values
 //! - [ ] numerical hexfloat values
 //! - [ ] numerical values with exponents
+//! - [x] unprefixed byte strings
+//! - [x] prefixed byte strings
 //!
 //! ## Validating JSON
 //!
@@ -119,7 +137,7 @@
 //! |structs|objects|
 //! |arrays|arrays|
 //! |text / tstr|string|
-//! |number / int / float|number*|
+//! |number / int / float|number[^number]|
 //! |bool / true / false|boolean|
 //! |null / nil|null|
 //! |any|any valid JSON|
@@ -127,20 +145,49 @@
 //! Occurrence indicators can be used to validate key/value pairs in a JSON
 //! object and the number of elements in a JSON array; depending on how the
 //! indicators are defined in a CDDL data definition. CDDL groups, generics,
-//! sockets/plugs and group-to-choice enumerations are all parsed into their
-//! full representations before being evaluated for JSON validation.
+//! sockets/plugs and group-to-choice enumerations are all parsed and
+//! monomorphized into their full representations before being evaluated for
+//! JSON validation.
 //!
-//! All CDDL control operators can be used for validating JSON, with the
-//! exception of the `.cbor` and `.cborseq` operators.
+//! Below is the table of supported control operators and whether or not they've
+//! been implemented as of the current release:
 //!
-//! *Note: While JSON itself does not distinguish between integers and
+//! |Control operator|Implementation status|
+//! |----------------|---------------------|
+//! |.pcre|Implemented[^regex]|
+//! |.regex|Implemented[^regex]|
+//! |.size|Incomplete|
+//! |.bits|Unsupported for JSON validation|
+//! |.cbor|Unsupported for JSON validation|
+//! |.cborseq|Unsupported for JSON validation|
+//! |.within|Incomplete|
+//! |.and|Incomplete|
+//! |.lt|Incomplete|
+//! |.le|Incomplete|
+//! |.gt|Incomplete|
+//! |.ge|Incomplete|
+//! |.eq|Incomplete|
+//! |.ne|Incomplete|
+//! |.default|Incomplete|
+//!
+//! [^number]: While JSON itself does not distinguish between integers and
 //! floating-point numbers, this crate does provide the ability to validate
 //! numbers against a more specific numerical CBOR type, provided that its
 //! equivalent representation is allowed by JSON.
 //!
+//! [^regex]: Due to Perl-Compatible Regular Expressions (PCREs) being more
+//! widely used than XSD regular expressions, this crate also provides support
+//! for the proposed `.pcre` control extension in place of the `.regexp`
+//! operator (see
+//! [Discussion](https://tools.ietf.org/html/rfc8610#section-3.8.3.2) and
+//! [CDDL-Freezer
+//! proposal](https://tools.ietf.org/html/draft-bormann-cbor-cddl-freezer-02#section-5.1)).
+//! Ensure that your regex string is properly JSON escaped when using this
+//! control.
+//!
 //! ### Comparing with JSON schema and JSON schema language
 //!
-//! [CDDL](https://www.rfc-editor.org/rfc/rfc8610.html), [JSON
+//! [CDDL](https://tools.ietf.org/html/rfc8610), [JSON
 //! schema](https://json-schema.org/) and [JSON schema
 //! language](https://tools.ietf.org/html/draft-json-schema-language-02) can all
 //! be used to define JSON data structures. However, the approaches taken to
@@ -159,7 +206,7 @@
 //! [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data
 //! structures. Similary to the JSON validation implementation, CBOR validation
 //! is done via the loosely typed
-//! [`Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html)
+//! [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html)
 //! enum. Unfortunately, due to a [limitation of
 //! Serde](https://github.com/pyfisch/cbor/issues/3), CBOR tags are ignored
 //! during deserialization.
@@ -182,7 +229,15 @@
 //! Both JSON and CBOR validation are dependent on their respective heap
 //! allocated `Value` types, but since these types aren't supported in a
 //! `no_std` context, they subsequently aren't supported in a `no_std` context
-//! in this crate.f
+//! in this crate.
+//!
+//! ## Dependency graph
+//!
+//! Below is a graph of the dependencies used by this project. It was generated
+//! using [`cargo-deps`](https://github.com/m-cat/cargo-deps).
+//!
+//! ![cddl
+//! dependencies](https://github.com/anweiss/cddl/raw/master/dep-graph.png)
 
 #![allow(dead_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
