@@ -1,0 +1,243 @@
+on: [ push ]
+
+name: Build and Test
+
+jobs:
+  minimum-version-check:
+    strategy:
+      matrix:
+        rust_toolchain: [ 1.36.0 ]
+        platform: [ ubuntu-latest, macOS-latest, windows-latest ]
+    name: minimum version check using Rust ${{ matrix.rust_toolchain }} on ${{ matrix.platform }}
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Install Rust
+        if: matrix.platform != 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          set -e
+          $HOME/.cargo/bin/rustup install $RUSTUP_TOOLCHAIN
+          $HOME/.cargo/bin/rustup default $RUSTUP_TOOLCHAIN
+          echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
+
+      - name: Install Rust
+        if: matrix.platform == 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        shell: powershell
+        run: |
+          rustup install "$env:RUSTUP_TOOLCHAIN"
+          rustup default "$env:RUSTUP_TOOLCHAIN"
+
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Check compilation with default features
+        if: matrix.platform == 'windows-latest'
+        shell: powershell
+        run: |
+          cargo --version
+          cargo check --all --bins --examples --tests
+
+      - name: Check compilation with default features
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          cargo --version
+          cargo check --all --bins --examples --tests
+
+      - name: Check compilation with default features
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          $HOME/.cargo/bin/cargo check --all --bins --examples --tests
+
+      - name: Check compilation with no features
+        if: matrix.platform != 'macOS-latest'
+        run: cargo check --all --bins --examples --tests --no-default-features
+
+      - name: Check compilation with no features
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          $HOME/.cargo/bin/cargo check --all --bins --examples --tests --no-default-features
+
+      - name: Check compilation with all features
+        if: matrix.platform != 'macOS-latest'
+        run: cargo check --all --bins --examples --tests --all-features
+
+      - name: Check compilation with all features
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          $HOME/.cargo/bin/cargo check --all --bins --examples --tests --all-features
+
+  compilation-check:
+    strategy:
+      matrix:
+        rust_toolchain: [ stable ]
+        platform: [ ubuntu-latest, macOS-latest, windows-latest ]
+    name: Compilation check
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Install Rust
+        if: matrix.platform != 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          set -e
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
+          export PATH="$PATH:$HOME/.cargo/bin"
+
+      - name: Install Rust
+        if: matrix.platform == 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        shell: powershell
+        run: |
+          $env:RUSTUP_HOME="C:\Rust\.rustup"
+          $env:CARGO_HOME="C:\Rust\.cargo"
+          Invoke-WebRequest -UseBasicParsing -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
+          .\rustup-init.exe -y --default-toolchain $env:RUSTUP_TOOLCHAIN
+          Remove-Item -Path .\rustup-init.exe
+          $env:PATH = "$env:CARGO_HOME\bin;$env:PATH"
+
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Check compilation with default features
+        if: matrix.platform != 'macOS-latest'
+        run: cargo check --all --bins --examples --tests
+
+      - name: Check compilation with default features
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          $HOME/.cargo/bin/cargo check --all --bins --examples --tests
+
+      - name: Check compilation with no features
+        if: matrix.platform != 'macOS-latest'
+        run: cargo check --all --bins --examples --tests --no-default-features
+
+      - name: Check compilation with no features
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          $HOME/.cargo/bin/cargo check --all --bins --examples --tests --no-default-features
+
+      - name: Check compilation with all features
+        if: matrix.platform != 'macOS-latest'
+        run: cargo check --all --bins --examples --tests --all-features
+
+      - name: Check compilation with all features
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          $HOME/.cargo/bin/cargo check --all --bins --examples --tests --all-features
+      
+  test-suite:
+    strategy:
+      matrix:
+        rust_toolchain: [ stable, beta, nightly ]
+        platform: [ ubuntu-latest, macOS-latest, windows-latest ]
+    name: Test suite
+    needs: compilation-check
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Install Rust
+        if: matrix.platform != 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          set -e
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
+          export PATH="$PATH:$HOME/.cargo/bin"
+
+      - name: Install Rust
+        if: matrix.platform == 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        shell: powershell
+        run: |
+          $env:RUSTUP_HOME="C:\Rust\.rustup"
+          $env:CARGO_HOME="C:\Rust\.cargo"
+          Invoke-WebRequest -UseBasicParsing -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
+          .\rustup-init.exe -y --default-toolchain $env:RUSTUP_TOOLCHAIN
+          Remove-Item -Path .\rustup-init.exe
+          $env:PATH = "$env:CARGO_HOME\bin;$env:PATH"
+
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.platform }}
+        if: matrix.platform != 'macOS-latest'
+        run: cargo test --all
+
+      - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.platform }}
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          $HOME/.cargo/bin/cargo test --all
+
+  style-linting:
+    strategy:
+      matrix:
+        rust_toolchain: [ stable, beta ]
+        platform: [ ubuntu-latest, macOS-latest, windows-latest ]
+    name: Style linting
+    needs: compilation-check
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Install Rust
+        if: matrix.platform != 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          set -e
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
+          export PATH="$PATH:$HOME/.cargo/bin"
+
+      - name: Install Rust
+        if: matrix.platform == 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        shell: powershell
+        run: |
+          $env:RUSTUP_HOME="C:\Rust\.rustup"
+          $env:CARGO_HOME="C:\Rust\.cargo"
+          Invoke-WebRequest -UseBasicParsing -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
+          .\rustup-init.exe -y --default-toolchain $env:RUSTUP_TOOLCHAIN
+          Remove-Item -Path .\rustup-init.exe
+          $env:PATH = "$env:CARGO_HOME\bin;$env:PATH"
+
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Install rustfmt
+        if: matrix.platform != 'macOS-latest'
+        run: rustup component add rustfmt
+
+      - name: Install rustfmt
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          $HOME/.cargo/bin/rustup component add rustfmt
+
+      - name: cargo +${{ matrix.rust_toolchain }} fmt ${{ matrix.platform }}
+        if: matrix.platform != 'macOS-latest'
+        run: cargo fmt --all -- --check
+
+      - name: cargo +${{ matrix.rust_toolchain }} fmt ${{ matrix.platform }}
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          $HOME/.cargo/bin/cargo fmt --all -- --check
+
+      - name: Install clippy
+        if: matrix.platform != 'macOS-latest'
+        run: rustup component add clippy
+
+      - name: Install clippy
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          $HOME/.cargo/bin/rustup component add clippy
+
+      - name: cargo +${{ matrix.rust_toolchain }} clippy ${{ matrix.platform }}
+        if: matrix.platform != 'macOS-latest'
+        run: cargo clippy --all
+
+      - name: cargo +${{ matrix.rust_toolchain }} clippy ${{ matrix.platform }}
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          $HOME/.cargo/bin/cargo clippy --all 

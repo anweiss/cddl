@@ -1,0 +1,82 @@
+name: Publish CLI
+on:
+  release:
+    types: [ created ]
+
+jobs:
+  release-cli:
+    name: Release CLI
+    strategy:
+      matrix:
+        rust: [ stable ]
+        platform: [ ubuntu-latest, windows-latest, macOS-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Build CLI
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          cargo b --release --bin cddl
+          cp target/release/cddl cddl-linux-amd64
+
+      - name: Build CLI
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          $HOME/.cargo/bin/cargo b --release --bin cddl
+          cp target/release/cddl cddl-darwin-amd64
+
+      - name: Build CLI
+        if: matrix.platform == 'windows-latest'
+        shell: powershell
+        run: |
+          cargo b --release --bin cddl
+          cp target\release\cddl.exe cddl-windows-amd64.exe
+
+      - name: Upload binary
+        if: matrix.platform == 'windows-latest'
+        shell: powershell
+        env:
+          ACCESS_TOKEN: ${{ secrets.AccessToken }}
+        run: |
+          $tag = $(git describe --tags)
+          .\.github\workflows\upload-binary.ps1 -token $env:ACCESS_TOKEN -file cddl-windows-amd64.exe -tag $tag -user anweiss -project cddl
+
+      - name: Upload binary
+        if: matrix.platform == 'ubuntu-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.AccessToken }}
+        run: |
+          go get github.com/aktau/github-release
+          github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-linux-amd64" --file cddl-linux-amd64
+
+      - name: Upload binary
+        if: matrix.platform == 'macOS-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.AccessToken }}
+        run: |
+          go get github.com/aktau/github-release
+          github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-darwin-amd64" --file cddl-darwin-amd64
+
+  publish-docker-image:
+    name: Publish Docker image
+    runs-on: ubuntu-latest
+    needs: release-cli
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Build image
+        run: |
+          docker build -t docker.pkg.github.com/anweiss/cddl/cddl:`git describe --tags` .
+      
+      - name: Login to GPR
+        env:
+          GPR_PAT: ${{ secrets.GPRPat }}
+        run: |
+          docker login docker.pkg.github.com -u anweiss -p $GPR_PAT
+        
+      - name: Push image
+        run: |
+          docker push docker.pkg.github.com/anweiss/cddl/cddl:`git describe --tags`

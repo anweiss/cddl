@@ -3,27 +3,6 @@ stages:
     parameters:
       minrust: 1.36.0
       codecov_token: $(CODECOV_TOKEN_SECRET)
-  - stage: build_and_push
-    displayName: Build and Push Docker image
-    dependsOn: test
-    jobs:
-      - job: build_and_push
-        displayName: Build and push image
-        pool:
-          vmImage: ubuntu-16.04
-        steps:
-          - script: TAG=`git describe --tags` && docker build -t docker.pkg.github.com/$GPR_USER/cddl/cddl:$TAG .
-            displayName: Build image
-            env:
-              GPR_USER: $(GPR_USER)
-          - script: docker login docker.pkg.github.com -u $GPR_USER -p $GPR_PAT
-            displayName: Login to GitHub Package Registry
-            env:
-              GPR_USER: $(GPR_USER)
-              GPR_PAT: $(GPR_PAT)
-          - script: TAG=`git describe --tags` && docker push docker.pkg.github.com/$GPR_USER/cddl/cddl:$TAG
-            displayName: Push image
-
             
 resources:
   repositories:
@@ -33,9 +12,9 @@ resources:
       endpoint: anweiss
 
 trigger:
-  tags:
+  branches:
     include:
       - '*'
-  branches:
+  tags:
     include:
       - '*'
