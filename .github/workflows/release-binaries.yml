@@ -1,0 +1,337 @@
+name: Publish CLI
+on:
+  create:
+    ref_type: tag
+
+jobs:
+  # compilation-check:
+  #   strategy:
+  #     matrix:
+  #       rust_toolchain: [ stable ]
+  #       platform: [ ubuntu-latest, macOS-latest, windows-latest ]
+  #   name: Compilation check
+  #   runs-on: ${{ matrix.platform }}
+  #   steps:
+  #     - name: Install Rust
+  #       if: matrix.platform != 'windows-latest'
+  #       env:
+  #         RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+  #       run: |
+  #         set -e
+  #         curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
+  #         export PATH="$PATH:$HOME/.cargo/bin"
+  #         echo "##vso[task.setvariable variable=PATH;]$PATH;$HOME/.cargo/bin"
+  #         source $HOME/.cargo/env
+  #         rustup default $RUSTUP_TOOLCHAIN
+  #         rustup update $RUSTUP_TOOLCHAIN
+
+  #     - name: Install Rust
+  #       if: matrix.platform == 'windows-latest'
+  #       env:
+  #         RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+  #       shell: powershell
+  #       run: |
+  #         Invoke-WebRequest -UseBasicParsing -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
+  #         .\rustup-init.exe -v -y --default-toolchain "$env:RUSTUP_TOOLCHAIN"
+  #         Remove-Item -Path .\rustup-init.exe
+  #         $env:PATH = "$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+  #         echo "##vso[task.setvariable variable=PATH;]$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+
+  #     - name: Set Rust version
+  #       if: matrix.platform == 'windows-latest'
+  #       env:
+  #         RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+  #       run: |
+  #         rustup install %RUSTUP_TOOLCHAIN%
+  #         rustup default %RUSTUP_TOOLCHAIN%
+  #         rustup update %RUSTUP_TOOLCHAIN%
+
+  #     - name: Checkout source
+  #       uses: actions/checkout@master
+
+  #     - name: Check compilation with default features
+  #       if: matrix.platform != 'macOS-latest'
+  #       run: |
+  #         cargo check --all --bins --examples --tests
+
+  #     - name: Check compilation with default features
+  #       if: matrix.platform == 'macOS-latest'
+  #       run: |
+  #         source $HOME/.cargo/env
+  #         cargo check --all --bins --examples --tests
+
+  #     - name: Check compilation with no features
+  #       if: matrix.platform != 'macOS-latest'
+  #       run: |
+  #         cargo check --all --bins --examples --tests --no-default-features
+
+  #     - name: Check compilation with no features
+  #       if: matrix.platform == 'macOS-latest'
+  #       run: |
+  #         source $HOME/.cargo/env
+  #         cargo check --all --bins --examples --tests --no-default-features
+
+  #     - name: Check compilation with all features
+  #       if: matrix.platform != 'macOS-latest'
+  #       run: |
+  #         cargo check --all --bins --examples --tests --all-features
+
+  #     - name: Check compilation with all features
+  #       if: matrix.platform == 'macOS-latest'
+  #       run: |
+  #         source $HOME/.cargo/env
+  #         cargo check --all --bins --examples --tests --all-features
+      
+  # test-suite:
+  #   strategy:
+  #     matrix:
+  #       rust_toolchain: [ stable ]
+  #       platform: [ ubuntu-latest, macOS-latest, windows-latest ]
+  #   name: Test suite
+  #   needs: compilation-check
+  #   runs-on: ${{ matrix.platform }}
+  #   steps:
+  #     - name: Install Rust
+  #       if: matrix.platform != 'windows-latest'
+  #       env:
+  #         RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+  #       run: |
+  #         set -e
+  #         curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
+  #         export PATH="$PATH:$HOME/.cargo/bin"
+  #         echo "##vso[task.setvariable variable=PATH;]$PATH;$HOME/.cargo/bin"
+  #         source $HOME/.cargo/env
+  #         rustup default $RUSTUP_TOOLCHAIN
+  #         rustup update $RUSTUP_TOOLCHAIN
+
+  #     - name: Install Rust
+  #       if: matrix.platform == 'windows-latest'
+  #       env:
+  #         RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+  #       shell: powershell
+  #       run: |
+  #         Invoke-WebRequest -UseBasicParsing -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
+  #         .\rustup-init.exe -v -y --default-toolchain "$env:RUSTUP_TOOLCHAIN"
+  #         Remove-Item -Path .\rustup-init.exe
+  #         $env:PATH = "$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+  #         echo "##vso[task.setvariable variable=PATH;]$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+
+  #     - name: Set Rust version
+  #       if: matrix.platform == 'windows-latest'
+  #       env:
+  #         RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+  #       run: |
+  #         rustup install %RUSTUP_TOOLCHAIN%
+  #         rustup default %RUSTUP_TOOLCHAIN%
+  #         rustup update %RUSTUP_TOOLCHAIN%
+
+  #     - name: Checkout source
+  #       uses: actions/checkout@master
+
+  #     - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.platform }}
+  #       if: matrix.platform != 'macOS-latest'
+  #       run: |
+  #         cargo test --all
+
+  #     - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.platform }}
+  #       if: matrix.platform == 'macOS-latest'
+  #       run: |
+  #         source $HOME/.cargo/env
+  #         cargo test --all
+
+  create-release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    # needs: test-suite
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.AccessToken }}
+        run: |
+          mkdir -p $HOME/go/src $HOME/go/bin $HOME/go/pkg
+          export GOPATH="$HOME/go"
+          export GOBIN="$GOPATH/bin"
+          export PATH="$PATH:$GOBIN"
+          go get -u github.com/aktau/github-release
+          export TAG=`git describe --tags`
+          export DESCRIPTION="$(git log $(git describe --tags --abbrev=0)..HEAD --pretty=format:"%h %s")"
+          github-release release --user anweiss --repo cddl --tag $TAG --name $TAG --description "$DESCRIPTION" --draft
+
+  upload-binaries:
+    name: Upload binaries
+    strategy:
+      matrix:
+        rust_toolchain: [ stable ]
+        platform: [ ubuntu-latest, windows-latest, macOS-latest ]
+    runs-on: ${{ matrix.platform }}
+    needs: create-release
+    steps:
+      - name: Install Rust
+        if: matrix.platform != 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          set -e
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
+          export PATH="$PATH:$HOME/.cargo/bin"
+          echo "##vso[task.setvariable variable=PATH;]$PATH;$HOME/.cargo/bin"
+          source $HOME/.cargo/env
+          rustup default $RUSTUP_TOOLCHAIN
+          rustup update $RUSTUP_TOOLCHAIN
+
+      - name: Install Rust
+        if: matrix.platform == 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        shell: powershell
+        run: |
+          Invoke-WebRequest -UseBasicParsing -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
+          .\rustup-init.exe -v -y --default-toolchain "$env:RUSTUP_TOOLCHAIN"
+          Remove-Item -Path .\rustup-init.exe
+          $env:PATH = "$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+          echo "##vso[task.setvariable variable=PATH;]$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+
+      - name: Set Rust version
+        if: matrix.platform == 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          rustup install %RUSTUP_TOOLCHAIN%
+          rustup default %RUSTUP_TOOLCHAIN%
+          rustup update %RUSTUP_TOOLCHAIN%
+
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Build CLI
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          cargo b --release --bin cddl
+          cp target/release/cddl cddl-linux-amd64
+
+      - name: Build CLI
+        if: matrix.platform == 'macOS-latest'
+        run: |
+          source $HOME/.cargo/env
+          cargo b --release --bin cddl
+          cp target/release/cddl cddl-darwin-amd64
+
+      - name: Build CLI
+        if: matrix.platform == 'windows-latest'
+        shell: powershell
+        run: |
+          cargo b --release --bin cddl
+          cp target\release\cddl.exe cddl-windows-amd64.exe
+
+      - name: Upload binary
+        if: matrix.platform == 'windows-latest'
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ secrets.AccessToken }}
+        run: |
+          $tag = $(git describe --tags)
+          mkdir -p $env:HOME\go\src
+          mkdir -p $env:HOME\go\bin
+          mkdir -p $env:HOME\go\pkg
+          $env:GOPATH = "D:\go"
+          $env:GOBIN = "$env:GOPATH\bin"
+          $env:PATH = "$env:PATH;$env:GOBIN"
+          go get -u github.com/aktau/github-release
+          github-release upload --user anweiss --repo cddl --tag $tag --name "cddl-windows-amd64.exe" --file cddl-windows-amd64.exe
+
+      - name: Upload binary
+        if: matrix.platform == 'ubuntu-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.AccessToken }}
+        run: |
+          mkdir -p $HOME/go/src $HOME/go/bin $HOME/go/pkg
+          export GOPATH="$HOME/go"
+          export GOBIN="$GOPATH/bin"
+          export PATH="$PATH:$GOBIN"
+          go get -u github.com/aktau/github-release
+          github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-linux-amd64" --file cddl-linux-amd64
+
+      - name: Upload binary
+        if: matrix.platform == 'macOS-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.AccessToken }}
+        run: |
+          mkdir -p $HOME/go/src $HOME/go/bin $HOME/go/pkg
+          export GOPATH="$HOME/go"
+          export GOBIN="$GOPATH/bin"
+          export PATH="$PATH:$GOBIN"
+          go get -u github.com/aktau/github-release
+          github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-darwin-amd64" --file cddl-darwin-amd64
+
+  publish-docker-image:
+    name: Publish Docker image
+    runs-on: ubuntu-latest
+    needs: create-release
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Build image
+        run: |
+          export TAG=`git describe --tags`
+          docker build -t docker.pkg.github.com/anweiss/cddl/cddl:$TAG .
+      
+      - name: Login to GPR
+        env:
+          GPR_PAT: ${{ secrets.GPRPat }}
+        run: |
+          docker login docker.pkg.github.com -u anweiss -p $GPR_PAT
+        
+      - name: Push image
+        run: |
+          export TAG=`git describe --tags`
+          docker push docker.pkg.github.com/anweiss/cddl/cddl:$TAG
+
+  publish-release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: [ upload-binaries, publish-docker-image ]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.AccessToken }}
+        run: |
+          mkdir -p $HOME/go/src $HOME/go/bin $HOME/go/pkg
+          export GOPATH="$HOME/go"
+          export GOBIN="$GOPATH/bin"
+          export PATH="$PATH:$GOBIN"
+          go get -u github.com/aktau/github-release
+          github-release edit --user anweiss --repo cddl --tag `git describe --tags` --draft false
+          
+  publish-crate:
+    name: Publish crate
+    runs-on: ubuntu-latest
+    needs: publish-release
+    steps:
+      - name: Install Rust
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: |
+          set -e
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
+          export PATH="$PATH:$HOME/.cargo/bin"
+          echo "##vso[task.setvariable variable=PATH;]$PATH;$HOME/.cargo/bin"
+          source $HOME/.cargo/env
+          rustup default $RUSTUP_TOOLCHAIN
+          rustup update $RUSTUP_TOOLCHAIN
+
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Publish crate
+        env:
+          CRATESIO_TOKEN: ${{ secrets.CratesIOToken }}
+        run: |
+          cargo login $CRATESIO_TOKEN
+          cargo publish
