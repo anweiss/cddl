@@ -167,7 +167,7 @@ jobs:
       matrix:
         rust_toolchain: [ stable ]
         platform: [ ubuntu-latest, windows-latest, macOS-latest ]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.platform }}
     needs: create-release
     steps:
       - name: Install Rust
