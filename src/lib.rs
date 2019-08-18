@@ -4,8 +4,6 @@
 //! [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Build
 //! Status](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Factions-badge.atrox.dev%2Fanweiss%2Fcddl%2Fbadge&style=popout)](https://actions-badge.atrox.dev/anweiss/cddl/goto)
 //!
-//!
-//!
 //! > This crate is very much experimental and is being developed as a personal
 //! > learning exercise for getting acquainted with Rust and about parsing in
 //! > general. It is far from complete. There are likely more performant and
@@ -82,32 +80,6 @@
 //! - [ ] numerical values with exponents
 //! - [x] unprefixed byte strings
 //! - [x] prefixed byte strings
-//!
-//! ## CLI
-//!
-//! A CLI has been made available for various platforms and as a Docker iamge.
-//! It can downloaded from the
-//! [Releases](https://github.com/anweiss/cddl/releases) tab. Instructions for
-//! using the tool can be viewed by executing the following:
-//!
-//!     $ cddl help
-//!
-//! If using Docker:
-//!
-//! > Ensure your Docker client has been
-//! > [authenticated](https://help.github.com/en/articles/configuring-docker-for-use-with-github-package-registry#authenticating-to-github-package-registry)
-//! > into GitHub Package Registry. Replace `<version>` with an appropriate
-//! > release tag. Requires use of the `--volume` argument for mounting `.cddl`
-//! > and `.json` documents into the container when executing the command. The
-//! > command below assumes these documents are in your current working
-//! > directory.
-//!
-//!     $ docker run -it --rm -v $PWD:/cddl -w /cddl docker.pkg.github.com/anweiss/cddl/cddl:<version> help
-//!
-//! The tool supports parsing of `.cddl` files for verifying conformance against
-//! RFC 8610. It also supports validation of `.cddl` documents against `.json`
-//! files. Detailed information about the JSON validation functions can be found
-//! in the section that follows.
 //!
 //! ## Validating JSON
 //!
