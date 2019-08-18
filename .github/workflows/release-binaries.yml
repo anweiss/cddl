@@ -142,7 +142,7 @@ jobs:
   create-release:
     name: Create GitHub release
     runs-on: ubuntu-latest
-    # needs: test-suite
+    needs: test-suite
     steps:
       - name: Checkout source
         uses: actions/checkout@master
