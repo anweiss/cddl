@@ -266,10 +266,29 @@ jobs:
           go get -u github.com/aktau/github-release
           github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-darwin-amd64" --file cddl-darwin-amd64
 
+  publish-release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: upload-binaries
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.AccessToken }}
+        run: |
+          mkdir -p $HOME/go/src $HOME/go/bin $HOME/go/pkg
+          export GOPATH="$HOME/go"
+          export GOBIN="$GOPATH/bin"
+          export PATH="$PATH:$GOBIN"
+          go get -u github.com/aktau/github-release
+          github-release edit --user anweiss --repo cddl --tag `git describe --tags`
+
   publish-docker-image:
     name: Publish Docker image
     runs-on: ubuntu-latest
-    needs: create-release
+    needs: publish-release
     steps:
       - name: Checkout source
         uses: actions/checkout@master
@@ -289,25 +308,6 @@ jobs:
         run: |
           export TAG=`git describe --tags`
           docker push docker.pkg.github.com/anweiss/cddl/cddl:$TAG
-
-  publish-release:
-    name: Publish release
-    runs-on: ubuntu-latest
-    needs: [ upload-binaries, publish-docker-image ]
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@master
-
-      - name: Publish release
-        env:
-          GITHUB_TOKEN: ${{ secrets.AccessToken }}
-        run: |
-          mkdir -p $HOME/go/src $HOME/go/bin $HOME/go/pkg
-          export GOPATH="$HOME/go"
-          export GOBIN="$GOPATH/bin"
-          export PATH="$PATH:$GOBIN"
-          go get -u github.com/aktau/github-release
-          github-release edit --user anweiss --repo cddl --tag `git describe --tags`
           
   publish-crate:
     name: Publish crate
