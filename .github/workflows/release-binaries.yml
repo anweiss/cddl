@@ -307,7 +307,7 @@ jobs:
           export GOBIN="$GOPATH/bin"
           export PATH="$PATH:$GOBIN"
           go get -u github.com/aktau/github-release
-          github-release edit --user anweiss --repo cddl --tag `git describe --tags` --draft false
+          github-release edit --user anweiss --repo cddl --tag `git describe --tags`
           
   publish-crate:
     name: Publish crate
