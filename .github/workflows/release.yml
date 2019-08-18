@@ -1,4 +1,4 @@
-name: Publish CLI
+name: Release package
 on:
   create:
     ref_type: tag
@@ -211,6 +211,8 @@ jobs:
         run: |
           cargo b --release --bin cddl
           cp target/release/cddl cddl-linux-amd64
+          chmod +x cddl-linux-amd64
+          tar -czvf cddl-linux-amd64.tar.gz cddl-linux-amd64
 
       - name: Build CLI
         if: matrix.platform == 'macOS-latest'
@@ -218,6 +220,9 @@ jobs:
           source $HOME/.cargo/env
           cargo b --release --bin cddl
           cp target/release/cddl cddl-darwin-amd64
+          chmod +x cddl-darwin-amd64
+          zip cddl-darwin-amd64.zip cddl-darwin-amd64
+
 
       - name: Build CLI
         if: matrix.platform == 'windows-latest'
@@ -225,6 +230,7 @@ jobs:
         run: |
           cargo b --release --bin cddl
           cp target\release\cddl.exe cddl-windows-amd64.exe
+          Compress-Archive -Path .\cddl-windows-amd64.exe -DestinationPath cddl-windows-amd64.zip
 
       - name: Upload binary
         if: matrix.platform == 'windows-latest'
@@ -240,7 +246,7 @@ jobs:
           $env:GOBIN = "$env:GOPATH\bin"
           $env:PATH = "$env:PATH;$env:GOBIN"
           go get -u github.com/aktau/github-release
-          github-release upload --user anweiss --repo cddl --tag $tag --name "cddl-windows-amd64.exe" --file cddl-windows-amd64.exe
+          github-release upload --user anweiss --repo cddl --tag $tag --name "cddl-windows-amd64.zip" --file cddl-windows-amd64.zip
 
       - name: Upload binary
         if: matrix.platform == 'ubuntu-latest'
@@ -252,7 +258,7 @@ jobs:
           export GOBIN="$GOPATH/bin"
           export PATH="$PATH:$GOBIN"
           go get -u github.com/aktau/github-release
-          github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-linux-amd64" --file cddl-linux-amd64
+          github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-linux-amd64.tar.giz" --file cddl-linux-amd64.tar.gz
 
       - name: Upload binary
         if: matrix.platform == 'macOS-latest'
@@ -264,7 +270,7 @@ jobs:
           export GOBIN="$GOPATH/bin"
           export PATH="$PATH:$GOBIN"
           go get -u github.com/aktau/github-release
-          github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-darwin-amd64" --file cddl-darwin-amd64
+          github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-darwin-amd64.zip" --file cddl-darwin-amd64.zip
 
   publish-release:
     name: Publish release
@@ -283,7 +289,8 @@ jobs:
           export GOBIN="$GOPATH/bin"
           export PATH="$PATH:$GOBIN"
           go get -u github.com/aktau/github-release
-          github-release edit --user anweiss --repo cddl --tag `git describe --tags`
+          export DESCRIPTION="$(git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"%h %s")"
+          github-release edit --user anweiss --repo cddl --tag `git describe --tags` --description "$DESCRIPTION"
 
   publish-docker-image:
     name: Publish Docker image
