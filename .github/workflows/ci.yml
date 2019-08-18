@@ -17,9 +17,12 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         run: |
           set -e
-          $HOME/.cargo/bin/rustup install $RUSTUP_TOOLCHAIN
-          $HOME/.cargo/bin/rustup default $RUSTUP_TOOLCHAIN
-          echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
+          export PATH="$PATH:$HOME/.cargo/bin"
+          echo "##vso[task.setvariable variable=PATH;]$PATH;$HOME/.cargo/bin"
+          source $HOME/.cargo/env
+          rustup default $RUSTUP_TOOLCHAIN
+          rustup update $RUSTUP_TOOLCHAIN
 
       - name: Install Rust
         if: matrix.platform == 'windows-latest'
@@ -27,47 +30,56 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         shell: powershell
         run: |
-          rustup install "$env:RUSTUP_TOOLCHAIN"
-          rustup default "$env:RUSTUP_TOOLCHAIN"
+          Invoke-WebRequest -UseBasicParsing -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
+          .\rustup-init.exe -v -y --default-toolchain "$env:RUSTUP_TOOLCHAIN"
+          Remove-Item -Path .\rustup-init.exe
+          $env:PATH = "$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+          echo "##vso[task.setvariable variable=PATH;]$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+
+      - name: Set Rust version
+        if: matrix.platform == 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          rustup install %RUSTUP_TOOLCHAIN%
+          rustup default %RUSTUP_TOOLCHAIN%
+          rustup update %RUSTUP_TOOLCHAIN%
 
       - name: Checkout source
         uses: actions/checkout@master
 
       - name: Check compilation with default features
-        if: matrix.platform == 'windows-latest'
-        shell: powershell
+        if: matrix.platform != 'macOS-latest'
         run: |
-          cargo --version
-          cargo check --all --bins --examples --tests
-
-      - name: Check compilation with default features
-        if: matrix.platform == 'ubuntu-latest'
-        run: |
-          cargo --version
           cargo check --all --bins --examples --tests
 
       - name: Check compilation with default features
         if: matrix.platform == 'macOS-latest'
         run: |
-          $HOME/.cargo/bin/cargo check --all --bins --examples --tests
+          source $HOME/.cargo/env
+          cargo check --all --bins --examples --tests
 
       - name: Check compilation with no features
         if: matrix.platform != 'macOS-latest'
-        run: cargo check --all --bins --examples --tests --no-default-features
+        run: |
+          cargo check --all --bins --examples --tests --no-default-features
 
       - name: Check compilation with no features
         if: matrix.platform == 'macOS-latest'
         run: |
-          $HOME/.cargo/bin/cargo check --all --bins --examples --tests --no-default-features
+          source $HOME/.cargo/env
+          cargo check --all --bins --examples --tests --no-default-features
 
       - name: Check compilation with all features
         if: matrix.platform != 'macOS-latest'
-        run: cargo check --all --bins --examples --tests --all-features
+        run: |
+          cargo check --all --bins --examples --tests --all-features
 
       - name: Check compilation with all features
         if: matrix.platform == 'macOS-latest'
         run: |
-          $HOME/.cargo/bin/cargo check --all --bins --examples --tests --all-features
+          source $HOME/.cargo/env
+          cargo check --all --bins --examples --tests --all-features
 
   compilation-check:
     strategy:
@@ -85,6 +97,10 @@ jobs:
           set -e
           curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
           export PATH="$PATH:$HOME/.cargo/bin"
+          echo "##vso[task.setvariable variable=PATH;]$PATH;$HOME/.cargo/bin"
+          source $HOME/.cargo/env
+          rustup default $RUSTUP_TOOLCHAIN
+          rustup update $RUSTUP_TOOLCHAIN
 
       - name: Install Rust
         if: matrix.platform == 'windows-latest'
@@ -92,42 +108,56 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         shell: powershell
         run: |
-          $env:RUSTUP_HOME="C:\Rust\.rustup"
-          $env:CARGO_HOME="C:\Rust\.cargo"
           Invoke-WebRequest -UseBasicParsing -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
-          .\rustup-init.exe -y --default-toolchain $env:RUSTUP_TOOLCHAIN
+          .\rustup-init.exe -v -y --default-toolchain "$env:RUSTUP_TOOLCHAIN"
           Remove-Item -Path .\rustup-init.exe
-          $env:PATH = "$env:CARGO_HOME\bin;$env:PATH"
+          $env:PATH = "$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+          echo "##vso[task.setvariable variable=PATH;]$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+
+      - name: Set Rust version
+        if: matrix.platform == 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          rustup install %RUSTUP_TOOLCHAIN%
+          rustup default %RUSTUP_TOOLCHAIN%
+          rustup update %RUSTUP_TOOLCHAIN%
 
       - name: Checkout source
         uses: actions/checkout@master
 
       - name: Check compilation with default features
         if: matrix.platform != 'macOS-latest'
-        run: cargo check --all --bins --examples --tests
+        run: |
+          cargo check --all --bins --examples --tests
 
       - name: Check compilation with default features
         if: matrix.platform == 'macOS-latest'
         run: |
-          $HOME/.cargo/bin/cargo check --all --bins --examples --tests
+          source $HOME/.cargo/env
+          cargo check --all --bins --examples --tests
 
       - name: Check compilation with no features
         if: matrix.platform != 'macOS-latest'
-        run: cargo check --all --bins --examples --tests --no-default-features
+        run: |
+          cargo check --all --bins --examples --tests --no-default-features
 
       - name: Check compilation with no features
         if: matrix.platform == 'macOS-latest'
         run: |
-          $HOME/.cargo/bin/cargo check --all --bins --examples --tests --no-default-features
+          source $HOME/.cargo/env
+          cargo check --all --bins --examples --tests --no-default-features
 
       - name: Check compilation with all features
         if: matrix.platform != 'macOS-latest'
-        run: cargo check --all --bins --examples --tests --all-features
+        run: |
+          cargo check --all --bins --examples --tests --all-features
 
       - name: Check compilation with all features
         if: matrix.platform == 'macOS-latest'
         run: |
-          $HOME/.cargo/bin/cargo check --all --bins --examples --tests --all-features
+          source $HOME/.cargo/env
+          cargo check --all --bins --examples --tests --all-features
       
   test-suite:
     strategy:
@@ -146,6 +176,10 @@ jobs:
           set -e
           curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
           export PATH="$PATH:$HOME/.cargo/bin"
+          echo "##vso[task.setvariable variable=PATH;]$PATH;$HOME/.cargo/bin"
+          source $HOME/.cargo/env
+          rustup default $RUSTUP_TOOLCHAIN
+          rustup update $RUSTUP_TOOLCHAIN
 
       - name: Install Rust
         if: matrix.platform == 'windows-latest'
@@ -153,24 +187,34 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         shell: powershell
         run: |
-          $env:RUSTUP_HOME="C:\Rust\.rustup"
-          $env:CARGO_HOME="C:\Rust\.cargo"
           Invoke-WebRequest -UseBasicParsing -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
-          .\rustup-init.exe -y --default-toolchain $env:RUSTUP_TOOLCHAIN
+          .\rustup-init.exe -v -y --default-toolchain "$env:RUSTUP_TOOLCHAIN"
           Remove-Item -Path .\rustup-init.exe
-          $env:PATH = "$env:CARGO_HOME\bin;$env:PATH"
+          $env:PATH = "$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+          echo "##vso[task.setvariable variable=PATH;]$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+
+      - name: Set Rust version
+        if: matrix.platform == 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          rustup install %RUSTUP_TOOLCHAIN%
+          rustup default %RUSTUP_TOOLCHAIN%
+          rustup update %RUSTUP_TOOLCHAIN%
 
       - name: Checkout source
         uses: actions/checkout@master
 
       - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.platform }}
         if: matrix.platform != 'macOS-latest'
-        run: cargo test --all
+        run: |
+          cargo test --all
 
       - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.platform }}
         if: matrix.platform == 'macOS-latest'
         run: |
-          $HOME/.cargo/bin/cargo test --all
+          source $HOME/.cargo/env
+          cargo test --all
 
   style-linting:
     strategy:
@@ -189,6 +233,10 @@ jobs:
           set -e
           curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
           export PATH="$PATH:$HOME/.cargo/bin"
+          echo "##vso[task.setvariable variable=PATH;]$PATH;$HOME/.cargo/bin"
+          source $HOME/.cargo/env
+          rustup default $RUSTUP_TOOLCHAIN
+          rustup update $RUSTUP_TOOLCHAIN
 
       - name: Install Rust
         if: matrix.platform == 'windows-latest'
@@ -196,48 +244,64 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         shell: powershell
         run: |
-          $env:RUSTUP_HOME="C:\Rust\.rustup"
-          $env:CARGO_HOME="C:\Rust\.cargo"
           Invoke-WebRequest -UseBasicParsing -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
-          .\rustup-init.exe -y --default-toolchain $env:RUSTUP_TOOLCHAIN
+          .\rustup-init.exe -v -y --default-toolchain "$env:RUSTUP_TOOLCHAIN"
           Remove-Item -Path .\rustup-init.exe
-          $env:PATH = "$env:CARGO_HOME\bin;$env:PATH"
+          $env:PATH = "$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+          echo "##vso[task.setvariable variable=PATH;]$env:PATH;$env:Programfiles\Rust\.cargo\bin"
+
+      - name: Set Rust version
+        if: matrix.platform == 'windows-latest'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          rustup install %RUSTUP_TOOLCHAIN%
+          rustup default %RUSTUP_TOOLCHAIN%
+          rustup update %RUSTUP_TOOLCHAIN%
 
       - name: Checkout source
         uses: actions/checkout@master
 
       - name: Install rustfmt
         if: matrix.platform != 'macOS-latest'
-        run: rustup component add rustfmt
+        run: |
+          rustup component add rustfmt
 
       - name: Install rustfmt
         if: matrix.platform == 'macOS-latest'
         run: |
-          $HOME/.cargo/bin/rustup component add rustfmt
+          source $HOME/.cargo/env
+          rustup component add rustfmt
 
       - name: cargo +${{ matrix.rust_toolchain }} fmt ${{ matrix.platform }}
         if: matrix.platform != 'macOS-latest'
-        run: cargo fmt --all -- --check
+        run: |
+          cargo fmt --all -- --check
 
       - name: cargo +${{ matrix.rust_toolchain }} fmt ${{ matrix.platform }}
         if: matrix.platform == 'macOS-latest'
         run: |
-          $HOME/.cargo/bin/cargo fmt --all -- --check
+          source $HOME/.cargo/env
+          cargo fmt --all -- --check
 
       - name: Install clippy
         if: matrix.platform != 'macOS-latest'
-        run: rustup component add clippy
+        run: |
+          rustup component add clippy
 
       - name: Install clippy
         if: matrix.platform == 'macOS-latest'
         run: |
-          $HOME/.cargo/bin/rustup component add clippy
+          source $HOME/.cargo/env
+          rustup component add clippy
 
       - name: cargo +${{ matrix.rust_toolchain }} clippy ${{ matrix.platform }}
         if: matrix.platform != 'macOS-latest'
-        run: cargo clippy --all
+        run: |
+          cargo clippy --all
 
       - name: cargo +${{ matrix.rust_toolchain }} clippy ${{ matrix.platform }}
         if: matrix.platform == 'macOS-latest'
         run: |
-          $HOME/.cargo/bin/cargo clippy --all 
+          source $HOME/.cargo/env
+          cargo clippy --all 

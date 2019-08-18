@@ -1,6 +1,6 @@
 # cddl-rs
 
-[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Build Status](https://dev.azure.com/anweiss/cddl/_apis/build/status/cddl-CI?branchName=master)](https://dev.azure.com/anweiss/cddl/_build/latest?definitionId=1&branchName=master) [![codecov](https://codecov.io/gh/anweiss/cddl/branch/master/graph/badge.svg)](https://codecov.io/gh/anweiss/cddl)
+[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Actions Status](https://wdp9fww0r9.execute-api.us-west-2.amazonaws.com/production/badge/anweiss/cddl)](https://wdp9fww0r9.execute-api.us-west-2.amazonaws.com/production/results/anweiss/cddl)
 
 > This crate is very much experimental and is being developed as a personal learning exercise for getting acquainted with Rust and about parsing in general. It is far from complete. There are likely more performant and stable libraries out there for parsing CDDL. This one should not be used in production in any form or fashion.
 
