@@ -70,17 +70,6 @@ jobs:
         run: |
           source $HOME/.cargo/env
           cargo check --all --bins --examples --tests --no-default-features
-
-      - name: Check compilation with all features
-        if: matrix.platform != 'macOS-latest'
-        run: |
-          cargo check --all --bins --examples --tests --all-features
-
-      - name: Check compilation with all features
-        if: matrix.platform == 'macOS-latest'
-        run: |
-          source $HOME/.cargo/env
-          cargo check --all --bins --examples --tests --all-features
       
   test-suite:
     strategy:
