@@ -256,6 +256,9 @@ extern crate serde_json;
 #[cfg(feature = "std")]
 extern crate serde_cbor;
 
+#[cfg(feature = "nightly")]
+extern crate uriparse;
+
 /// Abstract syntax tree representing a CDDL definition
 pub mod ast;
 /// Lexer for CDDL

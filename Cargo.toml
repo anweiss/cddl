@@ -19,10 +19,13 @@ clap = "2.33"
 base16 = "0.2"
 base64 = "0.10"
 regex = "1.2"
+chrono = "0.4"
+uriparse = { version = "0.6", optional = true }
 
 [features]
 default = ["std"]
 std = ["serde_json", "serde_cbor", "serde"]
+nightly = ["uriparse"]
 
 [[bin]]
 name = "cddl"
