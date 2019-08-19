@@ -123,6 +123,25 @@ impl<'a> Node for Rule<'a> {
   }
 }
 
+impl<'a> Rule<'a> {
+  /// Returns the name id of a rule
+  pub fn name(&self) -> &str {
+    match self {
+      Rule::Type(tr) => (tr.name.0).0,
+      Rule::Group(gr) => (gr.name.0).0,
+    }
+  }
+
+  /// Returns whether or not a rule extends an existing type or group rule with
+  /// additional choices
+  pub fn is_choice_alternate(&self) -> bool {
+    match self {
+      Rule::Type(tr) => tr.is_type_choice_alternate,
+      Rule::Group(gr) => gr.is_group_choice_alternate,
+    }
+  }
+}
+
 /// Type expression
 ///
 /// ```abnf

@@ -98,7 +98,17 @@ impl<'a> Parser<'a> {
     let mut c = CDDL::default();
 
     while self.cur_token != Token::EOF {
-      c.rules.push(self.parse_rule()?);
+      let r = self.parse_rule()?;
+
+      if c
+        .rules
+        .iter()
+        .any(|existing_rule| r.name() == existing_rule.name() && !r.is_choice_alternate())
+      {
+        return Err(format!("Rule with name {} already defined", r.name()).into());
+      }
+
+      c.rules.push(r);
     }
 
     Ok(c)
