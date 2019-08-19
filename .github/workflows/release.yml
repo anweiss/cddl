@@ -258,7 +258,7 @@ jobs:
           export GOBIN="$GOPATH/bin"
           export PATH="$PATH:$GOBIN"
           go get -u github.com/aktau/github-release
-          github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-linux-amd64.tar.giz" --file cddl-linux-amd64.tar.gz
+          github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-linux-amd64.tar.gz" --file cddl-linux-amd64.tar.gz
 
       - name: Upload binary
         if: matrix.platform == 'macOS-latest'
