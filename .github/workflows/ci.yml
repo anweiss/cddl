@@ -70,21 +70,10 @@ jobs:
           source $HOME/.cargo/env
           cargo check --all --bins --examples --tests --no-default-features
 
-      - name: Check compilation with all features
-        if: matrix.platform != 'macOS-latest'
-        run: |
-          cargo check --all --bins --examples --tests --all-features
-
-      - name: Check compilation with all features
-        if: matrix.platform == 'macOS-latest'
-        run: |
-          source $HOME/.cargo/env
-          cargo check --all --bins --examples --tests --all-features
-
   compilation-check:
     strategy:
       matrix:
-        rust_toolchain: [ stable ]
+        rust_toolchain: [ stable, beta, nightly ]
         platform: [ ubuntu-latest, macOS-latest, windows-latest ]
     name: Compilation check
     runs-on: ${{ matrix.platform }}
@@ -149,12 +138,12 @@ jobs:
           cargo check --all --bins --examples --tests --no-default-features
 
       - name: Check compilation with all features
-        if: matrix.platform != 'macOS-latest'
+        if: matrix.platform != 'macOS-latest' && matrix.rust_toolchain == 'nightly'
         run: |
           cargo check --all --bins --examples --tests --all-features
 
       - name: Check compilation with all features
-        if: matrix.platform == 'macOS-latest'
+        if: matrix.platform == 'macOS-latest' && matrix.rust_toolchain == 'nightly'
         run: |
           source $HOME/.cargo/env
           cargo check --all --bins --examples --tests --all-features

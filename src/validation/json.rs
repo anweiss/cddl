@@ -820,6 +820,8 @@ impl<'a> Validator<Value> for CDDL<'a> {
 
           // If an array element is not validated by any of the group entries,
           // return scoped errors
+          let mut errors: Vec<Error> = Vec::new();
+
           if values.iter().any(
             |v| match self.validate_group_entry(ge, false, None, occur, v) {
               Ok(()) => true,
@@ -831,6 +833,10 @@ impl<'a> Validator<Value> for CDDL<'a> {
             },
           ) {
             continue;
+          }
+
+          if !errors.is_empty() {
+            return Err(Error::MultiError(errors));
           }
         }
         // Validate the object key/value pairs against each group entry,
