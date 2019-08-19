@@ -122,6 +122,14 @@
 //! null = nil
 //! ```
 //!
+//! Furthermore, the following data types from the standard prelude can be used
+//! to validate JSON strings:
+//!
+//! ```cddl
+//! tdate = #6.0(tstr)
+//! uri = #6.32(tstr)
+//! ```
+//!
 //! The first non-group rule defined by a CDDL data structure definition
 //! determines the root type, which is subsequently used for validating the
 //! top-level JSON data type.
