@@ -3,7 +3,7 @@ pub mod cbor;
 /// JSON validation implementation
 pub mod json;
 
-use crate::{ast::*, parser::ParserError};
+use crate::{ast::*, parser::ParserError, token::Numeric};
 use std::{fmt, result};
 
 /// Alias for `Result` with an error of type `validator::ValidationError`
@@ -215,9 +215,9 @@ impl<'a> CDDL<'a> {
   }
 
   // Checks whether or not a given type is a type name identifier and that it
-  // resolves to a text string data type (text | tstr | #3)
-  fn is_type_string_data_type(&self, ident: &Type2) -> bool {
-    match ident {
+  // resolves to a text string data type (text | tstr)
+  fn is_type_string_data_type(&self, t2: &Type2) -> bool {
+    match t2 {
       Type2::Typename((Identifier((ident, _)), _)) if *ident == "text" || *ident == "tstr" => true,
       Type2::Typename((ident, _)) => self.rules.iter().any(|r| match r {
         Rule::Type(tr) if tr.name == *ident => tr
@@ -225,6 +225,21 @@ impl<'a> CDDL<'a> {
           .0
           .iter()
           .any(|tc| self.is_type_string_data_type(&tc.type2)),
+        _ => false,
+      }),
+      _ => false,
+    }
+  }
+
+  fn is_type_numeric_data_type(&self, t2: &Type2) -> bool {
+    match t2 {
+      Type2::Typename((Identifier((ident, _)), _)) if is_numeric_data_type(ident) => true,
+      Type2::Typename((ident, _)) => self.rules.iter().any(|r| match r {
+        Rule::Type(tr) if tr.name == *ident => tr
+          .value
+          .0
+          .iter()
+          .any(|tc| self.is_type_numeric_data_type(&tc.type2)),
         _ => false,
       }),
       _ => false,
@@ -252,8 +267,43 @@ impl<'a> CDDL<'a> {
         Ok(text_values)
       }
       _ => Err(Error::Syntax(
-        "Talue can only be referrenced via another type name identifier".into(),
+        "Value can only be referenced via another type name identifier".into(),
       )),
     }
+  }
+
+  fn numeric_values_from_type(&self, ident: &Type2) -> result::Result<Vec<Numeric>, Error> {
+    match ident {
+      Type2::IntValue(i) => Ok(vec![Numeric::INT(*i)]),
+      Type2::UintValue(ui) => Ok(vec![Numeric::UINT(*ui)]),
+      Type2::FloatValue(f) => Ok(vec![Numeric::FLOAT(*f)]),
+      Type2::Typename((ident, _)) => {
+        let mut numeric_values = Vec::new();
+
+        for r in self.rules.iter() {
+          match r {
+            Rule::Type(tr) if tr.name == *ident => {
+              for tc in tr.value.0.iter() {
+                numeric_values.append(&mut self.numeric_values_from_type(&tc.type2)?);
+              }
+            }
+            _ => continue,
+          }
+        }
+
+        Ok(numeric_values)
+      }
+      _ => Err(Error::Syntax(
+        "Value can only be referenced via another type name identifier".into(),
+      )),
+    }
+  }
+}
+
+fn is_numeric_data_type(t: &str) -> bool {
+  match t {
+    "uint" | "nint" | "int" | "number" | "float" | "float16" | "float32" | "float64"
+    | "float16-32" | "float32-64" => true,
+    _ => false,
   }
 }

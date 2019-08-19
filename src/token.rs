@@ -268,6 +268,13 @@ pub enum Value<'a> {
   TEXT(&'a str),
 }
 
+#[derive(Debug, PartialEq)]
+pub enum Numeric {
+  INT(isize),
+  UINT(usize),
+  FLOAT(f64),
+}
+
 impl<'a> fmt::Display for Value<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {

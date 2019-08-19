@@ -1,11 +1,19 @@
 use crate::{
   ast::*,
   parser::{self, ParserError},
+  token::{self, Numeric, Token},
   validation::{CompilationError, Error, Result, Validator},
 };
+use chrono;
 use regex::Regex;
 use serde_json::{self, Value};
 use std::{f64, fmt};
+
+#[cfg(feature = "nightly")]
+use std::convert::TryFrom;
+
+#[cfg(feature = "nightly")]
+use uriparse;
 
 /// Error type when validating JSON
 #[derive(Debug)]
@@ -98,7 +106,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     }
 
     Err(Error::Syntax(format!(
-      "No rule with name {} defined\n",
+      "No rule with name \"{}\" defined",
       (ident.0).0
     )))
   }
@@ -499,16 +507,21 @@ impl<'a> Validator<Value> for CDDL<'a> {
     controller: &Type2,
     value: &Value,
   ) -> Result {
-    match operator {
-      "pcre" | "regexp" => {
+    let mut errors: Vec<Error> = Vec::new();
+
+    match token::lookup_control(operator) {
+      t @ Some(Token::PCRE) | t @ Some(Token::REGEXP) => {
+        if t == Some(Token::REGEXP) {
+          println!("NOTE: Only Perl-compatible regex is supported.\nThis crate evaluates the .regexp operator as an alias for the .pcre extension operator\n");
+        }
+
         if !self.is_type_string_data_type(target) {
           return Err(Error::Syntax(format!(
-            "the .pcre control operator is only defined for the text type. Got {}",
+            "the {} control operator is only defined for the text type. Got {}",
+            Token::PCRE,
             target
           )));
         }
-
-        let mut errors: Vec<Error> = Vec::new();
 
         let find_valid_value = |c: &str| -> bool {
           match validate_pcre_control(c, value) {
@@ -523,6 +536,36 @@ impl<'a> Validator<Value> for CDDL<'a> {
 
         if self
           .text_values_from_type(controller)?
+          .into_iter()
+          .any(find_valid_value)
+        {
+          Ok(())
+        } else {
+          Err(Error::MultiError(errors))
+        }
+      }
+      Some(Token::LT) => {
+        if !self.is_type_numeric_data_type(target) {
+          return Err(Error::Syntax(format!(
+            "the {} control operator is only defined for the numeric type. Got {}",
+            Token::LT,
+            target
+          )));
+        }
+
+        let find_valid_value = |n: Numeric| -> bool {
+          match validate_lt_control(n, value) {
+            Ok(()) => true,
+            Err(e) => {
+              errors.push(e);
+
+              false
+            }
+          }
+        };
+
+        if self
+          .numeric_values_from_type(controller)?
           .into_iter()
           .any(find_valid_value)
         {
@@ -574,21 +617,29 @@ impl<'a> Validator<Value> for CDDL<'a> {
       Type2::Typename((tn, _)) => match value {
         Value::Null => expect_null((tn.0).0),
         Value::Bool(_) => self.expect_bool((tn.0).0, value),
-        Value::String(_) => {
-          if (tn.0).0 == "tstr" || (tn.0).0 == "text" {
+        Value::String(s) => match (tn.0).0 {
+          "tstr" | "text" => Ok(()),
+          "tdate" => validate_tdate(s),
+          #[cfg(feature = "nightly")]
+          "uri" => validate_uri(s),
+          "uri" => {
+            println!("NOTE: Validation against the \"uri\" data type is only supported by versions of this crate built with unstable Rust\n");
+
             Ok(())
-          } else if is_type_json_prelude((tn.0).0) {
-            // Expecting non-string type but got JSON string
-            Err(
-              JSONError {
-                expected_memberkey,
-                expected_value: (tn.0).0.to_string(),
-                actual_memberkey,
-                actual_value: value.clone(),
-              }
-              .into(),
-            )
-          } else {
+          }
+          _ => {
+            if is_type_json_prelude((tn.0).0) {
+              return Err(
+                JSONError {
+                  expected_memberkey,
+                  expected_value: (tn.0).0.to_string(),
+                  actual_memberkey,
+                  actual_value: value.clone(),
+                }
+                .into(),
+              );
+            }
+
             self.validate_rule_for_ident(
               tn,
               false,
@@ -598,7 +649,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
               value,
             )
           }
-        }
+        },
         Value::Number(_) => {
           self.validate_numeric_data_type(expected_memberkey, actual_memberkey, (tn.0).0, value)
         }
@@ -769,8 +820,6 @@ impl<'a> Validator<Value> for CDDL<'a> {
 
           // If an array element is not validated by any of the group entries,
           // return scoped errors
-          let mut errors: Vec<Error> = Vec::new();
-
           if values.iter().any(
             |v| match self.validate_group_entry(ge, false, None, occur, v) {
               Ok(()) => true,
@@ -782,18 +831,6 @@ impl<'a> Validator<Value> for CDDL<'a> {
             },
           ) {
             continue;
-          }
-
-          if !errors.is_empty() {
-            return Err(
-              JSONError {
-                expected_memberkey: None,
-                expected_value: gc.to_string(),
-                actual_memberkey: None,
-                actual_value: value.clone(),
-              }
-              .into(),
-            );
           }
         }
         // Validate the object key/value pairs against each group entry,
@@ -934,34 +971,17 @@ impl<'a> Validator<Value> for CDDL<'a> {
                 }
 
                 match om.get((ident.0).0) {
-                  Some(v) => {
-                    return self.validate_type(
-                      &vmke.entry_type,
-                      Some(mk.to_string()),
-                      Some(((ident.0).0).to_string()),
-                      vmke.occur.as_ref(),
-                      v,
-                    )
-                  }
+                  Some(v) => self.validate_type(
+                    &vmke.entry_type,
+                    Some(mk.to_string()),
+                    Some(((ident.0).0).to_string()),
+                    vmke.occur.as_ref(),
+                    v,
+                  ),
                   None => match occur {
                     Some(o) => match o {
-                      Occur::Optional | Occur::OneOrMore => {
-                        return Ok(());
-                      }
-                      _ => {
-                        return Err(
-                          JSONError {
-                            expected_memberkey: Some(mk.to_string()),
-                            expected_value: format!("{} {}", mk, vmke.entry_type),
-                            actual_memberkey: None,
-                            actual_value: value.clone(),
-                          }
-                          .into(),
-                        );
-                      }
-                    },
-                    None => {
-                      return Err(
+                      Occur::Optional | Occur::OneOrMore => Ok(()),
+                      _ => Err(
                         JSONError {
                           expected_memberkey: Some(mk.to_string()),
                           expected_value: format!("{} {}", mk, vmke.entry_type),
@@ -969,8 +989,17 @@ impl<'a> Validator<Value> for CDDL<'a> {
                           actual_value: value.clone(),
                         }
                         .into(),
-                      );
-                    }
+                      ),
+                    },
+                    None => Err(
+                      JSONError {
+                        expected_memberkey: Some(mk.to_string()),
+                        expected_value: format!("{} {}", mk, vmke.entry_type),
+                        actual_memberkey: None,
+                        actual_value: value.clone(),
+                      }
+                      .into(),
+                    ),
                   },
                 }
               }
@@ -988,8 +1017,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
             )),
           }
         } else {
-          // TODO: Inline type
-          unimplemented!()
+          self.validate_type(&vmke.entry_type, None, None, occur, value)
         }
       }
       GroupEntry::TypeGroupname(tge) => self.validate_rule_for_ident(
@@ -1299,6 +1327,21 @@ fn is_type_json_prelude(t: &str) -> bool {
   }
 }
 
+fn validate_tdate(value: &str) -> Result {
+  let _ = chrono::DateTime::parse_from_rfc3339(value)
+    .map_err(|e| Error::Syntax(format!("Error parsing date value {}: {}", value, e)))?;
+
+  Ok(())
+}
+
+#[cfg(feature = "nightly")]
+fn validate_uri(value: &str) -> Result {
+  let _ = uriparse::uri_reference::URIReference::try_from(value)
+    .map_err(|e| Error::Syntax(format!("Error parsing URI value {}: {}", value, e)))?;
+
+  Ok(())
+}
+
 fn validate_pcre_control(controller: &str, value: &Value) -> Result {
   match value {
     Value::String(s) => {
@@ -1340,10 +1383,56 @@ fn validate_pcre_control(controller: &str, value: &Value) -> Result {
   }
 }
 
+fn validate_lt_control(controller: Numeric, value: &Value) -> Result {
+  match value {
+    Value::Number(n) => match controller {
+      Numeric::INT(i) => match n.as_i64() {
+        Some(ni) if ni < i as i64 => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: format!("expected int < {}", i),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Numeric::UINT(ui) => match n.as_u64() {
+        Some(uin) if uin < ui as u64 => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: format!("expected uint < {}", ui),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Numeric::FLOAT(f) => match n.as_f64() {
+        Some(fv) if fv < f => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: format!("expected float < {}", f),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+    },
+    _ => Err(Error::Syntax(format!(
+      ".lt control can only be used against numeric values. Got {}",
+      value
+    ))),
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
-  use serde_json;
 
   #[test]
   fn validate_json_null() -> Result {
@@ -1482,6 +1571,22 @@ mod tests {
     let cddl_input = r#"mypcre = tstr .pcre regexoptions
     
     regexoptions = "^[A-Z]$" / "[A-Za-z0-9]+@[A-Za-z0-9]+(\\.[A-Za-z0-9]+)+""#;
+
+    validate_json_from_str(cddl_input, json_input)
+  }
+
+  #[test]
+  fn validate_lt_control() -> Result {
+    let json_input = r#"10.5"#;
+    let cddl_input = r#"ltrule = float .lt 15.5"#;
+
+    validate_json_from_str(cddl_input, json_input)
+  }
+
+  #[test]
+  fn validate_uri_text_value() -> Result {
+    let json_input = r#""https://gitub.com""#;
+    let cddl_input = r#"root = uri"#;
 
     validate_json_from_str(cddl_input, json_input)
   }
