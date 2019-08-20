@@ -1,4 +1,9 @@
-on: [ push ]
+on:
+  push:
+    tags:
+      - "!*"
+    branches:
+      - "*"
 
 name: Build and Test
 
