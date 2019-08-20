@@ -1,5 +1,6 @@
 /// CBOR validation implementation
 pub mod cbor;
+
 /// JSON validation implementation
 pub mod json;
 
