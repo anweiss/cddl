@@ -19,6 +19,10 @@ use alloc::borrow::{Cow, ToOwned};
 /// Alias for `Result` with an error of type `cddl::LexerError`
 pub type Result<T> = result::Result<T, LexerError>;
 
+/// Alias for position indicating current line number, column number and string
+/// index respectively
+pub type Position = (u64, u64, usize);
+
 /// Lexer error types
 #[derive(Debug)]
 pub enum LexerError {
@@ -29,7 +33,7 @@ pub enum LexerError {
   /// Byte string not properly encoded as base 64
   BASE64(base64::DecodeError),
   /// CDDL lexing syntax error
-  LEXER(&'static str),
+  LEXER((Position, &'static str)),
   /// Error parsing integer
   PARSEINT(num::ParseIntError),
 }
@@ -50,7 +54,7 @@ impl Error for LexerError {
 impl fmt::Display for LexerError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      LexerError::LEXER(e) => write!(f, "{}", e),
+      LexerError::LEXER(e) => write!(f, "lexer error at ln {}, col {}. {}", (e.0).0, (e.0).1, e.1),
       LexerError::UTF8(e) => write!(f, "{}", e),
       LexerError::BASE16(e) => write!(f, "{}", e),
       LexerError::BASE64(e) => write!(f, "{}", e),
@@ -59,8 +63,8 @@ impl fmt::Display for LexerError {
   }
 }
 
-impl From<&'static str> for LexerError {
-  fn from(e: &'static str) -> Self {
+impl From<(Position, &'static str)> for LexerError {
+  fn from(e: (Position, &'static str)) -> Self {
     LexerError::LEXER(e)
   }
 }
@@ -75,6 +79,7 @@ impl From<str::Utf8Error> for LexerError {
 pub struct Lexer<'a> {
   str_input: &'a [u8],
   input: Peekable<CharIndices<'a>>,
+  position: Position,
 }
 
 impl<'a> Lexer<'a> {
@@ -83,6 +88,7 @@ impl<'a> Lexer<'a> {
     Lexer {
       str_input: input.as_bytes(),
       input: input.char_indices().peekable(),
+      position: (0, 0, 0),
     }
   }
 
@@ -90,41 +96,57 @@ impl<'a> Lexer<'a> {
     self
       .input
       .next()
-      .ok_or_else(|| "Unable to advance to the next token".into())
+      .and_then(|c| {
+        if c.1 == '\n' {
+          self.position.0 += 1;
+          self.position.1 = 0;
+        } else {
+          self.position.1 += 1;
+        }
+
+        self.position.2 = c.0;
+        Some(c)
+      })
+      .ok_or_else(|| (self.position, "Unable to advance to the next token").into())
   }
 
   /// Advances the index of the str iterator over the input and returns a
   /// `Token`
-  pub fn next_token(&mut self) -> Result<Token<'a>> {
+  pub fn next_token(&mut self) -> Result<(Position, Token<'a>)> {
     self.skip_whitespace();
+
+    let token_position = self.position;
 
     if let Ok(c) = self.read_char() {
       match c {
         (_, '=') => match self.peek_char() {
           Some(&c) if c.1 == '>' => {
             let _ = self.read_char()?;
-            Ok(Token::ARROWMAP)
+            Ok((token_position, Token::ARROWMAP))
           }
-          _ => Ok(Token::ASSIGN),
+          _ => Ok((token_position, Token::ASSIGN)),
         },
-        (_, '+') => Ok(Token::ONEORMORE),
-        (_, '?') => Ok(Token::OPTIONAL),
-        (_, '*') => Ok(Token::ASTERISK),
-        (_, '(') => Ok(Token::LPAREN),
-        (_, ')') => Ok(Token::RPAREN),
-        (_, '[') => Ok(Token::LBRACKET),
-        (_, ']') => Ok(Token::RBRACKET),
-        (_, '<') => Ok(Token::LANGLEBRACKET),
-        (idx, '"') => Ok(Token::VALUE(Value::TEXT(self.read_text_value(idx)?))),
-        (_, '{') => Ok(Token::LBRACE),
-        (_, '}') => Ok(Token::RBRACE),
-        (_, ',') => Ok(Token::COMMA),
-        (idx, ';') => Ok(Token::COMMENT(self.read_comment(idx)?)),
-        (_, ':') => Ok(Token::COLON),
-        (_, '^') => Ok(Token::CUT),
-        (_, '&') => Ok(Token::GTOCHOICE),
-        (_, '>') => Ok(Token::RANGLEBRACKET),
-        (_, '~') => Ok(Token::UNWRAP),
+        (_, '+') => Ok((token_position, Token::ONEORMORE)),
+        (_, '?') => Ok((token_position, Token::OPTIONAL)),
+        (_, '*') => Ok((token_position, Token::ASTERISK)),
+        (_, '(') => Ok((token_position, Token::LPAREN)),
+        (_, ')') => Ok((token_position, Token::RPAREN)),
+        (_, '[') => Ok((token_position, Token::LBRACKET)),
+        (_, ']') => Ok((token_position, Token::RBRACKET)),
+        (_, '<') => Ok((token_position, Token::LANGLEBRACKET)),
+        (idx, '"') => Ok((
+          token_position,
+          Token::VALUE(Value::TEXT(self.read_text_value(idx)?)),
+        )),
+        (_, '{') => Ok((token_position, Token::LBRACE)),
+        (_, '}') => Ok((token_position, Token::RBRACE)),
+        (_, ',') => Ok((token_position, Token::COMMA)),
+        (idx, ';') => Ok((token_position, Token::COMMENT(self.read_comment(idx)?))),
+        (_, ':') => Ok((token_position, Token::COLON)),
+        (_, '^') => Ok((token_position, Token::CUT)),
+        (_, '&') => Ok((token_position, Token::GTOCHOICE)),
+        (_, '>') => Ok((token_position, Token::RANGLEBRACKET)),
+        (_, '~') => Ok((token_position, Token::UNWRAP)),
         (_, '/') => match self.peek_char() {
           Some(&c) if c.1 == '/' => {
             let _ = self.read_char()?;
@@ -132,30 +154,34 @@ impl<'a> Lexer<'a> {
             match self.peek_char() {
               Some(&c) if c.1 == '=' => {
                 let _ = self.read_char()?;
-                Ok(Token::GCHOICEALT)
+                Ok((token_position, Token::GCHOICEALT))
               }
-              _ => Ok(Token::GCHOICE),
+              _ => Ok((token_position, Token::GCHOICE)),
             }
           }
           Some(&c) if c.1 == '=' => {
             let _ = self.read_char()?;
-            Ok(Token::TCHOICEALT)
+            Ok((token_position, Token::TCHOICEALT))
           }
-          _ => Ok(Token::TCHOICE),
+          _ => Ok((token_position, Token::TCHOICE)),
         },
         (idx, '#') => match self.peek_char() {
-          Some(&c) if is_digit(c.1) => Ok(Token::TAG(self.read_tag()?)),
-          None => Ok(Token::TAG(Tag::ANY)),
-          _ => Ok(Token::ILLEGAL(
-            str::from_utf8(&self.str_input[idx..=idx + 1]).map_err(LexerError::UTF8)?,
+          Some(&c) if is_digit(c.1) => Ok((token_position, Token::TAG(self.read_tag()?))),
+          None => Ok((token_position, Token::TAG(Tag::ANY))),
+          _ => Ok((
+            token_position,
+            Token::ILLEGAL(
+              str::from_utf8(&self.str_input[idx..=idx + 1]).map_err(LexerError::UTF8)?,
+            ),
           )),
         },
         (_, '\'') => {
           let (idx, _) = self.read_char()?;
 
-          Ok(Token::BYTESLICEVALUE(ByteSliceValue::UTF8(
-            self.read_byte_string(idx)?,
-          )))
+          Ok((
+            token_position,
+            Token::BYTESLICEVALUE(ByteSliceValue::UTF8(self.read_byte_string(idx)?)),
+          ))
         }
         (idx, ch) => {
           if is_ealpha(ch) {
@@ -173,14 +199,20 @@ impl<'a> Lexer<'a> {
                       return base16::decode_slice(&bs[..], &mut buf)
                         .map_err(LexerError::BASE16)
                         .and_then(|_| {
-                          Ok(Token::BYTESLICEVALUE(ByteSliceValue::B16(bs.as_bytes())))
+                          Ok((
+                            token_position,
+                            Token::BYTESLICEVALUE(ByteSliceValue::B16(bs.as_bytes())),
+                          ))
                         });
                     }
                     Cow::Owned(bs) => {
                       let b = bs.as_bytes();
-                      return base16::decode(b)
-                        .map_err(LexerError::BASE16)
-                        .and_then(|_| Ok(Token::BYTEVECVALUE(ByteVecValue::B16(b.to_owned()))));
+                      return base16::decode(b).map_err(LexerError::BASE16).and_then(|_| {
+                        Ok((
+                          token_position,
+                          Token::BYTEVECVALUE(ByteVecValue::B16(b.to_owned())),
+                        ))
+                      });
                     }
                   }
                 }
@@ -207,14 +239,20 @@ impl<'a> Lexer<'a> {
                               return base64::decode_config(bs, base64::URL_SAFE)
                                 .map_err(LexerError::BASE64)
                                 .and_then(|_| {
-                                  Ok(Token::BYTESLICEVALUE(ByteSliceValue::B64(bs.as_bytes())))
+                                  Ok((
+                                    token_position,
+                                    Token::BYTESLICEVALUE(ByteSliceValue::B64(bs.as_bytes())),
+                                  ))
                                 });
                             }
                             Cow::Owned(bs) => {
                               return base64::decode_config(&bs, base64::URL_SAFE)
                                 .map_err(LexerError::BASE64)
                                 .and_then(|_| {
-                                  Ok(Token::BYTEVECVALUE(ByteVecValue::B64(bs.into_bytes())))
+                                  Ok((
+                                    token_position,
+                                    Token::BYTEVECVALUE(ByteVecValue::B64(bs.into_bytes())),
+                                  ))
                                 });
                             }
                           }
@@ -230,7 +268,7 @@ impl<'a> Lexer<'a> {
 
             // TODO: Error handling for invalid control identifier
             if let Some(control) = token::lookup_control(ident_str) {
-              return Ok(control);
+              return Ok((token_position, control));
             }
 
             let ident = token::lookup_ident(ident_str);
@@ -249,16 +287,16 @@ impl<'a> Lexer<'a> {
                     match self.peek_char() {
                       // Control operator detected
                       Some(&c) if is_ealpha(c.1) => {
-                        return Ok(ident);
+                        return Ok((token_position, ident));
                       }
                       // Range detected
                       _ => return self.read_range(ident),
                     }
                   }
-                  _ => return Ok(ident),
+                  _ => return Ok((token_position, ident)),
                 }
               }
-              _ => return Ok(ident),
+              _ => return Ok((token_position, ident)),
             }
           } else if is_digit(ch) || ch == '-' {
             let number = self.read_int_or_float(idx)?;
@@ -270,17 +308,18 @@ impl<'a> Lexer<'a> {
 
                 return self.read_range(number);
               }
-              _ => return Ok(number),
+              _ => return Ok((token_position, number)),
             }
           }
 
-          Ok(Token::ILLEGAL(
-            str::from_utf8(&self.str_input[idx..=idx]).map_err(LexerError::UTF8)?,
+          Ok((
+            token_position,
+            Token::ILLEGAL(str::from_utf8(&self.str_input[idx..=idx]).map_err(LexerError::UTF8)?),
           ))
         }
       }
     } else {
-      Ok(Token::EOF)
+      Ok((token_position, Token::EOF))
     }
   }
 
@@ -326,7 +365,9 @@ impl<'a> Lexer<'a> {
               '\x20'..='\x7e' | '\u{0128}'..='\u{10FFFD}' => {
                 let _ = self.read_char()?;
               }
-              _ => return Err("Unexpected escape character in text string".into()),
+              _ => {
+                return Err((self.position, "Unexpected escape character in text string").into())
+              }
             }
           }
         }
@@ -337,11 +378,19 @@ impl<'a> Lexer<'a> {
               .map_err(LexerError::UTF8)?,
           )
         }
-        _ => return Err("Unexpected char in text string. Expected closing \"".into()),
+        _ => {
+          return Err(
+            (
+              self.position,
+              "Unexpected char in text string. Expected closing \"",
+            )
+              .into(),
+          )
+        }
       }
     }
 
-    Err("Empty text value".into())
+    Err((self.position, "Empty text value").into())
   }
 
   fn read_byte_string(&mut self, idx: usize) -> Result<&'a [u8]> {
@@ -353,11 +402,19 @@ impl<'a> Lexer<'a> {
         }
         // Closing '
         '\x27' => return Ok(&self.str_input[idx..self.read_char()?.0]),
-        _ => return Err("Unexpected character in byte string. Expected closing '".into()),
+        _ => {
+          return Err(
+            (
+              self.position,
+              "Unexpected character in byte string. Expected closing '",
+            )
+              .into(),
+          )
+        }
       }
     }
 
-    Err("Empty byte string".into())
+    Err((self.position, "Empty byte string").into())
   }
 
   fn read_prefixed_byte_string(&mut self, idx: usize) -> Result<Cow<'a, str>> {
@@ -377,7 +434,9 @@ impl<'a> Lexer<'a> {
               '\x20'..='\x7e' | '\u{0128}'..='\u{10FFFD}' => {
                 let _ = self.read_char()?;
               }
-              _ => return Err("Unexpected escape character in byte string".into()),
+              _ => {
+                return Err((self.position, "Unexpected escape character in byte string").into())
+              }
             }
           }
         }
@@ -407,13 +466,19 @@ impl<'a> Lexer<'a> {
             has_whitespace = true;
             let _ = self.read_char()?;
           } else {
-            return Err("Unexpected char in byte string. Expected closing '".into());
+            return Err(
+              (
+                self.position,
+                "Unexpected char in byte string. Expected closing '",
+              )
+                .into(),
+            );
           }
         }
       }
     }
 
-    Err("Empty byte string".into())
+    Err((self.position, "Empty byte string").into())
   }
 
   fn read_comment(&mut self, idx: usize) -> Result<&'a str> {
@@ -533,7 +598,7 @@ impl<'a> Lexer<'a> {
                 if c.1 == ')' {
                   let _ = self.read_char()?;
                 } else {
-                  return Err("Malformed tag".into());
+                  return Err((self.position, "Malformed tag").into());
                 }
               }
 
@@ -560,11 +625,13 @@ impl<'a> Lexer<'a> {
 
         Ok(Tag::MAJORTYPE((mt, None)))
       }
-      _ => Err("Malformed tag".into()),
+      _ => Err((self.position, "Malformed tag").into()),
     }
   }
 
-  fn read_range(&mut self, lower: Token<'a>) -> Result<Token<'a>> {
+  fn read_range(&mut self, lower: Token<'a>) -> Result<(Position, Token<'a>)> {
+    let token_position = self.position;
+
     let mut is_inclusive = true;
 
     if let Some(&c) = self.peek_char() {
@@ -593,88 +660,104 @@ impl<'a> Lexer<'a> {
       let upper = self.read_int_or_float(c.0)?;
 
       match lower {
-        Token::VALUE(value) => match value {
-          Value::INT(li) => {
-            if let Token::VALUE(value) = upper {
-              match value {
-                Value::INT(ui) => {
-                  return Ok(Token::RANGE((
-                    RangeValue::INT(li),
-                    RangeValue::INT(ui),
-                    is_inclusive,
-                  )))
-                }
-                Value::UINT(ui) => {
-                  return Ok(Token::RANGE((
-                    RangeValue::INT(li),
-                    RangeValue::UINT(ui),
-                    is_inclusive,
-                  )))
-                }
-                _ => {
-                  return Err(
-                    "Only numerical ranges between integers or floating point values are allowed"
+        Token::VALUE(value) => {
+          match value {
+            Value::INT(li) => {
+              if let Token::VALUE(value) = upper {
+                match value {
+                  Value::INT(ui) => {
+                    return Ok((
+                      token_position,
+                      Token::RANGE((RangeValue::INT(li), RangeValue::INT(ui), is_inclusive)),
+                    ))
+                  }
+                  Value::UINT(ui) => {
+                    return Ok((
+                      token_position,
+                      Token::RANGE((RangeValue::INT(li), RangeValue::UINT(ui), is_inclusive)),
+                    ))
+                  }
+                  _ => return Err(
+                    (
+                      self.position,
+                      "Only numerical ranges between integers or floating point values are allowed",
+                    )
                       .into(),
-                  )
+                  ),
                 }
               }
             }
-          }
-          Value::UINT(li) => {
-            if let Token::VALUE(value) = upper {
-              if let Value::UINT(ui) = value {
-                return Ok(Token::RANGE((
-                  RangeValue::UINT(li),
-                  RangeValue::UINT(ui),
-                  is_inclusive,
-                )));
+            Value::UINT(li) => {
+              if let Token::VALUE(value) = upper {
+                if let Value::UINT(ui) = value {
+                  return Ok((
+                    token_position,
+                    Token::RANGE((RangeValue::UINT(li), RangeValue::UINT(ui), is_inclusive)),
+                  ));
+                }
+              } else {
+                return Err(
+                  (
+                    self.position,
+                    "Only numerical ranges between integers or floating point values are allowed",
+                  )
+                    .into(),
+                );
               }
-            } else {
+            }
+            Value::FLOAT(lf) => {
+              if let Token::VALUE(value) = upper {
+                if let Value::FLOAT(uf) = value {
+                  return Ok((
+                    token_position,
+                    Token::RANGE((RangeValue::FLOAT(lf), RangeValue::FLOAT(uf), is_inclusive)),
+                  ));
+                }
+              } else {
+                return Err(
+                  (
+                    self.position,
+                    "Only numerical ranges between integers or floating point values are allowed",
+                  )
+                    .into(),
+                );
+              }
+            }
+            _ => {
               return Err(
-                "Only numerical ranges between integers or floating point values are allowed"
+                (
+                  self.position,
+                  "Only numerical ranges between integers or floating point values are allowed",
+                )
                   .into(),
-              );
+              )
             }
           }
-          Value::FLOAT(lf) => {
-            if let Token::VALUE(value) = upper {
-              if let Value::FLOAT(uf) = value {
-                return Ok(Token::RANGE((
-                  RangeValue::FLOAT(lf),
-                  RangeValue::FLOAT(uf),
-                  is_inclusive,
-                )));
-              }
-            } else {
-              return Err(
-                "Only numerical ranges between integers or floating point values are allowed"
-                  .into(),
-              );
-            }
-          }
-          _ => {
-            return Err(
-              "Only numerical ranges between integers or floating point values are allowed".into(),
-            )
-          }
-        },
+        }
         _ => {
-          return Ok(Token::RANGE((
-            RangeValue::try_from(lower)?,
-            RangeValue::try_from(upper)?,
-            is_inclusive,
-          )))
+          return Ok((
+            token_position,
+            Token::RANGE((
+              RangeValue::try_from(lower).map_err(|e| LexerError::from((self.position, e)))?,
+              RangeValue::try_from(upper).map_err(|e| LexerError::from((self.position, e)))?,
+              is_inclusive,
+            )),
+          ))
         }
       }
     } else if is_ealpha(c.1) {
-      return Ok(Token::RANGE((
-        RangeValue::try_from(lower)?,
-        RangeValue::try_from(token::lookup_ident(self.read_identifier(c.0)?))?,
-        is_inclusive,
-      )));
+      return Ok((
+        token_position,
+        Token::RANGE((
+          RangeValue::try_from(lower).map_err(|e| LexerError::from((self.position, e)))?,
+          RangeValue::try_from(token::lookup_ident(self.read_identifier(c.0)?))
+            .map_err(|e| LexerError::from((self.position, e)))?,
+          is_inclusive,
+        )),
+      ));
     }
 
-    Err("Invalid range syntax. Ranges must be between integers (matching integer values) or between floating-point values (matching floating-point values)".into())
+    Err((self.position, "Invalid range syntax. Ranges must be between integers (matching integer values) or between floating-point values (matching floating-point values)").into())
   }
 }
 
@@ -871,7 +954,7 @@ city = (
 
     for (expected_tok, literal) in expected_tok.iter() {
       let tok = l.next_token().unwrap();
-      assert_eq!((expected_tok, *literal), (&tok, &*tok.to_string()))
+      assert_eq!((expected_tok, *literal), (&tok.1, &*tok.1.to_string()))
     }
   }
 }

@@ -1,4 +1,3 @@
-use super::lexer::LexerError;
 use std::{convert::TryFrom, fmt};
 
 #[cfg(not(feature = "std"))]
@@ -222,7 +221,7 @@ pub enum RangeValue<'a> {
 }
 
 impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
-  type Error = LexerError;
+  type Error = &'static str;
 
   fn try_from(t: Token<'a>) -> Result<Self, Self::Error> {
     match t {
@@ -231,9 +230,9 @@ impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
         Value::INT(i) => Ok(RangeValue::INT(i)),
         Value::UINT(ui) => Ok(RangeValue::UINT(ui)),
         Value::FLOAT(f) => Ok(RangeValue::FLOAT(f)),
-        _ => Err("Invalid range token".into()),
+        _ => Err("Invalid range token"),
       },
-      _ => Err("Invalid range token".into()),
+      _ => Err("Invalid range token"),
     }
   }
 }

@@ -1,6 +1,6 @@
 use super::{
   ast::*,
-  lexer::{Lexer, LexerError},
+  lexer::{Lexer, LexerError, Position},
   token::{self, Tag, Token, Value},
 };
 use regex;
@@ -24,6 +24,7 @@ pub struct Parser<'a> {
   l: Lexer<'a>,
   cur_token: Token<'a>,
   peek_token: Token<'a>,
+  position: Position,
   errors: Vec<ParserError>,
 }
 
@@ -31,7 +32,7 @@ pub struct Parser<'a> {
 #[derive(Debug)]
 pub enum ParserError {
   /// Parsing error
-  PARSER(String),
+  PARSER((Position, String)),
   /// Lexing error
   LEXER(LexerError),
   /// Regex error
@@ -41,7 +42,11 @@ pub enum ParserError {
 impl fmt::Display for ParserError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      ParserError::PARSER(e) => write!(f, "{}", e),
+      ParserError::PARSER((position, error)) => write!(
+        f,
+        "Parser error at ln {}, col {}. {}",
+        position.0, position.1, error
+      ),
       ParserError::LEXER(e) => write!(f, "{}", e),
       ParserError::REGEX(e) => write!(f, "{}", e),
     }
@@ -59,15 +64,15 @@ impl Error for ParserError {
   }
 }
 
-impl From<String> for ParserError {
-  fn from(e: String) -> Self {
+impl From<(Position, String)> for ParserError {
+  fn from(e: (Position, String)) -> Self {
     ParserError::PARSER(e)
   }
 }
 
-impl From<&'static str> for ParserError {
-  fn from(e: &'static str) -> Self {
-    ParserError::PARSER(e.to_string())
+impl From<(Position, &'static str)> for ParserError {
+  fn from(e: (Position, &'static str)) -> Self {
+    ParserError::PARSER((e.0, (e.1.to_string())))
   }
 }
 
@@ -79,6 +84,7 @@ impl<'a> Parser<'a> {
       cur_token: Token::EOF,
       peek_token: Token::EOF,
       errors: Vec::default(),
+      position: (0, 0, 0),
     };
 
     p.next_token()?;
@@ -89,7 +95,10 @@ impl<'a> Parser<'a> {
 
   fn next_token(&mut self) -> Result<()> {
     mem::swap(&mut self.cur_token, &mut self.peek_token);
-    self.peek_token = self.l.next_token().map_err(ParserError::LEXER)?;
+    let nt = self.l.next_token().map_err(ParserError::LEXER)?;
+    self.position = nt.0;
+    self.peek_token = nt.1;
+
     Ok(())
   }
 
@@ -105,7 +114,13 @@ impl<'a> Parser<'a> {
         .iter()
         .any(|existing_rule| r.name() == existing_rule.name() && !r.is_choice_alternate())
       {
-        return Err(format!("Rule with name {} already defined", r.name()).into());
+        return Err(
+          (
+            self.position,
+            format!("Rule with name {} already defined", r.name()),
+          )
+            .into(),
+        );
       }
 
       c.rules.push(r);
@@ -121,7 +136,15 @@ impl<'a> Parser<'a> {
 
     let ident = match &self.cur_token {
       Token::IDENT(i) => *i,
-      _ => return Err(format!("expected IDENT. Got {}", self.cur_token).into()),
+      _ => {
+        return Err(
+          (
+            self.position,
+            format!("expected IDENT. Got {}", self.cur_token),
+          )
+            .into(),
+        )
+      }
     };
 
     let gp = if self.peek_token_is(&Token::LANGLEBRACKET) {
@@ -138,7 +161,7 @@ impl<'a> Parser<'a> {
       && !self.expect_peek(&Token::TCHOICEALT)?
       && !self.expect_peek(&Token::GCHOICEALT)?
     {
-      return Err("Expected ASSIGN. Got {}".into());
+      return Err((self.position, "Expected ASSIGN. Got {}").into());
     }
 
     let mut is_type_choice_alternate = false;
@@ -199,7 +222,7 @@ impl<'a> Parser<'a> {
         }
         Token::COMMA => self.next_token()?,
         Token::COMMENT(_) => self.next_token()?,
-        _ => return Err("Illegal token".into()),
+        _ => return Err((self.position, "Illegal token").into()),
       }
     }
 
@@ -351,7 +374,7 @@ impl<'a> Parser<'a> {
           return Ok(Type2::Unwrap((ident.into(), None)));
         }
 
-        Err("Invalid unwrap".into())
+        Err((self.position, "Invalid unwrap").into())
       }
 
       // & ( group )
@@ -381,7 +404,7 @@ impl<'a> Parser<'a> {
 
             Ok(Type2::ChoiceFromGroup((ident.into(), None)))
           }
-          _ => Err("Invalid group to choice enumeration syntax".into()),
+          _ => Err((self.position, "Invalid group to choice enumeration syntax").into()),
         }
       }
 
@@ -402,11 +425,14 @@ impl<'a> Parser<'a> {
         match self.cur_token.in_standard_prelude() {
           Some(s) => Ok(Type2::Typename(((s, None).into(), None))),
           None => Err(
-            format!(
-              "Unknown type2 alternative. Unknown token: {:#?}",
-              self.cur_token
+            (
+              self.position,
+              format!(
+                "Unknown type2 alternative. Unknown token: {:#?}",
+                self.cur_token
+              ),
             )
-            .into(),
+              .into(),
           ),
         }
       }
@@ -586,7 +612,7 @@ impl<'a> Parser<'a> {
           Token::VALUE(value) => match value {
             v => Some(MemberKey::Value(*v)),
           },
-          _ => return Err("Malformed memberkey".into()),
+          _ => return Err((self.position, "Malformed memberkey").into()),
         };
 
         self.next_token()?;
@@ -602,7 +628,13 @@ impl<'a> Parser<'a> {
         }
 
         if !is_optional {
-          return Err("Malformed memberkey. Missing \":\" or \"=>\"".into());
+          return Err(
+            (
+              self.position,
+              "Malformed memberkey. Missing \":\" or \"=>\"",
+            )
+              .into(),
+          );
         }
 
         Ok(None)
@@ -639,7 +671,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
           }
 
-          return Err("Malformed occurrence syntax".into());
+          return Err((self.position, "Malformed occurrence syntax").into());
         }
 
         self.next_token()?;
@@ -680,11 +712,14 @@ impl<'a> Parser<'a> {
 
   fn peek_error(&mut self, t: &Token) {
     self.errors.push(
-      format!(
-        "expected next token to be {:?}, got {:?} instead",
-        t, self.peek_token
+      (
+        self.position,
+        format!(
+          "expected next token to be {:?}, got {:?} instead",
+          t, self.peek_token
+        ),
       )
-      .into(),
+        .into(),
     )
   }
 }
@@ -1096,6 +1131,6 @@ mod tests {
       errors.push_str(&format!("parser error: {}\n", err));
     }
 
-    Err(errors.into())
+    Err((p.position, errors).into())
   }
 }
