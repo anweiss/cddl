@@ -30,7 +30,9 @@ nightly = ["uriparse"]
 [[bin]]
 name = "cddl"
 required-features = ["std"]
+path = "src/bin/cddl.rs"
 
 [[bin]]
 name = "repl"
 required-features = ["std"]
+path = "src/bin/repl.rs"

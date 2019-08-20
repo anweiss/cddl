@@ -161,21 +161,21 @@
 //!
 //! |Control operator|Implementation status|
 //! |----------------|---------------------|
-//! |.pcre|Implemented<sup>[2](#regex)</sup>|
-//! |.regex|Implemented<sup>[2](#regex)</sup>|
-//! |.size|Incomplete|
-//! |.bits|Unsupported for JSON validation|
-//! |.cbor|Unsupported for JSON validation|
-//! |.cborseq|Unsupported for JSON validation|
-//! |.within|Incomplete|
-//! |.and|Incomplete|
-//! |.lt|Incomplete|
-//! |.le|Incomplete|
-//! |.gt|Incomplete|
-//! |.ge|Incomplete|
-//! |.eq|Incomplete|
-//! |.ne|Incomplete|
-//! |.default|Incomplete|
+//! |`.pcre`|Implemented<sup>[2](#regex)</sup>|
+//! |`.regex`|Implemented<sup>[2](#regex)</sup>|
+//! |`.size`|Incomplete|
+//! |`.bits`|Unsupported for JSON validation|
+//! |`.cbor`|Unsupported for JSON validation|
+//! |`.cborseq`|Unsupported for JSON validation|
+//! |`.within`|Incomplete|
+//! |`.and`|Incomplete|
+//! |`.lt`|Implemented|
+//! |`.le`|Incomplete|
+//! |`.gt`|Incomplete|
+//! |`.ge`|Incomplete|
+//! |`.eq`|Incomplete|
+//! |`.ne`|Incomplete|
+//! |`.default`|Incomplete|
 //!
 //! <a name="number">1</a>: While JSON itself does not distinguish between
 //! integers and floating-point numbers, this crate does provide the ability to

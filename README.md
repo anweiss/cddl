@@ -62,7 +62,7 @@ Rust is a systems programming language designed around safety and is ideally-sui
 
 ## CLI
 
-A CLI has been made available for various platforms and as a Docker iamge. It can downloaded from the [Releases](https://github.com/anweiss/cddl/releases) tab. Instructions for using the tool can be viewed by executing the following:
+A CLI has been made available for various platforms and as a Docker image. It can downloaded from the [Releases](https://github.com/anweiss/cddl/releases) tab. Instructions for using the tool can be viewed by executing the `help` subcommand:
 
     $ cddl help
 
@@ -137,21 +137,21 @@ Below is the table of supported control operators and whether or not they've bee
 
 |Control operator|Implementation status|
 |----------------|---------------------|
-|.pcre|Implemented<sup>[2](#regex)</sup>|
-|.regex|Implemented<sup>[2](#regex)</sup>|
-|.size|Incomplete|
-|.bits|Unsupported for JSON validation|
-|.cbor|Unsupported for JSON validation|
-|.cborseq|Unsupported for JSON validation|
-|.within|Incomplete|
-|.and|Incomplete|
-|.lt|Incomplete|
-|.le|Incomplete|
-|.gt|Incomplete|
-|.ge|Incomplete|
-|.eq|Incomplete|
-|.ne|Incomplete|
-|.default|Incomplete|
+|`.pcre`|Implemented<sup>[2](#regex)</sup>|
+|`.regex`|Implemented<sup>[2](#regex)</sup>|
+|`.size`|Incomplete|
+|`.bits`|Unsupported for JSON validation|
+|`.cbor`|Unsupported for JSON validation|
+|`.cborseq`|Unsupported for JSON validation|
+|`.within`|Incomplete|
+|`.and`|Incomplete|
+|`.lt`|Implemented|
+|`.le`|Incomplete|
+|`.gt`|Incomplete|
+|`.ge`|Incomplete|
+|`.eq`|Incomplete|
+|`.ne`|Incomplete|
+|`.default`|Incomplete|
 
 <a name="number">1</a>: While JSON itself does not distinguish between integers and floating-point numbers, this crate does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON.
 
