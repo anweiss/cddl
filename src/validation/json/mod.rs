@@ -1,5 +1,4 @@
-/// JSON control validation
-pub mod controls;
+mod controls;
 
 use super::{CompilationError, Error, Result, Validator};
 use crate::{
@@ -558,6 +557,96 @@ impl<'a> Validator<Value> for CDDL<'a> {
 
         let find_valid_value = |n: Numeric| -> bool {
           match validate_lt_control(n, value) {
+            Ok(()) => true,
+            Err(e) => {
+              errors.push(e);
+
+              false
+            }
+          }
+        };
+
+        if self
+          .numeric_values_from_type(controller)?
+          .into_iter()
+          .any(find_valid_value)
+        {
+          Ok(())
+        } else {
+          Err(Error::MultiError(errors))
+        }
+      }
+      Some(Token::LE) => {
+        if !self.is_type_numeric_data_type(target) {
+          return Err(Error::Syntax(format!(
+            "the {} control operator is only defined for the numeric type. Got {}",
+            Token::LT,
+            target
+          )));
+        }
+
+        let find_valid_value = |n: Numeric| -> bool {
+          match validate_le_control(n, value) {
+            Ok(()) => true,
+            Err(e) => {
+              errors.push(e);
+
+              false
+            }
+          }
+        };
+
+        if self
+          .numeric_values_from_type(controller)?
+          .into_iter()
+          .any(find_valid_value)
+        {
+          Ok(())
+        } else {
+          Err(Error::MultiError(errors))
+        }
+      }
+      Some(Token::GT) => {
+        if !self.is_type_numeric_data_type(target) {
+          return Err(Error::Syntax(format!(
+            "the {} control operator is only defined for the numeric type. Got {}",
+            Token::LT,
+            target
+          )));
+        }
+
+        let find_valid_value = |n: Numeric| -> bool {
+          match validate_gt_control(n, value) {
+            Ok(()) => true,
+            Err(e) => {
+              errors.push(e);
+
+              false
+            }
+          }
+        };
+
+        if self
+          .numeric_values_from_type(controller)?
+          .into_iter()
+          .any(find_valid_value)
+        {
+          Ok(())
+        } else {
+          Err(Error::MultiError(errors))
+        }
+      }
+      Some(Token::GE) => {
+        if !self.is_type_numeric_data_type(target) {
+          return Err(Error::Syntax(format!(
+            "the {} control operator is only defined for the numeric type. Got {}",
+            Token::LT,
+            target
+          )));
+        }
+
+        let find_valid_value = |n: Numeric| -> bool {
+          match validate_ge_control(n, value) {
             Ok(()) => true,
             Err(e) => {
               errors.push(e);

@@ -62,13 +62,21 @@ pub enum Token<'a> {
   /// not the range is inclusive
   RANGE((RangeValue<'a>, RangeValue<'a>, bool)),
 
+  /// Left opening parend
   LPAREN,
+  /// Right closing parend
   RPAREN,
+  /// Left opening brace
   LBRACE,
+  /// Right closing brace
   RBRACE,
+  /// Left opening bracket
   LBRACKET,
+  /// Right closing bracket
   RBRACKET,
+  /// Left opening angle bracket
   LANGLEBRACKET,
+  /// Right closing angle bracket
   RANGLEBRACKET,
 
   // Control operators
