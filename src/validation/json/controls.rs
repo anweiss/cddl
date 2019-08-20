@@ -58,7 +58,7 @@ pub fn validate_lt_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("expected int < {}", i),
+            expected_value: format!("int < {}", i),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -70,7 +70,7 @@ pub fn validate_lt_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("expected uint < {}", ui),
+            expected_value: format!("uint < {}", ui),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -82,7 +82,7 @@ pub fn validate_lt_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("expected float < {}", f),
+            expected_value: format!("float < {}", f),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -107,7 +107,7 @@ pub fn validate_gt_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("expected int > {}", i),
+            expected_value: format!("int > {}", i),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -119,7 +119,7 @@ pub fn validate_gt_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("expected uint > {}", ui),
+            expected_value: format!("uint > {}", ui),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -131,7 +131,7 @@ pub fn validate_gt_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("expected float > {}", f),
+            expected_value: format!("float > {}", f),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -141,6 +141,104 @@ pub fn validate_gt_control(controller: Numeric, value: &Value) -> Result {
     },
     _ => Err(Error::Syntax(format!(
       ".gt control can only be used against numeric values. Got {}",
+      value
+    ))),
+  }
+}
+
+/// Validates whether or not a JSON value is greater than or equal to a given
+/// numeric controller
+pub fn validate_ge_control(controller: Numeric, value: &Value) -> Result {
+  match value {
+    Value::Number(n) => match controller {
+      Numeric::INT(i) => match n.as_i64() {
+        Some(ni) if ni >= i as i64 => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: format!("int >= {}", i),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Numeric::UINT(ui) => match n.as_u64() {
+        Some(uin) if uin >= ui as u64 => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: format!("uint >= {}", ui),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Numeric::FLOAT(f) => match n.as_f64() {
+        Some(fv) if fv >= f => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: format!("float >= {}", f),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+    },
+    _ => Err(Error::Syntax(format!(
+      ".ge control can only be used against numeric values. Got {}",
+      value
+    ))),
+  }
+}
+
+/// Validates whether or not a JSON value is less than or equal to a given
+/// numeric controller
+pub fn validate_le_control(controller: Numeric, value: &Value) -> Result {
+  match value {
+    Value::Number(n) => match controller {
+      Numeric::INT(i) => match n.as_i64() {
+        Some(ni) if ni <= i as i64 => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: format!("int <= {}", i),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Numeric::UINT(ui) => match n.as_u64() {
+        Some(uin) if uin <= ui as u64 => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: format!("uint <= {}", ui),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Numeric::FLOAT(f) => match n.as_f64() {
+        Some(fv) if fv <= f => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: format!("float <= {}", f),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+    },
+    _ => Err(Error::Syntax(format!(
+      ". control can only be used against numeric values. Got {}",
       value
     ))),
   }
@@ -164,6 +262,30 @@ mod tests {
   fn validate_lt_control() -> Result {
     let json_input = r#"10.5"#;
     let cddl_input = r#"ltrule = float .lt 15.5"#;
+
+    validate_json_from_str(cddl_input, json_input)
+  }
+
+  #[test]
+  fn validate_le_control() -> Result {
+    let json_input = r#"10"#;
+    let cddl_input = r#"lerule = uint .le 15"#;
+
+    validate_json_from_str(cddl_input, json_input)
+  }
+
+  #[test]
+  fn validate_gt_control() -> Result {
+    let json_input = r#"-10"#;
+    let cddl_input = r#"gtrule = int .gt -20"#;
+
+    validate_json_from_str(cddl_input, json_input)
+  }
+
+  #[test]
+  fn validate_ge_control() -> Result {
+    let json_input = r#"10.5"#;
+    let cddl_input = r#"gerule = float .ge 10.5"#;
 
     validate_json_from_str(cddl_input, json_input)
   }

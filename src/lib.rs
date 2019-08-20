@@ -170,9 +170,9 @@
 //! |`.within`|Incomplete|
 //! |`.and`|Incomplete|
 //! |`.lt`|Implemented|
-//! |`.le`|Incomplete|
-//! |`.gt`|Incomplete|
-//! |`.ge`|Incomplete|
+//! |`.le`|Implemented|
+//! |`.gt`|Implemented|
+//! |`.ge`|Implemented|
 //! |`.eq`|Incomplete|
 //! |`.ne`|Incomplete|
 //! |`.default`|Incomplete|

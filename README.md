@@ -137,18 +137,18 @@ Below is the table of supported control operators and whether or not they've bee
 
 |Control operator|Implementation status|
 |----------------|---------------------|
-|`.pcre`|Implemented<sup>[2](#regex)</sup>|
-|`.regex`|Implemented<sup>[2](#regex)</sup>|
+|`.pcre`|:heavy_check_mark:<sup>[2](#regex)</sup>|
+|`.regex`|:heavy_check_mark:<sup>[2](#regex)</sup>|
 |`.size`|Incomplete|
 |`.bits`|Unsupported for JSON validation|
 |`.cbor`|Unsupported for JSON validation|
 |`.cborseq`|Unsupported for JSON validation|
 |`.within`|Incomplete|
 |`.and`|Incomplete|
-|`.lt`|Implemented|
-|`.le`|Incomplete|
-|`.gt`|Incomplete|
-|`.ge`|Incomplete|
+|`.lt`|:heavy_check_mark:|
+|`.le`|:heavy_check_mark:|
+|`.gt`|:heavy_check_mark:|
+|`.ge`|:heavy_check_mark:|
 |`.eq`|Incomplete|
 |`.ne`|Incomplete|
 |`.default`|Incomplete|
