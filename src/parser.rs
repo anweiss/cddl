@@ -502,7 +502,7 @@ impl<'a> Parser<'a> {
     let occur = self.parse_occur(true)?;
 
     if occur.is_some() {
-      while let Token::VALUE(Value::UINT(_)) | Token::ASTERISK | Token::OPTIONAL = self.cur_token {
+      while let Token::VALUE(Value::UINT(_)) | Token::ASTERISK | Token::OPTIONAL | Token::ONEORMORE = self.cur_token {
         self.next_token()?;
       }
     }
@@ -944,6 +944,7 @@ mod tests {
       r#"9.9"#,
       r#"#"#,
       r#"[*3 reputon]"#,
+      r#"[+ reputon]"#,
       r#"&groupname"#,
       r#"&( inlinegroup )"#,
       r#"{ ? "optional-key" ^ => int, }"#,
@@ -972,6 +973,13 @@ mod tests {
       Type2::Array(Group(vec![GroupChoice(vec![GroupEntry::TypeGroupname(
         TypeGroupnameEntry {
           occur: Some(Occur::Exact((None, Some(3)))),
+          name: Identifier(("reputon", None)),
+          generic_arg: None,
+        },
+      )])])),
+      Type2::Array(Group(vec![GroupChoice(vec![GroupEntry::TypeGroupname(
+        TypeGroupnameEntry {
+          occur: Some(Occur::OneOrMore),
           name: Identifier(("reputon", None)),
           generic_arg: None,
         },
