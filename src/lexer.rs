@@ -99,7 +99,7 @@ impl<'a> Lexer<'a> {
       .and_then(|c| {
         if c.1 == '\n' {
           self.position.0 += 1;
-          self.position.1 = 0;
+          self.position.1 = 1;
         } else {
           self.position.1 += 1;
         }
