@@ -87,7 +87,7 @@ impl<'a> Parser<'a> {
       cur_token: Token::EOF,
       peek_token: Token::EOF,
       errors: Vec::default(),
-      position: (0, 0, 0),
+      position: (1, 1, 0),
     };
 
     p.next_token()?;

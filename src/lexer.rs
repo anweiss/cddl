@@ -88,7 +88,7 @@ impl<'a> Lexer<'a> {
     Lexer {
       str_input: input.as_bytes(),
       input: input.char_indices().peekable(),
-      position: (0, 0, 0),
+      position: (1, 1, 0),
     }
   }
 
