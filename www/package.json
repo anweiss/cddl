@@ -3,9 +3,6 @@
   "version": "0.3.13",
   "description": "Parser for the Concise data definition language (CDDL)",
   "main": "index.js",
-  "bin": {
-    "create-wasm-app": ".bin/create-wasm-app.js"
-  },
   "scripts": {
     "build": "webpack --config webpack.config.js",
     "start": "webpack-dev-server"
@@ -20,7 +17,7 @@
     "rust",
     "webpack"
   ],
-  "author": "Andrew Weiss <andrew.weiss@outlook.com",
+  "author": "Andrew Weiss <andrew.weiss@outlook.com>",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/anweiss/cddl/issues"
