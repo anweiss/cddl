@@ -16,6 +16,9 @@ use alloc::{
   vec::Vec,
 };
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
 /// Alias for `Result` with an error of type `cddl::ParserError`
 pub type Result<T> = result::Result<T, ParserError>;
 
@@ -730,8 +733,19 @@ pub fn cddl_from_str<'a>(input: &'a str) -> Result<CDDL<'a>> {
 }
 
 /// Validates CDDL input against RFC 8610
+#[cfg(not(target_arch = "wasm32"))]
 pub fn compile_cddl_from_str(input: &str) -> Result<()> {
   Parser::new(Lexer::new(input))?.parse_cddl().map(|_| ())
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn compile_cddl_from_str(input: &str) -> result::Result<(), JsValue> {
+  Parser::new(Lexer::new(input))
+    .map_err(|e| JsValue::from(e.to_string()))?
+    .parse_cddl()
+    .map_err(|e| JsValue::from(e.to_string()))
+    .map(|_| ())
 }
 
 #[cfg(test)]
