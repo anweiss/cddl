@@ -23,6 +23,7 @@ base64 = "0.10"
 regex = "1.2"
 chrono = "0.4"
 uriparse = { version = "0.6", optional = true }
+itertools = "0.8"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 crossterm = "0.9"
