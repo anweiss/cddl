@@ -511,7 +511,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
   ) -> Result {
     let mut errors: Vec<Error> = Vec::new();
 
-    match token::lookup_control(operator) {
+    match token::lookup_control_from_str(operator) {
       t @ Some(Token::PCRE) | t @ Some(Token::REGEXP) => {
         if t == Some(Token::REGEXP) {
           println!("NOTE: Only Perl-compatible regex is supported.\nThis crate evaluates the .regexp operator as an alias for the .pcre extension operator\n");

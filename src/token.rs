@@ -33,8 +33,6 @@ pub enum Token<'a> {
   ONEORMORE,
   /// Unwrap operator '~'
   UNWRAP,
-  /// Control operator
-  CONTROL(&'a str),
 
   // Delimiters
   /// Comma ','
@@ -57,6 +55,8 @@ pub enum Token<'a> {
   ARROWMAP,
   /// Cut '^'
   CUT,
+
+  RANGEOP(bool),
 
   /// Range tuple with lower bound, upper bound, and bool indicating whether or
   /// not the range is inclusive
@@ -447,6 +447,13 @@ impl<'a> fmt::Display for Token<'a> {
       Token::VALUE(value) => write!(f, "{}", value),
       Token::BYTESLICEVALUE(value) => write!(f, "{}", value),
       Token::BYTEVECVALUE(value) => write!(f, "{}", value),
+      Token::RANGEOP(i) => {
+        if *i {
+          write!(f, "..")
+        } else {
+          write!(f, "...")
+        }
+      }
       Token::RANGE((l, u, i)) => match l {
         RangeValue::IDENT(_) if *i => write!(f, "{} .. {}", l, u),
         RangeValue::IDENT(_) => write!(f, "{} ... {}", l, u),
@@ -464,44 +471,44 @@ impl<'a> fmt::Display for Token<'a> {
   }
 }
 
-pub fn lookup_control(ident: &str) -> Option<Token> {
+pub fn lookup_control_from_str(ident: &str) -> Option<Token> {
   match ident {
-    "size" => Some(Token::SIZE),
-    "bits" => Some(Token::BITS),
-    "regexp" => Some(Token::REGEXP),
-    "cbor" => Some(Token::CBOR),
-    "cborseq" => Some(Token::CBORSEQ),
-    "within" => Some(Token::WITHIN),
-    "and" => Some(Token::AND),
-    "lt" => Some(Token::LT),
-    "le" => Some(Token::LE),
-    "gt" => Some(Token::GT),
-    "ge" => Some(Token::GE),
-    "eq" => Some(Token::EQ),
-    "ne" => Some(Token::NE),
-    "default" => Some(Token::DEFAULT),
-    "pcre" => Some(Token::PCRE),
+    ".size" => Some(Token::SIZE),
+    ".bits" => Some(Token::BITS),
+    ".regexp" => Some(Token::REGEXP),
+    ".cbor" => Some(Token::CBOR),
+    ".cborseq" => Some(Token::CBORSEQ),
+    ".within" => Some(Token::WITHIN),
+    ".and" => Some(Token::AND),
+    ".lt" => Some(Token::LT),
+    ".le" => Some(Token::LE),
+    ".gt" => Some(Token::GT),
+    ".ge" => Some(Token::GE),
+    ".eq" => Some(Token::EQ),
+    ".ne" => Some(Token::NE),
+    ".default" => Some(Token::DEFAULT),
+    ".pcre" => Some(Token::PCRE),
     _ => None,
   }
 }
 
 pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
   match t {
-    Token::SIZE => Some("size"),
-    Token::BITS => Some("bits"),
-    Token::REGEXP => Some("regexp"),
-    Token::CBOR => Some("cbor"),
-    Token::CBORSEQ => Some("cborseq"),
-    Token::WITHIN => Some("within"),
-    Token::AND => Some("and"),
-    Token::LT => Some("lt"),
-    Token::LE => Some("le"),
-    Token::GT => Some("gt"),
-    Token::GE => Some("ge"),
-    Token::EQ => Some("eq"),
-    Token::NE => Some("ne"),
-    Token::DEFAULT => Some("default"),
-    Token::PCRE => Some("pcre"),
+    Token::SIZE => Some(".size"),
+    Token::BITS => Some(".bits"),
+    Token::REGEXP => Some(".regexp"),
+    Token::CBOR => Some(".cbor"),
+    Token::CBORSEQ => Some(".cborseq"),
+    Token::WITHIN => Some(".within"),
+    Token::AND => Some(".and"),
+    Token::LT => Some(".lt"),
+    Token::LE => Some(".le"),
+    Token::GT => Some(".gt"),
+    Token::GE => Some(".ge"),
+    Token::EQ => Some(".eq"),
+    Token::NE => Some(".ne"),
+    Token::DEFAULT => Some(".default"),
+    Token::PCRE => Some(".pcre"),
     _ => None,
   }
 }

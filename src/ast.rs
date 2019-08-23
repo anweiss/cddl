@@ -361,7 +361,7 @@ impl<'a> fmt::Display for RangeCtlOp {
     match self {
       RangeCtlOp::RangeOp(false) => write!(f, "..."),
       RangeCtlOp::RangeOp(true) => write!(f, ".."),
-      RangeCtlOp::CtlOp(ctrl) => write!(f, ".{}", ctrl),
+      RangeCtlOp::CtlOp(ctrl) => write!(f, "{}", ctrl),
     }
   }
 }

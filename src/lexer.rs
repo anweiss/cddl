@@ -1,6 +1,7 @@
 use super::token::{self, ByteSliceValue, ByteVecValue, RangeValue, Tag, Token, Value};
 use base16;
 use base64;
+use itertools;
 use lexical_core;
 use std::{
   convert::TryFrom,
@@ -79,6 +80,7 @@ impl From<str::Utf8Error> for LexerError {
 pub struct Lexer<'a> {
   str_input: &'a [u8],
   input: Peekable<CharIndices<'a>>,
+  multipeek: itertools::MultiPeek<CharIndices<'a>>,
   position: Position,
 }
 
@@ -88,11 +90,14 @@ impl<'a> Lexer<'a> {
     Lexer {
       str_input: input.as_bytes(),
       input: input.char_indices().peekable(),
+      multipeek: itertools::multipeek(input.char_indices()),
       position: (1, 1, 0),
     }
   }
 
   fn read_char(&mut self) -> Result<(usize, char)> {
+    self.multipeek.next();
+
     self
       .input
       .next()
@@ -183,6 +188,34 @@ impl<'a> Lexer<'a> {
             Token::BYTESLICEVALUE(ByteSliceValue::UTF8(self.read_byte_string(idx)?)),
           ))
         }
+        (idx, '.') => {
+          if let Some(&c) = self.peek_char() {
+            if c.1 == '.' {
+              // Rangeop
+              let _ = self.read_char()?;
+
+              if let Some(&c) = self.peek_char() {
+                if c.1 == '.' {
+                  let _ = self.read_char()?;
+
+                  return Ok((self.position, Token::RANGEOP(false)));
+                }
+              }
+
+              return Ok((self.position, Token::RANGEOP(true)));
+            } else if is_ealpha(c.1) {
+              // Controlop
+              return Ok((
+                self.position,
+                token::lookup_control_from_str(self.read_identifier(idx)?).ok_or(
+                  LexerError::from((self.position, "Invalid control operator")),
+                )?,
+              ));
+            }
+          }
+
+          Err((self.position, "Invalid character").into())
+        }
         (idx, ch) => {
           if is_ealpha(ch) {
             // base 16 (hex) encoded byte string
@@ -264,52 +297,12 @@ impl<'a> Lexer<'a> {
               }
             }
 
-            let ident_str = self.read_identifier(idx)?;
-
-            // TODO: Error handling for invalid control identifier
-            if let Some(control) = token::lookup_control(ident_str) {
-              return Ok((token_position, control));
-            }
-
-            let ident = token::lookup_ident(ident_str);
-
-            // TODO: Move range detection out of lexer and into parser. This is
-            // kludgy otherwise due to the lexer processing ranges and the
-            // parser processing controls
-            match self.peek_char() {
-              Some(&c) if c.1 == '\u{0020}' => {
-                let _ = self.read_char()?;
-
-                match self.peek_char() {
-                  Some(&c) if c.1 == '.' => {
-                    let _ = self.read_char()?;
-
-                    match self.peek_char() {
-                      // Control operator detected
-                      Some(&c) if is_ealpha(c.1) => {
-                        return Ok((token_position, ident));
-                      }
-                      // Range detected
-                      _ => return self.read_range(ident),
-                    }
-                  }
-                  _ => return Ok((token_position, ident)),
-                }
-              }
-              _ => return Ok((token_position, ident)),
-            }
+            return Ok((
+              self.position,
+              token::lookup_ident(self.read_identifier(idx)?),
+            ));
           } else if is_digit(ch) || ch == '-' {
-            let number = self.read_int_or_float(idx)?;
-
-            match self.peek_char() {
-              // Range detected
-              Some(&c) if c.1 == '.' => {
-                let _ = self.read_char()?;
-
-                return self.read_range(number);
-              }
-              _ => return Ok((token_position, number)),
-            }
+            return Ok((self.position, self.read_int_or_float(idx)?));
           }
 
           Ok((
@@ -519,12 +512,11 @@ impl<'a> Lexer<'a> {
 
     let (end_idx, i) = self.read_number(idx)?;
 
-    if let Some(&c) = self.peek_char() {
+    if let Some(&c) = self.multipeek.peek() {
       if c.1 == '.' {
-        let _ = self.read_char()?;
-
-        if let Some(&c) = self.peek_char() {
+        if let Some(&c) = self.multipeek.peek() {
           if is_digit(c.1) {
+            let _ = self.read_char()?;
             let (fraction_idx, _) = self.read_number(c.0)?;
 
             if is_signed {
@@ -819,8 +811,8 @@ delivery = (
 )
 
 city = (
-  name: tstr,
-  zip-code: uint,
+  name: tstr
+  zip-code: uint
   1*3 $$tcp-option,
 )"#;
 
@@ -859,14 +851,9 @@ city = (
       ),
       (IDENT(("mysecondrule", None)), "mysecondrule"),
       (ASSIGN, "="),
-      (
-        RANGE((
-          RangeValue::IDENT(("mynumber", None)),
-          RangeValue::FLOAT(100.5),
-          true,
-        )),
-        "mynumber .. 100.5",
-      ),
+      (IDENT(("mynumber", None)), "mynumber"),
+      (RANGEOP(true), ".."),
+      (VALUE(Value::FLOAT(100.5)), "100.5"),
       (IDENT(("myintrule", None)), "myintrule"),
       (ASSIGN, "="),
       (VALUE(Value::INT(-10)), "-10"),
@@ -875,10 +862,9 @@ city = (
       (VALUE(Value::FLOAT(-10.5)), "-10.5"),
       (IDENT(("myintrange", None)), "myintrange"),
       (ASSIGN, "="),
-      (
-        RANGE((RangeValue::INT(-10), RangeValue::UINT(10), true)),
-        "-10..10",
-      ),
+      (VALUE(Value::INT(-10)), "-10"),
+      (RANGEOP(true), ".."),
+      (VALUE(Value::UINT(10)), "10"),
       (IDENT(("mycontrol", None)), "mycontrol"),
       (ASSIGN, "="),
       (IDENT(("mynumber", None)), "mynumber"),
@@ -934,11 +920,9 @@ city = (
       (IDENT(("name", None)), "name"),
       (COLON, ":"),
       (TSTR, "tstr"),
-      (COMMA, ","),
       (IDENT(("zip-code", None)), "zip-code"),
       (COLON, ":"),
       (UINT, "uint"),
-      (COMMA, ","),
       (VALUE(Value::UINT(1)), "1"),
       (ASTERISK, "*"),
       (VALUE(Value::UINT(3)), "3"),
@@ -953,6 +937,37 @@ city = (
     let mut l = Lexer::new(input);
 
     for (expected_tok, literal) in expected_tok.iter() {
+      let tok = l.next_token().unwrap();
+      assert_eq!((expected_tok, *literal), (&tok.1, &*tok.1.to_string()))
+    }
+  }
+
+  #[test]
+  fn verify_controlop() {
+    let input = r#".size"#;
+    let expected_tok = Token::SIZE;
+
+    let mut l = Lexer::new(input);
+
+    assert_eq!(
+      expected_tok.to_string(),
+      l.next_token().unwrap().1.to_string()
+    )
+  }
+
+  #[test]
+  fn verify_range() {
+    let input = r#"100.5..150.5"#;
+
+    let mut l = Lexer::new(input);
+
+    let expected_tokens = [
+      (VALUE(Value::FLOAT(100.5)), "100.5"),
+      (RANGEOP(true), ".."),
+      (VALUE(Value::FLOAT(150.5)), "150.5"),
+    ];
+
+    for (expected_tok, literal) in expected_tokens.iter() {
       let tok = l.next_token().unwrap();
       assert_eq!((expected_tok, *literal), (&tok.1, &*tok.1.to_string()))
     }

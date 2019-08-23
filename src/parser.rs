@@ -192,22 +192,22 @@ impl<'a> Parser<'a> {
         })))
       }
       _ => {
-        let r = Rule::Type(TypeRule {
+        Ok(Rule::Type(TypeRule {
           name: ident.into(),
           generic_param: gp,
           is_type_choice_alternate,
           value: self.parse_type()?,
-        });
+        }))
 
-        match self.cur_token {
-          // If last (or only) type choice is a rangeop, advance token
-          Token::RANGE(_) => {
-            self.next_token()?;
+        // match self.cur_token {
+        //   // If last (or only) type choice is a rangeop, advance token
+        //   Token::RANGE(_) => {
+        //     self.next_token()?;
 
-            Ok(r)
-          }
-          _ => Ok(r),
-        }
+        //     Ok(r)
+        //   }
+        //   _ => Ok(r),
+        // }
       }
     }
   }
@@ -279,29 +279,33 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_type1(&mut self) -> Result<Type1<'a>> {
-    match &self.cur_token {
-      Token::RANGE((lower, upper, inclusive)) => Ok(Type1 {
-        type2: (*lower).into(),
-        operator: Some((RangeCtlOp::RangeOp(*inclusive), (*upper).into())),
-      }),
+    let t2_1 = self.parse_type2()?;
 
-      _ => {
-        let target = self.parse_type2()?;
+    while let Token::COMMENT(_) = self.cur_token {
+      self.next_token()?;
+    }
 
-        if let Some(ctrl) = token::control_str_from_token(&self.cur_token) {
-          self.next_token()?;
+    let op = match &self.cur_token {
+      Token::RANGEOP(i) => Some(RangeCtlOp::RangeOp(*i)),
+      _ => match token::control_str_from_token(&self.cur_token) {
+        Some(co) => Some(RangeCtlOp::CtlOp(co)),
+        None => None,
+      },
+    };
 
-          return Ok(Type1 {
-            type2: target,
-            operator: Some((RangeCtlOp::CtlOp(ctrl), self.parse_type2()?)),
-          });
-        }
+    match op {
+      Some(o) => {
+        self.next_token()?;
 
         Ok(Type1 {
-          type2: target,
-          operator: None,
+          type2: t2_1,
+          operator: Some((o, self.parse_type2()?)),
         })
       }
+      None => Ok(Type1 {
+        type2: t2_1,
+        operator: None,
+      }),
     }
   }
 
@@ -918,7 +922,7 @@ mod tests {
       Type1 {
         type2: Type2::Typename((Identifier(("target", None)), None)),
         operator: Some((
-          RangeCtlOp::CtlOp("lt"),
+          RangeCtlOp::CtlOp(".lt"),
           Type2::Typename((Identifier(("controller", None)), None)),
         )),
       },
