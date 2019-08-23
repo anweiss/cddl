@@ -502,7 +502,11 @@ impl<'a> Parser<'a> {
     let occur = self.parse_occur(true)?;
 
     if occur.is_some() {
-      while let Token::VALUE(Value::UINT(_)) | Token::ASTERISK | Token::OPTIONAL | Token::ONEORMORE = self.cur_token {
+      while let Token::VALUE(Value::UINT(_))
+      | Token::ASTERISK
+      | Token::OPTIONAL
+      | Token::ONEORMORE = self.cur_token
+      {
         self.next_token()?;
       }
     }
