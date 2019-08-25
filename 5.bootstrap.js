@@ -1,1 +1,1 @@
-(window.webpackJsonp=window.webpackJsonp||[]).push([[5],[,function(e,n,i){"use strict";i.r(n);var t=i(11);window.editor=t.a.create(document.getElementById("cddlDataDefinition"),{minimap:{enabled:!1}})}]]);
+(window.webpackJsonp=window.webpackJsonp||[]).push([[5],[,function(e,n,i){"use strict";i.r(n);var t=i(243);window.editor=t.editor.create(document.getElementById("cddlDataDefinition"),{minimap:{enabled:!1}})}]]);
