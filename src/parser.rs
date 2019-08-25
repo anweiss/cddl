@@ -143,7 +143,7 @@ impl<'a> Parser<'a> {
         return Err(
           (
             self.position,
-            format!("expected IDENT. Got {}", self.cur_token),
+            format!("expected rule identifier. Got {}", self.cur_token),
           )
             .into(),
         )
@@ -164,7 +164,13 @@ impl<'a> Parser<'a> {
       && !self.expect_peek(&Token::TCHOICEALT)?
       && !self.expect_peek(&Token::GCHOICEALT)?
     {
-      return Err((self.position, "Expected ASSIGN(=). Got {}").into());
+      return Err(
+        (
+          self.position,
+          format!("Expected ASSIGN(=). Got {}", self.cur_token),
+        )
+          .into(),
+      );
     }
 
     let mut is_type_choice_alternate = false;
