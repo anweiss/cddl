@@ -487,8 +487,6 @@ impl<'a> Parser<'a> {
 
       grpchoice.0.push(ge);
 
-      println!("cur_token {}", self.cur_token);
-
       // Don't advance the token if it is currently an opening or closing
       // map/group delimiter
       if !self.cur_token_is(Token::RPAREN)
