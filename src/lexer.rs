@@ -79,6 +79,7 @@ impl From<str::Utf8Error> for LexerError {
 /// Lexer which holds a byte slice and iterator over the byte slice
 pub struct Lexer<'a> {
   str_input: &'a [u8],
+  // TODO: Remove duplicate iterator in favor of multipeek
   input: Peekable<CharIndices<'a>>,
   multipeek: itertools::MultiPeek<CharIndices<'a>>,
   position: Position,

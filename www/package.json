@@ -4,7 +4,7 @@
   "description": "Parser for the Concise data definition language (CDDL)",
   "main": "index.js",
   "scripts": {
-    "build": "webpack --config webpack.config.js",
+    "build": "webpack --config webpack.config.prod.js",
     "start": "webpack-dev-server"
   },
   "repository": {
@@ -27,13 +27,13 @@
     "cddl": "file:../pkg"
   },
   "devDependencies": {
+    "copy-webpack-plugin": "^5.0.0",
+    "css-loader": "^1.0.0",
     "hello-wasm-pack": "^0.1.0",
+    "monaco-editor": "^0.17.1",
+    "style-loader": "^0.23.1",
     "webpack": "^4.29.3",
     "webpack-cli": "^3.1.0",
-    "webpack-dev-server": "^3.1.5",
-    "copy-webpack-plugin": "^5.0.0",
-    "monaco-editor": "^0.17.1",
-    "css-loader": "^1.0.0",
-    "style-loader": "^0.23.1"
+    "webpack-dev-server": "^3.1.5"
   }
 }
