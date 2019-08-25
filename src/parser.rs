@@ -112,9 +112,11 @@ impl<'a> Parser<'a> {
     while self.cur_token != Token::EOF {
       let r = self.parse_rule()?;
 
-      if c.rules.iter().any(|existing_rule| {
+      let rule_exists = |existing_rule: &Rule| {
         r.name() == existing_rule.name() && !existing_rule.is_choice_alternate()
-      }) {
+      };
+
+      if c.rules.iter().any(rule_exists) {
         return Err(
           (
             self.position,
@@ -495,10 +497,10 @@ impl<'a> Parser<'a> {
         && !self.cur_token_is(Token::LPAREN)
         && !self.cur_token_is(Token::LBRACE)
         && !self.cur_token_is(Token::LBRACKET)
+        && !self.peek_token_is(&Token::COLON)
+        && !self.peek_token_is(&Token::ARROWMAP)
       {
-        if !self.peek_token_is(&Token::COLON) && !self.peek_token_is(&Token::ARROWMAP) {
-          self.next_token()?;
-        }
+        self.next_token()?;
       }
 
       if self.cur_token_is(Token::COMMA) {

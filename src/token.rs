@@ -56,6 +56,7 @@ pub enum Token<'a> {
   /// Cut '^'
   CUT,
 
+  /// Range operator. Inclusive '..' if true, otherwise exclusive '...'s
   RANGEOP(bool),
 
   /// Range tuple with lower bound, upper bound, and bool indicating whether or
@@ -80,24 +81,40 @@ pub enum Token<'a> {
   RANGLEBRACKET,
 
   // Control operators
+  /// .size control operator
   SIZE,
+  /// .bits control operator
   BITS,
+  /// .regexp control operator
   REGEXP,
+  /// .cbor control operator
   CBOR,
+  /// .cborseq control operator
   CBORSEQ,
+  /// .within control operator
   WITHIN,
+  /// .and control operator
   AND,
+  /// .lt control operator
   LT,
+  /// .le control operator
   LE,
+  /// .gt control operator
   GT,
+  /// .ge control operator
   GE,
+  /// .eq control operator
   EQ,
+  /// .ne control operator
   NE,
+  ///.default control operator
   DEFAULT,
+  /// .pcre control operator
   /// Proposed control extension to support Perl-Compatible Regular Expressions
-  /// (PCREs). See https://tools.ietf.org/html/rfc8610#section-3.8.3.2
+  /// (PCREs). See https://tools.ietf.org/html/rfc8610#section-3.8.3.2s
   PCRE,
 
+  /// group to choice enumeration '&'
   GTOCHOICE,
 
   // Standard prelude

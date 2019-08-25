@@ -207,9 +207,8 @@ impl<'a> Lexer<'a> {
               // Controlop
               return Ok((
                 self.position,
-                token::lookup_control_from_str(self.read_identifier(idx)?).ok_or(
-                  LexerError::from((self.position, "Invalid control operator")),
-                )?,
+                token::lookup_control_from_str(self.read_identifier(idx)?)
+                  .ok_or_else(|| LexerError::from((self.position, "Invalid control operator")))?,
               ));
             }
           }
