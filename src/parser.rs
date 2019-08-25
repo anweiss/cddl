@@ -167,7 +167,10 @@ impl<'a> Parser<'a> {
       return Err(
         (
           self.position,
-          format!("Expected ASSIGN(=). Got {}", self.cur_token),
+          format!(
+            "Expected assignment '=' after identifier. Got {}",
+            self.cur_token
+          ),
         )
           .into(),
       );

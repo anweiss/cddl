@@ -342,13 +342,21 @@ jobs:
           wasm-pack build --release
 
       - name: Build web
+        env:
+          GIT_USER: ${{ secrets.GitUser }}
+          REPO_PAT: ${{ secrets.AccessToken }}
         run: |
           cd www
           npm install
           rm -rf dist/
           git config user.email "andrew.weiss@outlook.com"
           git config user.name "Andrew Weiss"
+          mkdir dist
           git worktree add dist gh-pages
+          cd dist
+          git pull https://$GIT_USER:$REPO_PAT@github.com/anweiss/cddl.git gh-pages
+          git rm -r .
+          cd ..
           npm run build
 
       - name: Push web

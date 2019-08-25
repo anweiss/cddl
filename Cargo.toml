@@ -2,6 +2,7 @@
 name = "cddl"
 description = "Parser for the Concise data definition language (CDDL)"
 repository = "https://github.com/anweiss/cddl"
+homepage = "https://anweiss.github.io/cddl"
 license = "MIT"
 version = "0.3.14"
 authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
@@ -53,3 +54,4 @@ path = "src/bin/repl.rs"
 
 [profile.release]
 opt-level = "s"
+lto = true
