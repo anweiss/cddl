@@ -1,0 +1,38 @@
+(window["webpackJsonp"] = window["webpackJsonp"] || []).push([[5],{
+
+/***/ "../pkg/cddl.js":
+/*!**********************!*\
+  !*** ../pkg/cddl.js ***!
+  \**********************/
+/*! exports provided: compile_cddl_from_str, __wbindgen_string_new, __wbindgen_rethrow */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+eval("__webpack_require__.r(__webpack_exports__);\n/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, \"compile_cddl_from_str\", function() { return compile_cddl_from_str; });\n/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, \"__wbindgen_string_new\", function() { return __wbindgen_string_new; });\n/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, \"__wbindgen_rethrow\", function() { return __wbindgen_rethrow; });\n/* harmony import */ var _cddl_bg_wasm__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./cddl_bg.wasm */ \"../pkg/cddl_bg.wasm\");\n\n\nlet WASM_VECTOR_LEN = 0;\n\nlet cachedTextEncoder = new TextEncoder('utf-8');\n\nlet cachegetUint8Memory = null;\nfunction getUint8Memory() {\n    if (cachegetUint8Memory === null || cachegetUint8Memory.buffer !== _cddl_bg_wasm__WEBPACK_IMPORTED_MODULE_0__[\"memory\"].buffer) {\n        cachegetUint8Memory = new Uint8Array(_cddl_bg_wasm__WEBPACK_IMPORTED_MODULE_0__[\"memory\"].buffer);\n    }\n    return cachegetUint8Memory;\n}\n\nlet passStringToWasm;\nif (typeof cachedTextEncoder.encodeInto === 'function') {\n    passStringToWasm = function(arg) {\n\n\n        let size = arg.length;\n        let ptr = _cddl_bg_wasm__WEBPACK_IMPORTED_MODULE_0__[\"__wbindgen_malloc\"](size);\n        let offset = 0;\n        {\n            const mem = getUint8Memory();\n            for (; offset < arg.length; offset++) {\n                const code = arg.charCodeAt(offset);\n                if (code > 0x7F) break;\n                mem[ptr + offset] = code;\n            }\n        }\n\n        if (offset !== arg.length) {\n            arg = arg.slice(offset);\n            ptr = _cddl_bg_wasm__WEBPACK_IMPORTED_MODULE_0__[\"__wbindgen_realloc\"](ptr, size, size = offset + arg.length * 3);\n            const view = getUint8Memory().subarray(ptr + offset, ptr + size);\n            const ret = cachedTextEncoder.encodeInto(arg, view);\n\n            offset += ret.written;\n        }\n        WASM_VECTOR_LEN = offset;\n        return ptr;\n    };\n} else {\n    passStringToWasm = function(arg) {\n\n\n        let size = arg.length;\n        let ptr = _cddl_bg_wasm__WEBPACK_IMPORTED_MODULE_0__[\"__wbindgen_malloc\"](size);\n        let offset = 0;\n        {\n            const mem = getUint8Memory();\n            for (; offset < arg.length; offset++) {\n                const code = arg.charCodeAt(offset);\n                if (code > 0x7F) break;\n                mem[ptr + offset] = code;\n            }\n        }\n\n        if (offset !== arg.length) {\n            const buf = cachedTextEncoder.encode(arg.slice(offset));\n            ptr = _cddl_bg_wasm__WEBPACK_IMPORTED_MODULE_0__[\"__wbindgen_realloc\"](ptr, size, size = offset + buf.length);\n            getUint8Memory().set(buf, ptr + offset);\n            offset += buf.length;\n        }\n        WASM_VECTOR_LEN = offset;\n        return ptr;\n    };\n}\n/**\n* @param {string} input\n*/\nfunction compile_cddl_from_str(input) {\n    _cddl_bg_wasm__WEBPACK_IMPORTED_MODULE_0__[\"compile_cddl_from_str\"](passStringToWasm(input), WASM_VECTOR_LEN);\n}\n\nlet cachedTextDecoder = new TextDecoder('utf-8');\n\nfunction getStringFromWasm(ptr, len) {\n    return cachedTextDecoder.decode(getUint8Memory().subarray(ptr, ptr + len));\n}\n\nconst heap = new Array(32);\n\nheap.fill(undefined);\n\nheap.push(undefined, null, true, false);\n\nlet heap_next = heap.length;\n\nfunction addHeapObject(obj) {\n    if (heap_next === heap.length) heap.push(heap.length + 1);\n    const idx = heap_next;\n    heap_next = heap[idx];\n\n    heap[idx] = obj;\n    return idx;\n}\n\nfunction getObject(idx) { return heap[idx]; }\n\nfunction dropObject(idx) {\n    if (idx < 36) return;\n    heap[idx] = heap_next;\n    heap_next = idx;\n}\n\nfunction takeObject(idx) {\n    const ret = getObject(idx);\n    dropObject(idx);\n    return ret;\n}\n\nconst __wbindgen_string_new = function(arg0, arg1) {\n    const ret = getStringFromWasm(arg0, arg1);\n    return addHeapObject(ret);\n};\n\nconst __wbindgen_rethrow = function(arg0) {\n    throw takeObject(arg0);\n};\n\n\n\n//# sourceURL=webpack:///../pkg/cddl.js?");
+
+/***/ }),
+
+/***/ "../pkg/cddl_bg.wasm":
+/*!***************************!*\
+  !*** ../pkg/cddl_bg.wasm ***!
+  \***************************/
+/*! exports provided: memory, compile_cddl_from_str, EXPONENT_DEFAULT_CHAR, __wbindgen_malloc, __wbindgen_realloc, is_success, is_overflow, is_invalid_digit, is_empty, atou8_range, atou16_range, atou32_range, atou64_range, atousize_range, atoi8_range, atoi16_range, atoi32_range, atoi64_range, atoisize_range, try_atou8_range, try_atou16_range, try_atou32_range, try_atou64_range, try_atousize_range, try_atoi8_range, try_atoi16_range, try_atoi32_range, try_atoi64_range, try_atoisize_range, atou128_range, atoi128_range, try_atou128_range, try_atoi128_range, u8toa_range, u16toa_range, u32toa_range, u64toa_range, usizetoa_range, i8toa_range, i16toa_range, i32toa_range, i64toa_range, isizetoa_range, u128toa_range, i128toa_range, f32toa_range, f64toa_range, atof32_range, atof64_range, atof32_lossy_range, atof64_lossy_range, try_atof32_range, try_atof64_range, try_atof32_lossy_range, try_atof64_lossy_range, get_nan_string_ffi, set_nan_string_ffi, get_inf_string_ffi, set_inf_string_ffi, get_infinity_string_ffi, set_infinity_string_ffi, MAX_I8_SIZE_FFI, MAX_I16_SIZE_FFI, MAX_I32_SIZE_FFI, MAX_I64_SIZE_FFI, MAX_I128_SIZE_FFI, MAX_ISIZE_SIZE_FFI, MAX_U8_SIZE_FFI, MAX_U16_SIZE_FFI, MAX_U32_SIZE_FFI, MAX_U64_SIZE_FFI, MAX_U128_SIZE_FFI, MAX_USIZE_SIZE_FFI, MAX_F32_SIZE_FFI, MAX_F64_SIZE_FFI, BUFFER_SIZE_FFI */
+/***/ (function(module, exports, __webpack_require__) {
+
+eval("\"use strict\";\n// Instantiate WebAssembly module\nvar wasmExports = __webpack_require__.w[module.i];\n__webpack_require__.r(exports);\n// export exports from WebAssembly module\nfor(var name in wasmExports) if(name != \"__webpack_init__\") exports[name] = wasmExports[name];\n// exec imports from WebAssembly module (for esm order)\n/* harmony import */ var m0 = __webpack_require__(/*! ./cddl.js */ \"../pkg/cddl.js\");\n\n\n// exec wasm module\nwasmExports[\"__webpack_init__\"]()\n\n//# sourceURL=webpack:///../pkg/cddl_bg.wasm?");
+
+/***/ }),
+
+/***/ "./index.js":
+/*!******************!*\
+  !*** ./index.js ***!
+  \******************/
+/*! no exports provided */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+eval("__webpack_require__.r(__webpack_exports__);\n/* harmony import */ var cddl__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! cddl */ \"../pkg/cddl.js\");\n/* harmony import */ var monaco_editor__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! monaco-editor */ \"./node_modules/monaco-editor/esm/vs/editor/editor.main.js\");\n\n\n\n\ndocument.getElementById('compile').addEventListener('click', e => {\n  e.preventDefault();\n\n  try {\n    cddl__WEBPACK_IMPORTED_MODULE_0__[\"compile_cddl_from_str\"](window.editor.getValue());\n    document.getElementById('result').innerHTML = '<div class=\"alert alert-success\" role=\"alert\">Success</div>';\n  } catch (err) {\n    document.getElementById('result').innerHTML = '<div class=\"alert alert-danger\" role=\"alert\">Error: ' + err + '</div>';\n  }\n});\n\n//# sourceURL=webpack:///./index.js?");
+
+/***/ })
+
+}]);
