@@ -112,11 +112,9 @@ impl<'a> Parser<'a> {
     while self.cur_token != Token::EOF {
       let r = self.parse_rule()?;
 
-      if c
-        .rules
-        .iter()
-        .any(|existing_rule| r.name() == existing_rule.name() && !r.is_choice_alternate())
-      {
+      if c.rules.iter().any(|existing_rule| {
+        r.name() == existing_rule.name() && !existing_rule.is_choice_alternate()
+      }) {
         return Err(
           (
             self.position,
@@ -344,7 +342,7 @@ impl<'a> Parser<'a> {
 
       // { group }
       Token::LBRACE => {
-        self.next_token()?;
+        // self.next_token()?;
 
         while let Token::COMMENT(_) = self.cur_token {
           self.next_token()?;
@@ -355,7 +353,7 @@ impl<'a> Parser<'a> {
 
       // [ group ]
       Token::LBRACKET => {
-        self.next_token()?;
+        // self.next_token()?;
 
         while let Token::COMMENT(_) = self.cur_token {
           self.next_token()?;
@@ -473,19 +471,30 @@ impl<'a> Parser<'a> {
   fn parse_grpchoice(&mut self) -> Result<GroupChoice<'a>> {
     let mut grpchoice = GroupChoice(Vec::new());
 
+    if self.cur_token_is(Token::LBRACE)
+      || self.cur_token_is(Token::LPAREN)
+      || self.cur_token_is(Token::LBRACKET)
+    {
+      self.next_token()?;
+    }
+
     while !self.cur_token_is(Token::RBRACE)
       && !self.cur_token_is(Token::RPAREN)
       && !self.cur_token_is(Token::RBRACKET)
       && !self.cur_token_is(Token::EOF)
     {
-      grpchoice.0.push(self.parse_grpent()?);
+      let ge = self.parse_grpent()?;
 
-      // FYI, this was a really difficult bug to fix. When the last entry in a
-      // map, group or array is of the form "memberkey: type" without a trailing
-      // comma, don't advance the token
+      grpchoice.0.push(ge);
+
+      // Don't advance the token if it is currently an opening or closing
+      // map/group delimiter
       if !self.cur_token_is(Token::RPAREN)
         && !self.cur_token_is(Token::RBRACE)
         && !self.cur_token_is(Token::RBRACKET)
+        && !self.cur_token_is(Token::LPAREN)
+        && !self.cur_token_is(Token::LBRACE)
+        && !self.cur_token_is(Token::LBRACKET)
       {
         self.next_token()?;
       }
@@ -528,6 +537,10 @@ impl<'a> Parser<'a> {
     if self.cur_token_is(Token::LPAREN) {
       self.next_token()?;
 
+      while self.cur_token_is(Token::LPAREN) {
+        self.next_token()?;
+      }
+
       while let Token::COMMENT(_) = self.cur_token {
         self.next_token()?;
       }
@@ -538,7 +551,7 @@ impl<'a> Parser<'a> {
         self.next_token()?;
       }
 
-      if self.cur_token_is(Token::RPAREN) {
+      while self.cur_token_is(Token::RPAREN) {
         self.next_token()?;
       }
 
@@ -666,7 +679,7 @@ impl<'a> Parser<'a> {
 
         Ok(Some(Occur::ZeroOrMore))
       }
-      _ => {
+      Token::VALUE(_) => {
         let lower = if let Token::VALUE(value) = &self.cur_token {
           if let Value::UINT(li) = value {
             Some(*li)
@@ -700,6 +713,7 @@ impl<'a> Parser<'a> {
 
         Ok(Some(Occur::Exact((lower, upper))))
       }
+      _ => Ok(None),
     }
   }
 
@@ -956,6 +970,7 @@ mod tests {
       r#"&groupname"#,
       r#"&( inlinegroup )"#,
       r#"{ ? "optional-key" ^ => int, }"#,
+      r#"[ [* file-entry], [* directory-entry ] ]"#,
     ];
 
     let expected_outputs = [
@@ -1019,6 +1034,54 @@ mod tests {
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
+      let l = Lexer::new(&inputs[idx]);
+      let mut p = Parser::new(l)?;
+
+      let t2 = p.parse_type2()?;
+      check_parser_errors(&p)?;
+
+      assert_eq!(t2.to_string(), expected_output.to_string());
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn verify_type2_complex() -> Result<()> {
+    let inputs = [r#"[ [* file-entry], [* directory-entry] ]"#];
+
+    let expected_ouputs = [Type2::Array(Group(vec![GroupChoice(vec![
+      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+        occur: None,
+        member_key: None,
+        entry_type: Type(vec![Type1 {
+          type2: Type2::Array(Group(vec![GroupChoice(vec![GroupEntry::TypeGroupname(
+            TypeGroupnameEntry {
+              occur: Some(Occur::ZeroOrMore),
+              name: Identifier(("file-entry", None)),
+              generic_arg: None,
+            },
+          )])])),
+          operator: None,
+        }]),
+      })),
+      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+        occur: None,
+        member_key: None,
+        entry_type: Type(vec![Type1 {
+          type2: Type2::Array(Group(vec![GroupChoice(vec![GroupEntry::TypeGroupname(
+            TypeGroupnameEntry {
+              occur: Some(Occur::ZeroOrMore),
+              name: Identifier(("directory-entry", None)),
+              generic_arg: None,
+            },
+          )])])),
+          operator: None,
+        }]),
+      })),
+    ])]))];
+
+    for (idx, expected_output) in expected_ouputs.iter().enumerate() {
       let l = Lexer::new(&inputs[idx]);
       let mut p = Parser::new(l)?;
 

@@ -409,6 +409,8 @@ impl<'a> fmt::Display for Token<'a> {
       Token::RPAREN => write!(f, ")"),
       Token::LBRACE => write!(f, "{{"),
       Token::RBRACE => write!(f, "}}"),
+      Token::LBRACKET => write!(f, "["),
+      Token::RBRACKET => write!(f, "]"),
       Token::TCHOICE => write!(f, "/"),
       Token::TCHOICEALT => write!(f, "/="),
       Token::GCHOICEALT => write!(f, "//="),
