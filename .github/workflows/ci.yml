@@ -299,3 +299,58 @@ jobs:
         run: |
           source $HOME/.cargo/env
           cargo clippy --all 
+
+  publish-wasm:
+    strategy:
+      matrix:
+        rust_toolchain: [ stable ]
+        platform: [ ubuntu-latest ]
+    name: Publish wasm
+    needs: compilation-check
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Install Rust
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          set -e
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
+          export PATH="$PATH:$HOME/.cargo/bin"
+          echo "##vso[task.setvariable variable=PATH;]$PATH;$HOME/.cargo/bin"
+          source $HOME/.cargo/env
+          rustup default $RUSTUP_TOOLCHAIN
+          rustup update $RUSTUP_TOOLCHAIN
+
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Add wasm target
+        run: |
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install wasmpack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install node
+        uses: actions/setup-node@v1
+        with:
+          node-verison: '10.x'
+
+      - name: Build wasm
+        run: |
+          wasm-pack build --release
+
+      - name: Build web
+        run: |
+          cd www
+          npm install
+          rm -rf dist/*.wasm
+          npm run build
+
+      - name: Push web
+        run: |
+          cd www/dist
+          git add -A
+          git commit -m 'CI website build'
+          git push origin gh-pages
