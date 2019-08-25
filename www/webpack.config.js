@@ -1,5 +1,6 @@
 const CopyWebpackPlugin = require('copy-webpack-plugin');
 const path = require('path');
+const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin');
 
 module.exports = {
   entry: "./bootstrap.js",
@@ -16,5 +17,6 @@ module.exports = {
       test: /\.css$/,
       use: ['style-loader', 'css-loader']
     }]
-  }
+  },
+  plugins: [new MonacoWebpackPlugin()]
 };
