@@ -1,0 +1,17 @@
+reputation-object = {
+  application: text
+  reputons: [* reputon]
+}
+
+reputon = {
+  rater: text
+  assertion: text
+  rated: text
+  rating: float16
+  ? confidence: float16
+  ? normal-rating: float16
+  ? sample-size: uint
+  ? generated: uint
+  ? expires: uint
+  * text => any
+}
