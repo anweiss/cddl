@@ -2,9 +2,9 @@
 name = "cddl"
 description = "Parser for the Concise data definition language (CDDL)"
 repository = "https://github.com/anweiss/cddl"
-homepage = "https://anweiss.github.io/cddl"
+homepage = "https://cddl.anweiss.tech"
 license = "MIT"
-version = "0.3.14"
+version = "0.3.15"
 authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
 readme = "README.md"
 edition = "2018"
