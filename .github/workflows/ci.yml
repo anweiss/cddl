@@ -349,8 +349,13 @@ jobs:
           npm run build
 
       - name: Push web
+        env:
+          GIT_USER: ${{ secrets.GitUser }}
+          REPO_PAT: ${{ secrets.AccessToken }}
         run: |
           cd www/dist
+          git config user.email "andrew.weiss@outlook.com"
+          git config user.name "Andrew Weiss"
           git add -A
           git commit -m 'CI website build'
-          git push origin gh-pages
+          git push https://$GIT_USER:$REPO_PAT@github.com/anweiss/cddl.git gh-pages
