@@ -137,18 +137,18 @@ Below is the table of supported control operators and whether or not they've bee
 
 |Control operator|Implementation status|
 |----------------|---------------------|
-|`.pcre`|:heavy_check_mark:<sup>[2](#regex)</sup>|
-|`.regex`|:heavy_check_mark:<sup>[2](#regex)</sup>|
+|`.pcre`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup>|
+|`.regex`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup>|
 |`.size`|Incomplete|
 |`.bits`|Unsupported for JSON validation|
 |`.cbor`|Unsupported for JSON validation|
 |`.cborseq`|Unsupported for JSON validation|
 |`.within`|Incomplete|
 |`.and`|Incomplete|
-|`.lt`|:heavy_check_mark:|
-|`.le`|:heavy_check_mark:|
-|`.gt`|:heavy_check_mark:|
-|`.ge`|:heavy_check_mark:|
+|`.lt`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
+|`.le`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
+|`.gt`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
+|`.ge`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
 |`.eq`|Incomplete|
 |`.ne`|Incomplete|
 |`.default`|Incomplete|
