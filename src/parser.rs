@@ -543,6 +543,22 @@ impl<'a> Parser<'a> {
 
     let member_key = self.parse_memberkey(true)?;
 
+    if member_key.is_some() {
+      // Two member keys in a row indicates a malformed entry
+      if let Some(mk) = self.parse_memberkey(true)? {
+        return Err(
+          (
+            self.position,
+            format!(
+              "Incomplete group entry for memberkey {}. Missing entry type",
+              mk
+            ),
+          )
+            .into(),
+        );
+      }
+    }
+
     while let Token::COMMENT(_) = self.cur_token {
       self.next_token()?;
     }
