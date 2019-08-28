@@ -59,7 +59,7 @@ impl<'a> Node for CDDL<'a> {
 /// EALPHA = ALPHA / "@" / "_" / "$"
 /// DIGIT = %x30-39
 /// ```
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Identifier<'a>(pub (&'a str, Option<&'a SocketPlug>));
 
 impl<'a> Node for Identifier<'a> {
@@ -258,7 +258,7 @@ impl<'a> fmt::Display for GenericParm<'a> {
 /// ```abnf
 /// genericarg = "<" S type1 S *("," S type1 S )  ">"
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericArg<'a>(pub Vec<Type1<'a>>);
 
 impl<'a> fmt::Display for GenericArg<'a> {
@@ -283,7 +283,7 @@ impl<'a> fmt::Display for GenericArg<'a> {
 /// ```abnf
 /// type = type1 *(S "/" S  type1)
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Type<'a>(pub Vec<Type1<'a>>);
 
 impl<'a> fmt::Display for Type<'a> {
@@ -308,7 +308,7 @@ impl<'a> fmt::Display for Type<'a> {
 /// ```abnf
 /// type1 = type2 [S (rangeop / ctlop) S type2]
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Type1<'a> {
   /// Type
   pub type2: Type2<'a>,
@@ -348,7 +348,7 @@ impl<'a> fmt::Display for Type1<'a> {
 /// rangeop = "..." / ".."
 /// ctlop = "." id
 /// ```
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum RangeCtlOp {
   /// Range operator where value is `true` if inclusive
   RangeOp(bool),
@@ -381,7 +381,7 @@ impl<'a> fmt::Display for RangeCtlOp {
 ///     / "#" DIGIT ["." uint]                ; major/ai
 ///     / "#"                                 ; any
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Type2<'a> {
   /// Integer value
   IntValue(isize),
@@ -444,7 +444,7 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", tn)
       }
-      Type2::ParenthesizedType(_t) => unimplemented!(),
+      Type2::ParenthesizedType(t) => write!(f, "({})", t),
       Type2::Map(g) => write!(f, "{{{}}}", g),
       Type2::Array(g) => write!(f, "[{}]", g),
       Type2::Unwrap((ident, ga)) => {
@@ -527,7 +527,7 @@ impl<'a> From<ByteVecValue> for Type2<'a> {
 /// ```abnf
 /// group = grpchoice * (S "//" S grpchoice)
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Group<'a>(pub Vec<GroupChoice<'a>>);
 
 impl<'a> fmt::Display for Group<'a> {
@@ -552,7 +552,7 @@ impl<'a> fmt::Display for Group<'a> {
 /// ```abnf
 /// grpchoice = *(grpent optcom)
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GroupChoice<'a>(pub Vec<GroupEntry<'a>>);
 
 impl<'a> fmt::Display for GroupChoice<'a> {
@@ -578,7 +578,7 @@ impl<'a> fmt::Display for GroupChoice<'a> {
 ///       / [occur S] groupname [genericarg]  ; preempted by above
 ///       / [occur S] "(" S group S ")"
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum GroupEntry<'a> {
   /// Value group entry type
   ValueMemberKey(Box<ValueMemberKeyEntry<'a>>),
@@ -610,7 +610,7 @@ impl<'a> fmt::Display for GroupEntry<'a> {
 /// ```abnf
 /// [occur S] [memberkey S] type
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ValueMemberKeyEntry<'a> {
   /// Optional occurrence indicator
   pub occur: Option<Occur>,
@@ -639,7 +639,7 @@ impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
 }
 
 /// Group entry from a named type or group
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeGroupnameEntry<'a> {
   /// Optional occurrence indicator
   pub occur: Option<Occur>,
@@ -673,7 +673,7 @@ impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
 ///           / bareword S ":"
 ///           / value S ":"
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MemberKey<'a> {
   /// Type expression. If second value in tuple is `true`, a cut is present
   Type1(Box<(Type1<'a>, bool)>),
@@ -705,7 +705,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
 ///       / "+"
 ///       / "?"
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Occur {
   /// Occurrence indicator in the form n*m, where n is an optional lower limit
   /// and m is an optional upper limit

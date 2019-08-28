@@ -532,6 +532,27 @@ pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
   }
 }
 
+pub fn is_control_token(t: &Token) -> bool {
+  match t {
+    Token::SIZE
+    | Token::BITS
+    | Token::REGEXP
+    | Token::CBOR
+    | Token::CBORSEQ
+    | Token::WITHIN
+    | Token::AND
+    | Token::LT
+    | Token::LE
+    | Token::GT
+    | Token::GE
+    | Token::EQ
+    | Token::NE
+    | Token::DEFAULT
+    | Token::PCRE => true,
+    _ => false,
+  }
+}
+
 pub fn lookup_ident(ident: &str) -> Token {
   match ident {
     "false" => Token::FALSE,

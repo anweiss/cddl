@@ -293,7 +293,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
               .into(),
             ),
           },
-          Type2::Typename((ident, _)) => match self.numerical_type_from_ident(ident) {
+          Type2::Typename((ident, _)) => match self.numerical_value_type_from_ident(ident) {
             Some(t2) => {
               let mut validation_errors: Vec<Error> = Vec::new();
 
@@ -363,7 +363,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
               .into(),
             ),
           },
-          Type2::Typename((ident, _)) => match self.numerical_type_from_ident(ident) {
+          Type2::Typename((ident, _)) => match self.numerical_value_type_from_ident(ident) {
             Some(t2) => {
               let mut validation_errors: Vec<Error> = Vec::new();
 
@@ -433,7 +433,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
               .into(),
             ),
           },
-          Type2::Typename((ident, _)) => match self.numerical_type_from_ident(ident) {
+          Type2::Typename((ident, _)) => match self.numerical_value_type_from_ident(ident) {
             Some(t2) => {
               let mut validation_errors: Vec<Error> = Vec::new();
 
@@ -461,7 +461,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
             upper
           ))),
         },
-        Type2::Typename((ident, _)) => match self.numerical_type_from_ident(ident) {
+        Type2::Typename((ident, _)) => match self.numerical_value_type_from_ident(ident) {
           Some(t2) => {
             let mut validation_errors: Vec<Error> = Vec::new();
 
@@ -567,7 +567,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
         };
 
         if self
-          .numeric_values_from_type(controller)?
+          .numeric_values_from_type(target, controller)?
           .into_iter()
           .any(find_valid_value)
         {
@@ -597,7 +597,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
         };
 
         if self
-          .numeric_values_from_type(controller)?
+          .numeric_values_from_type(target, controller)?
           .into_iter()
           .any(find_valid_value)
         {
@@ -627,7 +627,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
         };
 
         if self
-          .numeric_values_from_type(controller)?
+          .numeric_values_from_type(target, controller)?
           .into_iter()
           .any(find_valid_value)
         {
@@ -657,13 +657,60 @@ impl<'a> Validator<Value> for CDDL<'a> {
         };
 
         if self
-          .numeric_values_from_type(controller)?
+          .numeric_values_from_type(target, controller)?
           .into_iter()
           .any(find_valid_value)
         {
           Ok(())
         } else {
           Err(Error::MultiError(errors))
+        }
+      }
+      Some(Token::EQ) => {
+        if self.is_type_numeric_data_type(target) {
+          let find_valid_value = |n: Numeric| -> bool {
+            match validate_eq_numeric_control(n, value) {
+              Ok(()) => true,
+              Err(e) => {
+                errors.push(e);
+
+                false
+              }
+            }
+          };
+
+          if self
+            .numeric_values_from_type(target, controller)?
+            .into_iter()
+            .any(find_valid_value)
+          {
+            Ok(())
+          } else {
+            Err(Error::MultiError(errors))
+          }
+        } else if self.is_type_string_data_type(target) {
+          let find_valid_value = |c: &str| -> bool {
+            match validate_eq_text_control(c, value) {
+              Ok(()) => true,
+              Err(e) => {
+                errors.push(e);
+
+                false
+              }
+            }
+          };
+
+          if self
+            .text_values_from_type(controller)?
+            .into_iter()
+            .any(find_valid_value)
+          {
+            Ok(())
+          } else {
+            Err(Error::MultiError(errors))
+          }
+        } else {
+          unimplemented!()
         }
       }
       _ => unimplemented!(),
@@ -1140,6 +1187,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
           self.validate_group(g, occur, value)
         }
       }
+      _ => Err(Error::Syntax("Invalid group entry".into())),
     }
   }
 

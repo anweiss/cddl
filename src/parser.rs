@@ -192,12 +192,55 @@ impl<'a> Parser<'a> {
     }
 
     match self.cur_token {
+      Token::VALUE(Value::UINT(_)) => {
+        if self.peek_token_is(&Token::ASTERISK) {
+          let ge = self.parse_grpent()?;
+
+          Ok(Rule::Group(Box::from(GroupRule {
+            name: ident.into(),
+            generic_param: gp,
+            is_group_choice_alternate,
+            entry: ge,
+          })))
+        } else {
+          Ok(Rule::Type(TypeRule {
+            name: ident.into(),
+            generic_param: gp,
+            is_type_choice_alternate,
+            value: self.parse_type(None)?,
+          }))
+        }
+      }
       Token::LPAREN | Token::ASTERISK | Token::ONEORMORE | Token::OPTIONAL => {
+        let ge = self.parse_grpent()?;
+
+        if let GroupEntry::InlineGroup((occur, g)) = &ge {
+          if occur.is_none() && g.0.len() == 1 {
+            if let Some(gc) = g.0.iter().nth(0) {
+              if gc.0.len() == 1 {
+                if let Some(ge) = gc.0.iter().nth(0) {
+                  if let GroupEntry::ValueMemberKey(vmke) = ge {
+                    if vmke.occur.is_none() && vmke.member_key.is_none() {
+                      return Ok(Rule::Type(TypeRule {
+                        name: ident.into(),
+                        generic_param: gp,
+                        is_type_choice_alternate,
+                        value: self
+                          .parse_type(Some(Type2::ParenthesizedType(vmke.entry_type.clone())))?,
+                      }));
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
         Ok(Rule::Group(Box::from(GroupRule {
           name: ident.into(),
           generic_param: gp,
           is_group_choice_alternate,
-          entry: self.parse_grpent()?,
+          entry: ge,
         })))
       }
       _ => {
@@ -205,7 +248,7 @@ impl<'a> Parser<'a> {
           name: ident.into(),
           generic_param: gp,
           is_type_choice_alternate,
-          value: self.parse_type()?,
+          value: self.parse_type(None)?,
         }))
 
         // match self.cur_token {
@@ -254,7 +297,7 @@ impl<'a> Parser<'a> {
     let mut generic_args = GenericArg(Vec::new());
 
     while !self.cur_token_is(Token::RANGLEBRACKET) {
-      generic_args.0.push(self.parse_type1()?);
+      generic_args.0.push(self.parse_type1(None)?);
       if let Token::COMMA | Token::COMMENT(_) = self.cur_token {
         self.next_token()?;
       }
@@ -265,10 +308,10 @@ impl<'a> Parser<'a> {
     Ok(generic_args)
   }
 
-  fn parse_type(&mut self) -> Result<Type<'a>> {
+  fn parse_type(&mut self, parenthesized_type: Option<Type2<'a>>) -> Result<Type<'a>> {
     let mut t = Type(Vec::new());
 
-    t.0.push(self.parse_type1()?);
+    t.0.push(self.parse_type1(parenthesized_type)?);
 
     while let Token::COMMENT(_) = self.cur_token {
       self.next_token()?;
@@ -281,14 +324,18 @@ impl<'a> Parser<'a> {
         self.next_token()?;
       }
 
-      t.0.push(self.parse_type1()?);
+      t.0.push(self.parse_type1(None)?);
     }
 
     Ok(t)
   }
 
-  fn parse_type1(&mut self) -> Result<Type1<'a>> {
-    let t2_1 = self.parse_type2()?;
+  fn parse_type1(&mut self, parenthesized_type: Option<Type2<'a>>) -> Result<Type1<'a>> {
+    let t2_1 = if let Some(t2) = parenthesized_type {
+      t2
+    } else {
+      self.parse_type2()?
+    };
 
     while let Token::COMMENT(_) = self.cur_token {
       self.next_token()?;
@@ -348,7 +395,7 @@ impl<'a> Parser<'a> {
           self.next_token()?;
         }
 
-        Ok(Type2::ParenthesizedType(self.parse_type()?))
+        Ok(Type2::ParenthesizedType(self.parse_type(None)?))
       }
 
       // { group }
@@ -600,7 +647,7 @@ impl<'a> Parser<'a> {
           return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
             occur,
             member_key,
-            entry_type: self.parse_type()?,
+            entry_type: self.parse_type(None)?,
           })));
         }
 
@@ -609,7 +656,7 @@ impl<'a> Parser<'a> {
           return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
             occur,
             member_key,
-            entry_type: self.parse_type()?,
+            entry_type: self.parse_type(None)?,
           })));
         }
 
@@ -625,7 +672,7 @@ impl<'a> Parser<'a> {
       _ => Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
         occur,
         member_key,
-        entry_type: self.parse_type()?,
+        entry_type: self.parse_type(None)?,
       }))),
     }
   }
@@ -633,7 +680,7 @@ impl<'a> Parser<'a> {
   fn parse_memberkey(&mut self, is_optional: bool) -> Result<Option<MemberKey<'a>>> {
     match &self.peek_token {
       Token::ARROWMAP | Token::CUT => {
-        let t1 = self.parse_type1()?;
+        let t1 = self.parse_type1(None)?;
 
         while let Token::COMMENT(_) = self.cur_token {
           self.next_token()?;
@@ -918,7 +965,7 @@ mod tests {
     let l = Lexer::new(input);
     let mut p = Parser::new(l)?;
 
-    let t = p.parse_type()?;
+    let t = p.parse_type(None)?;
     check_parser_errors(&p)?;
 
     assert!(t.0.len() == 2);
@@ -940,6 +987,7 @@ mod tests {
       r#"1.5..4.5"#,
       r#"my..lower ... upper"#,
       r#"target .lt controller"#,
+      r#"( text / tstr ) .eq "hello""#,
     ];
 
     let expected_outputs = [
@@ -969,13 +1017,26 @@ mod tests {
           Type2::Typename((Identifier(("controller", None)), None)),
         )),
       },
+      Type1 {
+        type2: Type2::ParenthesizedType(Type(vec![
+          Type1 {
+            type2: Type2::Typename((Identifier(("text", None)), None)),
+            operator: None,
+          },
+          Type1 {
+            type2: Type2::Typename((Identifier(("tstr", None)), None)),
+            operator: None,
+          },
+        ])),
+        operator: Some((RangeCtlOp::CtlOp(".eq"), Type2::TextValue("hello"))),
+      },
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
       let l = Lexer::new(&inputs[idx]);
       let mut p = Parser::new(l)?;
 
-      let t1 = p.parse_type1()?;
+      let t1 = p.parse_type1(None)?;
       check_parser_errors(&p)?;
 
       assert_eq!(expected_output.to_string(), t1.to_string());

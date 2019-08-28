@@ -121,7 +121,8 @@ pub trait Validator<T> {
     value: &T,
   ) -> Result;
 
-  /// Validate data against a given type
+  /// Validate data against a given type, which may include additional type
+  /// choices
   fn validate_type(
     &self,
     t: &Type,
@@ -131,6 +132,8 @@ pub trait Validator<T> {
     value: &T,
   ) -> Result;
 
+  /// Validate data against a given type, which may include an optional range or
+  /// control operator
   fn validate_type1(
     &self,
     t1: &Type1,
@@ -140,8 +143,12 @@ pub trait Validator<T> {
     value: &T,
   ) -> Result;
 
+  /// Validate data against a given range operation between a lower and upper
+  /// bound
   fn validate_range(&self, lower: &Type2, upper: &Type2, is_inclusive: bool, value: &T) -> Result;
 
+  /// Validate data against a given control operator defined by a target type
+  /// and a controller types
   fn validate_control_operator(
     &self,
     target: &Type2,
@@ -150,6 +157,7 @@ pub trait Validator<T> {
     value: &T,
   ) -> Result;
 
+  /// Validate data against a given type
   fn validate_type2(
     &self,
     t2: &Type2,
@@ -159,6 +167,7 @@ pub trait Validator<T> {
     value: &T,
   ) -> Result;
 
+  /// Validate data against a given group
   fn validate_group(&self, g: &Group, occur: Option<&Occur>, value: &T) -> Result;
 
   fn validate_group_to_choice_enum(&self, g: &Group, occur: Option<&Occur>, value: &T) -> Result;
@@ -188,7 +197,7 @@ pub trait Validator<T> {
 }
 
 impl<'a> CDDL<'a> {
-  fn numerical_type_from_ident(&self, ident: &Identifier) -> Option<Vec<&Type2>> {
+  fn numerical_value_type_from_ident(&self, ident: &Identifier) -> Option<Vec<&Type2>> {
     let mut type_choices = Vec::new();
 
     for rule in self.rules.iter() {
@@ -199,7 +208,7 @@ impl<'a> CDDL<'a> {
               Type2::IntValue(_) | Type2::UintValue(_) | Type2::FloatValue(_) => {
                 type_choices.push(&tc.type2);
               }
-              Type2::Typename((ident, _)) => return self.numerical_type_from_ident(ident),
+              Type2::Typename((ident, _)) => return self.numerical_value_type_from_ident(ident),
               _ => continue,
             }
           }
@@ -273,11 +282,40 @@ impl<'a> CDDL<'a> {
     }
   }
 
-  fn numeric_values_from_type(&self, ident: &Type2) -> result::Result<Vec<Numeric>, Error> {
+  // Returns the numeric value(s) from a given type, provided their types match
+  // that of the given target data type
+  fn numeric_values_from_type(
+    &self,
+    target: &Type2,
+    ident: &Type2,
+  ) -> result::Result<Vec<Numeric>, Error> {
+    let target_idents = self.numerical_ident_from_type(target)?;
+
     match ident {
-      Type2::IntValue(i) => Ok(vec![Numeric::INT(*i)]),
-      Type2::UintValue(ui) => Ok(vec![Numeric::UINT(*ui)]),
-      Type2::FloatValue(f) => Ok(vec![Numeric::FLOAT(*f)]),
+      Type2::IntValue(i) => {
+        if target_idents.into_iter().any(|ti| ti == "int" || ti == "number") {
+          return Ok(vec![Numeric::INT(*i)])
+        }
+
+        Err(Error::Syntax("Target data type must be an 'int' or 'number' in order to validate against an integer value".into()))
+      }
+      Type2::UintValue(ui) => {
+        if target_idents.into_iter().any(|ti| ti == "uint" || ti == "number") {
+          return Ok(vec![Numeric::UINT(*ui)]);
+        }
+
+        Err(Error::Syntax("Target data type must be a 'uint' or 'number' in order to validate against an unsigned integer value".into()))
+      }
+      Type2::FloatValue(f) => {
+        if target_idents.into_iter().any(|ti| match ti {
+          "float" | "float16" | "float32" | "float64" | "float16-32" | "float32-64" | "number" => true,
+          _ => false,
+        }) {
+          return Ok(vec![Numeric::FLOAT(*f)]);
+        }
+
+        Err(Error::Syntax("Target data type must be a 'float', 'float16', 'float32', 'float64', 'float16-32', 'float32-64' or 'number' in order to validate against an unsigned integer value".into()))
+      }
       Type2::Typename((ident, _)) => {
         let mut numeric_values = Vec::new();
 
@@ -285,7 +323,7 @@ impl<'a> CDDL<'a> {
           match r {
             Rule::Type(tr) if tr.name == *ident => {
               for tc in tr.value.0.iter() {
-                numeric_values.append(&mut self.numeric_values_from_type(&tc.type2)?);
+                numeric_values.append(&mut self.numeric_values_from_type(target, &tc.type2)?);
               }
             }
             _ => continue,
@@ -295,7 +333,35 @@ impl<'a> CDDL<'a> {
         Ok(numeric_values)
       }
       _ => Err(Error::Syntax(
-        "Value can only be referenced via another type name identifier".into(),
+        "Value can only be referenced via another type name identifier whose target type is the type of the value".into(),
+      )),
+    }
+  }
+
+  fn numerical_ident_from_type(&'a self, t2: &'a Type2) -> result::Result<Vec<&'a str>, Error> {
+    let mut numeric_type_idents = Vec::new();
+
+    match t2 {
+      Type2::Typename((Identifier((ident, _)), _)) if is_numeric_data_type(ident) => {
+        numeric_type_idents.push(*ident);
+        Ok(numeric_type_idents)
+      }
+      Type2::Typename((ident, _)) => {
+        for r in self.rules.iter() {
+          match r {
+            Rule::Type(tr) if tr.name == *ident => {
+              for tc in tr.value.0.iter() {
+                numeric_type_idents.append(&mut self.numerical_ident_from_type(&tc.type2)?);
+              }
+            }
+            _ => continue,
+          }
+        }
+
+        Ok(numeric_type_idents)
+      }
+      _ => Err(Error::Syntax(
+        "Numeric identifier can only be referenced via another type name identifier".into(),
       )),
     }
   }

@@ -70,7 +70,7 @@ pub fn validate_lt_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("uint < {}", ui),
+            expected_value: format!("uint .lt {}", ui),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -82,7 +82,7 @@ pub fn validate_lt_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("float < {}", f),
+            expected_value: format!("float .lt {}", f),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -107,7 +107,7 @@ pub fn validate_gt_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("int > {}", i),
+            expected_value: format!("int .gt {}", i),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -119,7 +119,7 @@ pub fn validate_gt_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("uint > {}", ui),
+            expected_value: format!("uint .gt {}", ui),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -131,7 +131,7 @@ pub fn validate_gt_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("float > {}", f),
+            expected_value: format!("float .gt {}", f),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -156,7 +156,7 @@ pub fn validate_ge_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("int >= {}", i),
+            expected_value: format!("int .ge {}", i),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -168,7 +168,7 @@ pub fn validate_ge_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("uint >= {}", ui),
+            expected_value: format!("uint .ge {}", ui),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -180,7 +180,7 @@ pub fn validate_ge_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("float >= {}", f),
+            expected_value: format!("float .ge {}", f),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -205,7 +205,7 @@ pub fn validate_le_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("int <= {}", i),
+            expected_value: format!("int .le {}", i),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -217,7 +217,7 @@ pub fn validate_le_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("uint <= {}", ui),
+            expected_value: format!("uint .le {}", ui),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -229,7 +229,7 @@ pub fn validate_le_control(controller: Numeric, value: &Value) -> Result {
         _ => Err(
           JSONError {
             expected_memberkey: None,
-            expected_value: format!("float <= {}", f),
+            expected_value: format!("float .le {}", f),
             actual_memberkey: None,
             actual_value: value.clone(),
           }
@@ -241,6 +241,68 @@ pub fn validate_le_control(controller: Numeric, value: &Value) -> Result {
       ". control can only be used against numeric values. Got {}",
       value
     ))),
+  }
+}
+
+pub fn validate_eq_numeric_control(controller: Numeric, value: &Value) -> Result {
+  match value {
+    Value::Number(n) => match controller {
+      Numeric::INT(i) => match n.as_i64() {
+        Some(ni) if ni == i as i64 => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: format!("int .eq {}", i),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Numeric::UINT(ui) => match n.as_u64() {
+        Some(uin) if uin == ui as u64 => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: format!("uint .eq {}", ui),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Numeric::FLOAT(f) => match n.as_f64() {
+        Some(fv) if (fv - f).abs() < std::f64::EPSILON => Ok(()),
+        _ => Err(
+          JSONError {
+            expected_memberkey: None,
+            expected_value: format!("float .eq {}", f),
+            actual_memberkey: None,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+    },
+    _ => Err(Error::Syntax(format!(
+      ". control can only be used against numeric values. Got {}",
+      value
+    ))),
+  }
+}
+
+pub fn validate_eq_text_control(controller: &str, value: &Value) -> Result {
+  match value {
+    Value::String(s) if s == controller => Ok(()),
+    _ => Err(
+      JSONError {
+        expected_memberkey: None,
+        expected_value: format!("( text / tstr ) .eq \"{}\"", controller),
+        actual_memberkey: None,
+        actual_value: value.clone(),
+      }
+      .into(),
+    ),
   }
 }
 
@@ -286,6 +348,22 @@ mod tests {
   fn validate_ge_control() -> Result {
     let json_input = r#"10.5"#;
     let cddl_input = r#"gerule = float .ge 10.5"#;
+
+    validate_json_from_str(cddl_input, json_input)
+  }
+
+  #[test]
+  fn validate_eq_numeric_control() -> Result {
+    let json_input = r#"100"#;
+    let cddl_input = r#"eqrule = uint .eq 100"#;
+
+    validate_json_from_str(cddl_input, json_input)
+  }
+
+  #[test]
+  fn validate_eq_text_control() -> Result {
+    let json_input = r#""hello""#;
+    let cddl_input = r#"eqrule = text .eq "hello""#;
 
     validate_json_from_str(cddl_input, json_input)
   }
