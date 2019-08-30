@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Build Status](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Factions-badge.atrox.dev%2Fanweiss%2Fcddl%2Fbadge&style=popout)](https://actions-badge.atrox.dev/anweiss/cddl/goto)
 
-> This crate is very much experimental and is being developed as a personal learning exercise for getting acquainted with Rust and about parsing in general. It is far from complete. There are likely more performant and stable libraries out there for parsing CDDL. This one should not be used in production in any form or fashion.
+> This crate is very much experimental and is being developed as a personal learning exercise for getting acquainted with Rust and about parsing in general. It does not yet completely conform to the spec. There are likely more performant and stable libraries out there for parsing CDDL. This one should not be used in production in any form or fashion.
 
 A Rust implementation of the Concise data definition language (CDDL). CDDL is an IETF standard that "proposes a notational convention to express CBOR and JSON data structures." As of 2019-06-12, it is published as RFC 8610 (Proposed Standard) at https://tools.ietf.org/html/rfc8610.
 
@@ -70,7 +70,7 @@ You can also find a simple RFC 8610 conformance tool at https://cddl.anweiss.tec
 - [x] controls
 - [x] socket/plug
 - [x] generics
-- [ ] operator precedence
+- [x] operator precedence
 - [x] comments
 - [x] numerical int/uint values
 - [ ] numerical hexfloat values
