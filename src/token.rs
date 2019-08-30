@@ -107,7 +107,7 @@ pub enum Token<'a> {
   EQ,
   /// .ne control operator
   NE,
-  ///.default control operator
+  /// .default control operator
   DEFAULT,
   /// .pcre control operator
   /// Proposed control extension to support Perl-Compatible Regular Expressions

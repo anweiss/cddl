@@ -48,7 +48,7 @@ impl fmt::Display for ParserError {
       ParserError::PARSER((position, error)) => write!(
         f,
         "Parser error at ln {}, col {}. {}",
-        position.0, position.1, error
+        position.line, position.column, error
       ),
       ParserError::LEXER(e) => write!(f, "{}", e),
       ParserError::REGEX(e) => write!(f, "{}", e),
@@ -87,7 +87,12 @@ impl<'a> Parser<'a> {
       cur_token: Token::EOF,
       peek_token: Token::EOF,
       errors: Vec::default(),
-      position: (1, 1, 0),
+      position: Position {
+        line: 1,
+        column: 1,
+        range: (0, 0),
+        index: 0,
+      },
     };
 
     p.next_token()?;
@@ -120,7 +125,7 @@ impl<'a> Parser<'a> {
         return Err(
           (
             self.position,
-            format!("Rule with name {} already defined", r.name()),
+            format!("Rule with name '{}' already defined", r.name()),
           )
             .into(),
         );
@@ -143,7 +148,7 @@ impl<'a> Parser<'a> {
         return Err(
           (
             self.position,
-            format!("expected rule identifier. Got {}", self.cur_token),
+            format!("expected rule identifier. Got '{}'", self.cur_token),
           )
             .into(),
         )
@@ -168,7 +173,7 @@ impl<'a> Parser<'a> {
         (
           self.position,
           format!(
-            "Expected assignment '=' after identifier. Got {}",
+            "Expected assignment '=' after identifier {}",
             self.cur_token
           ),
         )
@@ -192,6 +197,7 @@ impl<'a> Parser<'a> {
     }
 
     match self.cur_token {
+      // Check for an occurrence indicator if uint followed by an asterisk '*'
       Token::VALUE(Value::UINT(_)) => {
         if self.peek_token_is(&Token::ASTERISK) {
           let ge = self.parse_grpent()?;
@@ -214,6 +220,12 @@ impl<'a> Parser<'a> {
       Token::LPAREN | Token::ASTERISK | Token::ONEORMORE | Token::OPTIONAL => {
         let ge = self.parse_grpent()?;
 
+        // If a group entry is an inline group with no leading occurrence
+        // indicator, and its group has only a single element that is not
+        // preceded by an occurrence indicator nor member key, treat it as a
+        // parenthesized type, subsequently parsing the reamining type and
+        // returning the type rule. This is the only situation where `clone` is
+        // required
         if let GroupEntry::InlineGroup((occur, g)) = &ge {
           if occur.is_none() && g.0.len() == 1 {
             if let Some(gc) = g.0.iter().nth(0) {
@@ -386,8 +398,7 @@ impl<'a> Parser<'a> {
       }
 
       // ( type )
-      // TODO: This is used to define precedence of a type expression, but not
-      // quite sure how to implement it. At the moment, this is never matched.
+      // TODO: Develop additional test cases
       Token::LPAREN => {
         self.next_token()?;
 
