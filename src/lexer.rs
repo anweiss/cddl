@@ -1325,7 +1325,12 @@ city = (
     match l.next_token() {
       Ok(_) => Ok(()),
       Err(e) => {
-        println!("{}", e);
+        assert_eq!(e.to_string(), r#"error: Invalid control operator
+ --> input:1:16
+  |
+1 | myrule = number .asdf 10
+  |                 ^^^^^ Invalid control operator
+  |"#);
 
         Ok(())
       }
