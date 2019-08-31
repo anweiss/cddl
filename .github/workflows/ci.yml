@@ -367,5 +367,5 @@ jobs:
         run: |
           cd www/dist
           git add -A
-          git commit -m 'CI website build'
+          git diff-index --quiet HEAD || git commit -m 'CI website build'
           git push https://$GIT_USER:$REPO_PAT@github.com/anweiss/cddl.git gh-pages
