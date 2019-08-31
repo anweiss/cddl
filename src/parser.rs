@@ -228,9 +228,9 @@ impl<'a> Parser<'a> {
         // required
         if let GroupEntry::InlineGroup((occur, g)) = &ge {
           if occur.is_none() && g.0.len() == 1 {
-            if let Some(gc) = g.0.iter().nth(0) {
+            if let Some(gc) = g.0.get(0) {
               if gc.0.len() == 1 {
-                if let Some(ge) = gc.0.iter().nth(0) {
+                if let Some(ge) = gc.0.get(0) {
                   if let GroupEntry::ValueMemberKey(vmke) = ge {
                     if vmke.occur.is_none() && vmke.member_key.is_none() {
                       return Ok(Rule::Type(TypeRule {

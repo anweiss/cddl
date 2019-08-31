@@ -1187,7 +1187,6 @@ impl<'a> Validator<Value> for CDDL<'a> {
           self.validate_group(g, occur, value)
         }
       }
-      _ => Err(Error::Syntax("Invalid group entry".into())),
     }
   }
 
