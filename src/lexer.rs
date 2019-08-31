@@ -42,6 +42,17 @@ pub struct Position {
   pub index: usize,
 }
 
+impl Default for Position {
+  fn default() -> Self {
+    Position {
+      line: 1,
+      column: 1,
+      range: (0, 0),
+      index: 0,
+    }
+  }
+}
+
 /// Lexer error
 #[derive(Debug)]
 pub struct LexerError {
@@ -94,7 +105,9 @@ impl fmt::Display for LexerError {
           }),
           footer: vec![],
           slices: vec![Slice {
-            source: String::from_utf8(self.input.clone()).map_err(|_| fmt::Error)?,
+            source: str::from_utf8(&self.input)
+              .map_err(|_| fmt::Error)?
+              .to_string(),
             line_start: self.position.line,
             origin: Some("input".to_string()),
             fold: false,
@@ -117,7 +130,9 @@ impl fmt::Display for LexerError {
           }),
           footer: vec![],
           slices: vec![Slice {
-            source: String::from_utf8(self.input.clone()).map_err(|_| fmt::Error)?,
+            source: str::from_utf8(&self.input)
+              .map_err(|_| fmt::Error)?
+              .to_string(),
             line_start: self.position.line,
             origin: Some("input".to_string()),
             fold: false,
@@ -140,7 +155,9 @@ impl fmt::Display for LexerError {
           }),
           footer: vec![],
           slices: vec![Slice {
-            source: String::from_utf8(self.input.clone()).map_err(|_| fmt::Error)?,
+            source: str::from_utf8(&self.input)
+              .map_err(|_| fmt::Error)?
+              .to_string(),
             line_start: self.position.line,
             origin: Some("input".to_string()),
             fold: false,
@@ -163,7 +180,9 @@ impl fmt::Display for LexerError {
           }),
           footer: vec![],
           slices: vec![Slice {
-            source: String::from_utf8(self.input.clone()).map_err(|_| fmt::Error)?,
+            source: str::from_utf8(&self.input)
+              .map_err(|_| fmt::Error)?
+              .to_string(),
             line_start: self.position.line,
             origin: Some("input".to_string()),
             fold: false,
@@ -186,7 +205,9 @@ impl fmt::Display for LexerError {
           }),
           footer: vec![],
           slices: vec![Slice {
-            source: String::from_utf8(self.input.clone()).map_err(|_| fmt::Error)?,
+            source: str::from_utf8(&self.input)
+              .map_err(|_| fmt::Error)?
+              .to_string(),
             line_start: self.position.line,
             origin: Some("input".to_string()),
             fold: false,
@@ -1325,12 +1346,15 @@ city = (
     match l.next_token() {
       Ok(_) => Ok(()),
       Err(e) => {
-        assert_eq!(e.to_string(), r#"error: Invalid control operator
+        assert_eq!(
+          e.to_string(),
+          r#"error: Invalid control operator
  --> input:1:16
   |
 1 | myrule = number .asdf 10
   |                 ^^^^^ Invalid control operator
-  |"#);
+  |"#
+        );
 
         Ok(())
       }
