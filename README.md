@@ -34,17 +34,15 @@ Rust is a systems programming language designed around safety and is ideally-sui
 
 ## CLI
 
-A CLI has been made available for various platforms and as a Docker image. It can downloaded from the [Releases](https://github.com/anweiss/cddl/releases) tab. Instructions for using the tool can be viewed by executing the `help` subcommand:
+A CLI has been made available for various platforms and as a Docker image. It can downloaded from the [Releases](https://github.com/anweiss/cddl/releases) tab. The tool supports parsing of `.cddl` files for verifying conformance against RFC 8610. It also supports validation of `.cddl` documents against `.json` files. Detailed information about the JSON validation functions can be found in [validating JSON](#validating-json) section below. Instructions for using the tool can be viewed by executing the `help` subcommand:
 
     $ cddl help
 
 If using Docker:
 
-> Ensure your Docker client has been [authenticated](https://help.github.com/en/articles/configuring-docker-for-use-with-github-package-registry#authenticating-to-github-package-registry) into GitHub Package Registry. Replace `<version>` with an appropriate release tag. Requires use of the `--volume` argument for mounting `.cddl` and `.json` documents into the container when executing the command. The command below assumes these documents are in your current working directory.
+> Ensure your Docker client has been [authenticated](https://help.github.com/en/articles/configuring-docker-for-use-with-github-package-registry#authenticating-to-github-package-registry) into GitHub Package Registry. Replace `<version>` with an appropriate [release](https://github.com/anweiss/cddl/releases) tag. Requires use of the `--volume` argument for mounting `.cddl` and `.json` documents into the container when executing the command. The command below assumes these documents are in your current working directory.
 
     $ docker run -it --rm -v $PWD:/cddl -w /cddl docker.pkg.github.com/anweiss/cddl/cddl:<version> help
-
-The tool supports parsing of `.cddl` files for verifying conformance against RFC 8610. It also supports validation of `.cddl` documents against `.json` files. Detailed information about the JSON validation functions can be found in the section that follows.
 
 ## Website
 
@@ -135,14 +133,14 @@ The following types and features of CDDL are supported by this crate for validat
 |null / nil|null|
 |any|any valid JSON|
 
-Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed and monomorphized into their full representations before being evaluated for JSON validation.
+Since JSON objects only support keys whos types are JSON strings, member keys defined in CDDL structs must use either the colon syntax (`mykey: tstr`) or the double arrow syntax with double quotes (`"mykey" => tstr`). Unquoted member keys used with the double arrow syntax must resolves to one of the supported data types can be used to validate JSON strings (`text` or `tstr`). Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed and monomorphized into their full representations before being evaluated for JSON validation.
 
 Below is the table of supported control operators and whether or not they've been implemented as of the current release:
 
 |Control operator|Implementation status|
 |----------------|---------------------|
 |`.pcre`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup>|
-|`.regex`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup>|
+|`.regex`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup> (alias for `.pcre`)|
 |`.size`|Incomplete|
 |`.bits`|Unsupported for JSON validation|
 |`.cbor`|Unsupported for JSON validation|
@@ -153,7 +151,7 @@ Below is the table of supported control operators and whether or not they've bee
 |`.le`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
 |`.gt`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
 |`.ge`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
-|`.eq`|Incomplete|
+|`.eq`|Partial (text and numeric values)|
 |`.ne`|Incomplete|
 |`.default`|Incomplete|
 

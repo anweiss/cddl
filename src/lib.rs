@@ -6,9 +6,9 @@
 //!
 //! > This crate is very much experimental and is being developed as a personal
 //! > learning exercise for getting acquainted with Rust and about parsing in
-//! > general. It is far from complete. There are likely more performant and
-//! > stable libraries out there for parsing CDDL. This one should not be used
-//! > in production in any form or fashion.
+//! > general. It does not yet completely conform to the spec. There are likely
+//! > more performant and stable libraries out there for parsing CDDL. This one
+//! > should not be used in production in any form or fashion.
 //!
 //! A Rust implementation of the Concise data definition language (CDDL). CDDL
 //! is an IETF standard that "proposes a notational convention to express CBOR
@@ -73,7 +73,7 @@
 //! - [x] controls
 //! - [x] socket/plug
 //! - [x] generics
-//! - [ ] operator precedence
+//! - [x] operator precedence
 //! - [x] comments
 //! - [x] numerical int/uint values
 //! - [ ] numerical hexfloat values
@@ -149,8 +149,13 @@
 //! |null / nil|null|
 //! |any|any valid JSON|
 //!
-//! Occurrence indicators can be used to validate key/value pairs in a JSON
-//! object and the number of elements in a JSON array; depending on how the
+//! Since JSON objects only support keys whos types are JSON strings, member
+//! keys defined in CDDL structs must use either the colon syntax (`mykey:
+//! tstr`) or the double arrow syntax with double quotes (`"mykey" => tstr`).
+//! Unquoted member keys used with the double arrow syntax must resolves to one
+//! of the supported data types can be used to validate JSON strings (`text` or
+//! `tstr`). Occurrence indicators can be used to validate key/value pairs in a
+//! JSON object and the number of elements in a JSON array; depending on how the
 //! indicators are defined in a CDDL data definition. CDDL groups, generics,
 //! sockets/plugs and group-to-choice enumerations are all parsed and
 //! monomorphized into their full representations before being evaluated for
@@ -161,19 +166,19 @@
 //!
 //! |Control operator|Implementation status|
 //! |----------------|---------------------|
-//! |`.pcre`|Implemented<sup>[2](#regex)</sup>|
-//! |`.regex`|Implemented<sup>[2](#regex)</sup>|
+//! |`.pcre`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup>|
+//! |`.regex`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup> (alias for `.pcre`)|
 //! |`.size`|Incomplete|
 //! |`.bits`|Unsupported for JSON validation|
 //! |`.cbor`|Unsupported for JSON validation|
 //! |`.cborseq`|Unsupported for JSON validation|
 //! |`.within`|Incomplete|
 //! |`.and`|Incomplete|
-//! |`.lt`|Implemented|
-//! |`.le`|Implemented|
-//! |`.gt`|Implemented|
-//! |`.ge`|Implemented|
-//! |`.eq`|Incomplete|
+//! |`.lt`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
+//! |`.le`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
+//! |`.gt`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
+//! |`.ge`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
+//! |`.eq`|Partial (text and numeric values)|
 //! |`.ne`|Incomplete|
 //! |`.default`|Incomplete|
 //!
