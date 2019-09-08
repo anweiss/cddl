@@ -858,7 +858,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     let mut validation_errors: Vec<Error> = Vec::new();
 
     let validate_type_from_group_entry = |gc: &GroupChoice| {
-      gc.0.iter().any(|ge| match ge {
+      gc.0.iter().any(|ge| match &ge.0 {
         // Member names have only "documentary value" when evaluating an
         // enumeration expression
         GroupEntry::ValueMemberKey(vmke) => {
@@ -911,7 +911,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     let mut errors: Vec<Error> = Vec::new();
 
     // Check for a wildcard entry
-    let wildcard_entry = gc.0.iter().find_map(|ge| match ge {
+    let wildcard_entry = gc.0.iter().find_map(|ge| match &ge.0 {
       GroupEntry::ValueMemberKey(vmke) => match &vmke.member_key {
         Some(MemberKey::Type1(t1)) if !t1.1 => match t1.0.type2 {
           Type2::Typename((Identifier(("tstr", None)), None)) => Some(&vmke.entry_type),
@@ -925,20 +925,20 @@ impl<'a> Validator<Value> for CDDL<'a> {
     for ge in gc.0.iter() {
       match value {
         Value::Array(values) => {
-          if let GroupEntry::TypeGroupname(tge) = ge {
+          if let GroupEntry::TypeGroupname(tge) = &ge.0 {
             if let Some(o) = &tge.occur {
               self.validate_array_occurrence(o, &tge.name.to_string(), values)?;
             }
           }
 
-          if let GroupEntry::InlineGroup((geo, g)) = ge {
+          if let GroupEntry::InlineGroup((geo, g)) = &ge.0 {
             if let Some(o) = geo {
-              self.validate_array_occurrence(o, &g.to_string(), values)?;
+              self.validate_array_occurrence(&o, &g.to_string(), values)?;
             }
           }
 
           let validate_all_entries =
-            |v: &Value| match self.validate_group_entry(ge, false, None, occur, v) {
+            |v: &Value| match self.validate_group_entry(&ge.0, false, None, occur, v) {
               Ok(()) => true,
               Err(e) => {
                 errors.push(e);
@@ -947,7 +947,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
               }
             };
 
-          if let GroupEntry::TypeGroupname(tge) = ge {
+          if let GroupEntry::TypeGroupname(tge) = &ge.0 {
             if self.rules.iter().any(|r| match r {
               Rule::Type(tr) if tr.name == tge.name => true,
               _ => false,
@@ -962,7 +962,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
           let mut errors: Vec<Error> = Vec::new();
 
           if values.iter().any(
-            |v| match self.validate_group_entry(ge, false, None, occur, v) {
+            |v| match self.validate_group_entry(&ge.0, false, None, occur, v) {
               Ok(()) => true,
               Err(e) => {
                 errors.push(e);
@@ -981,7 +981,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
         // Validate the object key/value pairs against each group entry,
         // collecting errors along the way
         Value::Object(_) => {
-          match self.validate_group_entry(ge, false, wildcard_entry, occur, value) {
+          match self.validate_group_entry(&ge.0, false, wildcard_entry, occur, value) {
             Ok(()) => continue,
             Err(e) => errors.push(e),
           }

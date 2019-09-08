@@ -140,6 +140,14 @@ impl<'a> Rule<'a> {
       Rule::Group(gr) => gr.is_group_choice_alternate,
     }
   }
+
+  /// Returns the beginning and ending range indices of a rule
+  pub fn range(&self) -> (usize, usize) {
+    match self {
+      Rule::Type(tr) => tr.range,
+      Rule::Group(gr) => gr.range,
+    }
+  }
 }
 
 /// Type expression
@@ -157,6 +165,8 @@ pub struct TypeRule<'a> {
   pub is_type_choice_alternate: bool,
   /// Type value
   pub value: Type<'a>,
+  /// Start and end range of type rule
+  pub range: (usize, usize),
 }
 
 impl<'a> fmt::Display for TypeRule<'a> {
@@ -200,6 +210,8 @@ pub struct GroupRule<'a> {
   pub is_group_choice_alternate: bool,
   /// Group entry
   pub entry: GroupEntry<'a>,
+  /// Start and end range of group rule
+  pub range: (usize, usize),
 }
 
 impl<'a> fmt::Display for GroupRule<'a> {
@@ -552,19 +564,25 @@ impl<'a> fmt::Display for Group<'a> {
 /// ```abnf
 /// grpchoice = *(grpent optcom)
 /// ```
+///
+/// If tuple is true, then entry is marked by a trailing comma
 #[derive(Debug, Clone)]
-pub struct GroupChoice<'a>(pub Vec<GroupEntry<'a>>);
+pub struct GroupChoice<'a>(pub Vec<(GroupEntry<'a>, bool)>);
 
 impl<'a> fmt::Display for GroupChoice<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if self.0.len() == 1 {
-      return write!(f, "{}", self.0[0]);
+      return write!(f, "{}", self.0[0].0);
     }
 
     let mut group_entries = String::new();
 
     for ge in self.0.iter() {
-      group_entries.push_str(&format!("\t{},\n", ge));
+      if ge.1 {
+        group_entries.push_str(&format!("\t{},\n", ge.0));
+      } else {
+        group_entries.push_str(&format!("\t{}\n", ge.0));
+      }
     }
 
     write!(f, "{}", group_entries)
@@ -765,22 +783,28 @@ mod tests {
   fn verify_group_output() {
     assert_eq!(
       Group(vec![GroupChoice(vec![
-        GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-          occur: None,
-          member_key: Some(MemberKey::Bareword("key1".into())),
-          entry_type: Type(vec![Type1 {
-            type2: Type2::TextValue("value1"),
-            operator: None,
-          }]),
-        })),
-        GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-          occur: None,
-          member_key: Some(MemberKey::Bareword("key2".into())),
-          entry_type: Type(vec![Type1 {
-            type2: Type2::TextValue("value2"),
-            operator: None,
-          }]),
-        })),
+        (
+          GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+            occur: None,
+            member_key: Some(MemberKey::Bareword("key1".into())),
+            entry_type: Type(vec![Type1 {
+              type2: Type2::TextValue("value1"),
+              operator: None,
+            }]),
+          })),
+          true
+        ),
+        (
+          GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+            occur: None,
+            member_key: Some(MemberKey::Bareword("key2".into())),
+            entry_type: Type(vec![Type1 {
+              type2: Type2::TextValue("value2"),
+              operator: None,
+            }]),
+          })),
+          true
+        ),
       ])])
       .to_string(),
       "\tkey1: \"value1\",\n\tkey2: \"value2\",\n".to_string()

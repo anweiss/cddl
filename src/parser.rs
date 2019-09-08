@@ -3,6 +3,11 @@ use super::{
   lexer::{Lexer, LexerError, Position},
   token::{self, Tag, Token, Value},
 };
+use annotate_snippets::{
+  display_list::DisplayList,
+  formatter::DisplayListFormatter,
+  snippet::{Annotation, AnnotationType, Slice, Snippet, SourceAnnotation},
+};
 use regex;
 use std::{fmt, mem, result};
 
@@ -11,6 +16,7 @@ use std::error::Error;
 
 #[cfg(not(feature = "std"))]
 use alloc::{
+  borrow::ToOwned,
   boxed::Box,
   string::{String, ToString},
   vec::Vec,
@@ -28,6 +34,7 @@ pub struct Parser<'a> {
   cur_token: Token<'a>,
   peek_token: Token<'a>,
   lexer_position: Position,
+  peek_lexer_position: Position,
   parser_position: Position,
   errors: Vec<ParserError>,
 }
@@ -36,7 +43,7 @@ pub struct Parser<'a> {
 #[derive(Debug)]
 pub enum ParserError {
   /// Parsing error
-  PARSER((Position, String)),
+  PARSER((Vec<u8>, Position, String)),
   /// Lexing error
   LEXER(LexerError),
   /// Regex error
@@ -46,11 +53,35 @@ pub enum ParserError {
 impl fmt::Display for ParserError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      ParserError::PARSER((position, error)) => write!(
-        f,
-        "Parser error at ln {}, col {}. {}",
-        position.line, position.column, error
-      ),
+      ParserError::PARSER((input, position, error)) => {
+        let dlf = DisplayListFormatter::new(false, false);
+
+        write!(
+          f,
+          "{}",
+          dlf.format(&DisplayList::from(Snippet {
+            title: Some(Annotation {
+              label: Some(error.to_string()),
+              id: None,
+              annotation_type: AnnotationType::Error,
+            }),
+            footer: vec![],
+            slices: vec![Slice {
+              source: std::str::from_utf8(input)
+                .map_err(|_| fmt::Error)?
+                .to_string(),
+              line_start: position.line,
+              origin: Some("input".to_string()),
+              fold: false,
+              annotations: vec![SourceAnnotation {
+                range: position.range,
+                label: error.to_string(),
+                annotation_type: AnnotationType::Error,
+              }],
+            }],
+          }))
+        )
+      }
       ParserError::LEXER(e) => write!(f, "{}", e),
       ParserError::REGEX(e) => write!(f, "{}", e),
     }
@@ -68,15 +99,15 @@ impl Error for ParserError {
   }
 }
 
-impl From<(Position, String)> for ParserError {
-  fn from(e: (Position, String)) -> Self {
-    ParserError::PARSER(e)
+impl<'a> From<(&'a [u8], Position, String)> for ParserError {
+  fn from(e: (&'a [u8], Position, String)) -> Self {
+    ParserError::PARSER((e.0.to_owned(), e.1, e.2))
   }
 }
 
-impl From<(Position, &'static str)> for ParserError {
-  fn from(e: (Position, &'static str)) -> Self {
-    ParserError::PARSER((e.0, (e.1.to_string())))
+impl<'a> From<(&'a [u8], Position, &'static str)> for ParserError {
+  fn from(e: (&'a [u8], Position, &'static str)) -> Self {
+    ParserError::PARSER((e.0.to_owned(), e.1, e.2.to_string()))
   }
 }
 
@@ -89,6 +120,7 @@ impl<'a> Parser<'a> {
       peek_token: Token::EOF,
       errors: Vec::default(),
       lexer_position: Position::default(),
+      peek_lexer_position: Position::default(),
       parser_position: Position::default(),
     };
 
@@ -100,8 +132,9 @@ impl<'a> Parser<'a> {
 
   fn next_token(&mut self) -> Result<()> {
     mem::swap(&mut self.cur_token, &mut self.peek_token);
+    mem::swap(&mut self.lexer_position, &mut self.peek_lexer_position);
     let nt = self.l.next_token().map_err(ParserError::LEXER)?;
-    self.lexer_position = nt.0;
+    self.peek_lexer_position = nt.0;
     self.peek_token = nt.1;
 
     Ok(())
@@ -114,14 +147,17 @@ impl<'a> Parser<'a> {
     while self.cur_token != Token::EOF {
       let r = self.parse_rule()?;
 
-      let rule_exists = |existing_rule: &Rule| {
+      let rule_exists = |existing_rule: &&Rule| {
         r.name() == existing_rule.name() && !existing_rule.is_choice_alternate()
       };
 
-      if c.rules.iter().any(rule_exists) {
+      if let Some(r) = c.rules.iter().find(rule_exists) {
+        self.parser_position.range = r.range();
+
         return Err(
           (
-            self.lexer_position,
+            self.l.str_input,
+            self.parser_position,
             format!("Rule with name '{}' already defined", r.name()),
           )
             .into(),
@@ -135,6 +171,8 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_rule(&mut self) -> Result<Rule<'a>> {
+    let begin_range = self.lexer_position.range.0;
+
     while let Token::COMMENT(_) = self.cur_token {
       self.next_token()?;
     }
@@ -142,17 +180,23 @@ impl<'a> Parser<'a> {
     let ident = match &self.cur_token {
       Token::IDENT(i) => *i,
       _ => {
+        self.parser_position.range = (begin_range, self.lexer_position.range.0);
+        self.parser_position.line = self.lexer_position.line;
+
         return Err(
           (
-            self.lexer_position,
+            self.l.str_input,
+            self.parser_position,
             format!("expected rule identifier. Got '{}'", self.cur_token),
           )
             .into(),
-        )
+        );
       }
     };
 
     let gp = if self.peek_token_is(&Token::LANGLEBRACKET) {
+      self.next_token()?;
+
       Some(self.parse_genericparm()?)
     } else {
       None
@@ -166,9 +210,13 @@ impl<'a> Parser<'a> {
       && !self.expect_peek(&Token::TCHOICEALT)?
       && !self.expect_peek(&Token::GCHOICEALT)?
     {
+      self.parser_position.range = (begin_range, self.lexer_position.range.0 + 1);
+      self.parser_position.line = self.lexer_position.line;
+
       return Err(
         (
-          self.lexer_position,
+          self.l.str_input,
+          self.parser_position,
           format!(
             "Expected assignment '=' after identifier {}",
             self.cur_token
@@ -197,6 +245,8 @@ impl<'a> Parser<'a> {
       // Check for an occurrence indicator if uint followed by an asterisk '*'
       Token::VALUE(Value::UINT(_)) => {
         if self.peek_token_is(&Token::ASTERISK) {
+          let end_range = self.lexer_position.range.0 + 1;
+
           let ge = self.parse_grpent()?;
 
           Ok(Rule::Group(Box::from(GroupRule {
@@ -204,17 +254,24 @@ impl<'a> Parser<'a> {
             generic_param: gp,
             is_group_choice_alternate,
             entry: ge,
+            range: (begin_range, end_range),
           })))
         } else {
+          let end_range = self.lexer_position.range.0 + 1;
+
+          let t = self.parse_type(None)?;
+
           Ok(Rule::Type(TypeRule {
             name: ident.into(),
             generic_param: gp,
             is_type_choice_alternate,
-            value: self.parse_type(None)?,
+            value: t,
+            range: (begin_range, end_range),
           }))
         }
       }
       Token::LPAREN | Token::ASTERISK | Token::ONEORMORE | Token::OPTIONAL => {
+        let end_range = self.lexer_position.range.0 + 1;
         let ge = self.parse_grpent()?;
 
         // If a group entry is an inline group with no leading occurrence
@@ -228,15 +285,18 @@ impl<'a> Parser<'a> {
             if let Some(gc) = g.0.get(0) {
               if gc.0.len() == 1 {
                 if let Some(ge) = gc.0.get(0) {
-                  if let GroupEntry::ValueMemberKey(vmke) = ge {
-                    if vmke.occur.is_none() && vmke.member_key.is_none() {
-                      return Ok(Rule::Type(TypeRule {
-                        name: ident.into(),
-                        generic_param: gp,
-                        is_type_choice_alternate,
-                        value: self
-                          .parse_type(Some(Type2::ParenthesizedType(vmke.entry_type.clone())))?,
-                      }));
+                  if !ge.1 {
+                    if let GroupEntry::ValueMemberKey(vmke) = &ge.0 {
+                      if vmke.occur.is_none() && vmke.member_key.is_none() {
+                        return Ok(Rule::Type(TypeRule {
+                          name: ident.into(),
+                          generic_param: gp,
+                          is_type_choice_alternate,
+                          value: self
+                            .parse_type(Some(Type2::ParenthesizedType(vmke.entry_type.clone())))?,
+                          range: (begin_range, end_range),
+                        }));
+                      }
                     }
                   }
                 }
@@ -250,47 +310,66 @@ impl<'a> Parser<'a> {
           generic_param: gp,
           is_group_choice_alternate,
           entry: ge,
+          range: (begin_range, end_range),
         })))
       }
       _ => {
+        let end_range = self.lexer_position.range.1 + 1;
+
+        let t = self.parse_type(None)?;
+
         Ok(Rule::Type(TypeRule {
           name: ident.into(),
           generic_param: gp,
           is_type_choice_alternate,
-          value: self.parse_type(None)?,
+          value: t,
+          range: (begin_range, end_range),
         }))
-
-        // match self.cur_token {
-        //   // If last (or only) type choice is a rangeop, advance token
-        //   Token::RANGE(_) => {
-        //     self.next_token()?;
-
-        //     Ok(r)
-        //   }
-        //   _ => Ok(r),
-        // }
       }
     }
   }
 
   fn parse_genericparm(&mut self) -> Result<GenericParm<'a>> {
-    self.next_token()?;
+    if self.cur_token_is(Token::LANGLEBRACKET) {
+      self.next_token()?;
+    }
 
     let mut generic_params = GenericParm(Vec::new());
+
+    let begin_range = self.lexer_position.range.0;
 
     while !self.cur_token_is(Token::RANGLEBRACKET) {
       match &self.cur_token {
         Token::IDENT(i) => {
           generic_params.0.push((*i).into());
           self.next_token()?;
+
+          if !self.cur_token_is(Token::COMMA) && !self.cur_token_is(Token::RANGLEBRACKET) {
+            self.parser_position.range = (begin_range, self.lexer_position.range.0 + 1);
+            self.parser_position.line = self.lexer_position.line;
+            return Err(
+              (
+                self.l.str_input,
+                self.parser_position,
+                "Expecting comma between generic parameters or closing right angle bracket",
+              )
+                .into(),
+            );
+          }
         }
         Token::COMMA => self.next_token()?,
         Token::COMMENT(_) => self.next_token()?,
-        _ => return Err((self.lexer_position, "Illegal token").into()),
+        _ => {
+          self.parser_position.range = (begin_range, self.lexer_position.range.0 + 1);
+          self.parser_position.line = self.lexer_position.line;
+          return Err((self.l.str_input, self.parser_position, "Illegal token").into());
+        }
       }
     }
 
-    self.next_token()?;
+    // Since generic params are only found after the identifier of a rule, don't
+    // advance beyond the closing '>' to retain the expect_peek semantics for
+    // '=', '/=' and '//='
 
     Ok(generic_params)
   }
@@ -312,7 +391,9 @@ impl<'a> Parser<'a> {
       }
     }
 
-    self.next_token()?;
+    if self.cur_token_is(Token::RANGLEBRACKET) {
+      self.next_token()?;
+    }
 
     Ok(generic_args)
   }
@@ -445,7 +526,7 @@ impl<'a> Parser<'a> {
           return Ok(Type2::Unwrap((ident.into(), None)));
         }
 
-        Err((self.lexer_position, "Invalid unwrap").into())
+        Err((self.l.str_input, self.parser_position, "Invalid unwrap").into())
       }
 
       // & ( group )
@@ -477,7 +558,8 @@ impl<'a> Parser<'a> {
           }
           _ => Err(
             (
-              self.lexer_position,
+              self.l.str_input,
+              self.parser_position,
               "Invalid group to choice enumeration syntax",
             )
               .into(),
@@ -503,7 +585,8 @@ impl<'a> Parser<'a> {
           Some(s) => Ok(Type2::Typename(((s, None).into(), None))),
           None => Err(
             (
-              self.lexer_position,
+              self.l.str_input,
+              self.parser_position,
               format!(
                 "Unknown type2 alternative. Unknown token: {:#?}",
                 self.cur_token
@@ -557,16 +640,15 @@ impl<'a> Parser<'a> {
     {
       let ge = self.parse_grpent()?;
 
-      grpchoice.0.push(ge);
-
-      // Don't advance the token if it is currently an opening or closing
-      // map/group delimiter
+      // Don't advance the token if it is a member key, comma or an opening or
+      // closing map/group delimiter. Otherwise, advance
       if !self.cur_token_is(Token::RPAREN)
         && !self.cur_token_is(Token::RBRACE)
         && !self.cur_token_is(Token::RBRACKET)
         && !self.cur_token_is(Token::LPAREN)
         && !self.cur_token_is(Token::LBRACE)
         && !self.cur_token_is(Token::LBRACKET)
+        && !self.cur_token_is(Token::COMMA)
         && !self.peek_token_is(&Token::COLON)
         && !self.peek_token_is(&Token::ARROWMAP)
       {
@@ -574,7 +656,10 @@ impl<'a> Parser<'a> {
       }
 
       if self.cur_token_is(Token::COMMA) {
+        grpchoice.0.push((ge, true));
         self.next_token()?;
+      } else {
+        grpchoice.0.push((ge, false));
       }
 
       while let Token::COMMENT(_) = self.cur_token {
@@ -609,7 +694,8 @@ impl<'a> Parser<'a> {
       if let Some(mk) = self.parse_memberkey(true)? {
         return Err(
           (
-            self.lexer_position,
+            self.l.str_input,
+            self.parser_position,
             format!(
               "Incomplete group entry for memberkey {}. Missing entry type",
               mk
@@ -726,7 +812,16 @@ impl<'a> Parser<'a> {
           Token::VALUE(value) => match value {
             v => Some(MemberKey::Value(*v)),
           },
-          _ => return Err((self.lexer_position, "Malformed memberkey").into()),
+          _ => {
+            return Err(
+              (
+                self.l.str_input,
+                self.parser_position,
+                "Malformed memberkey",
+              )
+                .into(),
+            )
+          }
         };
 
         self.next_token()?;
@@ -744,6 +839,7 @@ impl<'a> Parser<'a> {
         if !is_optional {
           return Err(
             (
+              self.l.str_input,
               self.lexer_position,
               "Malformed memberkey. Missing \":\" or \"=>\"",
             )
@@ -785,7 +881,14 @@ impl<'a> Parser<'a> {
             return Ok(None);
           }
 
-          return Err((self.lexer_position, "Malformed occurrence syntax").into());
+          return Err(
+            (
+              self.l.str_input,
+              self.lexer_position,
+              "Malformed occurrence syntax",
+            )
+              .into(),
+          );
         }
 
         self.next_token()?;
@@ -828,6 +931,7 @@ impl<'a> Parser<'a> {
   fn peek_error(&mut self, t: &Token) {
     self.errors.push(
       (
+        self.l.str_input,
         self.lexer_position,
         format!(
           "expected next token to be {:?}, got {:?} instead",
@@ -871,10 +975,11 @@ mod tests {
   #[test]
   fn verify_rule() -> Result<()> {
     let input = r#"myrule = secondrule
-    
-    myrange = 10..upper
-    
-    upper = 500 / 600"#;
+myrange = 10..upper
+upper = 500 / 600
+gr = 2* ( test )
+messages = message<"reboot", "now">
+message<t, v> = {type: 2, value: v}"#;
 
     let l = Lexer::new(input);
     let mut p = Parser::new(l)?;
@@ -882,7 +987,7 @@ mod tests {
     let cddl = p.parse_cddl()?;
     check_parser_errors(&p)?;
 
-    assert!(cddl.rules.len() == 3);
+    assert!(cddl.rules.len() == 6);
 
     let expected_outputs = [
       Rule::Type(TypeRule {
@@ -893,6 +998,7 @@ mod tests {
           type2: Type2::Typename((Identifier(("secondrule", None)), None)),
           operator: None,
         }]),
+        range: (0, 0),
       }),
       Rule::Type(TypeRule {
         name: Identifier(("myrange", None)),
@@ -905,6 +1011,7 @@ mod tests {
             Type2::Typename((Identifier(("upper", None)), None)),
           )),
         }]),
+        range: (0, 0),
       }),
       Rule::Type(TypeRule {
         name: Identifier(("upper", None)),
@@ -920,6 +1027,82 @@ mod tests {
             operator: None,
           },
         ]),
+        range: (0, 0),
+      }),
+      Rule::Group(Box::from(GroupRule {
+        name: Identifier(("gr", None)),
+        generic_param: None,
+        is_group_choice_alternate: false,
+        entry: GroupEntry::InlineGroup((
+          Some(Occur::Exact((Some(2), None))),
+          Group(vec![GroupChoice(vec![(
+            GroupEntry::TypeGroupname(TypeGroupnameEntry {
+              occur: None,
+              name: Identifier(("test", None)),
+              generic_arg: None,
+            }),
+            false,
+          )])]),
+        )),
+        range: (0, 0),
+      })),
+      Rule::Type(TypeRule {
+        name: Identifier(("messages", None)),
+        generic_param: None,
+        is_type_choice_alternate: false,
+        value: Type(vec![Type1 {
+          type2: Type2::Typename((
+            Identifier(("message", None)),
+            Some(GenericArg(vec![
+              Type1 {
+                type2: Type2::TextValue("reboot"),
+                operator: None,
+              },
+              Type1 {
+                type2: Type2::TextValue("now"),
+                operator: None,
+              },
+            ])),
+          )),
+          operator: None,
+        }]),
+        range: (0, 0),
+      }),
+      Rule::Type(TypeRule {
+        name: Identifier(("message", None)),
+        generic_param: Some(GenericParm(vec![
+          Identifier(("t", None)),
+          Identifier(("v", None)),
+        ])),
+        is_type_choice_alternate: false,
+        value: Type(vec![Type1 {
+          type2: Type2::Map(Group(vec![GroupChoice(vec![
+            (
+              GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+                occur: None,
+                member_key: Some(MemberKey::Bareword(Identifier(("type", None)))),
+                entry_type: Type(vec![Type1 {
+                  type2: Type2::UintValue(2),
+                  operator: None,
+                }]),
+              })),
+              true,
+            ),
+            (
+              GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+                occur: None,
+                member_key: Some(MemberKey::Bareword(Identifier(("value", None)))),
+                entry_type: Type(vec![Type1 {
+                  type2: Type2::Typename((Identifier(("v", None)), None)),
+                  operator: None,
+                }]),
+              })),
+              false,
+            ),
+          ])])),
+          operator: None,
+        }]),
+        range: (0, 0),
       }),
     ];
 
@@ -928,6 +1111,31 @@ mod tests {
     }
 
     Ok(())
+  }
+  #[test]
+  fn verify_rule_diagnostic() -> Result<()> {
+    let input = r#"a = b
+
+  a = b"#;
+
+    match compile_cddl_from_str(input) {
+      Ok(()) => Ok(()),
+      Err(e) => {
+        assert_eq!(
+          e.to_string(),
+          r#"error: Rule with name 'a' already defined
+ --> input:1:0
+  |
+1 | a = b
+  | ^^^^^ Rule with name 'a' already defined
+2 | 
+3 |   a = b
+  |"#
+        );
+
+        Ok(())
+      }
+    }
   }
 
   #[test]
@@ -949,6 +1157,31 @@ mod tests {
     }
 
     Ok(())
+  }
+
+  #[test]
+  fn verify_genericparm_diagnostic() -> Result<()> {
+    let input = r#"<1, 2>"#;
+
+    let l = Lexer::new(input);
+    let mut p = Parser::new(l)?;
+
+    match p.parse_genericparm() {
+      Ok(_) => Ok(()),
+      Err(e) => {
+        assert_eq!(
+          e.to_string(),
+          r#"error: Illegal token
+ --> input:1:1
+  |
+1 | <1, 2>
+  |  ^ Illegal token
+  |"#
+        );
+
+        Ok(())
+      }
+    }
   }
 
   #[test]
@@ -1097,30 +1330,33 @@ mod tests {
       Type2::TaggedData((Some(997), "tstr")),
       Type2::TaggedDataMajorType((9, Some(9))),
       Type2::Any,
-      Type2::Array(Group(vec![GroupChoice(vec![GroupEntry::TypeGroupname(
-        TypeGroupnameEntry {
+      Type2::Array(Group(vec![GroupChoice(vec![(
+        GroupEntry::TypeGroupname(TypeGroupnameEntry {
           occur: Some(Occur::Exact((None, Some(3)))),
           name: Identifier(("reputon", None)),
           generic_arg: None,
-        },
+        }),
+        false,
       )])])),
-      Type2::Array(Group(vec![GroupChoice(vec![GroupEntry::TypeGroupname(
-        TypeGroupnameEntry {
+      Type2::Array(Group(vec![GroupChoice(vec![(
+        GroupEntry::TypeGroupname(TypeGroupnameEntry {
           occur: Some(Occur::OneOrMore),
           name: Identifier(("reputon", None)),
           generic_arg: None,
-        },
+        }),
+        false,
       )])])),
       Type2::ChoiceFromGroup((Identifier(("groupname", None)), None)),
-      Type2::ChoiceFromInlineGroup(Group(vec![GroupChoice(vec![GroupEntry::TypeGroupname(
-        TypeGroupnameEntry {
+      Type2::ChoiceFromInlineGroup(Group(vec![GroupChoice(vec![(
+        GroupEntry::TypeGroupname(TypeGroupnameEntry {
           occur: None,
           name: Identifier(("inlinegroup", None)),
           generic_arg: None,
-        },
+        }),
+        false,
       )])])),
-      Type2::Map(Group(vec![GroupChoice(vec![GroupEntry::ValueMemberKey(
-        Box::from(ValueMemberKeyEntry {
+      Type2::Map(Group(vec![GroupChoice(vec![(
+        GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
           occur: Some(Occur::Optional),
           member_key: Some(MemberKey::Type1(Box::from((
             Type1 {
@@ -1133,7 +1369,8 @@ mod tests {
             type2: Type2::Typename((Identifier(("int", None)), None)),
             operator: None,
           }]),
-        }),
+        })),
+        true,
       )])])),
     ];
 
@@ -1155,34 +1392,42 @@ mod tests {
     let inputs = [r#"[ [* file-entry], [* directory-entry] ]"#];
 
     let expected_ouputs = [Type2::Array(Group(vec![GroupChoice(vec![
-      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-        occur: None,
-        member_key: None,
-        entry_type: Type(vec![Type1 {
-          type2: Type2::Array(Group(vec![GroupChoice(vec![GroupEntry::TypeGroupname(
-            TypeGroupnameEntry {
-              occur: Some(Occur::ZeroOrMore),
-              name: Identifier(("file-entry", None)),
-              generic_arg: None,
-            },
-          )])])),
-          operator: None,
-        }]),
-      })),
-      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-        occur: None,
-        member_key: None,
-        entry_type: Type(vec![Type1 {
-          type2: Type2::Array(Group(vec![GroupChoice(vec![GroupEntry::TypeGroupname(
-            TypeGroupnameEntry {
-              occur: Some(Occur::ZeroOrMore),
-              name: Identifier(("directory-entry", None)),
-              generic_arg: None,
-            },
-          )])])),
-          operator: None,
-        }]),
-      })),
+      (
+        GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+          occur: None,
+          member_key: None,
+          entry_type: Type(vec![Type1 {
+            type2: Type2::Array(Group(vec![GroupChoice(vec![(
+              GroupEntry::TypeGroupname(TypeGroupnameEntry {
+                occur: Some(Occur::ZeroOrMore),
+                name: Identifier(("file-entry", None)),
+                generic_arg: None,
+              }),
+              false,
+            )])])),
+            operator: None,
+          }]),
+        })),
+        true,
+      ),
+      (
+        GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+          occur: None,
+          member_key: None,
+          entry_type: Type(vec![Type1 {
+            type2: Type2::Array(Group(vec![GroupChoice(vec![(
+              GroupEntry::TypeGroupname(TypeGroupnameEntry {
+                occur: Some(Occur::ZeroOrMore),
+                name: Identifier(("directory-entry", None)),
+                generic_arg: None,
+              }),
+              false,
+            )])])),
+            operator: None,
+          }]),
+        })),
+        false,
+      ),
     ])]))];
 
     for (idx, expected_output) in expected_ouputs.iter().enumerate() {
@@ -1328,6 +1573,6 @@ mod tests {
       errors.push_str(&format!("parser error: {}\n", err));
     }
 
-    Err((p.lexer_position, errors).into())
+    Err((p.l.str_input, p.lexer_position, errors).into())
   }
 }

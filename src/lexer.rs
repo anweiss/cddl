@@ -22,7 +22,7 @@ use std::{borrow::Cow, error::Error};
 #[cfg(not(feature = "std"))]
 use alloc::{
   borrow::{Cow, ToOwned},
-  string::{String, ToString},
+  string::ToString,
   vec::Vec,
 };
 
@@ -275,11 +275,12 @@ impl<'a> From<(&'a [u8], Position, num::ParseIntError)> for LexerError {
 
 /// Lexer which holds a byte slice and iterator over the byte slice
 pub struct Lexer<'a> {
-  str_input: &'a [u8],
+  /// CDDL input string
+  pub str_input: &'a [u8],
   // TODO: Remove duplicate iterator in favor of multipeek
   input: Peekable<CharIndices<'a>>,
   multipeek: itertools::MultiPeek<CharIndices<'a>>,
-  position: Position,
+  pub position: Position,
 }
 
 impl<'a> Lexer<'a> {
@@ -312,7 +313,10 @@ impl<'a> Lexer<'a> {
           self.position.column += 1;
         }
 
-        self.position.index = c.0;
+        if !c.1.is_ascii_whitespace() {
+          self.position.index = c.0;
+        }
+
         Some(c)
       })
       .ok_or_else(|| {
@@ -328,10 +332,10 @@ impl<'a> Lexer<'a> {
   /// Advances the index of the str iterator over the input and returns a
   /// `Token`
   pub fn next_token(&mut self) -> Result<(Position, Token<'a>)> {
-    self.skip_whitespace();
+    self.skip_whitespace()?;
 
-    self.position.range.0 = self.position.index + 1;
-    self.position.range.1 = self.position.index + 1;
+    self.position.range.0 = self.position.index;
+    self.position.range.1 = self.position.index;
 
     if let Ok(c) = self.read_char() {
       match c {
@@ -829,14 +833,17 @@ impl<'a> Lexer<'a> {
     Ok("")
   }
 
-  fn skip_whitespace(&mut self) {
-    while let Some(&(_, ch)) = self.peek_char() {
+  fn skip_whitespace(&mut self) -> Result<()> {
+    while let Some(&(idx, ch)) = self.peek_char() {
       if ch.is_whitespace() {
-        let _ = self.read_char();
+        let _ = self.read_char()?;
       } else {
+        self.position.index = idx;
         break;
       }
     }
+
+    Ok(())
   }
 
   fn read_int_or_float(&mut self, mut idx: usize) -> Result<Token<'a>> {
@@ -1334,7 +1341,7 @@ city = (
   }
 
   #[test]
-  fn verify_diagnostic() -> Result<()> {
+  fn verify_lexer_diagnostic() -> Result<()> {
     let input = r#"myrule = number .asdf 10"#;
 
     let mut l = Lexer::new(input);
