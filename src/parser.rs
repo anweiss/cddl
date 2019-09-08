@@ -167,6 +167,21 @@ impl<'a> Parser<'a> {
       c.rules.push(r);
     }
 
+    // TODO: implement second pass over parenthesized type rules whose contents
+    // are Type2::Typename, and if the identifier refers to another group rule
+    // per the match rules in Appendix C, refactor rule into a group rule:
+    //
+    // "A rule defines a name for a type expression (production "type") or for a
+    // group expression (production "grpent"), with the intention that the
+    // semantics does not change when the name is replaced by its (parenthesized
+    // if needed) definition.  Note that whether the name defined by a rule
+    // stands for a type or a group isn't always determined by syntax alone:
+    // e.g., "a = b" can make "a" a type if "b" is a type, or a group if "b" is
+    // a group.  More subtly, in "a = (b)", "a" may be used as a type if "b" is
+    // a type, or as a group both when "b" is a group and when "b" is a type (a
+    // good convention to make the latter case stand out to the human reader is
+    // to write "a = (b,)")."
+
     Ok(c)
   }
 
@@ -210,7 +225,7 @@ impl<'a> Parser<'a> {
       && !self.expect_peek(&Token::TCHOICEALT)?
       && !self.expect_peek(&Token::GCHOICEALT)?
     {
-      self.parser_position.range = (begin_range, self.lexer_position.range.0 + 1);
+      self.parser_position.range = (begin_range, self.lexer_position.range.1);
       self.parser_position.line = self.lexer_position.line;
 
       return Err(
@@ -245,7 +260,7 @@ impl<'a> Parser<'a> {
       // Check for an occurrence indicator if uint followed by an asterisk '*'
       Token::VALUE(Value::UINT(_)) => {
         if self.peek_token_is(&Token::ASTERISK) {
-          let end_range = self.lexer_position.range.0 + 1;
+          let end_range = self.lexer_position.range.1 + 1;
 
           let ge = self.parse_grpent()?;
 
@@ -257,7 +272,7 @@ impl<'a> Parser<'a> {
             range: (begin_range, end_range),
           })))
         } else {
-          let end_range = self.lexer_position.range.0 + 1;
+          let end_range = self.lexer_position.range.1 + 1;
 
           let t = self.parse_type(None)?;
 
@@ -271,7 +286,7 @@ impl<'a> Parser<'a> {
         }
       }
       Token::LPAREN | Token::ASTERISK | Token::ONEORMORE | Token::OPTIONAL => {
-        let end_range = self.lexer_position.range.0 + 1;
+        let end_range = self.lexer_position.range.1 + 1;
         let ge = self.parse_grpent()?;
 
         // If a group entry is an inline group with no leading occurrence
@@ -1114,7 +1129,7 @@ message<t, v> = {type: 2, value: v}"#;
   }
   #[test]
   fn verify_rule_diagnostic() -> Result<()> {
-    let input = r#"a = b
+    let input = r#"a = 1234
 
   a = b"#;
 
@@ -1126,8 +1141,8 @@ message<t, v> = {type: 2, value: v}"#;
           r#"error: Rule with name 'a' already defined
  --> input:1:0
   |
-1 | a = b
-  | ^^^^^ Rule with name 'a' already defined
+1 | a = 1234
+  | ^^^^^^^^ Rule with name 'a' already defined
 2 | 
 3 |   a = b
   |"#
