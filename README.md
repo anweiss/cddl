@@ -34,7 +34,7 @@ Rust is a systems programming language designed around safety and is ideally-sui
 
 ## CLI
 
-A CLI has been made available for various platforms and as a Docker image. It can downloaded from the [Releases](https://github.com/anweiss/cddl/releases) tab. The tool supports parsing of `.cddl` files for verifying conformance against RFC 8610. It also supports validation of `.cddl` documents against `.json` files. Detailed information about the JSON validation functions can be found in [validating JSON](#validating-json) section below. Instructions for using the tool can be viewed by executing the `help` subcommand:
+A CLI has been made available for various platforms and as a Docker image. It can downloaded from the [Releases](https://github.com/anweiss/cddl/releases) tab. The tool supports parsing of `.cddl` files for verifying conformance against RFC 8610. It also supports validation of `.cddl` documents against `.json` files. Detailed information about the JSON validation functions can be found in the [validating JSON](#validating-json) section below. Instructions for using the tool can be viewed by executing the `help` subcommand:
 
     $ cddl help
 
@@ -133,7 +133,7 @@ The following types and features of CDDL are supported by this crate for validat
 |null / nil|null|
 |any|any valid JSON|
 
-Since JSON objects only support keys whos types are JSON strings, member keys defined in CDDL structs must use either the colon syntax (`mykey: tstr`) or the double arrow syntax with double quotes (`"mykey" => tstr`). Unquoted member keys used with the double arrow syntax must resolves to one of the supported data types can be used to validate JSON strings (`text` or `tstr`). Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed and monomorphized into their full representations before being evaluated for JSON validation.
+Since JSON objects only support keys whose types are JSON strings, member keys defined in CDDL structs must use either the colon syntax (`mykey: tstr`) or the double arrow syntax with double quotes (`"mykey" => tstr`). Unquoted member keys used with the double arrow syntax must resolve to one of the supported data types that can be used to validate JSON strings (`text` or `tstr`). Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed and monomorphized into their full representations before being evaluated for JSON validation.
 
 Below is the table of supported control operators and whether or not they've been implemented as of the current release:
 
@@ -165,7 +165,7 @@ Below is the table of supported control operators and whether or not they've bee
 
 ## Validating CBOR
 
-> Incomplete. Under development
+> Incomplete. Under development. Less complete than JSON validation functions.
 
 This crate also uses [Serde](https://serde.rs/) and [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data structures. Similary to the JSON validation implementation, CBOR validation is done via the loosely typed [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html) enum. Unfortunately, due to a [limitation of Serde](https://github.com/pyfisch/cbor/issues/3), CBOR tags are ignored during deserialization.
 
@@ -178,7 +178,7 @@ Only the lexer and parser can be used in a `no_std` context provided that a heap
 cddl = { version = "<version>", default-features = false }
 ```
 
-Zero-copy parsing is implemented to the extent that is possible, with prefixed byte strings containing whitespace being one of the few exceptions where allocation is required.
+Zero-copy parsing is implemented to the extent that is possible, with prefixed byte strings containing whitespace being one of the few exceptions where allocation is required. Allocation is also used for error handling and diagnostics.
 
 Both JSON and CBOR validation are dependent on their respective heap allocated `Value` types, but since these types aren't supported in a `no_std` context, they subsequently aren't supported in a `no_std` context in this crate.
 
