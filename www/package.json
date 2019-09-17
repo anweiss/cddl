@@ -1,6 +1,6 @@
 {
   "name": "cddl",
-  "version": "0.3.13",
+  "version": "0.3.16",
   "description": "Parser for the Concise data definition language (CDDL)",
   "main": "index.js",
   "scripts": {
