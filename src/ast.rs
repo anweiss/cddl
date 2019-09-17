@@ -1,6 +1,9 @@
 use super::token::{ByteSliceValue, ByteVecValue, RangeValue, SocketPlug, Value};
 use std::fmt;
 
+#[cfg(target_arch = "wasm32")]
+use serde::Serialize;
+
 #[cfg(feature = "std")]
 use std::borrow::Cow;
 
@@ -23,6 +26,7 @@ pub trait Node {
 /// ```abnf
 /// cddl = S 1*(rule S)
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Default, Debug)]
 pub struct CDDL<'a> {
   /// Zero or more production rules
@@ -59,6 +63,7 @@ impl<'a> Node for CDDL<'a> {
 /// EALPHA = ALPHA / "@" / "_" / "$"
 /// DIGIT = %x30-39
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
 pub struct Identifier<'a>(pub (&'a str, Option<&'a SocketPlug>));
 
@@ -97,6 +102,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
 /// rule = typename [genericparm] S assignt S type
 ///     / groupname [genericparm] S assigng S grpent
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug)]
 pub enum Rule<'a> {
   /// Type expression
@@ -155,6 +161,7 @@ impl<'a> Rule<'a> {
 /// ```abnf
 /// typename [genericparm] S assignt S type
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug)]
 pub struct TypeRule<'a> {
   /// Type name identifier
@@ -200,6 +207,7 @@ impl<'a> Node for TypeRule<'a> {
 /// ```abnf
 /// groupname [genericparm] S assigng S grpent
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug)]
 pub struct GroupRule<'a> {
   /// Group name identifier
@@ -245,6 +253,7 @@ impl<'a> Node for GroupRule<'a> {
 /// ```abnf
 /// genericparm =  "<" S id S *("," S id S ) ">"
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Default, Debug)]
 pub struct GenericParm<'a>(pub Vec<Identifier<'a>>);
 
@@ -270,6 +279,7 @@ impl<'a> fmt::Display for GenericParm<'a> {
 /// ```abnf
 /// genericarg = "<" S type1 S *("," S type1 S )  ">"
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct GenericArg<'a>(pub Vec<Type1<'a>>);
 
@@ -295,6 +305,7 @@ impl<'a> fmt::Display for GenericArg<'a> {
 /// ```abnf
 /// type = type1 *(S "/" S  type1)
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct Type<'a>(pub Vec<Type1<'a>>);
 
@@ -320,6 +331,7 @@ impl<'a> fmt::Display for Type<'a> {
 /// ```abnf
 /// type1 = type2 [S (rangeop / ctlop) S type2]
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct Type1<'a> {
   /// Type
@@ -360,6 +372,7 @@ impl<'a> fmt::Display for Type1<'a> {
 /// rangeop = "..." / ".."
 /// ctlop = "." id
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
 pub enum RangeCtlOp {
   /// Range operator where value is `true` if inclusive
@@ -393,6 +406,7 @@ impl<'a> fmt::Display for RangeCtlOp {
 ///     / "#" DIGIT ["." uint]                ; major/ai
 ///     / "#"                                 ; any
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub enum Type2<'a> {
   /// Integer value
@@ -539,6 +553,7 @@ impl<'a> From<ByteVecValue> for Type2<'a> {
 /// ```abnf
 /// group = grpchoice * (S "//" S grpchoice)
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct Group<'a>(pub Vec<GroupChoice<'a>>);
 
@@ -566,6 +581,7 @@ impl<'a> fmt::Display for Group<'a> {
 /// ```
 ///
 /// If tuple is true, then entry is marked by a trailing comma
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct GroupChoice<'a>(pub Vec<(GroupEntry<'a>, bool)>);
 
@@ -596,6 +612,7 @@ impl<'a> fmt::Display for GroupChoice<'a> {
 ///       / [occur S] groupname [genericarg]  ; preempted by above
 ///       / [occur S] "(" S group S ")"
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub enum GroupEntry<'a> {
   /// Value group entry type
@@ -628,6 +645,7 @@ impl<'a> fmt::Display for GroupEntry<'a> {
 /// ```abnf
 /// [occur S] [memberkey S] type
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct ValueMemberKeyEntry<'a> {
   /// Optional occurrence indicator
@@ -657,6 +675,7 @@ impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
 }
 
 /// Group entry from a named type or group
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct TypeGroupnameEntry<'a> {
   /// Optional occurrence indicator
@@ -691,6 +710,7 @@ impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
 ///           / bareword S ":"
 ///           / value S ":"
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub enum MemberKey<'a> {
   /// Type expression. If second value in tuple is `true`, a cut is present
@@ -723,6 +743,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
 ///       / "+"
 ///       / "?"
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub enum Occur {
   /// Occurrence indicator in the form n*m, where n is an optional lower limit

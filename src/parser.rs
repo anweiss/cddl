@@ -959,8 +959,22 @@ impl<'a> Parser<'a> {
 }
 
 /// Returns a `ast::CDDL` from a `&str`
+#[cfg(not(target_arch = "wasm32"))]
 pub fn cddl_from_str<'a>(input: &'a str) -> Result<CDDL<'a>> {
   Parser::new(Lexer::new(input))?.parse_cddl()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
+  let c = Parser::new(Lexer::new(input))
+    .map_err(|e| JsValue::from(e.to_string()))?
+    .parse_cddl()
+    .map_err(|e| JsValue::from(e.to_string()))?;
+
+  JsValue::from_serde(&c)
+    .map_err(|e| JsValue::from(e.to_string()))
+    .map(|c| c)
 }
 
 /// Validates CDDL input against RFC 8610

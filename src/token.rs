@@ -1,5 +1,8 @@
 use std::{convert::TryFrom, fmt};
 
+#[cfg(target_arch = "wasm32")]
+use serde::Serialize;
+
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 
@@ -283,6 +286,7 @@ impl<'a> fmt::Display for RangeValue<'a> {
   }
 }
 
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Value<'a> {
   // TODO: support hexfloat and exponent
@@ -372,6 +376,7 @@ impl fmt::Display for ByteVecValue {
   }
 }
 
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq)]
 pub enum SocketPlug {
   TYPE,
