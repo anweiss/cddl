@@ -4,7 +4,7 @@ description = "Parser for the Concise data definition language (CDDL)"
 repository = "https://github.com/anweiss/cddl"
 homepage = "https://cddl.anweiss.tech"
 license = "MIT"
-version = "0.3.15"
+version = "0.3.16"
 authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
 readme = "README.md"
 edition = "2018"
@@ -31,7 +31,7 @@ annotate-snippets = "0.6"
 crossterm = "0.9"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2"
+wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
 console_error_panic_hook = { version = "0.1", optional = true }
 wee_alloc = { version = "0.4", optional = true }
 
