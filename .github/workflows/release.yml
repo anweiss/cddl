@@ -376,6 +376,6 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.GPRPat }}
         run: |
-          copy .npmrc pkg/
+          cp .npmrc pkg/
           echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" > ~/.npmrc
           npm publish --access=public
