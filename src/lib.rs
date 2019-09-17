@@ -1,8 +1,9 @@
 //! # cddl
 //!
 //! [![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl)
-//! [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Build
-//! Status](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Factions-badge.atrox.dev%2Fanweiss%2Fcddl%2Fbadge&style=popout)](https://actions-badge.atrox.dev/anweiss/cddl/goto)
+//! [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl)
+//! [![](https://github.com/anweiss/cddl/workflows/Release%20package/badge.svg)](https://github.com/anweiss/cddl/actions)
+//! [![](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions)
 //!
 //! > This crate is very much experimental and is being developed as a personal
 //! > learning exercise for getting acquainted with Rust and about parsing in
