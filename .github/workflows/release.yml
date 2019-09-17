@@ -7,8 +7,8 @@ jobs:
   compilation-check:
     strategy:
       matrix:
-        rust_toolchain: [ stable ]
-        platform: [ ubuntu-latest, macOS-latest, windows-latest ]
+        rust_toolchain: [stable]
+        platform: [ubuntu-latest, macOS-latest, windows-latest]
     name: Compilation check
     runs-on: ${{ matrix.platform }}
     steps:
@@ -70,12 +70,12 @@ jobs:
         run: |
           source $HOME/.cargo/env
           cargo check --all --bins --examples --tests --no-default-features
-      
+
   test-suite:
     strategy:
       matrix:
-        rust_toolchain: [ stable ]
-        platform: [ ubuntu-latest, macOS-latest, windows-latest ]
+        rust_toolchain: [stable]
+        platform: [ubuntu-latest, macOS-latest, windows-latest]
     name: Test suite
     needs: compilation-check
     runs-on: ${{ matrix.platform }}
@@ -153,8 +153,8 @@ jobs:
     name: Upload binaries
     strategy:
       matrix:
-        rust_toolchain: [ stable ]
-        platform: [ ubuntu-latest, windows-latest, macOS-latest ]
+        rust_toolchain: [stable]
+        platform: [ubuntu-latest, windows-latest, macOS-latest]
     runs-on: ${{ matrix.platform }}
     needs: create-release
     steps:
@@ -211,7 +211,6 @@ jobs:
           cp target/release/cddl cddl-darwin-amd64
           chmod +x cddl-darwin-amd64
           zip cddl-darwin-amd64.zip cddl-darwin-amd64
-
 
       - name: Build CLI
         if: matrix.platform == 'windows-latest'
@@ -293,18 +292,18 @@ jobs:
         run: |
           export TAG=`git describe --tags`
           docker build -t docker.pkg.github.com/anweiss/cddl/cddl:$TAG .
-      
+
       - name: Login to GPR
         env:
           GPR_PAT: ${{ secrets.GPRPat }}
         run: |
           docker login docker.pkg.github.com -u anweiss -p $GPR_PAT
-        
+
       - name: Push image
         run: |
           export TAG=`git describe --tags`
           docker push docker.pkg.github.com/anweiss/cddl/cddl:$TAG
-          
+
   publish-crate:
     name: Publish crate
     runs-on: ubuntu-latest
@@ -331,3 +330,52 @@ jobs:
         run: |
           cargo login $CRATESIO_TOKEN
           cargo publish
+
+  publish-npm:
+    strategy:
+      matrix:
+        rust_toolchain: [stable]
+        platform: [ubuntu-latest]
+    name: Publish npm package
+    runs-on: ${{ matrix.platform }}
+    needs: publish-release
+    steps:
+      - name: Install Rust
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          set -e
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
+          export PATH="$PATH:$HOME/.cargo/bin"
+          echo "##vso[task.setvariable variable=PATH;]$PATH;$HOME/.cargo/bin"
+          source $HOME/.cargo/env
+          rustup default $RUSTUP_TOOLCHAIN
+          rustup update $RUSTUP_TOOLCHAIN
+
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Add wasm target
+        run: |
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install wasmpack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install node
+        uses: actions/setup-node@v1
+        with:
+          node-verison: "10.x"
+
+      - name: Build wasm
+        run: |
+          wasm-pack build --target nodejs --scope anweiss --release
+
+      - name: Publish to GPR
+        env:
+          NPM_TOKEN: ${{ secrets.GPRPat }}
+        run: |
+          copy .npmrc pkg/
+          echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          npm publish --access=public
