@@ -63,7 +63,7 @@ impl Into<Error> for CBORError {
   }
 }
 
-impl<'a> Validator<Value> for CDDL<'a> {
+impl Validator<Value> for CDDL {
   fn validate(&self, value: &Value) -> Result {
     for rule in self.rules.iter() {
       if let Rule::Type(tr) = rule {
@@ -189,10 +189,10 @@ impl<'a> Validator<Value> for CDDL<'a> {
 
   fn validate_control_operator(
     &self,
-    target: &Type2,
-    operator: &'static str,
-    controller: &Type2,
-    value: &Value,
+    _target: &Type2,
+    _operator: &'static str,
+    _controller: &Type2,
+    _value: &Value,
   ) -> Result {
     unimplemented!()
   }
@@ -255,7 +255,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
         ),
       },
       Type2::B16ByteString(bs) => match value {
-        Value::Bytes(b) if b == &bs.as_ref() => Ok(()),
+        Value::Bytes(b) if b == bs => Ok(()),
         _ => Err(
           CBORError {
             expected_memberkey,
@@ -267,7 +267,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
         ),
       },
       Type2::B64ByteString(bs) => match value {
-        Value::Bytes(b) if b == &bs.as_ref() => Ok(()),
+        Value::Bytes(b) if b == bs => Ok(()),
         _ => Err(
           CBORError {
             expected_memberkey,
@@ -280,12 +280,12 @@ impl<'a> Validator<Value> for CDDL<'a> {
       },
       // TODO: evaluate genericarg
       Type2::Typename((tn, _)) => match value {
-        Value::Null => expect_null((tn.0).0),
-        Value::Bool(_) => self.expect_bool((tn.0).0, value),
+        Value::Null => expect_null(&(tn.0).0),
+        Value::Bool(_) => self.expect_bool(&(tn.0).0, value),
         Value::Text(_) => {
           if (tn.0).0 == "tstr" || (tn.0).0 == "text" {
             Ok(())
-          } else if is_type_prelude((tn.0).0) {
+          } else if is_type_prelude(&(tn.0).0) {
             // Expecting non-text type but got text
             Err(
               CBORError {
@@ -308,7 +308,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
           }
         }
         Value::Integer(_) | Value::Float(_) => {
-          self.validate_numeric_data_type(expected_memberkey, actual_memberkey, (tn.0).0, value)
+          self.validate_numeric_data_type(expected_memberkey, actual_memberkey, &(tn.0).0, value)
         }
         Value::Map(_) => self.validate_rule_for_ident(
           tn,
@@ -329,7 +329,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
         Value::Bytes(_) => {
           if (tn.0).0 == "bstr" || (tn.0).0 == "bytes" {
             Ok(())
-          } else if is_type_prelude((tn.0).0) {
+          } else if is_type_prelude(&(tn.0).0) {
             // Expecting non-bytes type but got bytes
             Err(
               CBORError {
@@ -618,34 +618,17 @@ impl<'a> Validator<Value> for CDDL<'a> {
                 }
 
                 match om.get(&Value::Text((ident.0).0.to_string())) {
-                  Some(v) => {
-                    return self.validate_type(
-                      &vmke.entry_type,
-                      Some(mk.to_string()),
-                      Some(((ident.0).0).to_string()),
-                      vmke.occur.as_ref(),
-                      v,
-                    )
-                  }
+                  Some(v) => self.validate_type(
+                    &vmke.entry_type,
+                    Some(mk.to_string()),
+                    Some(((ident.0).0).to_string()),
+                    vmke.occur.as_ref(),
+                    v,
+                  ),
                   None => match occur {
                     Some(o) => match o {
-                      Occur::Optional | Occur::OneOrMore => {
-                        return Ok(());
-                      }
-                      _ => {
-                        return Err(
-                          CBORError {
-                            expected_memberkey: Some(mk.to_string()),
-                            expected_value: format!("{} {}", mk, vmke.entry_type),
-                            actual_memberkey: None,
-                            actual_value: value.clone(),
-                          }
-                          .into(),
-                        );
-                      }
-                    },
-                    None => {
-                      return Err(
+                      Occur::Optional | Occur::OneOrMore => Ok(()),
+                      _ => Err(
                         CBORError {
                           expected_memberkey: Some(mk.to_string()),
                           expected_value: format!("{} {}", mk, vmke.entry_type),
@@ -653,8 +636,17 @@ impl<'a> Validator<Value> for CDDL<'a> {
                           actual_value: value.clone(),
                         }
                         .into(),
-                      );
-                    }
+                      ),
+                    },
+                    None => Err(
+                      CBORError {
+                        expected_memberkey: Some(mk.to_string()),
+                        expected_value: format!("{} {}", mk, vmke.entry_type),
+                        actual_memberkey: None,
+                        actual_value: value.clone(),
+                      }
+                      .into(),
+                    ),
                   },
                 }
               }

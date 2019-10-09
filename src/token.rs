@@ -4,26 +4,25 @@ use std::{convert::TryFrom, fmt};
 use serde::Serialize;
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{
+  string::{String, ToString},
+  vec::Vec,
+};
 
 /// Token which represents a valids CDDL character or sequence
 #[derive(PartialEq, Debug)]
-pub enum Token<'a> {
+pub enum Token {
   /// Illegal sequence of characters
-  ILLEGAL(&'a str),
+  ILLEGAL(String),
   /// End of file
   EOF,
 
   /// Identifier with optional `SocketPlug`
-  IDENT((&'a str, Option<&'a SocketPlug>)),
+  IDENT((String, Option<SocketPlug>)),
   /// Value
-  VALUE(Value<'a>),
-  /// Borrowed byte value
-  BYTESLICEVALUE(ByteSliceValue<'a>),
-  /// Owned byte values
-  BYTEVECVALUE(ByteVecValue),
+  VALUE(Value),
   /// CBOR tag
-  TAG(Tag<'a>),
+  TAG(Tag),
 
   // Operators
   /// Assignment operator '='
@@ -44,7 +43,7 @@ pub enum Token<'a> {
   COLON,
 
   /// Comment text
-  COMMENT(&'a str),
+  COMMENT(String),
 
   /// Type choice indicator '/'
   TCHOICE,
@@ -64,7 +63,7 @@ pub enum Token<'a> {
 
   /// Range tuple with lower bound, upper bound, and bool indicating whether or
   /// not the range is inclusive
-  RANGE((RangeValue<'a>, RangeValue<'a>, bool)),
+  RANGE((RangeValue, RangeValue, bool)),
 
   /// Left opening parend
   LPAREN,
@@ -89,7 +88,7 @@ pub enum Token<'a> {
   /// .bits control operator
   BITS,
   /// .regexp control operator
-  REGEXP,
+  CREGEXP,
   /// .cbor control operator
   CBOR,
   /// .cborseq control operator
@@ -121,50 +120,91 @@ pub enum Token<'a> {
   GTOCHOICE,
 
   // Standard prelude
+  /// false
   FALSE,
+  /// true
   TRUE,
+  /// bool
   BOOL,
+  /// nil
   NIL,
+  /// null
   NULL,
+  /// uint
   UINT,
+  /// nint
   NINT,
+  /// int
   INT,
+  /// float16
   FLOAT16,
+  /// float32
   FLOAT32,
+  /// float64
   FLOAT64,
+  /// float16-32
   FLOAT1632,
+  /// float32-64
   FLOAT3264,
+  ///float
   FLOAT,
+  /// bstr
   BSTR,
+  /// tstr
   TSTR,
+  /// any
   ANY,
+  /// bytes
   BYTES,
+  /// text
   TEXT,
+  /// tdate
   TDATE,
+  /// time
   TIME,
+  /// number
   NUMBER,
+  /// biguint
   BIGUINT,
+  /// bignint
   BIGNINT,
+  /// bigint
   BIGINT,
+  /// integer
   INTEGER,
+  /// unsigned
   UNSIGNED,
+  /// decfrac
   DECFRAC,
+  /// bigfloat
   BIGFLOAT,
+  /// eb64url
   EB64URL,
+  /// eb64legacy
   EB64LEGACY,
+  /// eb16k
   EB16,
+  /// encoded-cbor
   ENCODEDCBOR,
+  /// uri
   URI,
+  /// b64url
   B64URL,
+  /// b64legacy
   B64LEGACY,
-  TREGEXP,
+  /// regexp
+  REGEXP,
+  /// mime-message
   MIMEMESSAGE,
+  /// cbor-any
   CBORANY,
+  /// undefined
   UNDEFINED,
 }
 
-impl<'a> Token<'a> {
-  pub fn in_standard_prelude(&self) -> Option<&'a str> {
+impl Token {
+  /// Returns optional string literal of token in standard prelude
+  pub fn in_standard_prelude(&self) -> Option<&'static str> {
     match self {
       Token::ANY => Some("any"),
       Token::UINT => Some("uint"),
@@ -211,14 +251,19 @@ impl<'a> Token<'a> {
   }
 }
 
+/// Tag data type
 #[derive(PartialEq, Debug)]
-pub enum Tag<'a> {
-  DATA((Option<usize>, &'a str)),
+pub enum Tag {
+  /// Tagged data item with optional uint tag (usize) and type given as the tagged value (Type)
+  // TODO: only `String` is supported ... need to support `Type`
+  DATA((Option<usize>, String)),
+  /// Data item of a major type (u8) optionally constrained to additional info given by the uint (usize)
   MAJORTYPE((u8, Option<usize>)),
+  /// Any data item
   ANY,
 }
 
-impl<'a> fmt::Display for Tag<'a> {
+impl fmt::Display for Tag {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Tag::DATA((tag_uint, tagged_value)) => {
@@ -240,18 +285,23 @@ impl<'a> fmt::Display for Tag<'a> {
   }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub enum RangeValue<'a> {
-  IDENT((&'a str, Option<&'a SocketPlug>)),
+/// Range value
+#[derive(Debug, PartialEq, Clone)]
+pub enum RangeValue {
+  /// Identifier with optional socket/plug prefix
+  IDENT((String, Option<SocketPlug>)),
+  /// Integer
   INT(isize),
+  /// Unsigned integer
   UINT(usize),
+  /// Float
   FLOAT(f64),
 }
 
-impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
+impl TryFrom<Token> for RangeValue {
   type Error = &'static str;
 
-  fn try_from(t: Token<'a>) -> Result<Self, Self::Error> {
+  fn try_from(t: Token) -> Result<Self, Self::Error> {
     match t {
       Token::IDENT(ident) => Ok(RangeValue::IDENT(ident)),
       Token::VALUE(value) => match value {
@@ -265,8 +315,9 @@ impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
   }
 }
 
-impl<'a> RangeValue<'a> {
-  pub fn as_value(&self) -> Option<Value<'a>> {
+impl RangeValue {
+  /// Returns `Value` from given `RangeValue`
+  pub fn as_value(&self) -> Option<Value> {
     match &self {
       RangeValue::UINT(ui) => Some(Value::UINT(*ui)),
       RangeValue::FLOAT(f) => Some(Value::FLOAT(*f)),
@@ -275,7 +326,7 @@ impl<'a> RangeValue<'a> {
   }
 }
 
-impl<'a> fmt::Display for RangeValue<'a> {
+impl fmt::Display for RangeValue {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       RangeValue::IDENT(ident) => write!(f, "{}", ident.0),
@@ -286,86 +337,76 @@ impl<'a> fmt::Display for RangeValue<'a> {
   }
 }
 
+/// Literal string value
+// TODO: support hexfloat and exponent
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub enum Value<'a> {
-  // TODO: support hexfloat and exponent
+#[derive(Debug, PartialEq, Clone)]
+pub enum Value {
+  /// Integer value
   INT(isize),
+  /// Unsigned integer value
   UINT(usize),
+  /// Float value
   FLOAT(f64),
-  TEXT(&'a str),
+  /// Text value
+  TEXT(String),
+  /// Byte value
+  BYTE(ByteValue),
 }
 
+/// Numeric value
 #[derive(Debug, PartialEq)]
 pub enum Numeric {
+  /// Integer
   INT(isize),
+  /// Unsigned integer
   UINT(usize),
+  /// Float
   FLOAT(f64),
 }
 
-impl<'a> fmt::Display for Value<'a> {
+impl fmt::Display for Value {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Value::TEXT(text) => write!(f, "\"{}\"", text),
       Value::INT(i) => write!(f, "{}", i),
       Value::UINT(ui) => write!(f, "{}", ui),
       Value::FLOAT(float) => write!(f, "{}", float),
+      Value::BYTE(bv) => write!(f, "{}", bv),
     }
   }
 }
 
-impl<'a> From<&'static str> for Value<'a> {
+impl<'a> From<&'static str> for Value {
   fn from(value: &'static str) -> Self {
-    Value::TEXT(value)
+    Value::TEXT(value.into())
   }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum ByteSliceValue<'a> {
-  UTF8(&'a [u8]),
-  B16(&'a [u8]),
-  B64(&'a [u8]),
-}
-
-impl<'a> fmt::Display for ByteSliceValue<'a> {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    match self {
-      ByteSliceValue::UTF8(b) => write!(f, "'{}'", std::str::from_utf8(b).map_err(|_| fmt::Error)?),
-      ByteSliceValue::B16(b) => write!(
-        f,
-        "h'{}'",
-        std::str::from_utf8(b)
-          .map_err(|_| fmt::Error)?
-          .replace(" ", "")
-      ),
-      ByteSliceValue::B64(b) => write!(
-        f,
-        "b64'{}'",
-        std::str::from_utf8(b)
-          .map_err(|_| fmt::Error)?
-          .replace(" ", "")
-      ),
-    }
-  }
-}
-
+/// Byte string values
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
-pub enum ByteVecValue {
+pub enum ByteValue {
+  /// Unprefixed byte string value
+  UTF8(Vec<u8>),
+  /// Prefixed base16 encoded byte string value
   B16(Vec<u8>),
+  /// Prefixed base64 encoded (URL safe) byte string value
   B64(Vec<u8>),
 }
 
-impl fmt::Display for ByteVecValue {
+impl fmt::Display for ByteValue {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      ByteVecValue::B16(b) => write!(
+      ByteValue::UTF8(b) => write!(f, "'{}'", std::str::from_utf8(b).map_err(|_| fmt::Error)?),
+      ByteValue::B16(b) => write!(
         f,
         "h'{}'",
         String::from_utf8(b.to_vec())
           .map_err(|_| fmt::Error)?
           .replace(" ", "")
       ),
-      ByteVecValue::B64(b) => write!(
+      ByteValue::B64(b) => write!(
         f,
         "b64'{}'",
         String::from_utf8(b.to_vec())
@@ -376,10 +417,13 @@ impl fmt::Display for ByteVecValue {
   }
 }
 
+/// Socket/plug prefix
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SocketPlug {
+  /// Type socket `$`
   TYPE,
+  /// Group socket `$$`
   GROUP,
 }
 
@@ -412,7 +456,7 @@ impl<'a> fmt::Display for SocketPlug {
   }
 }
 
-impl<'a> fmt::Display for Token<'a> {
+impl fmt::Display for Token {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Token::IDENT((ident, socket_plug)) => {
@@ -469,8 +513,6 @@ impl<'a> fmt::Display for Token<'a> {
       Token::TRUE => write!(f, "true"),
       Token::GTOCHOICE => write!(f, "&"),
       Token::VALUE(value) => write!(f, "{}", value),
-      Token::BYTESLICEVALUE(value) => write!(f, "{}", value),
-      Token::BYTEVECVALUE(value) => write!(f, "{}", value),
       Token::RANGEOP(i) => {
         if *i {
           write!(f, "..")
@@ -495,11 +537,12 @@ impl<'a> fmt::Display for Token<'a> {
   }
 }
 
+/// Return an optional control token from a given string
 pub fn lookup_control_from_str(ident: &str) -> Option<Token> {
   match ident {
     ".size" => Some(Token::SIZE),
     ".bits" => Some(Token::BITS),
-    ".regexp" => Some(Token::REGEXP),
+    ".regexp" => Some(Token::CREGEXP),
     ".cbor" => Some(Token::CBOR),
     ".cborseq" => Some(Token::CBORSEQ),
     ".within" => Some(Token::WITHIN),
@@ -516,6 +559,7 @@ pub fn lookup_control_from_str(ident: &str) -> Option<Token> {
   }
 }
 
+/// Return an optional string from a given token
 pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
   match t {
     Token::SIZE => Some(".size"),
@@ -537,27 +581,7 @@ pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
   }
 }
 
-pub fn is_control_token(t: &Token) -> bool {
-  match t {
-    Token::SIZE
-    | Token::BITS
-    | Token::REGEXP
-    | Token::CBOR
-    | Token::CBORSEQ
-    | Token::WITHIN
-    | Token::AND
-    | Token::LT
-    | Token::LE
-    | Token::GT
-    | Token::GE
-    | Token::EQ
-    | Token::NE
-    | Token::DEFAULT
-    | Token::PCRE => true,
-    _ => false,
-  }
-}
-
+/// Returns token in standard prelude from given string
 pub fn lookup_ident(ident: &str) -> Token {
   match ident {
     "false" => Token::FALSE,
@@ -595,7 +619,7 @@ pub fn lookup_ident(ident: &str) -> Token {
     "uri" => Token::URI,
     "b64url" => Token::B64URL,
     "b64legacy" => Token::B64LEGACY,
-    "regexp" => Token::TREGEXP,
+    "regexp" => Token::REGEXP,
     "mime-message" => Token::MIMEMESSAGE,
     "cbor-any" => Token::CBORANY,
     "undefined" => Token::UNDEFINED,
@@ -604,15 +628,15 @@ pub fn lookup_ident(ident: &str) -> Token {
         if c == '$' {
           if let Some(c) = ident.chars().nth(1) {
             if c == '$' {
-              return Token::IDENT((&ident[2..], Some(&SocketPlug::GROUP)));
+              return Token::IDENT((ident[2..].to_string(), Some(SocketPlug::GROUP)));
             }
           }
 
-          return Token::IDENT((&ident[1..], Some(&SocketPlug::TYPE)));
+          return Token::IDENT((ident[1..].to_string(), Some(SocketPlug::TYPE)));
         }
       }
 
-      Token::IDENT((ident, None))
+      Token::IDENT((ident.to_string(), None))
     }
   }
 }
