@@ -378,4 +378,5 @@ jobs:
         run: |
           cp .npmrc pkg/
           echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          cd www
           npm publish --access=public
