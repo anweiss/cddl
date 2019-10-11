@@ -74,7 +74,7 @@ impl Into<Error> for JSONError {
   }
 }
 
-impl<'a> Validator<Value> for CDDL<'a> {
+impl Validator<Value> for CDDL {
   fn validate(&self, value: &Value) -> Result {
     for rule in self.rules.iter() {
       // First type rule is root
@@ -512,8 +512,8 @@ impl<'a> Validator<Value> for CDDL<'a> {
     let mut errors: Vec<Error> = Vec::new();
 
     match token::lookup_control_from_str(operator) {
-      t @ Some(Token::PCRE) | t @ Some(Token::REGEXP) => {
-        if t == Some(Token::REGEXP) {
+      t @ Some(Token::PCRE) | t @ Some(Token::CREGEXP) => {
+        if t == Some(Token::CREGEXP) {
           println!("NOTE: Only Perl-compatible regex is supported.\nThis crate evaluates the .regexp operator as an alias for the .pcre extension operator\n");
         }
 
@@ -525,8 +525,8 @@ impl<'a> Validator<Value> for CDDL<'a> {
           )));
         }
 
-        let find_valid_value = |c: &str| -> bool {
-          match validate_pcre_control(c, value) {
+        let find_valid_value = |c: String| -> bool {
+          match validate_pcre_control(&c, value) {
             Ok(()) => true,
             Err(e) => {
               errors.push(e);
@@ -689,8 +689,8 @@ impl<'a> Validator<Value> for CDDL<'a> {
             Err(Error::MultiError(errors))
           }
         } else if self.is_type_string_data_type(target) {
-          let find_valid_value = |c: &str| -> bool {
-            match validate_eq_text_control(c, value) {
+          let find_valid_value = |c: String| -> bool {
+            match validate_eq_text_control(&c, value) {
               Ok(()) => true,
               Err(e) => {
                 errors.push(e);
@@ -754,9 +754,9 @@ impl<'a> Validator<Value> for CDDL<'a> {
       Type2::Typename((Identifier((ident, _)), _)) if *ident == "any" => Ok(()),
       // TODO: evaluate genericarg
       Type2::Typename((tn, _)) => match value {
-        Value::Null => expect_null((tn.0).0),
-        Value::Bool(_) => self.expect_bool((tn.0).0, value),
-        Value::String(s) => match (tn.0).0 {
+        Value::Null => expect_null(&(tn.0).0),
+        Value::Bool(_) => self.expect_bool(&(tn.0).0, value),
+        Value::String(s) => match (tn.0).0.as_ref() {
           "tstr" | "text" => Ok(()),
           "tdate" => validate_tdate(s),
           #[cfg(feature = "nightly")]
@@ -767,7 +767,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
             Ok(())
           }
           _ => {
-            if is_type_json_prelude((tn.0).0) {
+            if is_type_json_prelude(&(tn.0).0) {
               return Err(
                 JSONError {
                   expected_memberkey,
@@ -790,7 +790,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
           }
         },
         Value::Number(_) => {
-          self.validate_numeric_data_type(expected_memberkey, actual_memberkey, (tn.0).0, value)
+          self.validate_numeric_data_type(expected_memberkey, actual_memberkey, &(tn.0).0, value)
         }
         Value::Object(_) => self.validate_rule_for_ident(
           tn,
@@ -913,8 +913,8 @@ impl<'a> Validator<Value> for CDDL<'a> {
     // Check for a wildcard entry
     let wildcard_entry = gc.0.iter().find_map(|ge| match &ge.0 {
       GroupEntry::ValueMemberKey(vmke) => match &vmke.member_key {
-        Some(MemberKey::Type1(t1)) if !t1.1 => match t1.0.type2 {
-          Type2::Typename((Identifier(("tstr", None)), None)) => Some(&vmke.entry_type),
+        Some(MemberKey::Type1(t1)) if !t1.1 => match &t1.0.type2 {
+          Type2::Typename((Identifier((s, None)), None)) if s == "tstr" => Some(&vmke.entry_type),
           _ => None,
         },
         _ => None,
@@ -1024,7 +1024,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
               Type2::TextValue(t) => match value {
                 Value::Object(om) => {
                   if !is_type_json_prelude(&vmke.entry_type.to_string()) {
-                    if let Some(v) = om.get(*t) {
+                    if let Some(v) = om.get(t) {
                       return self.validate_type(
                         &vmke.entry_type,
                         Some(mk.to_string()),
@@ -1043,7 +1043,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
                     );
                   }
 
-                  if let Some(v) = om.get(*t) {
+                  if let Some(v) = om.get(t) {
                     let r = self.validate_type(
                       &vmke.entry_type,
                       Some(mk.to_string()),
@@ -1096,7 +1096,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
             MemberKey::Bareword(ident) => match value {
               Value::Object(om) => {
                 if !is_type_json_prelude(&vmke.entry_type.to_string()) {
-                  if let Some(v) = om.get((ident.0).0) {
+                  if let Some(v) = om.get(&(ident.0).0) {
                     return self.validate_type(
                       &vmke.entry_type,
                       Some(mk.to_string()),
@@ -1115,7 +1115,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
                   );
                 }
 
-                match om.get((ident.0).0) {
+                match om.get(&(ident.0).0) {
                   Some(v) => self.validate_type(
                     &vmke.entry_type,
                     Some(mk.to_string()),

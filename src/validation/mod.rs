@@ -170,10 +170,13 @@ pub trait Validator<T> {
   /// Validate data against a given group
   fn validate_group(&self, g: &Group, occur: Option<&Occur>, value: &T) -> Result;
 
+  /// Validate data against a given group-to-choice enumeration
   fn validate_group_to_choice_enum(&self, g: &Group, occur: Option<&Occur>, value: &T) -> Result;
 
+  /// Validate data against a given group choice
   fn validate_group_choice(&self, gc: &GroupChoice, occur: Option<&Occur>, value: &T) -> Result;
 
+  /// Validate data against a given group entry
   fn validate_group_entry(
     &self,
     ge: &GroupEntry,
@@ -183,10 +186,13 @@ pub trait Validator<T> {
     value: &T,
   ) -> Result;
 
+  /// Validate data against a given array and occurrence indicator
   fn validate_array_occurrence(&self, occur: &Occur, group: &str, values: &[T]) -> Result;
 
+  /// Expect data to be a boolean
   fn expect_bool(&self, ident: &str, value: &T) -> Result;
 
+  /// Validate data against a given numeric data type
   fn validate_numeric_data_type(
     &self,
     expected_memberkey: Option<String>,
@@ -196,7 +202,7 @@ pub trait Validator<T> {
   ) -> Result;
 }
 
-impl<'a> CDDL<'a> {
+impl CDDL {
   fn numerical_value_type_from_ident(&self, ident: &Identifier) -> Option<Vec<&Type2>> {
     let mut type_choices = Vec::new();
 
@@ -257,9 +263,9 @@ impl<'a> CDDL<'a> {
   }
 
   // Returns the text value(s) from a given type
-  fn text_values_from_type(&'a self, ident: &'a Type2) -> result::Result<Vec<&'a str>, Error> {
+  fn text_values_from_type(&self, ident: &Type2) -> result::Result<Vec<String>, Error> {
     match ident {
-      Type2::TextValue(t) => Ok(vec![t]),
+      Type2::TextValue(t) => Ok(vec![t.into()]),
       Type2::Typename((ident, _)) => {
         let mut text_values = Vec::new();
 
@@ -307,7 +313,7 @@ impl<'a> CDDL<'a> {
         Err(Error::Syntax("Target data type must be a 'uint' or 'number' in order to validate against an unsigned integer value".into()))
       }
       Type2::FloatValue(f) => {
-        if target_idents.into_iter().any(|ti| match ti {
+        if target_idents.into_iter().any(|ti| match ti.as_ref() {
           "float" | "float16" | "float32" | "float64" | "float16-32" | "float32-64" | "number" => true,
           _ => false,
         }) {
@@ -338,12 +344,12 @@ impl<'a> CDDL<'a> {
     }
   }
 
-  fn numerical_ident_from_type(&'a self, t2: &'a Type2) -> result::Result<Vec<&'a str>, Error> {
+  fn numerical_ident_from_type(&self, t2: &Type2) -> result::Result<Vec<String>, Error> {
     let mut numeric_type_idents = Vec::new();
 
     match t2 {
       Type2::Typename((Identifier((ident, _)), _)) if is_numeric_data_type(ident) => {
-        numeric_type_idents.push(*ident);
+        numeric_type_idents.push(ident.clone());
         Ok(numeric_type_idents)
       }
       Type2::Typename((ident, _)) => {
