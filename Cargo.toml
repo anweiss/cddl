@@ -5,7 +5,7 @@ repository = "https://github.com/anweiss/cddl"
 homepage = "https://cddl.anweiss.tech"
 license = "MIT"
 version = "0.3.18"
-authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
+authors = ["anweiss <2326106+anweiss@users.noreply.github.com>"]
 readme = "README.md"
 edition = "2018"
 

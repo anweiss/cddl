@@ -180,7 +180,7 @@ jobs:
           npm install
           rm -rf dist/
           git config user.email "2326106+anweiss@users.noreply.github.com"
-          git config user.name "Andrew Weiss"
+          git config user.name "anweiss"
           mkdir dist
           git worktree add dist gh-pages
           cd dist
