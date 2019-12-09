@@ -184,7 +184,7 @@ jobs:
           mkdir dist
           git worktree add dist gh-pages
           cd dist
-          git pull https://$GIT_USER:$REPO_PAT@github.com/anweiss/cddl.git gh-pages
+          git pull "https://$GIT_USER:$REPO_PAT@github.com/anweiss/cddl.git" gh-pages
           git rm -r .
           git checkout HEAD -- CNAME
           cd ..
