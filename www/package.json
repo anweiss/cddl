@@ -27,7 +27,7 @@
     "cddl": "file:../pkg"
   },
   "devDependencies": {
-    "copy-webpack-plugin": "^5.0.0",
+    "copy-webpack-plugin": "^5.1.0",
     "css-loader": "^1.0.0",
     "hello-wasm-pack": "^0.1.0",
     "monaco-editor": "^0.17.1",
