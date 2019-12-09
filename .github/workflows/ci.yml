@@ -12,9 +12,9 @@ jobs:
     strategy:
       matrix:
         rust_toolchain: [1.36.0]
-        platform: [ubuntu-latest, macOS-latest, windows-latest]
-    name: minimum version check using Rust ${{ matrix.rust_toolchain }} on ${{ matrix.platform }}
-    runs-on: ${{ matrix.platform }}
+        os: [ubuntu-latest, macOS-latest, windows-latest]
+    name: minimum version check using Rust ${{ matrix.rust_toolchain }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
         uses: actions/checkout@master
@@ -42,9 +42,9 @@ jobs:
     strategy:
       matrix:
         rust_toolchain: [stable, beta, nightly]
-        platform: [ubuntu-latest, macOS-latest, windows-latest]
+        os: [ubuntu-latest, macOS-latest, windows-latest]
     name: Compilation check
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
         uses: actions/checkout@master
@@ -79,10 +79,10 @@ jobs:
     strategy:
       matrix:
         rust_toolchain: [stable, beta, nightly]
-        platform: [ubuntu-latest, macOS-latest, windows-latest]
+        os: [ubuntu-latest, macOS-latest, windows-latest]
     name: Test suite
     needs: compilation-check
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
         uses: actions/checkout@master
@@ -104,10 +104,10 @@ jobs:
     strategy:
       matrix:
         rust_toolchain: [stable, beta]
-        platform: [ubuntu-latest, macOS-latest, windows-latest]
+        os: [ubuntu-latest, macOS-latest, windows-latest]
     name: Style linting
     needs: compilation-check
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
         uses: actions/checkout@master
@@ -142,10 +142,10 @@ jobs:
     strategy:
       matrix:
         rust_toolchain: [stable]
-        platform: [ubuntu-latest]
+        os: [ubuntu-latest]
     name: Publish wasm
     needs: compilation-check
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
         uses: actions/checkout@master
@@ -179,12 +179,12 @@ jobs:
           cd www
           npm install
           rm -rf dist/
-          git config user.email "andrew.weiss@outlook.com"
+          git config user.email "2326106+anweiss@users.noreply.github.com"
           git config user.name "Andrew Weiss"
           mkdir dist
           git worktree add dist gh-pages
           cd dist
-          git pull "https://$GIT_USER:$REPO_PAT@github.com/anweiss/cddl.git" gh-pages
+          git pull https://$GIT_USER:$REPO_PAT@github.com/anweiss/cddl.git gh-pages
           git rm -r .
           git checkout HEAD -- CNAME
           cd ..

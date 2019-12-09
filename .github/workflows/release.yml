@@ -9,9 +9,9 @@ jobs:
     strategy:
       matrix:
         rust_toolchain: [stable]
-        platform: [ubuntu-latest, macOS-latest, windows-latest]
+        os: [ubuntu-latest, macOS-latest, windows-latest]
     name: Compilation check
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
         uses: actions/checkout@master
@@ -39,10 +39,10 @@ jobs:
     strategy:
       matrix:
         rust_toolchain: [stable]
-        platform: [ubuntu-latest, macOS-latest, windows-latest]
+        os: [ubuntu-latest, macOS-latest, windows-latest]
     name: Test suite
     needs: compilation-check
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
         uses: actions/checkout@master
@@ -86,8 +86,8 @@ jobs:
     strategy:
       matrix:
         rust_toolchain: [stable]
-        platform: [ubuntu-latest, windows-latest, macOS-latest]
-    runs-on: ${{ matrix.platform }}
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+    runs-on: ${{ matrix.os }}
     needs: create-release
     steps:
       - name: Checkout source
@@ -245,9 +245,9 @@ jobs:
     strategy:
       matrix:
         rust_toolchain: [stable]
-        platform: [ubuntu-latest]
+        os: [ubuntu-latest]
     name: Publish npm package
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     needs: publish-release
     steps:
       - name: Checkout source
