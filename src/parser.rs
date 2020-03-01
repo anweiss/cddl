@@ -1,7 +1,7 @@
 use super::{
   ast::*,
   lexer::{Lexer, LexerError, Position},
-  token::{self, Tag, Token, Value},
+  token::{self, Token, Value},
 };
 use annotate_snippets::{
   display_list::DisplayList,
@@ -16,7 +16,6 @@ use std::error::Error;
 
 #[cfg(not(feature = "std"))]
 use alloc::{
-  borrow::ToOwned,
   boxed::Box,
   string::{String, ToString},
   vec::Vec,
@@ -292,15 +291,17 @@ impl<'a> Parser<'a> {
         // If a group entry is an inline group with no leading occurrence
         // indicator, and its group has only a single element that is not
         // preceded by an occurrence indicator nor member key, treat it as a
-        // parenthesized type, subsequently parsing the reamining type and
+        // parenthesized type, subsequently parsing the remaining type and
         // returning the type rule. This is the only situation where `clone` is
         // required
-        if let GroupEntry::InlineGroup((occur, g)) = &ge {
-          if occur.is_none() && g.0.len() == 1 {
+        if let GroupEntry::InlineGroup((None, g)) = &ge {
+          if g.0.len() == 1 {
             if let Some(gc) = g.0.get(0) {
               if gc.0.len() == 1 {
                 if let Some(ge) = gc.0.get(0) {
+                  // Check that there is no trailing comma
                   if !ge.1 {
+                    // TODO: Replace with box pattern destructuring once supported in stable
                     if let GroupEntry::ValueMemberKey(vmke) = &ge.0 {
                       if vmke.occur.is_none() && vmke.member_key.is_none() {
                         return Ok(Rule::Type(TypeRule {
@@ -397,8 +398,9 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_genericarg(&mut self) -> Result<GenericArg> {
-    self.next_token()?;
-
+    if self.peek_token_is(&Token::LANGLEBRACKET) {
+      self.next_token()?;
+    }
     // Required for type2 mutual recursion
     if self.cur_token_is(Token::LANGLEBRACKET) {
       self.next_token()?;
@@ -599,12 +601,49 @@ impl<'a> Parser<'a> {
       // # 6 ["." uint] ( type )
       // # DIGIT ["." uint]   ; major/ai
       // #                    ; any
-      Token::TAG(tag) => match tag {
-        Tag::DATA(data) => Ok(Type2::TaggedData(data.clone())),
-        Tag::MAJORTYPE(mt) => Ok(Type2::TaggedDataMajorType(*mt)),
-        Tag::ANY => Ok(Type2::Any),
-      },
+      // Token::TAG(tag) => match tag {
+      //   Tag::DATA(data) => Ok(Type2::TaggedData(data.clone())),
+      //   Tag::MAJORTYPE(mt) => Ok(Type2::TaggedDataMajorType(*mt)),
+      //   Tag::ANY => Ok(Type2::Any),
+      // },
+      Token::TAG(t) => {
+        match *t {
+          // Tagged data item containing the given type as the tagged value
+          (Some(6), tag) => {
+            self.next_token()?;
+            if !self.cur_token_is(Token::LPAREN) {
+              return Err(
+                (
+                  self.l.str_input.clone(),
+                  self.parser_position,
+                  format!("Malformed tag. Unknown token: {:#?}", self.cur_token),
+                )
+                  .into(),
+              );
+            }
 
+            self.next_token()?;
+
+            let t = self.parse_type(None)?;
+
+            if !self.cur_token_is(Token::RPAREN) {
+              return Err(
+                (
+                  self.l.str_input.clone(),
+                  self.parser_position,
+                  format!("Malformed tag. Unknown token: {:#?}", self.cur_token),
+                )
+                  .into(),
+              );
+            }
+
+            Ok(Type2::TaggedData((tag, t)))
+          }
+          // Tagged data of a major type
+          (Some(mt), tag) => Ok(Type2::TaggedDataMajorType((mt, tag))),
+          _ => Ok(Type2::Any),
+        }
+      }
       _ => {
         while let Token::COMMENT(_) = self.cur_token {
           self.next_token()?;
@@ -626,7 +665,6 @@ impl<'a> Parser<'a> {
         }
       }
     };
-
     self.next_token()?;
 
     t2
@@ -658,16 +696,25 @@ impl<'a> Parser<'a> {
     if self.cur_token_is(Token::LBRACE)
       || self.cur_token_is(Token::LPAREN)
       || self.cur_token_is(Token::LBRACKET)
+      || self.cur_token_is(Token::GCHOICE)
     {
       self.next_token()?;
     }
 
+    // TODO: The logic in this while loop is quite messy. Need to figure out a
+    // better way to advance the token when parsing the entries in a group
+    // choice
     while !self.cur_token_is(Token::RBRACE)
       && !self.cur_token_is(Token::RPAREN)
       && !self.cur_token_is(Token::RBRACKET)
       && !self.cur_token_is(Token::EOF)
     {
       let ge = self.parse_grpent()?;
+
+      if self.cur_token_is(Token::GCHOICE) {
+        grpchoice.0.push((ge, false));
+        return Ok(grpchoice);
+      }
 
       // Don't advance the token if it is a member key, comma or an opening or
       // closing map/group delimiter. Otherwise, advance
@@ -702,16 +749,6 @@ impl<'a> Parser<'a> {
   fn parse_grpent(&mut self) -> Result<GroupEntry> {
     let occur = self.parse_occur(true)?;
 
-    if occur.is_some() {
-      while let Token::VALUE(Value::UINT(_))
-      | Token::ASTERISK
-      | Token::OPTIONAL
-      | Token::ONEORMORE = self.cur_token
-      {
-        self.next_token()?;
-      }
-    }
-
     while let Token::COMMENT(_) = self.cur_token {
       self.next_token()?;
     }
@@ -742,6 +779,7 @@ impl<'a> Parser<'a> {
     if self.cur_token_is(Token::LPAREN) {
       self.next_token()?;
 
+      // TODO: Keep track of parenthesis count
       while self.cur_token_is(Token::LPAREN) {
         self.next_token()?;
       }
@@ -763,47 +801,29 @@ impl<'a> Parser<'a> {
       return Ok(ge);
     }
 
-    let ga = if self.peek_token_is(&Token::LANGLEBRACKET) {
-      Some(self.parse_genericarg()?)
-    } else {
-      None
-    };
+    let entry_type = self.parse_type(None)?;
 
-    match &self.cur_token {
-      Token::IDENT(ident) => {
-        // [occur S] [memberkey S] type
-        if member_key.is_some() {
-          return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-            occur,
-            member_key,
-            entry_type: self.parse_type(None)?,
-          })));
-        }
-
-        // Check for type choices in a group entry
-        if self.peek_token_is(&Token::TCHOICE) {
-          return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-            occur,
-            member_key,
-            entry_type: self.parse_type(None)?,
-          })));
-        }
-
-        // Otherwise it could be either typename or groupname. Requires context.
-        // [occur S] [memberkey S] type
-        // [occur S] groupname [genericarg]  ; preempted by above
-        Ok(GroupEntry::TypeGroupname(TypeGroupnameEntry {
-          occur,
-          name: ident.into(),
-          generic_arg: ga,
-        }))
-      }
-      _ => Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+    if member_key.is_some() {
+      return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
         occur,
         member_key,
-        entry_type: self.parse_type(None)?,
-      }))),
+        entry_type,
+      })));
     }
+
+    if let Some((name, generic_arg)) = entry_type.groupname_entry() {
+      return Ok(GroupEntry::TypeGroupname(TypeGroupnameEntry {
+        occur,
+        name,
+        generic_arg,
+      }));
+    }
+
+    Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+      occur,
+      member_key,
+      entry_type,
+    })))
   }
 
   fn parse_memberkey(&mut self, is_optional: bool) -> Result<Option<MemberKey>> {
@@ -881,16 +901,27 @@ impl<'a> Parser<'a> {
 
   fn parse_occur(&mut self, is_optional: bool) -> Result<Option<Occur>> {
     match &self.cur_token {
-      Token::OPTIONAL => Ok(Some(Occur::Optional)),
-      Token::ONEORMORE => Ok(Some(Occur::OneOrMore)),
+      Token::OPTIONAL => {
+        self.next_token()?;
+        Ok(Some(Occur::Optional))
+      }
+      Token::ONEORMORE => {
+        self.next_token()?;
+        Ok(Some(Occur::OneOrMore))
+      }
       Token::ASTERISK => {
-        if let Token::VALUE(value) = &self.peek_token {
-          if let Value::UINT(u) = value {
-            return Ok(Some(Occur::Exact((None, Some(*u)))));
-          }
-        }
+        let o = if let Token::VALUE(Value::UINT(u)) = &self.peek_token {
+          Some(Occur::Exact((None, Some(*u))))
+        } else {
+          Some(Occur::ZeroOrMore)
+        };
 
-        Ok(Some(Occur::ZeroOrMore))
+        self.next_token()?;
+
+        if let Token::VALUE(Value::UINT(_)) = &self.cur_token {
+          self.next_token()?;
+        }
+        Ok(o)
       }
       Token::VALUE(_) => {
         let lower = if let Token::VALUE(value) = &self.cur_token {
@@ -1009,7 +1040,7 @@ pub fn compile_cddl_from_str(input: &str) -> result::Result<(), JsValue> {
 #[allow(unused_imports)]
 mod tests {
   use super::{
-    super::{ast, lexer::Lexer, token::SocketPlug, token::Tag},
+    super::{ast, lexer::Lexer, token::SocketPlug},
     *,
   };
 
@@ -1348,7 +1379,6 @@ message<t, v> = {type: 2, value: v}"#;
       r#"&groupname"#,
       r#"&( inlinegroup )"#,
       r#"{ ? "optional-key" ^ => int, }"#,
-      r#"[ [* file-entry], [* directory-entry ] ]"#,
     ];
 
     let expected_outputs = [
@@ -1371,7 +1401,13 @@ message<t, v> = {type: 2, value: v}"#;
         None,
       )),
       Type2::Unwrap((Identifier(("group1".into(), None)), None)),
-      Type2::TaggedData((Some(997), "tstr".into())),
+      Type2::TaggedData((
+        Some(997),
+        Type(vec![Type1 {
+          type2: Type2::Typename((Identifier::from("tstr"), None)),
+          operator: None,
+        }]),
+      )),
       Type2::TaggedDataMajorType((9, Some(9))),
       Type2::Any,
       Type2::Array(Group(vec![GroupChoice(vec![(
@@ -1433,46 +1469,124 @@ message<t, v> = {type: 2, value: v}"#;
 
   #[test]
   fn verify_type2_complex() -> Result<()> {
-    let inputs = [r#"[ [* file-entry], [* directory-entry] ]"#];
+    let inputs = [
+      r#"[ [* file-entry], [* directory-entry] ]"#,
+      r#"{ int, int // int, tstr }"#,
+      r#"{ int, int, int, tstr }"#,
+    ];
 
-    let expected_ouputs = [Type2::Array(Group(vec![GroupChoice(vec![
-      (
-        GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-          occur: None,
-          member_key: None,
-          entry_type: Type(vec![Type1 {
-            type2: Type2::Array(Group(vec![GroupChoice(vec![(
-              GroupEntry::TypeGroupname(TypeGroupnameEntry {
-                occur: Some(Occur::ZeroOrMore),
-                name: Identifier(("file-entry".into(), None)),
-                generic_arg: None,
-              }),
-              false,
-            )])])),
-            operator: None,
-          }]),
-        })),
-        true,
-      ),
-      (
-        GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-          occur: None,
-          member_key: None,
-          entry_type: Type(vec![Type1 {
-            type2: Type2::Array(Group(vec![GroupChoice(vec![(
-              GroupEntry::TypeGroupname(TypeGroupnameEntry {
-                occur: Some(Occur::ZeroOrMore),
-                name: Identifier(("directory-entry".into(), None)),
-                generic_arg: None,
-              }),
-              false,
-            )])])),
-            operator: None,
-          }]),
-        })),
-        false,
-      ),
-    ])]))];
+    let expected_ouputs = [
+      Type2::Array(Group(vec![GroupChoice(vec![
+        (
+          GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+            occur: None,
+            member_key: None,
+            entry_type: Type(vec![Type1 {
+              type2: Type2::Array(Group(vec![GroupChoice(vec![(
+                GroupEntry::TypeGroupname(TypeGroupnameEntry {
+                  occur: Some(Occur::ZeroOrMore),
+                  name: Identifier(("file-entry".into(), None)),
+                  generic_arg: None,
+                }),
+                false,
+              )])])),
+              operator: None,
+            }]),
+          })),
+          true,
+        ),
+        (
+          GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+            occur: None,
+            member_key: None,
+            entry_type: Type(vec![Type1 {
+              type2: Type2::Array(Group(vec![GroupChoice(vec![(
+                GroupEntry::TypeGroupname(TypeGroupnameEntry {
+                  occur: Some(Occur::ZeroOrMore),
+                  name: Identifier(("directory-entry".into(), None)),
+                  generic_arg: None,
+                }),
+                false,
+              )])])),
+              operator: None,
+            }]),
+          })),
+          false,
+        ),
+      ])])),
+      Type2::Map(Group(vec![
+        GroupChoice(vec![
+          (
+            GroupEntry::TypeGroupname(TypeGroupnameEntry {
+              occur: None,
+              name: Identifier(("int".into(), None)),
+              generic_arg: None,
+            }),
+            true,
+          ),
+          (
+            GroupEntry::TypeGroupname(TypeGroupnameEntry {
+              occur: None,
+              name: Identifier(("int".into(), None)),
+              generic_arg: None,
+            }),
+            false,
+          ),
+        ]),
+        GroupChoice(vec![
+          (
+            GroupEntry::TypeGroupname(TypeGroupnameEntry {
+              occur: None,
+              name: Identifier(("int".into(), None)),
+              generic_arg: None,
+            }),
+            true,
+          ),
+          (
+            GroupEntry::TypeGroupname(TypeGroupnameEntry {
+              occur: None,
+              name: Identifier(("tstr".into(), None)),
+              generic_arg: None,
+            }),
+            false,
+          ),
+        ]),
+      ])),
+      Type2::Map(Group(vec![GroupChoice(vec![
+        (
+          GroupEntry::TypeGroupname(TypeGroupnameEntry {
+            occur: None,
+            name: Identifier(("int".into(), None)),
+            generic_arg: None,
+          }),
+          true,
+        ),
+        (
+          GroupEntry::TypeGroupname(TypeGroupnameEntry {
+            occur: None,
+            name: Identifier(("int".into(), None)),
+            generic_arg: None,
+          }),
+          true,
+        ),
+        (
+          GroupEntry::TypeGroupname(TypeGroupnameEntry {
+            occur: None,
+            name: Identifier(("int".into(), None)),
+            generic_arg: None,
+          }),
+          true,
+        ),
+        (
+          GroupEntry::TypeGroupname(TypeGroupnameEntry {
+            occur: None,
+            name: Identifier(("tstr".into(), None)),
+            generic_arg: None,
+          }),
+          false,
+        ),
+      ])])),
+    ];
 
     for (idx, expected_output) in expected_ouputs.iter().enumerate() {
       let l = Lexer::new(&inputs[idx]);
@@ -1489,7 +1603,13 @@ message<t, v> = {type: 2, value: v}"#;
 
   #[test]
   fn verify_grpent() -> Result<()> {
-    let inputs = [r#"* type1 ^ => "value""#, r#"type1: type2"#, r#"typename"#];
+    let inputs = [
+      r#"* type1 ^ => "value""#,
+      r#"type1: type2"#,
+      r#"typename"#,
+      r#"? 0: addrdistr"#,
+      r#"0: finite_set<transaction_input>"#,
+    ];
 
     let expected_outputs = [
       GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
@@ -1522,6 +1642,28 @@ message<t, v> = {type: 2, value: v}"#;
           operator: None,
         }]),
       })),
+      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+        occur: Some(Occur::Optional),
+        member_key: Some(MemberKey::Value(Value::INT(0))),
+        entry_type: Type(vec![Type1 {
+          type2: Type2::Typename((Identifier(("addrdistr".into(), None)), None)),
+          operator: None,
+        }]),
+      })),
+      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+        occur: None,
+        member_key: Some(MemberKey::Value(Value::INT(0))),
+        entry_type: Type(vec![Type1 {
+          type2: Type2::Typename((
+            Identifier::from("finite_set"),
+            Some(GenericArg(vec![Type1 {
+              type2: Type2::Typename((Identifier::from("transaction_input"), None)),
+              operator: None,
+            }])),
+          )),
+          operator: None,
+        }]),
+      })),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -1545,6 +1687,7 @@ message<t, v> = {type: 2, value: v}"#;
       r#"mybareword:"#,
       r#"my..bareword:"#,
       r#""myvalue": "#,
+      r#"0:"#,
     ];
 
     let expected_outputs = [
@@ -1565,6 +1708,7 @@ message<t, v> = {type: 2, value: v}"#;
       MemberKey::Bareword(Identifier(("mybareword".into(), None))),
       MemberKey::Bareword(Identifier(("my..bareword".into(), None))),
       MemberKey::Value(Value::TEXT("myvalue".into())),
+      MemberKey::Value(Value::INT(0)),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -1602,6 +1746,18 @@ message<t, v> = {type: 2, value: v}"#;
 
       assert_eq!(o.unwrap().to_string(), expected_output.to_string());
     }
+
+    Ok(())
+  }
+
+  #[test]
+  fn verify_cddl() -> Result<()> {
+    let input = r#"txin = #6.24(bytes)
+asdf = asdf"#;
+
+    let mut p = Parser::new(Lexer::new(input))?;
+
+    let _ = p.parse_cddl()?;
 
     Ok(())
   }

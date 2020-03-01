@@ -20,7 +20,7 @@ This crate supports validation of both CBOR and JSON data structures. An extreme
 - Basic REPL
 - Generate dummy JSON from conformant CDDL
 - Close to zero-copy as possible
-- Compile WebAssembly target for browser and Node.js (to eventually support an LSP language server implementation)
+- Compile WebAssembly target for browser and Node.js
 - `no_std` support (lexing and parsing only)
 
 ## Non-goals

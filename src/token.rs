@@ -21,8 +21,8 @@ pub enum Token {
   IDENT((String, Option<SocketPlug>)),
   /// Value
   VALUE(Value),
-  /// CBOR tag
-  TAG(Tag),
+  /// CBOR tag '#'
+  TAG((Option<u8>, Option<usize>)),
 
   // Operators
   /// Assignment operator '='
@@ -247,40 +247,6 @@ impl Token {
       Token::NULL => Some("null"),
       Token::UNDEFINED => Some("undefined"),
       _ => None,
-    }
-  }
-}
-
-/// Tag data type
-#[derive(PartialEq, Debug)]
-pub enum Tag {
-  /// Tagged data item with optional uint tag (usize) and type given as the tagged value (Type)
-  // TODO: only `String` is supported ... need to support `Type`
-  DATA((Option<usize>, String)),
-  /// Data item of a major type (u8) optionally constrained to additional info given by the uint (usize)
-  MAJORTYPE((u8, Option<usize>)),
-  /// Any data item
-  ANY,
-}
-
-impl fmt::Display for Tag {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    match self {
-      Tag::DATA((tag_uint, tagged_value)) => {
-        if let Some(t) = tag_uint {
-          return write!(f, "#6.{}({})", t, tagged_value);
-        }
-
-        write!(f, "#6({})", tagged_value)
-      }
-      Tag::MAJORTYPE((major_type, tag_uint)) => {
-        if let Some(t) = tag_uint {
-          return write!(f, "{}.{}", major_type, t);
-        }
-
-        write!(f, "{}", major_type)
-      }
-      Tag::ANY => write!(f, "#"),
     }
   }
 }
@@ -531,7 +497,16 @@ impl fmt::Display for Token {
           }
         }
       },
-      Token::TAG(tag) => write!(f, "{}", tag),
+      Token::TAG((mt, tag)) => {
+        if let Some(m) = mt {
+          if let Some(t) = tag {
+            return write!(f, "#{}.{}", m, t);
+          }
+
+          return write!(f, "#{}", m);
+        }
+        write!(f, "#")
+      }
       _ => write!(f, ""),
     }
   }

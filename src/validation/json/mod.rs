@@ -761,6 +761,7 @@ impl Validator<Value> for CDDL {
           "tdate" => validate_tdate(s),
           #[cfg(feature = "nightly")]
           "uri" => validate_uri(s),
+          #[cfg(not(feature = "nightly"))]
           "uri" => {
             println!("NOTE: Validation against the \"uri\" data type is only supported by versions of this crate built with unstable Rust\n");
 
