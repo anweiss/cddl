@@ -1,4 +1,4 @@
-use super::token::{self, ByteValue, RangeValue, Tag, Token, Value};
+use super::token::{self, ByteValue, RangeValue, Token, Value};
 use annotate_snippets::{
   display_list::DisplayList,
   formatter::DisplayListFormatter,
@@ -21,7 +21,6 @@ use std::{error::Error, string};
 
 #[cfg(not(feature = "std"))]
 use alloc::{
-  borrow::{Cow, ToOwned},
   string::{self, String, ToString},
   vec::Vec,
 };
@@ -101,7 +100,7 @@ impl fmt::Display for LexerError {
         "{}",
         dlf.format(&DisplayList::from(Snippet {
           title: Some(Annotation {
-            label: Some(le.to_string()),
+            label: Some((*le).to_string()),
             id: None,
             annotation_type: AnnotationType::Error,
           }),
@@ -115,7 +114,7 @@ impl fmt::Display for LexerError {
             fold: false,
             annotations: vec![SourceAnnotation {
               range: self.position.range,
-              label: le.to_string(),
+              label: (*le).to_string(),
               annotation_type: AnnotationType::Error,
             }],
           }],
@@ -488,26 +487,25 @@ impl<'a> Lexer<'a> {
             Ok((self.position, Token::TCHOICE))
           }
         },
-        (idx, '#') => match self.peek_char() {
+        (_, '#') => match self.peek_char() {
           Some(&c) if is_digit(c.1) => {
-            let tag = self.read_tag()?;
-            self.position.range.1 = self.position.index;
-            Ok((self.position, Token::TAG(tag)))
+            let (idx, _) = self.read_char()?;
+            let t = self.read_number(idx)?.1;
+            let (_, c) = self.read_char()?;
+            if c == '.' {
+              let (idx, _) = self.read_char()?;
+
+              self.position.range.1 = self.position.index;
+
+              return Ok((
+                self.position,
+                Token::TAG((Some(t as u8), Some(self.read_number(idx)?.1))),
+              ));
+            }
+
+            Ok((self.position, Token::TAG((Some(t as u8), None))))
           }
-          None => {
-            self.position.range.1 = self.position.index;
-            Ok((self.position, Token::TAG(Tag::ANY)))
-          }
-          _ => {
-            self.position.range.1 = self.position.index;
-            Ok((
-              self.position,
-              Token::ILLEGAL(
-                String::from_utf8(self.str_input[idx..=idx + 1].to_vec())
-                  .map_err(|e| (self.str_input.clone(), self.position, e))?,
-              ),
-            ))
-          }
+          _ => Ok((self.position, Token::TAG((None, None)))),
         },
         (_, '\'') => {
           let (idx, _) = self.read_char()?;
@@ -928,67 +926,6 @@ impl<'a> Lexer<'a> {
     self.input.peek()
   }
 
-  fn read_tag(&mut self) -> Result<Tag> {
-    self.position.range.0 = self.position.index;
-
-    match self.read_char() {
-      Ok(c) if c.1 == '6' => {
-        let (_, ch) = self.read_char()?;
-
-        if ch == '.' {
-          let (idx, _) = self.read_char()?;
-
-          let (_, t) = self.read_number(idx)?;
-
-          if let Ok(c) = self.read_char() {
-            // TODO: tagged data item with given type needs to support lexing of nested parenthesis
-            if c.1 == '(' {
-              let (idx, _) = self.read_char()?;
-              let tag = Tag::DATA((Some(t), self.read_identifier(idx)?));
-
-              if let Some(c) = self.peek_char() {
-                if c.1 == ')' {
-                  let _ = self.read_char()?;
-                } else {
-                  return Err((self.str_input.clone(), self.position, "Malformed tag").into());
-                }
-              }
-
-              self.position.range.1 = self.position.index;
-              return Ok(tag);
-            }
-          }
-        }
-
-        let (idx, _) = self.read_char()?;
-
-        self.position.range.1 = idx;
-
-        Ok(Tag::DATA((None, self.read_identifier(idx)?)))
-      }
-      Ok(c) if is_digit(c.1) => {
-        let mt = self.read_number(c.0)?.1 as u8;
-
-        let (_, ch) = self.read_char()?;
-
-        if ch == '.' {
-          let (idx, _) = self.read_char()?;
-
-          let (_, t) = self.read_number(idx)?;
-
-          self.position.range.1 = self.position.index;
-
-          return Ok(Tag::MAJORTYPE((mt, Some(t))));
-        }
-
-        self.position.range.1 = self.position.index;
-
-        Ok(Tag::MAJORTYPE((mt, None)))
-      }
-      _ => Err((self.str_input.clone(), self.position, "Malformed tag").into()),
-    }
-  }
-
   fn read_range(&mut self, lower: Token) -> Result<(Position, Token)> {
     let token_position = self.position;
 
@@ -1202,7 +1139,10 @@ city = (
       (VALUE(Value::FLOAT(10.5)), "10.5"),
       (IDENT(("mytag".into(), None)), "mytag"),
       (ASSIGN, "="),
-      (TAG(Tag::DATA((Some(1234), "tstr".into()))), "#6.1234(tstr)"),
+      (TAG((Some(6), Some(1234))), "#6.1234"),
+      (LPAREN, "("),
+      (TSTR, "tstr"),
+      (RPAREN, ")"),
       (IDENT(("myfirstrule".into(), None)), "myfirstrule"),
       (ASSIGN, "="),
       (VALUE(Value::TEXT("myotherrule".into())), "\"myotherrule\""),

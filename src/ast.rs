@@ -334,6 +334,24 @@ impl fmt::Display for Type {
   }
 }
 
+impl Type {
+  /// Used to delineate between grpent with `Type` and group entry with group
+  /// name identifier `id`
+  pub fn groupname_entry(&self) -> Option<(Identifier, Option<GenericArg>)> {
+    if self.0.len() == 1 {
+      if let Some(t1) = self.0.first() {
+        if t1.operator.is_none() {
+          if let Type2::Typename((ident, ga)) = &t1.type2 {
+            return Some((ident.clone(), ga.clone()));
+          }
+        }
+      }
+    }
+
+    None
+  }
+}
+
 /// Type with optional range or control operator
 ///
 /// ```abnf
@@ -445,9 +463,9 @@ pub enum Type2 {
   ChoiceFromInlineGroup(Group),
   /// Enumeration expression over previously defined group
   ChoiceFromGroup((Identifier, Option<GenericArg>)),
-  /// Tagged data item
-  // TODO: replace `String` with `Type` per spec
-  TaggedData((Option<usize>, String)),
+  /// Tagged data item where the first element is an optional tag and the second
+  /// is the type of the tagged value
+  TaggedData((Option<usize>, Type)),
   /// Data item of a major type with optional data constraint
   TaggedDataMajorType((u8, Option<usize>)),
   /// Any data item
