@@ -1,5 +1,5 @@
 {
-  "name": "cddl",
+  "name": "@anweiss/cddl",
   "version": "0.4.0",
   "description": "Parser for the Concise data definition language (CDDL)",
   "main": "index.js",
@@ -7,9 +7,12 @@
     "build": "webpack --config webpack.config.prod.js",
     "start": "webpack-dev-server"
   },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com/"
+  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/anweiss/cddl.git"
+    "url": "git://github.com/anweiss/cddl.git"
   },
   "keywords": [
     "webassembly",

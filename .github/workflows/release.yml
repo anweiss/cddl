@@ -5,12 +5,12 @@ on:
       - '[0-9].[0-9]+.[0-9]+'
 
 jobs:
-  compilation-check:
+  build-test:
+    name: Build, test and publish binaries
     strategy:
       matrix:
         rust_toolchain: [stable]
         os: [ubuntu-latest, macOS-latest, windows-latest]
-    name: Compilation check
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
@@ -35,71 +35,6 @@ jobs:
           command: check
           args: --all --bins --examples --tests --no-default-features
 
-  test-suite:
-    strategy:
-      matrix:
-        rust_toolchain: [stable]
-        os: [ubuntu-latest, macOS-latest, windows-latest]
-    name: Test suite
-    needs: compilation-check
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v2
-
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.rust_toolchain }}
-          override: true
-
-      - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.os }}
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all
-
-  create-release:
-    name: Create GitHub release
-    runs-on: ubuntu-latest
-    needs: test-suite
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v2
-
-      - name: Create release
-        env:
-          GITHUB_TOKEN: ${{ secrets.AccessToken }}
-        run: |
-          mkdir -p $HOME/go/src $HOME/go/bin $HOME/go/pkg
-          export GOPATH="$HOME/go"
-          export GOBIN="$GOPATH/bin"
-          export PATH="$PATH:$GOBIN"
-          go get -u github.com/aktau/github-release
-          export TAG=`git describe --tags`
-          export DESCRIPTION="$(git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"%h %s")"
-          github-release release --user anweiss --repo cddl --tag $TAG --name $TAG --description "$DESCRIPTION" --draft
-
-  upload-binaries:
-    name: Upload binaries
-    strategy:
-      matrix:
-        rust_toolchain: [stable]
-        os: [ubuntu-latest, windows-latest, macOS-latest]
-    runs-on: ${{ matrix.os }}
-    needs: create-release
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v2
-
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.rust_toolchain }}
-          override: true
-
       - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.os }}
         uses: actions-rs/cargo@v1
         with:
@@ -112,7 +47,6 @@ jobs:
           cargo b --release --bin cddl
           cp target/release/cddl cddl-linux-amd64
           chmod +x cddl-linux-amd64
-          tar -czvf cddl-linux-amd64.tar.gz cddl-linux-amd64
 
       - name: Build CLI
         if: matrix.os == 'macOS-latest'
@@ -121,7 +55,6 @@ jobs:
           cargo b --release --bin cddl
           cp target/release/cddl cddl-darwin-amd64
           chmod +x cddl-darwin-amd64
-          zip cddl-darwin-amd64.zip cddl-darwin-amd64
 
       - name: Build CLI
         if: matrix.os == 'windows-latest'
@@ -129,72 +62,83 @@ jobs:
         run: |
           cargo b --release --bin cddl
           cp target\release\cddl.exe cddl-windows-amd64.exe
-          Compress-Archive -Path .\cddl-windows-amd64.exe -DestinationPath cddl-windows-amd64.zip
 
-      - name: Upload binary
-        if: matrix.os == 'windows-latest'
-        shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ secrets.AccessToken }}
-        run: |
-          $tag = $(git describe --tags)
-          mkdir -p $env:HOME\go\src
-          mkdir -p $env:HOME\go\bin
-          mkdir -p $env:HOME\go\pkg
-          $env:GOPATH = "D:\go"
-          $env:GOBIN = "$env:GOPATH\bin"
-          $env:PATH = "$env:PATH;$env:GOBIN"
-          go get -u github.com/aktau/github-release
-          github-release upload --user anweiss --repo cddl --tag $tag --name "cddl-windows-amd64.zip" --file cddl-windows-amd64.zip
-
-      - name: Upload binary
+      - name: Upload binary artifact
         if: matrix.os == 'ubuntu-latest'
-        env:
-          GITHUB_TOKEN: ${{ secrets.AccessToken }}
-        run: |
-          mkdir -p $HOME/go/src $HOME/go/bin $HOME/go/pkg
-          export GOPATH="$HOME/go"
-          export GOBIN="$GOPATH/bin"
-          export PATH="$PATH:$GOBIN"
-          go get -u github.com/aktau/github-release
-          github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-linux-amd64.tar.gz" --file cddl-linux-amd64.tar.gz
+        uses: actions/upload-artifact@v1
+        with:
+          name: cddl-linux-amd64
+          path: ./cddl-linux-amd64
 
-      - name: Upload binary
+      - name: Upload binary artifact
         if: matrix.os == 'macOS-latest'
-        env:
-          GITHUB_TOKEN: ${{ secrets.AccessToken }}
-        run: |
-          mkdir -p $HOME/go/src $HOME/go/bin $HOME/go/pkg
-          export GOPATH="$HOME/go"
-          export GOBIN="$GOPATH/bin"
-          export PATH="$PATH:$GOBIN"
-          go get -u github.com/aktau/github-release
-          github-release upload --user anweiss --repo cddl --tag `git describe --tags` --name "cddl-darwin-amd64.zip" --file cddl-darwin-amd64.zip
+        uses: actions/upload-artifact@v1
+        with:
+          name: cddl-darwin-amd64
+          path: ./cddl-darwin-amd64
+
+      - name: Upload binary artifact
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v1
+        with:
+          name: cddl-windows-amd64.exe
+          path: ./cddl-windows-amd64.exe
 
   publish-release:
-    name: Publish release
+    name: Create Release and Publish Binaries
+    needs: [build-test]
     runs-on: ubuntu-latest
-    needs: upload-binaries
     steps:
       - name: Checkout source
         uses: actions/checkout@v2
 
-      - name: Publish release
-        env:
-          GITHUB_TOKEN: ${{ secrets.AccessToken }}
+      - name: Get changelog
+        id: changelog
         run: |
-          mkdir -p $HOME/go/src $HOME/go/bin $HOME/go/pkg
-          export GOPATH="$HOME/go"
-          export GOBIN="$GOPATH/bin"
-          export PATH="$PATH:$GOBIN"
-          go get -u github.com/aktau/github-release
-          export DESCRIPTION="$(git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"%h %s")"
-          github-release edit --user anweiss --repo cddl --tag `git describe --tags` --description "$DESCRIPTION"
+          echo "::set-output name=body::$(git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"%h %s")"
+
+      - name: Download linux binary artifact
+        uses: actions/download-artifact@v1
+        with:
+          name: cddl-linux-amd64
+          path: ./cddl-linux-amd64
+
+      - name: Download windows binary artifact
+        uses: actions/download-artifact@v1
+        with:
+          name: cddl-windows-amd64.exe
+          path: ./cddl-windows-amd64.exe
+
+      - name: Download macOS binary artifact
+        uses: actions/download-artifact@v1
+        with:
+          name: cddl-darwin-amd64
+          path: ./cddl-darwin-amd64
+
+      - name: Prepare binaries for publishing
+        run: |
+          chmod +x cddl-darwin-amd64 cddl-linux-amd64
+          zip cddl-darwin-amd64.zip cddl-darwin-amd64
+          zip cddl-windows-amd64.zip cddl-windows-amd64.exe
+          tar -czvf cddl-linux-amd64.tar.gz cddl-linux-amd64
+          ls -a
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          body: ${{ steps.changelog.outputs.body }}
+          files: |
+            cddl-linux-amd64.tar.gz
+            cddl-windows-amd64.zip
+            cddl-darwin-amd64.zip
 
   publish-docker-image:
     name: Publish Docker image
-    runs-on: ubuntu-latest
     needs: publish-release
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout source
         uses: actions/checkout@v2
@@ -206,9 +150,9 @@ jobs:
 
       - name: Login to GPR
         env:
-          GPR_PAT: ${{ secrets.GPRPat }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          docker login docker.pkg.github.com -u anweiss -p $GPR_PAT
+          docker login docker.pkg.github.com -u anweiss -p $GITHUB_TOKEN
 
       - name: Push image
         run: |
@@ -217,6 +161,9 @@ jobs:
 
   publish-crate:
     name: Publish crate
+    strategy:
+      matrix:
+        rust_toolchain: [stable]
     runs-on: ubuntu-latest
     needs: publish-release
     steps:
@@ -242,13 +189,9 @@ jobs:
           command: publish
 
   publish-npm:
-    strategy:
-      matrix:
-        rust_toolchain: [stable]
-        os: [ubuntu-latest]
     name: Publish npm package
-    runs-on: ${{ matrix.os }}
     needs: publish-release
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout source
         uses: actions/checkout@v2
@@ -257,7 +200,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: ${{ matrix.rust_toolchain }}
+          toolchain: stable
           override: true
           target: wasm32-unknown-unknown
 
@@ -276,16 +219,16 @@ jobs:
 
       - name: Publish to GPR
         env:
-          NPM_TOKEN: ${{ secrets.GPRPat }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cp .npmrc pkg/
-          echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          echo "//npm.pkg.github.com/:_authToken=$GITHUB_TOKEN" > ~/.npmrc
           cd www
           npm publish --access=public
 
   publish-wasm:
     name: Publish wasm
-    needs: test-suite
+    needs: publish-release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
