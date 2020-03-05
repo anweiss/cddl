@@ -1,4 +1,4 @@
-name: Draft patch release
+name: Draft release
 on:
   push:
     branches:
