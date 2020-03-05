@@ -1,0 +1,212 @@
+name: Publish packages
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish-binaries:
+    name: Build and publish binaries
+    strategy:
+      matrix:
+        rust_toolchain: [stable]
+        os: [ubuntu-latest, macOS-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust_toolchain }}
+          override: true
+
+      - name: Build CLI
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo b --release --bin cddl
+          cp target/release/cddl cddl-linux-amd64
+          chmod +x cddl-linux-amd64
+          tar -czvf cddl-linux-amd64.tar.gz cddl-linux-amd64
+
+      - name: Build CLI
+        if: matrix.os == 'macOS-latest'
+        run: |
+          source $HOME/.cargo/env
+          cargo b --release --bin cddl
+          cp target/release/cddl cddl-darwin-amd64
+          chmod +x cddl-darwin-amd64
+          zip cddl-darwin-amd64.zip cddl-darwin-amd64
+
+      - name: Build CLI
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          cargo b --release --bin cddl
+          cp target\release\cddl.exe cddl-windows-amd64.exe
+          Compress-Archive -Path .\cddl-windows-amd64.exe -DestinationPath cddl-windows-amd64.zip
+
+      - name: Upload binary asset
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./cddl-linux-amd64.tar.gz
+          asset_name: cddl-linux-amd64.tar.gz
+          asset_content_type: application/zip
+
+      - name: Upload binary asset
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./cddl-windows-amd64.zip
+          asset_name: cddl-windows-amd64.zip
+          asset_content_type: application/zip
+
+      - name: Upload binary asset
+        if: matrix.os == 'macOS-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./cddl-darwin-amd64.zip
+          asset_name: cddl-darwin-amd64.zip
+          asset_content_type: application/zip
+
+  publish-docker:
+    name: Publish Docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+
+      - name: Build image
+        run: |
+          export TAG=`git describe --tags`
+          docker build -t docker.pkg.github.com/anweiss/cddl/cddl:$TAG .
+
+      - name: Login to GPR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker login docker.pkg.github.com -u anweiss -p $GITHUB_TOKEN
+
+      - name: Push image
+        run: |
+          export TAG=`git describe --tags`
+          docker push docker.pkg.github.com/anweiss/cddl/cddl:$TAG
+
+  publish-npm:
+    name: Publish npm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          target: wasm32-unknown-unknown
+
+      - name: Install node
+        uses: actions/setup-node@v1
+        with:
+          node-verison: '10.x'
+
+      - name: Install wasmpack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build wasm
+        run: |
+          wasm-pack build --target nodejs --scope anweiss --release
+
+      - name: Publish to GPR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp .npmrc pkg/
+          echo "//npm.pkg.github.com/:_authToken=$GITHUB_TOKEN" > ~/.npmrc
+          cd www
+          npm publish --access=public
+
+  publish-crate:
+    name: Publish crate
+    strategy:
+      matrix:
+        rust_toolchain: [stable]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust_toolchain }}
+          override: true
+
+      - name: Login to crates.io
+        uses: actions-rs/cargo@v1
+        with:
+          command: login
+          args: ${{ secrets.CratesIOToken }}
+
+      - name: Publish crate
+        uses: actions-rs/cargo@v1
+        with:
+          command: publish
+
+  publish-wasm:
+    name: Publish wasm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          target: wasm32-unknown-unknown
+
+      - name: Install wasmpack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install node
+        uses: actions/setup-node@v1
+        with:
+          node-verison: '10.x'
+
+      - name: Build wasm
+        run: |
+          wasm-pack build --release
+
+      - name: Build web
+        run: |
+          cd www
+          npm install
+          npm run build
+
+      - name: Deploy web
+        uses: JamesIves/github-pages-deploy-action@releases/v3
+        with:
+          ACCESS_TOKEN: ${{ secrets.AccessToken }}
+          BRANCH: gh-pages
+          FOLDER: www/dist
