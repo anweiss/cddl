@@ -371,94 +371,93 @@ impl<'a> Lexer<'a> {
   pub fn next_token(&mut self) -> Result<(Position, Token)> {
     self.skip_whitespace()?;
 
-    self.position.range.0 = self.position.index;
-    self.position.range.1 = self.position.index;
+    let token_offset = self.position.index;
 
     if let Ok(c) = self.read_char() {
       match c {
         (_, '=') => match self.peek_char() {
           Some(&c) if c.1 == '>' => {
             let _ = self.read_char()?;
-            self.position.range.1 = self.position.index;
+            self.position.range = (token_offset, self.position.index + 1);
             Ok((self.position, Token::ARROWMAP))
           }
           _ => {
-            self.position.range.1 = self.position.index;
+            self.position.range = (token_offset, self.position.index + 1);
             Ok((self.position, Token::ASSIGN))
           }
         },
         (_, '+') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::ONEORMORE))
         }
         (_, '?') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::OPTIONAL))
         }
         (_, '*') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::ASTERISK))
         }
         (_, '(') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::LPAREN))
         }
         (_, ')') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::RPAREN))
         }
         (_, '[') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::LBRACKET))
         }
         (_, ']') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::RBRACKET))
         }
         (_, '<') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::LANGLEBRACKET))
         }
         (idx, '"') => {
           let tv = self.read_text_value(idx)?;
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::VALUE(Value::TEXT(tv))))
         }
         (_, '{') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::LBRACE))
         }
         (_, '}') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::RBRACE))
         }
         (_, ',') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::COMMA))
         }
         (idx, ';') => {
           let comment = self.read_comment(idx)?;
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::COMMENT(comment)))
         }
         (_, ':') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::COLON))
         }
         (_, '^') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::CUT))
         }
         (_, '&') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::GTOCHOICE))
         }
         (_, '>') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::RANGLEBRACKET))
         }
         (_, '~') => {
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
           Ok((self.position, Token::UNWRAP))
         }
         (_, '/') => match self.peek_char() {
@@ -468,22 +467,22 @@ impl<'a> Lexer<'a> {
             match self.peek_char() {
               Some(&c) if c.1 == '=' => {
                 let _ = self.read_char()?;
-                self.position.range.1 = self.position.index;
+                self.position.range = (token_offset, self.position.index + 1);
                 Ok((self.position, Token::GCHOICEALT))
               }
               _ => {
-                self.position.range.1 = self.position.index;
+                self.position.range = (token_offset, self.position.index + 1);
                 Ok((self.position, Token::GCHOICE))
               }
             }
           }
           Some(&c) if c.1 == '=' => {
             let _ = self.read_char()?;
-            self.position.range.1 = self.position.index;
+            self.position.range = (token_offset, self.position.index + 1);
             Ok((self.position, Token::TCHOICEALT))
           }
           _ => {
-            self.position.range.1 = self.position.index;
+            self.position.range = (token_offset, self.position.index + 1);
             Ok((self.position, Token::TCHOICE))
           }
         },
@@ -495,7 +494,7 @@ impl<'a> Lexer<'a> {
             if c == '.' {
               let (idx, _) = self.read_char()?;
 
-              self.position.range.1 = self.position.index;
+              self.position.range = (token_offset, self.position.index + 1);
 
               return Ok((
                 self.position,
@@ -503,15 +502,20 @@ impl<'a> Lexer<'a> {
               ));
             }
 
+            self.position.range = (token_offset, self.position.index + 1);
+
             Ok((self.position, Token::TAG((Some(t as u8), None))))
           }
-          _ => Ok((self.position, Token::TAG((None, None)))),
+          _ => {
+            self.position.range = (token_offset, self.position.index + 1);
+            Ok((self.position, Token::TAG((None, None))))
+          }
         },
         (_, '\'') => {
           let (idx, _) = self.read_char()?;
 
           let bsv = self.read_byte_string(idx)?;
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
 
           Ok((
             self.position,
@@ -528,20 +532,20 @@ impl<'a> Lexer<'a> {
                 if c.1 == '.' {
                   let _ = self.read_char()?;
 
-                  self.position.range.1 = self.position.index;
+                  self.position.range = (token_offset, self.position.index + 1);
 
                   return Ok((self.position, Token::RANGEOP(false)));
                 }
               }
 
-              self.position.range.1 = self.position.index;
+              self.position.range = (token_offset, self.position.index + 1);
 
               return Ok((self.position, Token::RANGEOP(true)));
             } else if is_ealpha(c.1) {
               // Controlop
               let ctrlop =
                 token::lookup_control_from_str(&self.read_identifier(idx)?).ok_or_else(|| {
-                  self.position.range.1 = self.position.index + 1;
+                  self.position.range = (token_offset, self.position.index + 1);
 
                   LexerError::from((
                     self.str_input.clone(),
@@ -550,12 +554,12 @@ impl<'a> Lexer<'a> {
                   ))
                 })?;
 
-              self.position.range.1 = self.position.index;
+              self.position.range = (token_offset, self.position.index + 1);
               return Ok((self.position, ctrlop));
             }
           }
 
-          self.position.range.1 = idx;
+          self.position.range = (token_offset, self.position.index + 1);
           Err((self.str_input.clone(), self.position, "Invalid character").into())
         }
         (idx, ch) => {
@@ -572,7 +576,7 @@ impl<'a> Lexer<'a> {
                   return base16::decode(&b)
                     .map_err(|e| (self.str_input.clone(), self.position, e).into())
                     .and_then(|_| {
-                      self.position.range.1 = self.position.index;
+                      self.position.range = (token_offset, self.position.index + 1);
 
                       Ok((
                         self.position,
@@ -602,7 +606,7 @@ impl<'a> Lexer<'a> {
                           return base64::decode_config(&bs, base64::URL_SAFE)
                             .map_err(|e| (self.str_input.clone(), self.position, e).into())
                             .and_then(|_| {
-                              self.position.range.1 = self.position.index;
+                              self.position.range = (token_offset, self.position.index + 1);
 
                               Ok((
                                 self.position,
@@ -619,18 +623,18 @@ impl<'a> Lexer<'a> {
 
             let ident = token::lookup_ident(&self.read_identifier(idx)?);
 
-            self.position.range.1 = self.position.index;
+            self.position.range = (token_offset, self.position.index + 1);
 
             return Ok((self.position, ident));
           } else if is_digit(ch) || ch == '-' {
             let number = self.read_int_or_float(idx)?;
 
-            self.position.range.1 = self.position.index;
+            self.position.range = (token_offset, self.position.index + 1);
 
             return Ok((self.position, number));
           }
 
-          self.position.range.1 = self.position.index;
+          self.position.range = (token_offset, self.position.index + 1);
 
           Ok((
             self.position,
@@ -642,7 +646,7 @@ impl<'a> Lexer<'a> {
         }
       }
     } else {
-      self.position.range.1 = self.position.index;
+      self.position.range = (token_offset, self.position.index + 1);
       Ok((self.position, Token::EOF))
     }
   }

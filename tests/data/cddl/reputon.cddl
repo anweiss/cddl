@@ -1,4 +1,4 @@
-reputation-object = {
+reputation-object<t, v> = {
   reputation-context,
   reputon-list
 }

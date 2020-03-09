@@ -208,7 +208,7 @@ impl CDDL {
 
     for rule in self.rules.iter() {
       match rule {
-        Rule::Type(tr) if tr.name == *ident => {
+        Rule::Type(tr) if tr.name.ident == ident.ident => {
           for tc in tr.value.0.iter() {
             match &tc.type2 {
               Type2::IntValue(_) | Type2::UintValue(_) | Type2::FloatValue(_) => {
@@ -234,9 +234,9 @@ impl CDDL {
   // resolves to a text string data type (text | tstr)
   fn is_type_string_data_type(&self, t2: &Type2) -> bool {
     match t2 {
-      Type2::Typename((Identifier((ident, _)), _)) if *ident == "text" || *ident == "tstr" => true,
+      Type2::Typename((ident, _)) if ident.ident == "text" || ident.ident == "tstr" => true,
       Type2::Typename((ident, _)) => self.rules.iter().any(|r| match r {
-        Rule::Type(tr) if tr.name == *ident => tr
+        Rule::Type(tr) if tr.name.ident == ident.ident => tr
           .value
           .0
           .iter()
@@ -249,9 +249,9 @@ impl CDDL {
 
   fn is_type_numeric_data_type(&self, t2: &Type2) -> bool {
     match t2 {
-      Type2::Typename((Identifier((ident, _)), _)) if is_numeric_data_type(ident) => true,
+      Type2::Typename((ident, _)) if is_numeric_data_type(&ident.ident) => true,
       Type2::Typename((ident, _)) => self.rules.iter().any(|r| match r {
-        Rule::Type(tr) if tr.name == *ident => tr
+        Rule::Type(tr) if tr.name.ident == ident.ident => tr
           .value
           .0
           .iter()
@@ -271,7 +271,7 @@ impl CDDL {
 
         for r in self.rules.iter() {
           match r {
-            Rule::Type(tr) if tr.name == *ident => {
+            Rule::Type(tr) if tr.name.ident == ident.ident => {
               for tc in tr.value.0.iter() {
                 text_values.append(&mut self.text_values_from_type(&tc.type2)?);
               }
@@ -327,7 +327,7 @@ impl CDDL {
 
         for r in self.rules.iter() {
           match r {
-            Rule::Type(tr) if tr.name == *ident => {
+            Rule::Type(tr) if tr.name.ident == ident.ident => {
               for tc in tr.value.0.iter() {
                 numeric_values.append(&mut self.numeric_values_from_type(target, &tc.type2)?);
               }
@@ -348,14 +348,14 @@ impl CDDL {
     let mut numeric_type_idents = Vec::new();
 
     match t2 {
-      Type2::Typename((Identifier((ident, _)), _)) if is_numeric_data_type(ident) => {
-        numeric_type_idents.push(ident.clone());
+      Type2::Typename((ident, _)) if is_numeric_data_type(&ident.ident) => {
+        numeric_type_idents.push(ident.ident.clone());
         Ok(numeric_type_idents)
       }
       Type2::Typename((ident, _)) => {
         for r in self.rules.iter() {
           match r {
-            Rule::Type(tr) if tr.name == *ident => {
+            Rule::Type(tr) if tr.name.ident == ident.ident => {
               for tc in tr.value.0.iter() {
                 numeric_type_idents.append(&mut self.numerical_ident_from_type(&tc.type2)?);
               }

@@ -23,7 +23,7 @@ pub trait Node {
 /// cddl = S 1*(rule S)
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Default, Debug)]
+#[derive(Default, Debug, PartialEq)]
 pub struct CDDL {
   /// Zero or more production rules
   pub rules: Vec<Rule>,
@@ -61,7 +61,14 @@ impl Node for CDDL {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
-pub struct Identifier(pub (String, Option<SocketPlug>));
+pub struct Identifier {
+  /// Identifier
+  pub ident: String,
+  /// Optional socket
+  pub socket: Option<SocketPlug>,
+  /// Range
+  pub range: (usize, usize),
+}
 
 impl Node for Identifier {
   fn token_literal(&self) -> Option<String> {
@@ -71,36 +78,34 @@ impl Node for Identifier {
 
 impl fmt::Display for Identifier {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    if let Some(sp) = &(self.0).1 {
-      return write!(f, "{}{}", sp, (self.0).0);
+    if let Some(sp) = &self.socket {
+      return write!(f, "{}{}", sp, self.ident);
     }
 
-    write!(f, "{}", (self.0).0)
-  }
-}
-
-impl From<&(String, Option<SocketPlug>)> for Identifier {
-  fn from(ident: &(String, Option<SocketPlug>)) -> Self {
-    Identifier((*ident).clone())
-  }
-}
-
-impl From<(String, Option<SocketPlug>)> for Identifier {
-  fn from(ident: (String, Option<SocketPlug>)) -> Self {
-    Identifier(ident)
-  }
-}
-
-impl From<(&str, Option<SocketPlug>)> for Identifier {
-  fn from(ident: (&str, Option<SocketPlug>)) -> Self {
-    Identifier((ident.0.into(), ident.1))
+    write!(f, "{}", self.ident)
   }
 }
 
 impl From<&'static str> for Identifier {
   fn from(ident: &'static str) -> Self {
     // TODO: support socketplug
-    Identifier((ident.into(), None))
+    Identifier {
+      ident: ident.into(),
+      socket: None,
+      range: (0, 0),
+    }
+  }
+}
+
+/// Create `Identifier` from `Token::IDENT(ident)`
+pub fn identifier_from_ident_token(
+  ident: (String, Option<SocketPlug>),
+  range: (usize, usize),
+) -> Identifier {
+  Identifier {
+    ident: ident.0,
+    socket: ident.1,
+    range,
   }
 }
 
@@ -111,7 +116,7 @@ impl From<&'static str> for Identifier {
 ///     / groupname [genericparm] S assigng S grpent
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Rule {
   /// Type expression
   Type(TypeRule),
@@ -141,8 +146,8 @@ impl Rule {
   /// Returns the name id of a rule
   pub fn name(&self) -> String {
     match self {
-      Rule::Type(tr) => (tr.name.0).0.clone(),
-      Rule::Group(gr) => (gr.name.0).0.clone(),
+      Rule::Type(tr) => tr.name.ident.to_string(),
+      Rule::Group(gr) => gr.name.ident.to_string(),
     }
   }
 
@@ -170,7 +175,7 @@ impl Rule {
 /// typename [genericparm] S assignt S type
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct TypeRule {
   /// Type name identifier
   pub name: Identifier,
@@ -216,7 +221,7 @@ impl Node for TypeRule {
 /// groupname [genericparm] S assigng S grpent
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct GroupRule {
   /// Group name identifier
   pub name: Identifier,
@@ -262,13 +267,18 @@ impl Node for GroupRule {
 /// genericparm =  "<" S id S *("," S id S ) ">"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Default, Debug)]
-pub struct GenericParm(pub Vec<Identifier>);
+#[derive(Debug, Default, PartialEq)]
+pub struct GenericParm {
+  /// List of generic parameters
+  pub params: Vec<Identifier>,
+  /// Start and end range of generic parameters
+  pub range: (usize, usize),
+}
 
 impl fmt::Display for GenericParm {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut gp = String::from("<");
-    for (idx, parm) in self.0.iter().enumerate() {
+    for (idx, parm) in self.params.iter().enumerate() {
       if idx != 0 {
         gp.push_str(", ");
       }
@@ -288,7 +298,7 @@ impl fmt::Display for GenericParm {
 /// genericarg = "<" S type1 S *("," S type1 S )  ">"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GenericArg(pub Vec<Type1>);
 
 impl fmt::Display for GenericArg {
@@ -314,7 +324,7 @@ impl fmt::Display for GenericArg {
 /// type = type1 *(S "/" S  type1)
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Type(pub Vec<Type1>);
 
 impl fmt::Display for Type {
@@ -358,7 +368,7 @@ impl Type {
 /// type1 = type2 [S (rangeop / ctlop) S type2]
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Type1 {
   /// Type
   pub type2: Type2,
@@ -433,7 +443,7 @@ impl fmt::Display for RangeCtlOp {
 ///     / "#"                                 ; any
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Type2 {
   /// Integer value
   IntValue(isize),
@@ -549,7 +559,14 @@ impl From<&Value> for Type2 {
 impl From<RangeValue> for Type2 {
   fn from(rv: RangeValue) -> Self {
     match rv {
-      RangeValue::IDENT(ident) => Type2::Typename((Identifier((ident.0, ident.1)), None)),
+      RangeValue::IDENT(ident) => Type2::Typename((
+        Identifier {
+          ident: ident.0,
+          socket: ident.1,
+          range: (0, 0),
+        },
+        None,
+      )),
       RangeValue::INT(i) => Type2::IntValue(i),
       RangeValue::UINT(ui) => Type2::UintValue(ui),
       RangeValue::FLOAT(f) => Type2::FloatValue(f),
@@ -573,7 +590,7 @@ impl From<&ByteValue> for Type2 {
 /// group = grpchoice * (S "//" S grpchoice)
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Group(pub Vec<GroupChoice>);
 
 impl fmt::Display for Group {
@@ -601,7 +618,7 @@ impl fmt::Display for Group {
 ///
 /// If tuple is true, then entry is marked by a trailing comma
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GroupChoice(pub Vec<(GroupEntry, bool)>);
 
 impl fmt::Display for GroupChoice {
@@ -632,7 +649,7 @@ impl fmt::Display for GroupChoice {
 ///       / [occur S] "(" S group S ")"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum GroupEntry {
   /// Value group entry type
   ValueMemberKey(Box<ValueMemberKeyEntry>),
@@ -665,7 +682,7 @@ impl fmt::Display for GroupEntry {
 /// [occur S] [memberkey S] type
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ValueMemberKeyEntry {
   /// Optional occurrence indicator
   pub occur: Option<Occur>,
@@ -695,7 +712,7 @@ impl fmt::Display for ValueMemberKeyEntry {
 
 /// Group entry from a named type or group
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeGroupnameEntry {
   /// Optional occurrence indicator
   pub occur: Option<Occur>,
@@ -730,7 +747,7 @@ impl fmt::Display for TypeGroupnameEntry {
 ///           / value S ":"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MemberKey {
   /// Type expression. If second value in tuple is `true`, a cut is present
   Type1(Box<(Type1, bool)>),
@@ -763,7 +780,7 @@ impl fmt::Display for MemberKey {
 ///       / "?"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Occur {
   /// Occurrence indicator in the form n*m, where n is an optional lower limit
   /// and m is an optional upper limit
