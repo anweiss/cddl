@@ -39,7 +39,9 @@ fn verify_json_validation() -> Result<(), Error> {
 #[test]
 fn verify_ast_correctness() -> Result<(), Box<dyn std::error::Error>> {
   assert_eq!(
-    parser::cddl_from_str(&fs::read_to_string("tests/data/cddl/reputon.cddl")?)?,
+    parser::cddl_from_str(std::str::from_utf8(include_bytes!(
+      "data/cddl/reputon.cddl"
+    ))?)?,
     data::reputon()
   );
 
