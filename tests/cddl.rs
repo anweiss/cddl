@@ -6,6 +6,7 @@ use cddl::{
   parser::{self, ParserError},
   validation::{json::validate_json_from_str, Error},
 };
+use pretty_assertions::assert_eq;
 use std::fs;
 
 #[test]

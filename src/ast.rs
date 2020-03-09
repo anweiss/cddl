@@ -1,5 +1,5 @@
 use super::token::{ByteValue, RangeValue, SocketPlug, Value};
-use std::{fmt, ops::RangeInclusive};
+use std::fmt;
 
 #[cfg(target_arch = "wasm32")]
 use serde::Serialize;
@@ -97,6 +97,7 @@ impl From<&'static str> for Identifier {
   }
 }
 
+/// Create `Identifier` from `Token::IDENT(ident)`
 pub fn identifier_from_ident_token(
   ident: (String, Option<SocketPlug>),
   range: (usize, usize),

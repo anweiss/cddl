@@ -568,13 +568,13 @@ impl<'a> Parser<'a> {
             self.next_token()?;
 
             return Ok(Type2::Unwrap((
-              identifier_from_ident_token(ident.clone(), range),
+              identifier_from_ident_token(ident, range),
               Some(self.parse_genericarg()?),
             )));
           }
 
           return Ok(Type2::Unwrap((
-            identifier_from_ident_token(ident.clone(), range),
+            identifier_from_ident_token(ident, range),
             None,
           )));
         }
@@ -1366,10 +1366,10 @@ message<t, v> = {type: 2, value: v}"#;
         assert_eq!(
           e.to_string(),
           r#"error: Illegal token
- --> input:1:1
+ --> input:1:0
   |
 1 | <1, 2>
-  |  ^ Illegal token
+  | ^ Illegal token
   |"#
         );
 
