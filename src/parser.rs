@@ -144,6 +144,9 @@ impl<'a> Parser<'a> {
     let mut c = CDDL::default();
 
     while self.cur_token != Token::EOF {
+      while let Token::COMMENT(_) = self.cur_token {
+        self.next_token()?;
+      }
       let r = self.parse_rule()?;
 
       let rule_exists = |existing_rule: &&Rule| {
@@ -164,6 +167,9 @@ impl<'a> Parser<'a> {
       }
 
       c.rules.push(r);
+      while let Token::COMMENT(_) = self.cur_token {
+        self.next_token()?;
+      }
     }
 
     // TODO: implement second pass over parenthesized type rules whose contents
@@ -201,12 +207,14 @@ impl<'a> Parser<'a> {
           (
             self.l.str_input.clone(),
             self.parser_position,
-            format!("expected rule identifier. Got '{}'", self.cur_token),
+            format!("expected rule identifier. Got '{:#?}'", self.cur_token),
           )
             .into(),
         );
       }
     };
+
+    let ident_range = self.lexer_position.range;
 
     let gp = if self.peek_token_is(&Token::LANGLEBRACKET) {
       self.next_token()?;
@@ -259,34 +267,33 @@ impl<'a> Parser<'a> {
       // Check for an occurrence indicator if uint followed by an asterisk '*'
       Token::VALUE(Value::UINT(_)) => {
         if self.peek_token_is(&Token::ASTERISK) {
-          let end_range = self.lexer_position.range.1 + 1;
-
           let ge = self.parse_grpent()?;
 
+          let range = (begin_range, self.parser_position.range.1);
+
           Ok(Rule::Group(Box::from(GroupRule {
-            name: ident.into(),
+            name: identifier_from_ident_token(ident, ident_range),
             generic_param: gp,
             is_group_choice_alternate,
             entry: ge,
-            range: (begin_range, end_range),
+            range,
           })))
         } else {
-          let end_range = self.lexer_position.range.1 + 1;
-
           let t = self.parse_type(None)?;
-
+          let range = (begin_range, self.parser_position.range.1);
           Ok(Rule::Type(TypeRule {
-            name: ident.into(),
+            name: identifier_from_ident_token(ident, ident_range),
             generic_param: gp,
             is_type_choice_alternate,
             value: t,
-            range: (begin_range, end_range),
+            range,
           }))
         }
       }
       Token::LPAREN | Token::ASTERISK | Token::ONEORMORE | Token::OPTIONAL => {
-        let end_range = self.lexer_position.range.1 + 1;
         let ge = self.parse_grpent()?;
+
+        let mut end_range = self.parser_position.range.1;
 
         // If a group entry is an inline group with no leading occurrence
         // indicator, and its group has only a single element that is not
@@ -304,12 +311,16 @@ impl<'a> Parser<'a> {
                     // TODO: Replace with box pattern destructuring once supported in stable
                     if let GroupEntry::ValueMemberKey(vmke) = &ge.0 {
                       if vmke.occur.is_none() && vmke.member_key.is_none() {
+                        let value = self
+                          .parse_type(Some(Type2::ParenthesizedType(vmke.entry_type.clone())))?;
+
+                        end_range = self.parser_position.range.1;
+
                         return Ok(Rule::Type(TypeRule {
-                          name: ident.into(),
+                          name: identifier_from_ident_token(ident, ident_range),
                           generic_param: gp,
                           is_type_choice_alternate,
-                          value: self
-                            .parse_type(Some(Type2::ParenthesizedType(vmke.entry_type.clone())))?,
+                          value,
                           range: (begin_range, end_range),
                         }));
                       }
@@ -322,7 +333,7 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Rule::Group(Box::from(GroupRule {
-          name: ident.into(),
+          name: identifier_from_ident_token(ident, ident_range),
           generic_param: gp,
           is_group_choice_alternate,
           entry: ge,
@@ -330,38 +341,41 @@ impl<'a> Parser<'a> {
         })))
       }
       _ => {
-        let end_range = self.lexer_position.range.1 + 1;
-
         let t = self.parse_type(None)?;
 
+        let range = (begin_range, self.parser_position.range.1);
+
         Ok(Rule::Type(TypeRule {
-          name: ident.into(),
+          name: identifier_from_ident_token(ident, ident_range),
           generic_param: gp,
           is_type_choice_alternate,
           value: t,
-          range: (begin_range, end_range),
+          range,
         }))
       }
     }
   }
 
   fn parse_genericparm(&mut self) -> Result<GenericParm> {
+    let begin_range = self.lexer_position.range.0;
+
     if self.cur_token_is(Token::LANGLEBRACKET) {
       self.next_token()?;
     }
 
-    let mut generic_params = GenericParm(Vec::new());
-
-    let begin_range = self.lexer_position.range.0;
+    let mut generic_params = GenericParm::default();
 
     while !self.cur_token_is(Token::RANGLEBRACKET) {
       match &self.cur_token {
-        Token::IDENT(i) => {
-          generic_params.0.push(i.into());
+        Token::IDENT(ident) => {
+          generic_params.params.push(identifier_from_ident_token(
+            ident.clone(),
+            self.lexer_position.range,
+          ));
           self.next_token()?;
 
           if !self.cur_token_is(Token::COMMA) && !self.cur_token_is(Token::RANGLEBRACKET) {
-            self.parser_position.range = (begin_range, self.lexer_position.range.0 + 1);
+            self.parser_position.range = (begin_range, self.lexer_position.range.0);
             self.parser_position.line = self.lexer_position.line;
             return Err(
               (
@@ -376,7 +390,7 @@ impl<'a> Parser<'a> {
         Token::COMMA => self.next_token()?,
         Token::COMMENT(_) => self.next_token()?,
         _ => {
-          self.parser_position.range = (begin_range, self.lexer_position.range.0 + 1);
+          self.parser_position.range = (begin_range, self.lexer_position.range.0);
           self.parser_position.line = self.lexer_position.line;
           return Err(
             (
@@ -393,6 +407,12 @@ impl<'a> Parser<'a> {
     // Since generic params are only found after the identifier of a rule, don't
     // advance beyond the closing '>' to retain the expect_peek semantics for
     // '=', '/=' and '//='
+
+    let mut end_range = self.lexer_position.range.1;
+    if self.cur_token_is(Token::RANGLEBRACKET) {
+      end_range += 1;
+    }
+    generic_params.range = (begin_range, end_range);
 
     Ok(generic_params)
   }
@@ -418,6 +438,8 @@ impl<'a> Parser<'a> {
     if self.cur_token_is(Token::RANGLEBRACKET) {
       self.next_token()?;
     }
+
+    self.parser_position.range.1 = self.lexer_position.range.0;
 
     Ok(generic_args)
   }
@@ -486,15 +508,19 @@ impl<'a> Parser<'a> {
 
       // typename [genericarg]
       Token::IDENT(ident) => {
+        let range = (self.lexer_position.range.0, self.lexer_position.range.1);
         // optional genericarg detected
         if self.peek_token_is(&Token::LANGLEBRACKET) {
           return Ok(Type2::Typename((
-            ident.into(),
+            identifier_from_ident_token(ident.clone(), range),
             Some(self.parse_genericarg()?),
           )));
         }
 
-        Ok(Type2::Typename((ident.into(), None)))
+        Ok(Type2::Typename((
+          identifier_from_ident_token(ident.clone(), range),
+          None,
+        )))
       }
 
       // ( type )
@@ -537,16 +563,20 @@ impl<'a> Parser<'a> {
 
         if let Token::IDENT(ident) = &self.cur_token {
           let ident = ident.clone();
+          let range = (self.lexer_position.range.0, self.lexer_position.range.1);
           if self.peek_token_is(&Token::LANGLEBRACKET) {
             self.next_token()?;
 
             return Ok(Type2::Unwrap((
-              ident.into(),
+              identifier_from_ident_token(ident.clone(), range),
               Some(self.parse_genericarg()?),
             )));
           }
 
-          return Ok(Type2::Unwrap((ident.into(), None)));
+          return Ok(Type2::Unwrap((
+            identifier_from_ident_token(ident.clone(), range),
+            None,
+          )));
         }
 
         Err(
@@ -576,16 +606,20 @@ impl<'a> Parser<'a> {
           }
           Token::IDENT(ident) => {
             let ident = ident.clone();
+            let ident_range = self.lexer_position.range;
             if self.peek_token_is(&Token::LANGLEBRACKET) {
               self.next_token()?;
 
               return Ok(Type2::ChoiceFromGroup((
-                ident.into(),
+                identifier_from_ident_token(ident, ident_range),
                 Some(self.parse_genericarg()?),
               )));
             }
 
-            Ok(Type2::ChoiceFromGroup((ident.into(), None)))
+            Ok(Type2::ChoiceFromGroup((
+              identifier_from_ident_token(ident, ident_range),
+              None,
+            )))
           }
           _ => Err(
             (
@@ -650,7 +684,14 @@ impl<'a> Parser<'a> {
         }
 
         match self.cur_token.in_standard_prelude() {
-          Some(s) => Ok(Type2::Typename(((s, None).into(), None))),
+          Some(s) => Ok(Type2::Typename((
+            Identifier {
+              ident: s.into(),
+              socket: None,
+              range: self.lexer_position.range,
+            },
+            None,
+          ))),
           None => Err(
             (
               self.l.str_input.clone(),
@@ -665,6 +706,9 @@ impl<'a> Parser<'a> {
         }
       }
     };
+
+    self.parser_position.range.1 = self.lexer_position.range.1;
+
     self.next_token()?;
 
     t2
@@ -729,6 +773,7 @@ impl<'a> Parser<'a> {
         && !self.peek_token_is(&Token::ARROWMAP)
       {
         self.next_token()?;
+        self.parser_position.range.1 = self.lexer_position.range.1;
       }
 
       if self.cur_token_is(Token::COMMA) {
@@ -795,6 +840,7 @@ impl<'a> Parser<'a> {
       }
 
       while self.cur_token_is(Token::RPAREN) {
+        self.parser_position.range.1 = self.lexer_position.range.1;
         self.next_token()?;
       }
 
@@ -857,7 +903,10 @@ impl<'a> Parser<'a> {
       }
       Token::COLON => {
         let mk = match &self.cur_token {
-          Token::IDENT(ident) => Some(MemberKey::Bareword(ident.into())),
+          Token::IDENT(ident) => Some(MemberKey::Bareword(identifier_from_ident_token(
+            ident.clone(),
+            self.lexer_position.range,
+          ))),
           Token::VALUE(value) => Some(MemberKey::Value(value.clone())),
           _ => {
             return Err(
@@ -1063,30 +1112,56 @@ message<t, v> = {type: 2, value: v}"#;
 
     let expected_outputs = [
       Rule::Type(TypeRule {
-        name: Identifier(("myrule".into(), None)),
+        name: Identifier {
+          ident: "myrule".into(),
+          socket: None,
+          range: (0, 6),
+        },
         generic_param: None,
         is_type_choice_alternate: false,
         value: Type(vec![Type1 {
-          type2: Type2::Typename((Identifier(("secondrule".into(), None)), None)),
+          type2: Type2::Typename((
+            Identifier {
+              ident: "secondrule".into(),
+              socket: None,
+              range: (9, 19),
+            },
+            None,
+          )),
           operator: None,
         }]),
-        range: (0, 0),
+        range: (0, 19),
       }),
       Rule::Type(TypeRule {
-        name: Identifier(("myrange".into(), None)),
+        name: Identifier {
+          ident: "myrange".into(),
+          socket: None,
+          range: (20, 27),
+        },
         generic_param: None,
         is_type_choice_alternate: false,
         value: Type(vec![Type1 {
           type2: Type2::UintValue(10),
           operator: Some((
             RangeCtlOp::RangeOp(true),
-            Type2::Typename((Identifier(("upper".into(), None)), None)),
+            Type2::Typename((
+              Identifier {
+                ident: "upper".into(),
+                socket: None,
+                range: (34, 39),
+              },
+              None,
+            )),
           )),
         }]),
-        range: (0, 0),
+        range: (20, 39),
       }),
       Rule::Type(TypeRule {
-        name: Identifier(("upper".into(), None)),
+        name: Identifier {
+          ident: "upper".into(),
+          socket: None,
+          range: (40, 45),
+        },
         generic_param: None,
         is_type_choice_alternate: false,
         value: Type(vec![
@@ -1099,10 +1174,14 @@ message<t, v> = {type: 2, value: v}"#;
             operator: None,
           },
         ]),
-        range: (0, 0),
+        range: (40, 57),
       }),
       Rule::Group(Box::from(GroupRule {
-        name: Identifier(("gr".into(), None)),
+        name: Identifier {
+          ident: "gr".into(),
+          socket: None,
+          range: (58, 60),
+        },
         generic_param: None,
         is_group_choice_alternate: false,
         entry: GroupEntry::InlineGroup((
@@ -1110,21 +1189,33 @@ message<t, v> = {type: 2, value: v}"#;
           Group(vec![GroupChoice(vec![(
             GroupEntry::TypeGroupname(TypeGroupnameEntry {
               occur: None,
-              name: Identifier(("test".into(), None)),
+              name: Identifier {
+                ident: "test".into(),
+                socket: None,
+                range: (68, 72),
+              },
               generic_arg: None,
             }),
             false,
           )])]),
         )),
-        range: (0, 0),
+        range: (58, 74),
       })),
       Rule::Type(TypeRule {
-        name: Identifier(("messages".into(), None)),
+        name: Identifier {
+          ident: "messages".into(),
+          socket: None,
+          range: (75, 83),
+        },
         generic_param: None,
         is_type_choice_alternate: false,
         value: Type(vec![Type1 {
           type2: Type2::Typename((
-            Identifier(("message".into(), None)),
+            Identifier {
+              ident: "message".into(),
+              socket: None,
+              range: (86, 93),
+            },
             Some(GenericArg(vec![
               Type1 {
                 type2: Type2::TextValue("reboot".into()),
@@ -1138,21 +1229,40 @@ message<t, v> = {type: 2, value: v}"#;
           )),
           operator: None,
         }]),
-        range: (0, 0),
+        range: (75, 111),
       }),
       Rule::Type(TypeRule {
-        name: Identifier(("message".into(), None)),
-        generic_param: Some(GenericParm(vec![
-          Identifier(("t".into(), None)),
-          Identifier(("v".into(), None)),
-        ])),
+        name: Identifier {
+          ident: "message".into(),
+          socket: None,
+          range: (111, 118),
+        },
+        generic_param: Some(GenericParm {
+          params: vec![
+            Identifier {
+              ident: "t".into(),
+              socket: None,
+              range: (119, 120),
+            },
+            Identifier {
+              ident: "v".into(),
+              socket: None,
+              range: (122, 123),
+            },
+          ],
+          range: (118, 125),
+        }),
         is_type_choice_alternate: false,
         value: Type(vec![Type1 {
           type2: Type2::Map(Group(vec![GroupChoice(vec![
             (
               GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
                 occur: None,
-                member_key: Some(MemberKey::Bareword(Identifier(("type".into(), None)))),
+                member_key: Some(MemberKey::Bareword(Identifier {
+                  ident: "type".into(),
+                  socket: None,
+                  range: (128, 132),
+                })),
                 entry_type: Type(vec![Type1 {
                   type2: Type2::UintValue(2),
                   operator: None,
@@ -1163,9 +1273,20 @@ message<t, v> = {type: 2, value: v}"#;
             (
               GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
                 occur: None,
-                member_key: Some(MemberKey::Bareword(Identifier(("value".into(), None)))),
+                member_key: Some(MemberKey::Bareword(Identifier {
+                  ident: "value".into(),
+                  socket: None,
+                  range: (137, 142),
+                })),
                 entry_type: Type(vec![Type1 {
-                  type2: Type2::Typename((Identifier(("v".into(), None)), None)),
+                  type2: Type2::Typename((
+                    Identifier {
+                      ident: "v".into(),
+                      socket: None,
+                      range: (144, 145),
+                    },
+                    None,
+                  )),
                   operator: None,
                 }]),
               })),
@@ -1174,16 +1295,17 @@ message<t, v> = {type: 2, value: v}"#;
           ])])),
           operator: None,
         }]),
-        range: (0, 0),
+        range: (111, 146),
       }),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      assert_eq!(cddl.rules[idx].to_string(), expected_output.to_string());
+      assert_eq!(cddl.rules[idx], *expected_output);
     }
 
     Ok(())
   }
+
   #[test]
   fn verify_rule_diagnostic() -> Result<()> {
     let input = r#"a = 1234
@@ -1220,12 +1342,12 @@ message<t, v> = {type: 2, value: v}"#;
     let gps = p.parse_genericparm()?;
     check_parser_errors(&p)?;
 
-    assert!(gps.0.len() == 2);
+    assert!(gps.params.len() == 2);
 
     let expected_generic_params = ["t", "v"];
 
     for (idx, expected_generic_param) in expected_generic_params.iter().enumerate() {
-      assert_eq!(&gps.0[idx].to_string(), expected_generic_param);
+      assert_eq!(&gps.params[idx].to_string(), expected_generic_param);
     }
 
     Ok(())
@@ -1323,27 +1445,69 @@ message<t, v> = {type: 2, value: v}"#;
         operator: Some((RangeCtlOp::RangeOp(true), Type2::FloatValue(4.5))),
       },
       Type1 {
-        type2: Type2::Typename((Identifier(("my..lower".into(), None)), None)),
+        type2: Type2::Typename((
+          Identifier {
+            ident: "my..lower".into(),
+            socket: None,
+            range: (0, 9),
+          },
+          None,
+        )),
         operator: Some((
           RangeCtlOp::RangeOp(false),
-          Type2::Typename((Identifier(("upper".into(), None)), None)),
+          Type2::Typename((
+            Identifier {
+              ident: "upper".into(),
+              socket: None,
+              range: (14, 19),
+            },
+            None,
+          )),
         )),
       },
       Type1 {
-        type2: Type2::Typename((Identifier(("target".into(), None)), None)),
+        type2: Type2::Typename((
+          Identifier {
+            ident: "target".into(),
+            socket: None,
+            range: (0, 6),
+          },
+          None,
+        )),
         operator: Some((
           RangeCtlOp::CtlOp(".lt"),
-          Type2::Typename((Identifier(("controller".into(), None)), None)),
+          Type2::Typename((
+            Identifier {
+              ident: "controller".into(),
+              socket: None,
+              range: (11, 21),
+            },
+            None,
+          )),
         )),
       },
       Type1 {
         type2: Type2::ParenthesizedType(Type(vec![
           Type1 {
-            type2: Type2::Typename((Identifier(("text".into(), None)), None)),
+            type2: Type2::Typename((
+              Identifier {
+                ident: "text".into(),
+                socket: None,
+                range: (2, 6),
+              },
+              None,
+            )),
             operator: None,
           },
           Type1 {
-            type2: Type2::Typename((Identifier(("tstr".into(), None)), None)),
+            type2: Type2::Typename((
+              Identifier {
+                ident: "tstr".into(),
+                socket: None,
+                range: (9, 13),
+              },
+              None,
+            )),
             operator: None,
           },
         ])),
@@ -1384,7 +1548,11 @@ message<t, v> = {type: 2, value: v}"#;
     let expected_outputs = [
       Type2::TextValue("myvalue".into()),
       Type2::Typename((
-        Identifier(("message".into(), None)),
+        Identifier {
+          ident: "message".into(),
+          socket: None,
+          range: (0, 7),
+        },
         Some(GenericArg(vec![
           Type1 {
             type2: Type2::TextValue("reboot".into()),
@@ -1397,10 +1565,21 @@ message<t, v> = {type: 2, value: v}"#;
         ])),
       )),
       Type2::Typename((
-        Identifier(("tcp-option".into(), Some(SocketPlug::GROUP))),
+        Identifier {
+          ident: "tcp-option".into(),
+          socket: Some(SocketPlug::GROUP),
+          range: (0, 12),
+        },
         None,
       )),
-      Type2::Unwrap((Identifier(("group1".into(), None)), None)),
+      Type2::Unwrap((
+        Identifier {
+          ident: "group1".into(),
+          socket: None,
+          range: (1, 7),
+        },
+        None,
+      )),
       Type2::TaggedData((
         Some(997),
         Type(vec![Type1 {
@@ -1413,7 +1592,11 @@ message<t, v> = {type: 2, value: v}"#;
       Type2::Array(Group(vec![GroupChoice(vec![(
         GroupEntry::TypeGroupname(TypeGroupnameEntry {
           occur: Some(Occur::Exact((None, Some(3)))),
-          name: Identifier(("reputon".into(), None)),
+          name: Identifier {
+            ident: "reputon".into(),
+            socket: None,
+            range: (4, 11),
+          },
           generic_arg: None,
         }),
         false,
@@ -1421,16 +1604,31 @@ message<t, v> = {type: 2, value: v}"#;
       Type2::Array(Group(vec![GroupChoice(vec![(
         GroupEntry::TypeGroupname(TypeGroupnameEntry {
           occur: Some(Occur::OneOrMore),
-          name: Identifier(("reputon".into(), None)),
+          name: Identifier {
+            ident: "reputon".into(),
+            socket: None,
+            range: (3, 10),
+          },
           generic_arg: None,
         }),
         false,
       )])])),
-      Type2::ChoiceFromGroup((Identifier(("groupname".into(), None)), None)),
+      Type2::ChoiceFromGroup((
+        Identifier {
+          ident: "groupname".into(),
+          socket: None,
+          range: (1, 9),
+        },
+        None,
+      )),
       Type2::ChoiceFromInlineGroup(Group(vec![GroupChoice(vec![(
         GroupEntry::TypeGroupname(TypeGroupnameEntry {
           occur: None,
-          name: Identifier(("inlinegroup".into(), None)),
+          name: Identifier {
+            ident: "inlinegroup".into(),
+            socket: None,
+            range: (3, 14),
+          },
           generic_arg: None,
         }),
         false,
@@ -1446,7 +1644,14 @@ message<t, v> = {type: 2, value: v}"#;
             true,
           )))),
           entry_type: Type(vec![Type1 {
-            type2: Type2::Typename((Identifier(("int".into(), None)), None)),
+            type2: Type2::Typename((
+              Identifier {
+                ident: "int".into(),
+                socket: None,
+                range: (24, 27),
+              },
+              None,
+            )),
             operator: None,
           }]),
         })),
@@ -1485,7 +1690,11 @@ message<t, v> = {type: 2, value: v}"#;
               type2: Type2::Array(Group(vec![GroupChoice(vec![(
                 GroupEntry::TypeGroupname(TypeGroupnameEntry {
                   occur: Some(Occur::ZeroOrMore),
-                  name: Identifier(("file-entry".into(), None)),
+                  name: Identifier {
+                    ident: "file-entry".into(),
+                    socket: None,
+                    range: (5, 15),
+                  },
                   generic_arg: None,
                 }),
                 false,
@@ -1503,7 +1712,11 @@ message<t, v> = {type: 2, value: v}"#;
               type2: Type2::Array(Group(vec![GroupChoice(vec![(
                 GroupEntry::TypeGroupname(TypeGroupnameEntry {
                   occur: Some(Occur::ZeroOrMore),
-                  name: Identifier(("directory-entry".into(), None)),
+                  name: Identifier {
+                    ident: "directory-entry".into(),
+                    socket: None,
+                    range: (21, 36),
+                  },
                   generic_arg: None,
                 }),
                 false,
@@ -1519,7 +1732,11 @@ message<t, v> = {type: 2, value: v}"#;
           (
             GroupEntry::TypeGroupname(TypeGroupnameEntry {
               occur: None,
-              name: Identifier(("int".into(), None)),
+              name: Identifier {
+                ident: "int".into(),
+                socket: None,
+                range: (2, 5),
+              },
               generic_arg: None,
             }),
             true,
@@ -1527,7 +1744,11 @@ message<t, v> = {type: 2, value: v}"#;
           (
             GroupEntry::TypeGroupname(TypeGroupnameEntry {
               occur: None,
-              name: Identifier(("int".into(), None)),
+              name: Identifier {
+                ident: "int".into(),
+                socket: None,
+                range: (7, 10),
+              },
               generic_arg: None,
             }),
             false,
@@ -1537,7 +1758,11 @@ message<t, v> = {type: 2, value: v}"#;
           (
             GroupEntry::TypeGroupname(TypeGroupnameEntry {
               occur: None,
-              name: Identifier(("int".into(), None)),
+              name: Identifier {
+                ident: "int".into(),
+                socket: None,
+                range: (14, 17),
+              },
               generic_arg: None,
             }),
             true,
@@ -1545,7 +1770,11 @@ message<t, v> = {type: 2, value: v}"#;
           (
             GroupEntry::TypeGroupname(TypeGroupnameEntry {
               occur: None,
-              name: Identifier(("tstr".into(), None)),
+              name: Identifier {
+                ident: "tstr".into(),
+                socket: None,
+                range: (19, 23),
+              },
               generic_arg: None,
             }),
             false,
@@ -1556,7 +1785,11 @@ message<t, v> = {type: 2, value: v}"#;
         (
           GroupEntry::TypeGroupname(TypeGroupnameEntry {
             occur: None,
-            name: Identifier(("int".into(), None)),
+            name: Identifier {
+              ident: "int".into(),
+              socket: None,
+              range: (2, 5),
+            },
             generic_arg: None,
           }),
           true,
@@ -1564,7 +1797,11 @@ message<t, v> = {type: 2, value: v}"#;
         (
           GroupEntry::TypeGroupname(TypeGroupnameEntry {
             occur: None,
-            name: Identifier(("int".into(), None)),
+            name: Identifier {
+              ident: "int".into(),
+              socket: None,
+              range: (7, 10),
+            },
             generic_arg: None,
           }),
           true,
@@ -1572,7 +1809,11 @@ message<t, v> = {type: 2, value: v}"#;
         (
           GroupEntry::TypeGroupname(TypeGroupnameEntry {
             occur: None,
-            name: Identifier(("int".into(), None)),
+            name: Identifier {
+              ident: "int".into(),
+              socket: None,
+              range: (12, 15),
+            },
             generic_arg: None,
           }),
           true,
@@ -1580,7 +1821,11 @@ message<t, v> = {type: 2, value: v}"#;
         (
           GroupEntry::TypeGroupname(TypeGroupnameEntry {
             occur: None,
-            name: Identifier(("tstr".into(), None)),
+            name: Identifier {
+              ident: "tstr".into(),
+              socket: None,
+              range: (17, 21),
+            },
             generic_arg: None,
           }),
           false,
@@ -1616,7 +1861,14 @@ message<t, v> = {type: 2, value: v}"#;
         occur: Some(Occur::ZeroOrMore),
         member_key: Some(MemberKey::Type1(Box::from((
           Type1 {
-            type2: Type2::Typename((Identifier(("type1".into(), None)), None)),
+            type2: Type2::Typename((
+              Identifier {
+                ident: "type1".into(),
+                socket: None,
+                range: (2, 7),
+              },
+              None,
+            )),
             operator: None,
           },
           true,
@@ -1628,9 +1880,20 @@ message<t, v> = {type: 2, value: v}"#;
       })),
       GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
         occur: None,
-        member_key: Some(MemberKey::Bareword(Identifier(("type1".into(), None)))),
+        member_key: Some(MemberKey::Bareword(Identifier {
+          ident: "type1".into(),
+          socket: None,
+          range: (0, 5),
+        })),
         entry_type: Type(vec![Type1 {
-          type2: Type2::Typename((Identifier(("type2".into(), None)), None)),
+          type2: Type2::Typename((
+            Identifier {
+              ident: "type2".into(),
+              socket: None,
+              range: (7, 12),
+            },
+            None,
+          )),
           operator: None,
         }]),
       })),
@@ -1638,7 +1901,14 @@ message<t, v> = {type: 2, value: v}"#;
         occur: None,
         member_key: None,
         entry_type: Type(vec![Type1 {
-          type2: Type2::Typename((Identifier(("typename".into(), None)), None)),
+          type2: Type2::Typename((
+            Identifier {
+              ident: "typename".into(),
+              socket: None,
+              range: (0, 8),
+            },
+            None,
+          )),
           operator: None,
         }]),
       })),
@@ -1646,7 +1916,14 @@ message<t, v> = {type: 2, value: v}"#;
         occur: Some(Occur::Optional),
         member_key: Some(MemberKey::Value(Value::INT(0))),
         entry_type: Type(vec![Type1 {
-          type2: Type2::Typename((Identifier(("addrdistr".into(), None)), None)),
+          type2: Type2::Typename((
+            Identifier {
+              ident: "addrdistr".into(),
+              socket: None,
+              range: (5, 14),
+            },
+            None,
+          )),
           operator: None,
         }]),
       })),
@@ -1693,7 +1970,14 @@ message<t, v> = {type: 2, value: v}"#;
     let expected_outputs = [
       MemberKey::Type1(Box::from((
         Type1 {
-          type2: Type2::Typename((Identifier(("type1".into(), None)), None)),
+          type2: Type2::Typename((
+            Identifier {
+              ident: "type1".into(),
+              socket: None,
+              range: (0, 5),
+            },
+            None,
+          )),
           operator: None,
         },
         false,
@@ -1705,8 +1989,16 @@ message<t, v> = {type: 2, value: v}"#;
         },
         true,
       ))),
-      MemberKey::Bareword(Identifier(("mybareword".into(), None))),
-      MemberKey::Bareword(Identifier(("my..bareword".into(), None))),
+      MemberKey::Bareword(Identifier {
+        ident: "mybareword".into(),
+        socket: None,
+        range: (0, 10),
+      }),
+      MemberKey::Bareword(Identifier {
+        ident: "my..bareword".into(),
+        socket: None,
+        range: (0, 12),
+      }),
       MemberKey::Value(Value::TEXT("myvalue".into())),
       MemberKey::Value(Value::INT(0)),
     ];

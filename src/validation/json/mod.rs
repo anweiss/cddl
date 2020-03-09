@@ -97,10 +97,10 @@ impl Validator<Value> for CDDL {
   ) -> Result {
     for rule in self.rules.iter() {
       match rule {
-        Rule::Type(tr) if tr.name == *ident => {
+        Rule::Type(tr) if tr.name.ident == ident.ident => {
           return self.validate_type_rule(&tr, expected_memberkey, actual_memberkey, occur, value)
         }
-        Rule::Group(gr) if gr.name == *ident => {
+        Rule::Group(gr) if gr.name.ident == ident.ident => {
           return self.validate_group_rule(&gr, is_enumeration, occur, value)
         }
         _ => continue,
@@ -109,7 +109,7 @@ impl Validator<Value> for CDDL {
 
     Err(Error::Syntax(format!(
       "No rule with name \"{}\" defined",
-      (ident.0).0
+      ident.ident
     )))
   }
 
@@ -751,12 +751,12 @@ impl Validator<Value> for CDDL {
         ),
       },
       // If type name identifier is 'any'
-      Type2::Typename((Identifier((ident, _)), _)) if *ident == "any" => Ok(()),
+      Type2::Typename((ident, _)) if ident.ident == "any" => Ok(()),
       // TODO: evaluate genericarg
       Type2::Typename((tn, _)) => match value {
-        Value::Null => expect_null(&(tn.0).0),
-        Value::Bool(_) => self.expect_bool(&(tn.0).0, value),
-        Value::String(s) => match (tn.0).0.as_ref() {
+        Value::Null => expect_null(&tn.ident),
+        Value::Bool(_) => self.expect_bool(&tn.ident, value),
+        Value::String(s) => match tn.ident.as_ref() {
           "tstr" | "text" => Ok(()),
           "tdate" => validate_tdate(s),
           #[cfg(feature = "nightly")]
@@ -768,11 +768,11 @@ impl Validator<Value> for CDDL {
             Ok(())
           }
           _ => {
-            if is_type_json_prelude(&(tn.0).0) {
+            if is_type_json_prelude(&tn.ident) {
               return Err(
                 JSONError {
                   expected_memberkey,
-                  expected_value: (tn.0).0.to_string(),
+                  expected_value: tn.ident.to_string(),
                   actual_memberkey,
                   actual_value: value.clone(),
                 }
@@ -791,7 +791,7 @@ impl Validator<Value> for CDDL {
           }
         },
         Value::Number(_) => {
-          self.validate_numeric_data_type(expected_memberkey, actual_memberkey, &(tn.0).0, value)
+          self.validate_numeric_data_type(expected_memberkey, actual_memberkey, &tn.ident, value)
         }
         Value::Object(_) => self.validate_rule_for_ident(
           tn,
@@ -915,7 +915,7 @@ impl Validator<Value> for CDDL {
     let wildcard_entry = gc.0.iter().find_map(|ge| match &ge.0 {
       GroupEntry::ValueMemberKey(vmke) => match &vmke.member_key {
         Some(MemberKey::Type1(t1)) if !t1.1 => match &t1.0.type2 {
-          Type2::Typename((Identifier((s, None)), None)) if s == "tstr" => Some(&vmke.entry_type),
+          Type2::Typename((ident, None)) if ident.ident == "tstr" => Some(&vmke.entry_type),
           _ => None,
         },
         _ => None,
@@ -1086,7 +1086,7 @@ impl Validator<Value> for CDDL {
               },
 
               // CDDL { * tstr => any } validates { "otherkey1": "anyvalue", "otherkey2": true }
-              Type2::Typename((ident, _)) if (ident.0).0 == "tstr" || (ident.0).0 == "text" => {
+              Type2::Typename((ident, _)) if ident.ident == "tstr" || ident.ident == "text" => {
                 Ok(())
               }
               _ => Err(Error::Syntax(
@@ -1094,14 +1094,14 @@ impl Validator<Value> for CDDL {
                   .to_string(),
               )),
             },
-            MemberKey::Bareword(ident) => match value {
+            MemberKey::Bareword(identifer) => match value {
               Value::Object(om) => {
                 if !is_type_json_prelude(&vmke.entry_type.to_string()) {
-                  if let Some(v) = om.get(&(ident.0).0) {
+                  if let Some(v) = om.get(&identifer.ident) {
                     return self.validate_type(
                       &vmke.entry_type,
                       Some(mk.to_string()),
-                      Some(((ident.0).0).to_string()),
+                      Some((identifer.ident).to_string()),
                       vmke.occur.as_ref(),
                       v,
                     );
@@ -1116,11 +1116,11 @@ impl Validator<Value> for CDDL {
                   );
                 }
 
-                match om.get(&(ident.0).0) {
+                match om.get(&identifer.ident) {
                   Some(v) => self.validate_type(
                     &vmke.entry_type,
                     Some(mk.to_string()),
-                    Some(((ident.0).0).to_string()),
+                    Some(identifer.ident.to_string()),
                     vmke.occur.as_ref(),
                     v,
                   ),

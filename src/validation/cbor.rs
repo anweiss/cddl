@@ -85,10 +85,10 @@ impl Validator<Value> for CDDL {
   ) -> Result {
     for rule in self.rules.iter() {
       match rule {
-        Rule::Type(tr) if tr.name == *ident => {
+        Rule::Type(tr) if tr.name.ident == ident.ident => {
           return self.validate_type_rule(&tr, expected_memberkey, actual_memberkey, occur, value)
         }
-        Rule::Group(gr) if gr.name == *ident => {
+        Rule::Group(gr) if gr.name.ident == ident.ident => {
           return self.validate_group_rule(&gr, is_enumeration, occur, value)
         }
         _ => continue,
@@ -97,7 +97,7 @@ impl Validator<Value> for CDDL {
 
     Err(Error::Syntax(format!(
       "No rule with name {} defined\n",
-      (ident.0).0
+      ident.ident,
     )))
   }
 
@@ -280,17 +280,17 @@ impl Validator<Value> for CDDL {
       },
       // TODO: evaluate genericarg
       Type2::Typename((tn, _)) => match value {
-        Value::Null => expect_null(&(tn.0).0),
-        Value::Bool(_) => self.expect_bool(&(tn.0).0, value),
+        Value::Null => expect_null(&tn.ident),
+        Value::Bool(_) => self.expect_bool(&tn.ident, value),
         Value::Text(_) => {
-          if (tn.0).0 == "tstr" || (tn.0).0 == "text" {
+          if tn.ident == "tstr" || tn.ident == "text" {
             Ok(())
-          } else if is_type_prelude(&(tn.0).0) {
+          } else if is_type_prelude(&tn.ident) {
             // Expecting non-text type but got text
             Err(
               CBORError {
                 expected_memberkey,
-                expected_value: (tn.0).0.to_string(),
+                expected_value: tn.ident.to_string(),
                 actual_memberkey,
                 actual_value: value.clone(),
               }
@@ -308,7 +308,7 @@ impl Validator<Value> for CDDL {
           }
         }
         Value::Integer(_) | Value::Float(_) => {
-          self.validate_numeric_data_type(expected_memberkey, actual_memberkey, &(tn.0).0, value)
+          self.validate_numeric_data_type(expected_memberkey, actual_memberkey, &tn.ident, value)
         }
         Value::Map(_) => self.validate_rule_for_ident(
           tn,
@@ -327,14 +327,14 @@ impl Validator<Value> for CDDL {
           value,
         ),
         Value::Bytes(_) => {
-          if (tn.0).0 == "bstr" || (tn.0).0 == "bytes" {
+          if tn.ident == "bstr" || tn.ident == "bytes" {
             Ok(())
-          } else if is_type_prelude(&(tn.0).0) {
+          } else if is_type_prelude(&tn.ident) {
             // Expecting non-bytes type but got bytes
             Err(
               CBORError {
                 expected_memberkey,
-                expected_value: (tn.0).0.to_string(),
+                expected_value: tn.ident.to_string(),
                 actual_memberkey,
                 actual_value: value.clone(),
               }
@@ -458,7 +458,7 @@ impl Validator<Value> for CDDL {
 
           if let GroupEntry::TypeGroupname(tge) = &ge.0 {
             if self.rules.iter().any(|r| match r {
-              Rule::Type(tr) if tr.name == tge.name => true,
+              Rule::Type(tr) if tr.name.ident == tge.name.ident => true,
               _ => false,
             }) && values.iter().all(validate_all_entries)
             {
@@ -587,7 +587,7 @@ impl Validator<Value> for CDDL {
                 _ => self.validate_type(&vmke.entry_type, Some(mk.to_string()), None, occur, value),
               },
               // CDDL { * tstr => any } validates { "otherkey1": "anyvalue", "otherkey2": true }
-              Type2::Typename((ident, _)) if (ident.0).0 == "tstr" || (ident.0).0 == "text" => {
+              Type2::Typename((ident, _)) if ident.ident == "tstr" || ident.ident == "text" => {
                 Ok(())
               }
               _ => Err(Error::Syntax(
@@ -598,11 +598,11 @@ impl Validator<Value> for CDDL {
             MemberKey::Bareword(ident) => match value {
               Value::Map(om) => {
                 if !is_type_prelude(&vmke.entry_type.to_string()) {
-                  if let Some(v) = om.get(&Value::Text((ident.0).0.to_string())) {
+                  if let Some(v) = om.get(&Value::Text(ident.ident.to_string())) {
                     return self.validate_type(
                       &vmke.entry_type,
                       Some(mk.to_string()),
-                      Some(((ident.0).0).to_string()),
+                      Some(ident.ident.to_string()),
                       vmke.occur.as_ref(),
                       v,
                     );
@@ -617,11 +617,11 @@ impl Validator<Value> for CDDL {
                   );
                 }
 
-                match om.get(&Value::Text((ident.0).0.to_string())) {
+                match om.get(&Value::Text(ident.ident.to_string())) {
                   Some(v) => self.validate_type(
                     &vmke.entry_type,
                     Some(mk.to_string()),
-                    Some(((ident.0).0).to_string()),
+                    Some(ident.ident.to_string()),
                     vmke.occur.as_ref(),
                     v,
                   ),
