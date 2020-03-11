@@ -176,7 +176,6 @@ impl<'a> Parser<'a> {
             self.parser_position.range = (r.span().0, r.span().1);
             self.parser_position.line = r.span().2;
 
-            println!("rule position {:?}", self.parser_position);
             self.errors.push(ParserError {
               position: self.parser_position,
               message: format!("Rule with name '{}' already defined", r.name()),
@@ -1124,7 +1123,9 @@ message<t, v> = {type: 2, value: v}"#;
     let mut p = Parser::new(l)?;
 
     let cddl = p.parse_cddl()?;
+
     if let Some(e) = p.print_errors() {
+      #[cfg(std)]
       println!("{}", e);
 
       return Err(Error::PARSER);

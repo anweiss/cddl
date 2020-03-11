@@ -69,7 +69,28 @@ impl fmt::Display for Identifier {
 
 impl From<&'static str> for Identifier {
   fn from(ident: &'static str) -> Self {
-    // TODO: support socketplug
+    let mut socket = ident.chars().take(2);
+
+    if let Some(c) = socket.next() {
+      if c == '$' {
+        if let Some(c) = socket.next() {
+          if c == '$' {
+            return Identifier {
+              ident: ident.into(),
+              socket: Some(SocketPlug::GROUP),
+              span: (0, 0, 0),
+            };
+          }
+        }
+
+        return Identifier {
+          ident: ident.into(),
+          socket: Some(SocketPlug::TYPE),
+          span: (0, 0, 0),
+        };
+      }
+    }
+
     Identifier {
       ident: ident.into(),
       socket: None,
