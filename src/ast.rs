@@ -11,11 +11,8 @@ use alloc::{
   vec::Vec,
 };
 
-/// Describes the literal formatting of an AST node
-pub trait Node {
-  /// Returns an optional formatted token literal string of the AST node
-  fn token_literal(&self) -> Option<String>;
-}
+/// Starting index, ending index and line number
+pub type Span = (usize, usize, usize);
 
 /// CDDL AST
 ///
@@ -33,21 +30,11 @@ impl fmt::Display for CDDL {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut cddl_output = String::new();
 
-    for r in self.rules.iter() {
-      cddl_output.push_str(&format!("{}\n\n", r));
+    for rule in self.rules.iter() {
+      cddl_output.push_str(&format!("{}\n\n", rule));
     }
 
     write!(f, "{}", cddl_output)
-  }
-}
-
-impl Node for CDDL {
-  fn token_literal(&self) -> Option<String> {
-    if !self.rules.is_empty() {
-      return self.rules[0].token_literal();
-    }
-
-    None
   }
 }
 
@@ -66,14 +53,8 @@ pub struct Identifier {
   pub ident: String,
   /// Optional socket
   pub socket: Option<SocketPlug>,
-  /// Range
-  pub range: (usize, usize),
-}
-
-impl Node for Identifier {
-  fn token_literal(&self) -> Option<String> {
-    Some(format!("{:?}", self))
-  }
+  /// Span
+  pub span: Span,
 }
 
 impl fmt::Display for Identifier {
@@ -92,20 +73,8 @@ impl From<&'static str> for Identifier {
     Identifier {
       ident: ident.into(),
       socket: None,
-      range: (0, 0),
+      span: (0, 0, 0),
     }
-  }
-}
-
-/// Create `Identifier` from `Token::IDENT(ident)`
-pub fn identifier_from_ident_token(
-  ident: (String, Option<SocketPlug>),
-  range: (usize, usize),
-) -> Identifier {
-  Identifier {
-    ident: ident.0,
-    socket: ident.1,
-    range,
   }
 }
 
@@ -133,15 +102,6 @@ impl fmt::Display for Rule {
   }
 }
 
-impl Node for Rule {
-  fn token_literal(&self) -> Option<String> {
-    match self {
-      Rule::Type(tr) => tr.token_literal(),
-      Rule::Group(gr) => gr.token_literal(),
-    }
-  }
-}
-
 impl Rule {
   /// Returns the name id of a rule
   pub fn name(&self) -> String {
@@ -161,10 +121,10 @@ impl Rule {
   }
 
   /// Returns the beginning and ending range indices of a rule
-  pub fn range(&self) -> (usize, usize) {
+  pub fn span(&self) -> Span {
     match self {
-      Rule::Type(tr) => tr.range,
-      Rule::Group(gr) => gr.range,
+      Rule::Type(tr) => tr.span,
+      Rule::Group(gr) => gr.span,
     }
   }
 }
@@ -185,8 +145,8 @@ pub struct TypeRule {
   pub is_type_choice_alternate: bool,
   /// Type value
   pub value: Type,
-  /// Start and end range of type rule
-  pub range: (usize, usize),
+  /// Span of type rule
+  pub span: Span,
 }
 
 impl fmt::Display for TypeRule {
@@ -209,12 +169,6 @@ impl fmt::Display for TypeRule {
   }
 }
 
-impl Node for TypeRule {
-  fn token_literal(&self) -> Option<String> {
-    Some(format!("{:?}", self))
-  }
-}
-
 /// Group expression
 ///
 /// ```abnf
@@ -231,8 +185,8 @@ pub struct GroupRule {
   pub is_group_choice_alternate: bool,
   /// Group entry
   pub entry: GroupEntry,
-  /// Start and end range of group rule
-  pub range: (usize, usize),
+  /// Span of group rule
+  pub span: Span,
 }
 
 impl fmt::Display for GroupRule {
@@ -255,12 +209,6 @@ impl fmt::Display for GroupRule {
   }
 }
 
-impl Node for GroupRule {
-  fn token_literal(&self) -> Option<String> {
-    Some("".into())
-  }
-}
-
 /// Generic parameters
 ///
 /// ```abnf
@@ -271,8 +219,8 @@ impl Node for GroupRule {
 pub struct GenericParm {
   /// List of generic parameters
   pub params: Vec<Identifier>,
-  /// Start and end range of generic parameters
-  pub range: (usize, usize),
+  /// Span of generic parameters
+  pub span: Span,
 }
 
 impl fmt::Display for GenericParm {
@@ -563,7 +511,7 @@ impl From<RangeValue> for Type2 {
         Identifier {
           ident: ident.0,
           socket: ident.1,
-          range: (0, 0),
+          span: (0, 0, 0),
         },
         None,
       )),

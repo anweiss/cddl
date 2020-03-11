@@ -2,7 +2,7 @@ use super::{
   super::{CompilationError, Error, Result},
   JSONError,
 };
-use crate::{token::Numeric, ParserError};
+use crate::token::Numeric;
 use regex::Regex;
 use serde_json::{self, Value};
 
@@ -20,7 +20,7 @@ pub fn validate_pcre_control(controller: &str, value: &Value) -> Result {
           .as_str()
           .ok_or_else(|| Error::Syntax("Malformed regex".into()))?,
       )
-      .map_err(|e| Error::Compilation(CompilationError::CDDL(ParserError::REGEX(e))))?;
+      .map_err(|e| Error::Compilation(CompilationError::CDDL(e.to_string())))?;
 
       if re.is_match(s) {
         return Ok(());

@@ -310,6 +310,7 @@ impl<'a> From<(Vec<u8>, Position, lexical::Error)> for LexerError {
 }
 
 /// Lexer which holds a byte slice and iterator over the byte slice
+#[derive(Debug)]
 pub struct Lexer<'a> {
   /// CDDL input string
   pub str_input: Vec<u8>,

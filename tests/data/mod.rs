@@ -9,22 +9,22 @@ pub fn reputon() -> CDDL {
         name: Identifier {
           ident: "reputation-object".into(),
           socket: None,
-          range: (0, 17),
+          span: (0, 17, 1),
         },
         generic_param: Some(GenericParm {
           params: vec![
             Identifier {
               ident: "t".into(),
               socket: None,
-              range: (18, 19),
+              span: (18, 19, 1),
             },
             Identifier {
               ident: "v".into(),
               socket: None,
-              range: (21, 22),
+              span: (21, 22, 1),
             },
           ],
-          range: (17, 24),
+          span: (17, 24, 1),
         }),
         is_type_choice_alternate: false,
         value: Type(vec![Type1 {
@@ -35,7 +35,7 @@ pub fn reputon() -> CDDL {
                 name: Identifier {
                   ident: "reputation-context".into(),
                   socket: None,
-                  range: (30, 48),
+                  span: (30, 48, 2),
                 },
                 generic_arg: None,
               }),
@@ -47,7 +47,7 @@ pub fn reputon() -> CDDL {
                 name: Identifier {
                   ident: "reputon-list".into(),
                   socket: None,
-                  range: (52, 64),
+                  span: (52, 64, 3),
                 },
                 generic_arg: None,
               }),
@@ -56,13 +56,13 @@ pub fn reputon() -> CDDL {
           ])])),
           operator: None,
         }]),
-        range: (0, 66),
+        span: (0, 66, 1),
       }),
       Rule::Group(Box::from(GroupRule {
         name: Identifier {
           ident: "reputation-context".into(),
           socket: None,
-          range: (68, 86),
+          span: (68, 86, 6),
         },
         generic_param: None,
         is_group_choice_alternate: false,
@@ -74,14 +74,14 @@ pub fn reputon() -> CDDL {
               member_key: Some(MemberKey::Bareword(Identifier {
                 ident: "application".into(),
                 socket: None,
-                range: (93, 104),
+                span: (93, 104, 7),
               })),
               entry_type: Type(vec![Type1 {
                 type2: Type2::Typename((
                   Identifier {
                     ident: "text".into(),
                     socket: None,
-                    range: (106, 110),
+                    span: (106, 110, 7),
                   },
                   None,
                 )),
@@ -91,13 +91,13 @@ pub fn reputon() -> CDDL {
             false,
           )])]),
         )),
-        range: (68, 112),
+        span: (68, 112, 6),
       })),
       Rule::Group(Box::from(GroupRule {
         name: Identifier {
           ident: "reputon-list".into(),
           socket: None,
-          range: (114, 126),
+          span: (114, 126, 10),
         },
         generic_param: None,
         is_group_choice_alternate: false,
@@ -109,14 +109,14 @@ pub fn reputon() -> CDDL {
               member_key: Some(MemberKey::Bareword(Identifier {
                 ident: "reputons".into(),
                 socket: None,
-                range: (133, 141),
+                span: (133, 141, 11),
               })),
               entry_type: Type(vec![Type1 {
                 type2: Type2::Typename((
                   Identifier {
                     ident: "reputon-array".into(),
                     socket: None,
-                    range: (143, 156),
+                    span: (143, 156, 11),
                   },
                   None,
                 )),
@@ -126,13 +126,13 @@ pub fn reputon() -> CDDL {
             false,
           )])]),
         )),
-        range: (114, 158),
+        span: (114, 158, 10),
       })),
       Rule::Type(TypeRule {
         name: Identifier {
           ident: "reputon-array".into(),
           socket: None,
-          range: (160, 173),
+          span: (160, 173, 14),
         },
         generic_param: None,
         is_type_choice_alternate: false,
@@ -143,7 +143,7 @@ pub fn reputon() -> CDDL {
               name: Identifier {
                 ident: "reputon".into(),
                 socket: None,
-                range: (179, 186),
+                span: (179, 186, 14),
               },
               generic_arg: None,
             }),
@@ -151,13 +151,13 @@ pub fn reputon() -> CDDL {
           )])])),
           operator: None,
         }]),
-        range: (160, 187),
+        span: (160, 187, 14),
       }),
       Rule::Type(TypeRule {
         name: Identifier {
           ident: "reputon".into(),
           socket: None,
-          range: (189, 196),
+          span: (189, 196, 16),
         },
         generic_param: None,
         is_type_choice_alternate: false,
@@ -169,7 +169,7 @@ pub fn reputon() -> CDDL {
                 name: Identifier {
                   ident: "rater-value".into(),
                   socket: None,
-                  range: (203, 214),
+                  span: (203, 214, 17),
                 },
                 generic_arg: None,
               }),
@@ -181,7 +181,7 @@ pub fn reputon() -> CDDL {
                 name: Identifier {
                   ident: "assertion-value".into(),
                   socket: None,
-                  range: (218, 233),
+                  span: (218, 233, 18),
                 },
                 generic_arg: None,
               }),
@@ -193,7 +193,7 @@ pub fn reputon() -> CDDL {
                 name: Identifier {
                   ident: "rated-value".into(),
                   socket: None,
-                  range: (237, 248),
+                  span: (237, 248, 19),
                 },
                 generic_arg: None,
               }),
@@ -205,7 +205,7 @@ pub fn reputon() -> CDDL {
                 name: Identifier {
                   ident: "rating-value".into(),
                   socket: None,
-                  range: (252, 264),
+                  span: (252, 264, 20),
                 },
                 generic_arg: None,
               }),
@@ -217,7 +217,7 @@ pub fn reputon() -> CDDL {
                 name: Identifier {
                   ident: "conf-value".into(),
                   socket: None,
-                  range: (270, 280),
+                  span: (270, 280, 21),
                 },
                 generic_arg: None,
               }),
@@ -229,7 +229,7 @@ pub fn reputon() -> CDDL {
                 name: Identifier {
                   ident: "normal-value".into(),
                   socket: None,
-                  range: (286, 298),
+                  span: (286, 298, 22),
                 },
                 generic_arg: None,
               }),
@@ -241,7 +241,7 @@ pub fn reputon() -> CDDL {
                 name: Identifier {
                   ident: "sample-value".into(),
                   socket: None,
-                  range: (304, 316),
+                  span: (304, 316, 23),
                 },
                 generic_arg: None,
               }),
@@ -253,7 +253,7 @@ pub fn reputon() -> CDDL {
                 name: Identifier {
                   ident: "gen-value".into(),
                   socket: None,
-                  range: (322, 331),
+                  span: (322, 331, 24),
                 },
                 generic_arg: None,
               }),
@@ -265,7 +265,7 @@ pub fn reputon() -> CDDL {
                 name: Identifier {
                   ident: "expire-value".into(),
                   socket: None,
-                  range: (337, 349),
+                  span: (337, 349, 25),
                 },
                 generic_arg: None,
               }),
@@ -277,7 +277,7 @@ pub fn reputon() -> CDDL {
                 name: Identifier {
                   ident: "ext-value".into(),
                   socket: None,
-                  range: (355, 364),
+                  span: (355, 364, 26),
                 },
                 generic_arg: None,
               }),
@@ -286,13 +286,13 @@ pub fn reputon() -> CDDL {
           ])])),
           operator: None,
         }]),
-        range: (189, 367),
+        span: (189, 367, 16),
       }),
       Rule::Group(Box::from(GroupRule {
         name: Identifier {
           ident: "rater-value".into(),
           socket: None,
-          range: (369, 380),
+          span: (369, 380, 29),
         },
         generic_param: None,
         is_group_choice_alternate: false,
@@ -304,14 +304,14 @@ pub fn reputon() -> CDDL {
               member_key: Some(MemberKey::Bareword(Identifier {
                 ident: "rater".into(),
                 socket: None,
-                range: (385, 390),
+                span: (385, 390, 29),
               })),
               entry_type: Type(vec![Type1 {
                 type2: Type2::Typename((
                   Identifier {
                     ident: "text".into(),
                     socket: None,
-                    range: (392, 396),
+                    span: (392, 396, 29),
                   },
                   None,
                 )),
@@ -321,13 +321,13 @@ pub fn reputon() -> CDDL {
             false,
           )])]),
         )),
-        range: (369, 398),
+        span: (369, 398, 29),
       })),
       Rule::Group(Box::from(GroupRule {
         name: Identifier {
           ident: "assertion-value".into(),
           socket: None,
-          range: (399, 414),
+          span: (399, 414, 30),
         },
         generic_param: None,
         is_group_choice_alternate: false,
@@ -339,14 +339,14 @@ pub fn reputon() -> CDDL {
               member_key: Some(MemberKey::Bareword(Identifier {
                 ident: "assertion".into(),
                 socket: None,
-                range: (419, 428),
+                span: (419, 428, 30),
               })),
               entry_type: Type(vec![Type1 {
                 type2: Type2::Typename((
                   Identifier {
                     ident: "text".into(),
                     socket: None,
-                    range: (430, 434),
+                    span: (430, 434, 30),
                   },
                   None,
                 )),
@@ -356,13 +356,13 @@ pub fn reputon() -> CDDL {
             false,
           )])]),
         )),
-        range: (399, 436),
+        span: (399, 436, 30),
       })),
       Rule::Group(Box::from(GroupRule {
         name: Identifier {
           ident: "rated-value".into(),
           socket: None,
-          range: (437, 448),
+          span: (437, 448, 31),
         },
         generic_param: None,
         is_group_choice_alternate: false,
@@ -374,14 +374,14 @@ pub fn reputon() -> CDDL {
               member_key: Some(MemberKey::Bareword(Identifier {
                 ident: "rated".into(),
                 socket: None,
-                range: (453, 458),
+                span: (453, 458, 31),
               })),
               entry_type: Type(vec![Type1 {
                 type2: Type2::Typename((
                   Identifier {
                     ident: "text".into(),
                     socket: None,
-                    range: (460, 464),
+                    span: (460, 464, 31),
                   },
                   None,
                 )),
@@ -391,13 +391,13 @@ pub fn reputon() -> CDDL {
             false,
           )])]),
         )),
-        range: (437, 466),
+        span: (437, 466, 31),
       })),
       Rule::Group(Box::from(GroupRule {
         name: Identifier {
           ident: "rating-value".into(),
           socket: None,
-          range: (467, 479),
+          span: (467, 479, 32),
         },
         generic_param: None,
         is_group_choice_alternate: false,
@@ -409,14 +409,14 @@ pub fn reputon() -> CDDL {
               member_key: Some(MemberKey::Bareword(Identifier {
                 ident: "rating".into(),
                 socket: None,
-                range: (484, 490),
+                span: (484, 490, 32),
               })),
               entry_type: Type(vec![Type1 {
                 type2: Type2::Typename((
                   Identifier {
                     ident: "float16".into(),
                     socket: None,
-                    range: (492, 499),
+                    span: (492, 499, 32),
                   },
                   None,
                 )),
@@ -426,13 +426,13 @@ pub fn reputon() -> CDDL {
             false,
           )])]),
         )),
-        range: (467, 501),
+        span: (467, 501, 32),
       })),
       Rule::Group(Box::from(GroupRule {
         name: Identifier {
           ident: "conf-value".into(),
           socket: None,
-          range: (502, 512),
+          span: (502, 512, 33),
         },
         generic_param: None,
         is_group_choice_alternate: false,
@@ -444,14 +444,14 @@ pub fn reputon() -> CDDL {
               member_key: Some(MemberKey::Bareword(Identifier {
                 ident: "confidence".into(),
                 socket: None,
-                range: (517, 527),
+                span: (517, 527, 33),
               })),
               entry_type: Type(vec![Type1 {
                 type2: Type2::Typename((
                   Identifier {
                     ident: "float16".into(),
                     socket: None,
-                    range: (529, 536),
+                    span: (529, 536, 33),
                   },
                   None,
                 )),
@@ -461,13 +461,13 @@ pub fn reputon() -> CDDL {
             false,
           )])]),
         )),
-        range: (502, 538),
+        span: (502, 538, 33),
       })),
       Rule::Group(Box::from(GroupRule {
         name: Identifier {
           ident: "normal-value".into(),
           socket: None,
-          range: (539, 551),
+          span: (539, 551, 34),
         },
         generic_param: None,
         is_group_choice_alternate: false,
@@ -479,14 +479,14 @@ pub fn reputon() -> CDDL {
               member_key: Some(MemberKey::Bareword(Identifier {
                 ident: "normal-rating".into(),
                 socket: None,
-                range: (556, 569),
+                span: (556, 569, 34),
               })),
               entry_type: Type(vec![Type1 {
                 type2: Type2::Typename((
                   Identifier {
                     ident: "float16".into(),
                     socket: None,
-                    range: (571, 578),
+                    span: (571, 578, 34),
                   },
                   None,
                 )),
@@ -496,13 +496,13 @@ pub fn reputon() -> CDDL {
             false,
           )])]),
         )),
-        range: (539, 580),
+        span: (539, 580, 34),
       })),
       Rule::Group(Box::from(GroupRule {
         name: Identifier {
           ident: "sample-value".into(),
           socket: None,
-          range: (581, 593),
+          span: (581, 593, 35),
         },
         generic_param: None,
         is_group_choice_alternate: false,
@@ -514,14 +514,14 @@ pub fn reputon() -> CDDL {
               member_key: Some(MemberKey::Bareword(Identifier {
                 ident: "sample-size".into(),
                 socket: None,
-                range: (598, 609),
+                span: (598, 609, 35),
               })),
               entry_type: Type(vec![Type1 {
                 type2: Type2::Typename((
                   Identifier {
                     ident: "uint".into(),
                     socket: None,
-                    range: (611, 615),
+                    span: (611, 615, 35),
                   },
                   None,
                 )),
@@ -531,13 +531,13 @@ pub fn reputon() -> CDDL {
             false,
           )])]),
         )),
-        range: (581, 617),
+        span: (581, 617, 35),
       })),
       Rule::Group(Box::from(GroupRule {
         name: Identifier {
           ident: "gen-value".into(),
           socket: None,
-          range: (618, 627),
+          span: (618, 627, 36),
         },
         generic_param: None,
         is_group_choice_alternate: false,
@@ -549,14 +549,14 @@ pub fn reputon() -> CDDL {
               member_key: Some(MemberKey::Bareword(Identifier {
                 ident: "generated".into(),
                 socket: None,
-                range: (632, 641),
+                span: (632, 641, 36),
               })),
               entry_type: Type(vec![Type1 {
                 type2: Type2::Typename((
                   Identifier {
                     ident: "uint".into(),
                     socket: None,
-                    range: (643, 647),
+                    span: (643, 647, 36),
                   },
                   None,
                 )),
@@ -566,13 +566,13 @@ pub fn reputon() -> CDDL {
             false,
           )])]),
         )),
-        range: (618, 649),
+        span: (618, 649, 36),
       })),
       Rule::Group(Box::from(GroupRule {
         name: Identifier {
           ident: "expire-value".into(),
           socket: None,
-          range: (650, 662),
+          span: (650, 662, 37),
         },
         generic_param: None,
         is_group_choice_alternate: false,
@@ -584,14 +584,14 @@ pub fn reputon() -> CDDL {
               member_key: Some(MemberKey::Bareword(Identifier {
                 ident: "expires".into(),
                 socket: None,
-                range: (667, 674),
+                span: (667, 674, 37),
               })),
               entry_type: Type(vec![Type1 {
                 type2: Type2::Typename((
                   Identifier {
                     ident: "uint".into(),
                     socket: None,
-                    range: (676, 680),
+                    span: (676, 680, 37),
                   },
                   None,
                 )),
@@ -601,13 +601,13 @@ pub fn reputon() -> CDDL {
             false,
           )])]),
         )),
-        range: (650, 682),
+        span: (650, 682, 37),
       })),
       Rule::Group(Box::from(GroupRule {
         name: Identifier {
           ident: "ext-value".into(),
           socket: None,
-          range: (683, 692),
+          span: (683, 692, 38),
         },
         generic_param: None,
         is_group_choice_alternate: false,
@@ -622,7 +622,7 @@ pub fn reputon() -> CDDL {
                     Identifier {
                       ident: "text".into(),
                       socket: None,
-                      range: (697, 701),
+                      span: (697, 701, 38),
                     },
                     None,
                   )),
@@ -635,7 +635,7 @@ pub fn reputon() -> CDDL {
                   Identifier {
                     ident: "any".into(),
                     socket: None,
-                    range: (705, 708),
+                    span: (705, 708, 38),
                   },
                   None,
                 )),
@@ -645,7 +645,7 @@ pub fn reputon() -> CDDL {
             false,
           )])]),
         )),
-        range: (683, 710),
+        span: (683, 710, 38),
       })),
     ],
   }

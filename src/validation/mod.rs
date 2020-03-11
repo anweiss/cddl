@@ -4,7 +4,7 @@ pub mod cbor;
 /// JSON validation implementation
 pub mod json;
 
-use crate::{ast::*, parser::ParserError, token::Numeric};
+use crate::{ast::*, token::Numeric};
 use std::{fmt, result};
 
 /// Alias for `Result` with an error of type `validator::ValidationError`
@@ -63,7 +63,7 @@ impl std::error::Error for Error {
 #[derive(Debug)]
 pub enum CompilationError {
   /// Error compiling CDDL data definition
-  CDDL(ParserError),
+  CDDL(String),
   /// Error compiling data target (i.e. JSON or CBOR)
   Target(Box<dyn std::error::Error>),
 }
@@ -80,8 +80,8 @@ impl fmt::Display for CompilationError {
 impl std::error::Error for CompilationError {
   fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
     match self {
-      CompilationError::CDDL(ce) => Some(ce),
       CompilationError::Target(te) => Some(te.as_ref()),
+      _ => None,
     }
   }
 }

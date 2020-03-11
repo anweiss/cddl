@@ -3,14 +3,14 @@
 mod data;
 
 use cddl::{
-  parser::{self, ParserError},
+  parser,
   validation::{json::validate_json_from_str, Error},
 };
 use pretty_assertions::assert_eq;
 use std::fs;
 
 #[test]
-fn verify_cddl_compiles() -> Result<(), ParserError> {
+fn verify_cddl_compiles() -> Result<(), String> {
   for file in fs::read_dir("tests/data/cddl/").unwrap() {
     let file = file.unwrap();
 
