@@ -24,7 +24,7 @@ pub fn reputon() -> CDDL {
               span: (21, 22, 1),
             },
           ],
-          span: (17, 24, 1),
+          span: (17, 23, 1),
         }),
         is_type_choice_alternate: false,
         value: Type(vec![Type1 {

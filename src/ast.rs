@@ -166,7 +166,7 @@ pub struct TypeRule {
   pub is_type_choice_alternate: bool,
   /// Type value
   pub value: Type,
-  /// Span of type rule
+  /// Span
   pub span: Span,
 }
 
@@ -206,7 +206,7 @@ pub struct GroupRule {
   pub is_group_choice_alternate: bool,
   /// Group entry
   pub entry: GroupEntry,
-  /// Span of group rule
+  /// Span
   pub span: Span,
 }
 
@@ -240,7 +240,7 @@ impl fmt::Display for GroupRule {
 pub struct GenericParm {
   /// List of generic parameters
   pub params: Vec<Identifier>,
-  /// Span of generic parameters
+  /// Span
   pub span: Span,
 }
 
@@ -268,12 +268,17 @@ impl fmt::Display for GenericParm {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct GenericArg(pub Vec<Type1>);
+pub struct GenericArg {
+  /// Generic arguments
+  pub args: Vec<Type1>,
+  /// Span
+  pub span: Span,
+}
 
 impl fmt::Display for GenericArg {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut ga = String::from("<");
-    for (idx, arg) in self.0.iter().enumerate() {
+    for (idx, arg) in self.args.iter().enumerate() {
       if idx != 0 {
         ga.push_str(", ");
       }
@@ -284,6 +289,15 @@ impl fmt::Display for GenericArg {
     ga.push('>');
 
     write!(f, "{}", ga)
+  }
+}
+
+impl GenericArg {
+  pub fn new() -> Self {
+    GenericArg {
+      args: Vec::new(),
+      span: (0, 0, 0),
+    }
   }
 }
 
