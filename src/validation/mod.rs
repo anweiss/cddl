@@ -208,13 +208,13 @@ impl CDDL {
 
     for rule in self.rules.iter() {
       match rule {
-        Rule::Type(tr) if tr.name.ident == ident.ident => {
-          for tc in tr.value.0.iter() {
+        Rule::Type { rule, .. } if rule.name.ident == ident.ident => {
+          for tc in rule.value.type_choices.iter() {
             match &tc.type2 {
-              Type2::IntValue(_) | Type2::UintValue(_) | Type2::FloatValue(_) => {
+              Type2::IntValue { .. } | Type2::UintValue { .. } | Type2::FloatValue { .. } => {
                 type_choices.push(&tc.type2);
               }
-              Type2::Typename((ident, _)) => return self.numerical_value_type_from_ident(ident),
+              Type2::Typename { ident, .. } => return self.numerical_value_type_from_ident(ident),
               _ => continue,
             }
           }
@@ -234,11 +234,11 @@ impl CDDL {
   // resolves to a text string data type (text | tstr)
   fn is_type_string_data_type(&self, t2: &Type2) -> bool {
     match t2 {
-      Type2::Typename((ident, _)) if ident.ident == "text" || ident.ident == "tstr" => true,
-      Type2::Typename((ident, _)) => self.rules.iter().any(|r| match r {
-        Rule::Type(tr) if tr.name.ident == ident.ident => tr
+      Type2::Typename { ident, .. } if ident.ident == "text" || ident.ident == "tstr" => true,
+      Type2::Typename { ident, .. } => self.rules.iter().any(|r| match r {
+        Rule::Type { rule, .. } if rule.name.ident == ident.ident => rule
           .value
-          .0
+          .type_choices
           .iter()
           .any(|tc| self.is_type_string_data_type(&tc.type2)),
         _ => false,
@@ -249,11 +249,11 @@ impl CDDL {
 
   fn is_type_numeric_data_type(&self, t2: &Type2) -> bool {
     match t2 {
-      Type2::Typename((ident, _)) if is_numeric_data_type(&ident.ident) => true,
-      Type2::Typename((ident, _)) => self.rules.iter().any(|r| match r {
-        Rule::Type(tr) if tr.name.ident == ident.ident => tr
+      Type2::Typename { ident, .. } if is_numeric_data_type(&ident.ident) => true,
+      Type2::Typename { ident, .. } => self.rules.iter().any(|r| match r {
+        Rule::Type { rule, .. } if rule.name.ident == ident.ident => rule
           .value
-          .0
+          .type_choices
           .iter()
           .any(|tc| self.is_type_numeric_data_type(&tc.type2)),
         _ => false,
@@ -265,14 +265,14 @@ impl CDDL {
   // Returns the text value(s) from a given type
   fn text_values_from_type(&self, ident: &Type2) -> result::Result<Vec<String>, Error> {
     match ident {
-      Type2::TextValue(t) => Ok(vec![t.into()]),
-      Type2::Typename((ident, _)) => {
+      Type2::TextValue { value, .. } => Ok(vec![value.into()]),
+      Type2::Typename { ident, .. } => {
         let mut text_values = Vec::new();
 
         for r in self.rules.iter() {
           match r {
-            Rule::Type(tr) if tr.name.ident == ident.ident => {
-              for tc in tr.value.0.iter() {
+            Rule::Type { rule, .. } if rule.name.ident == ident.ident => {
+              for tc in rule.value.type_choices.iter() {
                 text_values.append(&mut self.text_values_from_type(&tc.type2)?);
               }
             }
@@ -298,37 +298,37 @@ impl CDDL {
     let target_idents = self.numerical_ident_from_type(target)?;
 
     match ident {
-      Type2::IntValue(i) => {
+      Type2::IntValue{ value, .. } => {
         if target_idents.into_iter().any(|ti| ti == "int" || ti == "number") {
-          return Ok(vec![Numeric::INT(*i)])
+          return Ok(vec![Numeric::INT(*value)])
         }
 
         Err(Error::Syntax("Target data type must be an 'int' or 'number' in order to validate against an integer value".into()))
       }
-      Type2::UintValue(ui) => {
+      Type2::UintValue{ value, .. } => {
         if target_idents.into_iter().any(|ti| ti == "uint" || ti == "number") {
-          return Ok(vec![Numeric::UINT(*ui)]);
+          return Ok(vec![Numeric::UINT(*value)]);
         }
 
         Err(Error::Syntax("Target data type must be a 'uint' or 'number' in order to validate against an unsigned integer value".into()))
       }
-      Type2::FloatValue(f) => {
+      Type2::FloatValue{ value, .. } => {
         if target_idents.into_iter().any(|ti| match ti.as_ref() {
           "float" | "float16" | "float32" | "float64" | "float16-32" | "float32-64" | "number" => true,
           _ => false,
         }) {
-          return Ok(vec![Numeric::FLOAT(*f)]);
+          return Ok(vec![Numeric::FLOAT(*value)]);
         }
 
         Err(Error::Syntax("Target data type must be a 'float', 'float16', 'float32', 'float64', 'float16-32', 'float32-64' or 'number' in order to validate against an unsigned integer value".into()))
       }
-      Type2::Typename((ident, _)) => {
+      Type2::Typename{ ident, .. } => {
         let mut numeric_values = Vec::new();
 
         for r in self.rules.iter() {
           match r {
-            Rule::Type(tr) if tr.name.ident == ident.ident => {
-              for tc in tr.value.0.iter() {
+            Rule::Type{ rule, ..}  if rule.name.ident == ident.ident => {
+              for tc in rule.value.type_choices.iter() {
                 numeric_values.append(&mut self.numeric_values_from_type(target, &tc.type2)?);
               }
             }
@@ -348,15 +348,15 @@ impl CDDL {
     let mut numeric_type_idents = Vec::new();
 
     match t2 {
-      Type2::Typename((ident, _)) if is_numeric_data_type(&ident.ident) => {
+      Type2::Typename { ident, .. } if is_numeric_data_type(&ident.ident) => {
         numeric_type_idents.push(ident.ident.clone());
         Ok(numeric_type_idents)
       }
-      Type2::Typename((ident, _)) => {
+      Type2::Typename { ident, .. } => {
         for r in self.rules.iter() {
           match r {
-            Rule::Type(tr) if tr.name.ident == ident.ident => {
-              for tc in tr.value.0.iter() {
+            Rule::Type { rule, .. } if rule.name.ident == ident.ident => {
+              for tc in rule.value.type_choices.iter() {
                 numeric_type_idents.append(&mut self.numerical_ident_from_type(&tc.type2)?);
               }
             }

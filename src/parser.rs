@@ -1,7 +1,7 @@
 use super::{
   ast::*,
   lexer::{Lexer, LexerError, Position},
-  token::{self, Token, Value},
+  token::{self, ByteValue, Token, Value},
 };
 use annotate_snippets::{
   display_list::DisplayList,
@@ -294,13 +294,15 @@ impl<'a> Parser<'a> {
             begin_rule_line,
           );
 
-          Ok(Rule::Group(Box::from(GroupRule {
-            name: ident,
-            generic_param: gp,
-            is_group_choice_alternate,
-            entry: ge,
+          Ok(Rule::Group {
+            rule: Box::from(GroupRule {
+              name: ident,
+              generic_param: gp,
+              is_group_choice_alternate,
+              entry: ge,
+            }),
             span,
-          })))
+          })
         } else {
           let t = self.parse_type(None)?;
           let span = (
@@ -308,13 +310,15 @@ impl<'a> Parser<'a> {
             self.parser_position.range.1,
             begin_rule_line,
           );
-          Ok(Rule::Type(TypeRule {
-            name: ident,
-            generic_param: gp,
-            is_type_choice_alternate,
-            value: t,
+          Ok(Rule::Type {
+            rule: TypeRule {
+              name: ident,
+              generic_param: gp,
+              is_type_choice_alternate,
+              value: t,
+            },
             span,
-          }))
+          })
         }
       }
       Token::LPAREN | Token::ASTERISK | Token::ONEORMORE | Token::OPTIONAL => {
@@ -328,28 +332,35 @@ impl<'a> Parser<'a> {
         // parenthesized type, subsequently parsing the remaining type and
         // returning the type rule. This is the only situation where `clone` is
         // required
-        if let GroupEntry::InlineGroup((None, g)) = &ge {
-          if g.0.len() == 1 {
-            if let Some(gc) = g.0.get(0) {
-              if gc.0.len() == 1 {
-                if let Some(ge) = gc.0.get(0) {
+        if let GroupEntry::InlineGroup {
+          occur: None, group, ..
+        } = &ge
+        {
+          if group.group_choices.len() == 1 {
+            if let Some(gc) = group.group_choices.get(0) {
+              if gc.group_entries.len() == 1 {
+                if let Some(ge) = gc.group_entries.get(0) {
                   // Check that there is no trailing comma
                   if !ge.1 {
                     // TODO: Replace with box pattern destructuring once supported in stable
-                    if let GroupEntry::ValueMemberKey(vmke) = &ge.0 {
-                      if vmke.occur.is_none() && vmke.member_key.is_none() {
-                        let value = self
-                          .parse_type(Some(Type2::ParenthesizedType(vmke.entry_type.clone())))?;
+                    if let GroupEntry::ValueMemberKey { ge, .. } = &ge.0 {
+                      if ge.occur.is_none() && ge.member_key.is_none() {
+                        let value = self.parse_type(Some(Type2::ParenthesizedType {
+                          pt: ge.entry_type.clone(),
+                          span: (0, 0, 0),
+                        }))?;
 
                         end_rule_range = self.parser_position.range.1;
 
-                        return Ok(Rule::Type(TypeRule {
-                          name: ident,
-                          generic_param: gp,
-                          is_type_choice_alternate,
-                          value,
+                        return Ok(Rule::Type {
+                          rule: TypeRule {
+                            name: ident,
+                            generic_param: gp,
+                            is_type_choice_alternate,
+                            value,
+                          },
                           span: (begin_rule_range, end_rule_range, begin_rule_line),
-                        }));
+                        });
                       }
                     }
                   }
@@ -359,13 +370,15 @@ impl<'a> Parser<'a> {
           }
         }
 
-        Ok(Rule::Group(Box::from(GroupRule {
-          name: ident,
-          generic_param: gp,
-          is_group_choice_alternate,
-          entry: ge,
+        Ok(Rule::Group {
+          rule: Box::from(GroupRule {
+            name: ident,
+            generic_param: gp,
+            is_group_choice_alternate,
+            entry: ge,
+          }),
           span: (begin_rule_range, end_rule_range, begin_rule_line),
-        })))
+        })
       }
       _ => {
         let t = self.parse_type(None)?;
@@ -376,13 +389,15 @@ impl<'a> Parser<'a> {
           begin_rule_line,
         );
 
-        Ok(Rule::Type(TypeRule {
-          name: ident,
-          generic_param: gp,
-          is_type_choice_alternate,
-          value: t,
+        Ok(Rule::Type {
+          rule: TypeRule {
+            name: ident,
+            generic_param: gp,
+            is_type_choice_alternate,
+            value: t,
+          },
           span,
-        }))
+        })
       }
     }
   }
@@ -456,7 +471,7 @@ impl<'a> Parser<'a> {
       self.next_token()?;
     }
 
-    let mut generic_args = GenericArg::new();
+    let mut generic_args = GenericArg::default();
 
     while !self.cur_token_is(Token::RANGLEBRACKET) {
       generic_args.args.push(self.parse_type1(None)?);
@@ -480,9 +495,15 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_type(&mut self, parenthesized_type: Option<Type2>) -> Result<Type> {
-    let mut t = Type(Vec::new());
+    self.parser_position.range = self.lexer_position.range;
+    self.parser_position.line = self.lexer_position.line;
 
-    t.0.push(self.parse_type1(parenthesized_type)?);
+    let mut t = Type {
+      type_choices: Vec::new(),
+      span: (self.parser_position.range.0, 0, self.parser_position.line),
+    };
+
+    t.type_choices.push(self.parse_type1(parenthesized_type)?);
 
     while let Token::COMMENT(_) = self.cur_token {
       self.next_token()?;
@@ -495,13 +516,18 @@ impl<'a> Parser<'a> {
         self.next_token()?;
       }
 
-      t.0.push(self.parse_type1(None)?);
+      t.type_choices.push(self.parse_type1(None)?);
     }
+
+    t.span.1 = self.parser_position.range.1;
 
     Ok(t)
   }
 
   fn parse_type1(&mut self, parenthesized_type: Option<Type2>) -> Result<Type1> {
+    let begin_type1_range = self.lexer_position.range.0;
+    let begin_type1_line = self.lexer_position.line;
+
     let t2_1 = if let Some(t2) = parenthesized_type {
       t2
     } else {
@@ -512,26 +538,47 @@ impl<'a> Parser<'a> {
       self.next_token()?;
     }
 
+    let span = (
+      self.lexer_position.range.0,
+      self.lexer_position.range.1,
+      self.lexer_position.line,
+    );
+
     let op = match &self.cur_token {
-      Token::RANGEOP(i) => Some(RangeCtlOp::RangeOp(*i)),
+      Token::RANGEOP(i) => Some(RangeCtlOp::RangeOp {
+        is_inclusive: *i,
+        span,
+      }),
       _ => match token::control_str_from_token(&self.cur_token) {
-        Some(co) => Some(RangeCtlOp::CtlOp(co)),
+        Some(ctrl) => Some(RangeCtlOp::CtlOp { ctrl, span }),
         None => None,
       },
     };
+
+    let mut span = (
+      begin_type1_range,
+      self.parser_position.range.1,
+      begin_type1_line,
+    );
 
     match op {
       Some(o) => {
         self.next_token()?;
 
+        let t2 = self.parse_type2()?;
+
+        span.1 = self.parser_position.range.1;
+
         Ok(Type1 {
           type2: t2_1,
-          operator: Some((o, self.parse_type2()?)),
+          operator: Some((o, t2)),
+          span,
         })
       }
       None => Ok(Type1 {
         type2: t2_1,
         operator: None,
+        span,
       }),
     }
   }
@@ -539,56 +586,140 @@ impl<'a> Parser<'a> {
   fn parse_type2(&mut self) -> Result<Type2> {
     let t2 = match &self.cur_token {
       // value
-      Token::VALUE(value) => Ok(value.into()),
+      Token::VALUE(value) => {
+        self.parser_position.range = self.lexer_position.range;
+        self.parser_position.line = self.lexer_position.line;
+
+        let span = (
+          self.parser_position.range.0,
+          self.parser_position.range.1,
+          self.parser_position.line,
+        );
+
+        match value {
+          Value::TEXT(t) => Ok(Type2::TextValue {
+            value: t.to_string(),
+            span,
+          }),
+          Value::INT(i) => Ok(Type2::IntValue { value: *i, span }),
+          Value::UINT(ui) => Ok(Type2::UintValue { value: *ui, span }),
+          Value::FLOAT(f) => Ok(Type2::FloatValue { value: *f, span }),
+          Value::BYTE(ByteValue::UTF8(utf8)) => Ok(Type2::UTF8ByteString {
+            value: utf8.to_vec(),
+            span,
+          }),
+          Value::BYTE(ByteValue::B16(b16)) => Ok(Type2::B16ByteString {
+            value: b16.to_vec(),
+            span,
+          }),
+          Value::BYTE(ByteValue::B64(b64)) => Ok(Type2::B64ByteString {
+            value: b64.to_vec(),
+            span,
+          }),
+        }
+      }
 
       // typename [genericarg]
       Token::IDENT(ident) => {
+        let begin_type2_range = self.lexer_position.range.0;
+        let begin_type2_line = self.lexer_position.line;
+
         // optional genericarg detected
         if self.peek_token_is(&Token::LANGLEBRACKET) {
-          return Ok(Type2::Typename((
-            self.identifier_from_ident_token(ident.clone()),
-            Some(self.parse_genericarg()?),
-          )));
+          let ident = self.identifier_from_ident_token(ident.clone());
+          let ga = self.parse_genericarg()?;
+
+          let end_type2_range = self.parser_position.range.1;
+
+          return Ok(Type2::Typename {
+            ident,
+            generic_arg: Some(ga),
+            span: (begin_type2_range, end_type2_range, begin_type2_line),
+          });
         }
 
-        Ok(Type2::Typename((
-          self.identifier_from_ident_token(ident.clone()),
-          None,
-        )))
+        self.parser_position.range = self.lexer_position.range;
+        self.parser_position.line = self.lexer_position.line;
+
+        Ok(Type2::Typename {
+          ident: self.identifier_from_ident_token(ident.clone()),
+          generic_arg: None,
+          span: (
+            self.parser_position.range.0,
+            self.parser_position.range.1,
+            self.parser_position.line,
+          ),
+        })
       }
 
       // ( type )
       // TODO: Develop additional test cases
       Token::LPAREN => {
+        let begin_type2_range = self.lexer_position.range.0;
+        let begin_type2_line = self.lexer_position.line;
+
         self.next_token()?;
 
         while let Token::COMMENT(_) = self.cur_token {
           self.next_token()?;
         }
 
-        Ok(Type2::ParenthesizedType(self.parse_type(None)?))
+        let pt = self.parse_type(None)?;
+
+        self.parser_position.range.0 = begin_type2_range;
+        self.parser_position.range.1 = self.lexer_position.range.1;
+        self.parser_position.line = begin_type2_line;
+
+        Ok(Type2::ParenthesizedType {
+          pt,
+          span: (
+            self.parser_position.range.0,
+            self.parser_position.range.1,
+            self.parser_position.line,
+          ),
+        })
       }
 
       // { group }
       Token::LBRACE => {
-        // self.next_token()?;
+        let begin_type2_range = self.lexer_position.range.0;
+        let begin_type2_line = self.lexer_position.line;
 
         while let Token::COMMENT(_) = self.cur_token {
           self.next_token()?;
         }
 
-        Ok(Type2::Map(self.parse_group()?))
+        let group = self.parse_group()?;
+
+        Ok(Type2::Map {
+          group,
+          span: (
+            begin_type2_range,
+            self.lexer_position.range.1,
+            begin_type2_line,
+          ),
+        })
       }
 
       // [ group ]
       Token::LBRACKET => {
-        // self.next_token()?;
+        let begin_type2_range = self.lexer_position.range.0;
+        let begin_type2_line = self.lexer_position.line;
 
         while let Token::COMMENT(_) = self.cur_token {
           self.next_token()?;
         }
 
-        Ok(Type2::Array(self.parse_group()?))
+        let group = self.parse_group()?;
+
+        Ok(Type2::Array {
+          group,
+          span: (
+            begin_type2_range,
+            self.lexer_position.range.1,
+            begin_type2_line,
+          ),
+        })
       }
 
       // ~ typename [genericarg]
@@ -601,10 +732,18 @@ impl<'a> Parser<'a> {
           if self.peek_token_is(&Token::LANGLEBRACKET) {
             self.next_token()?;
 
-            return Ok(Type2::Unwrap((ident, Some(self.parse_genericarg()?))));
+            return Ok(Type2::Unwrap {
+              ident,
+              generic_arg: Some(self.parse_genericarg()?),
+              span: (0, 0, 0),
+            });
           }
 
-          return Ok(Type2::Unwrap((ident, None)));
+          return Ok(Type2::Unwrap {
+            ident,
+            generic_arg: None,
+            span: (0, 0, 0),
+          });
         }
 
         self.errors.push(ParserError {
@@ -618,6 +757,9 @@ impl<'a> Parser<'a> {
       // & ( group )
       // & groupname [genericarg]
       Token::GTOCHOICE => {
+        let begin_type2_range = self.lexer_position.range.0;
+        let begin_type2_line = self.lexer_position.line;
+
         self.next_token()?;
 
         while let Token::COMMENT(_) = self.cur_token {
@@ -628,20 +770,46 @@ impl<'a> Parser<'a> {
           Token::LPAREN => {
             self.next_token()?;
 
-            Ok(Type2::ChoiceFromInlineGroup(self.parse_group()?))
+            let group = self.parse_group()?;
+
+            Ok(Type2::ChoiceFromInlineGroup {
+              group,
+              span: (
+                begin_type2_range,
+                self.parser_position.range.1,
+                begin_type2_line,
+              ),
+            })
           }
           Token::IDENT(ident) => {
             let ident = self.identifier_from_ident_token(ident.clone());
             if self.peek_token_is(&Token::LANGLEBRACKET) {
               self.next_token()?;
 
-              return Ok(Type2::ChoiceFromGroup((
+              let generic_arg = Some(self.parse_genericarg()?);
+
+              return Ok(Type2::ChoiceFromGroup {
                 ident,
-                Some(self.parse_genericarg()?),
-              )));
+                generic_arg,
+                span: (
+                  begin_type2_range,
+                  self.parser_position.range.1,
+                  begin_type2_line,
+                ),
+              });
             }
 
-            Ok(Type2::ChoiceFromGroup((ident, None)))
+            self.parser_position.range.1 = self.lexer_position.range.1;
+
+            Ok(Type2::ChoiceFromGroup {
+              ident,
+              generic_arg: None,
+              span: (
+                begin_type2_range,
+                self.parser_position.range.1,
+                begin_type2_line,
+              ),
+            })
           }
           _ => {
             self.errors.push(ParserError {
@@ -662,6 +830,9 @@ impl<'a> Parser<'a> {
       //   Tag::ANY => Ok(Type2::Any),
       // },
       Token::TAG(t) => {
+        let begin_type2_range = self.lexer_position.range.0;
+        let begin_type2_line = self.lexer_position.line;
+
         match *t {
           // Tagged data item containing the given type as the tagged value
           (Some(6), tag) => {
@@ -688,11 +859,31 @@ impl<'a> Parser<'a> {
               return Err(Error::PARSER);
             }
 
-            Ok(Type2::TaggedData((tag, t)))
+            Ok(Type2::TaggedData {
+              tag,
+              t,
+              span: (
+                begin_type2_range,
+                self.parser_position.range.1,
+                begin_type2_line,
+              ),
+            })
           }
           // Tagged data of a major type
-          (Some(mt), tag) => Ok(Type2::TaggedDataMajorType((mt, tag))),
-          _ => Ok(Type2::Any),
+          (Some(mt), constraint) => Ok(Type2::TaggedDataMajorType {
+            mt,
+            constraint,
+            span: (
+              begin_type2_range,
+              self.lexer_position.range.1,
+              begin_type2_line,
+            ),
+          }),
+          _ => Ok(Type2::Any((
+            begin_type2_range,
+            self.lexer_position.range.1,
+            begin_type2_line,
+          ))),
         }
       }
       _ => {
@@ -701,10 +892,21 @@ impl<'a> Parser<'a> {
         }
 
         match self.cur_token.in_standard_prelude() {
-          Some(s) => Ok(Type2::Typename((
-            self.identifier_from_ident_token((s.into(), None)),
-            None,
-          ))),
+          Some(s) => {
+            let ident = self.identifier_from_ident_token((s.into(), None));
+            self.parser_position.range = self.lexer_position.range;
+            self.parser_position.line = self.lexer_position.line;
+
+            Ok(Type2::Typename {
+              ident,
+              generic_arg: None,
+              span: (
+                self.parser_position.range.0,
+                self.parser_position.range.1,
+                self.parser_position.line,
+              ),
+            })
+          }
           None => {
             self.errors.push(ParserError {
               position: self.parser_position,
@@ -728,9 +930,22 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_group(&mut self) -> Result<Group> {
-    let mut group = Group(Vec::new());
+    let begin_group_range = if self.cur_token_is(Token::LBRACE)
+      || self.cur_token_is(Token::LPAREN)
+      || self.cur_token_is(Token::LBRACKET)
+      || self.cur_token_is(Token::GCHOICE)
+    {
+      self.peek_lexer_position.range.0
+    } else {
+      self.lexer_position.range.0
+    };
 
-    group.0.push(self.parse_grpchoice()?);
+    let mut group = Group {
+      group_choices: Vec::new(),
+      span: (begin_group_range, 0, self.lexer_position.line),
+    };
+
+    group.group_choices.push(self.parse_grpchoice()?);
 
     while let Token::COMMENT(_) = self.cur_token {
       self.next_token()?;
@@ -741,14 +956,19 @@ impl<'a> Parser<'a> {
         self.next_token()?;
       }
 
-      group.0.push(self.parse_grpchoice()?);
+      group.group_choices.push(self.parse_grpchoice()?);
     }
+
+    group.span.1 = self.parser_position.range.1;
 
     Ok(group)
   }
 
   fn parse_grpchoice(&mut self) -> Result<GroupChoice> {
-    let mut grpchoice = GroupChoice(Vec::new());
+    let mut grpchoice = GroupChoice {
+      group_entries: Vec::new(),
+      span: (self.lexer_position.range.0, 0, self.lexer_position.line),
+    };
 
     if self.cur_token_is(Token::LBRACE)
       || self.cur_token_is(Token::LPAREN)
@@ -756,6 +976,8 @@ impl<'a> Parser<'a> {
       || self.cur_token_is(Token::GCHOICE)
     {
       self.next_token()?;
+
+      grpchoice.span.0 = self.lexer_position.range.0;
     }
 
     // TODO: The logic in this while loop is quite messy. Need to figure out a
@@ -769,7 +991,8 @@ impl<'a> Parser<'a> {
       let ge = self.parse_grpent()?;
 
       if self.cur_token_is(Token::GCHOICE) {
-        grpchoice.0.push((ge, false));
+        grpchoice.group_entries.push((ge, false));
+        grpchoice.span.1 = self.parser_position.range.1;
         return Ok(grpchoice);
       }
 
@@ -785,15 +1008,16 @@ impl<'a> Parser<'a> {
         && !self.peek_token_is(&Token::COLON)
         && !self.peek_token_is(&Token::ARROWMAP)
       {
-        self.next_token()?;
         self.parser_position.range.1 = self.lexer_position.range.1;
+        self.next_token()?;
       }
 
       if self.cur_token_is(Token::COMMA) {
-        grpchoice.0.push((ge, true));
+        grpchoice.group_entries.push((ge, true));
+        self.parser_position.range.1 = self.lexer_position.range.1;
         self.next_token()?;
       } else {
-        grpchoice.0.push((ge, false));
+        grpchoice.group_entries.push((ge, false));
       }
 
       while let Token::COMMENT(_) = self.cur_token {
@@ -801,10 +1025,15 @@ impl<'a> Parser<'a> {
       }
     }
 
+    grpchoice.span.1 = self.parser_position.range.1;
+
     Ok(grpchoice)
   }
 
   fn parse_grpent(&mut self) -> Result<GroupEntry> {
+    let begin_grpent_range = self.lexer_position.range.0;
+    let begin_grpent_line = self.lexer_position.line;
+
     let occur = self.parse_occur(true)?;
 
     while let Token::COMMENT(_) = self.cur_token {
@@ -844,7 +1073,13 @@ impl<'a> Parser<'a> {
         self.next_token()?;
       }
 
-      let ge = GroupEntry::InlineGroup((occur, self.parse_group()?));
+      let group = self.parse_group()?;
+
+      let mut span = (
+        begin_grpent_range,
+        self.parser_position.range.1,
+        begin_grpent_line,
+      );
 
       while let Token::COMMENT(_) = self.cur_token {
         self.next_token()?;
@@ -852,38 +1087,62 @@ impl<'a> Parser<'a> {
 
       while self.cur_token_is(Token::RPAREN) {
         self.parser_position.range.1 = self.lexer_position.range.1;
+        span.1 = self.parser_position.range.1;
+
         self.next_token()?;
       }
 
-      return Ok(ge);
+      return Ok(GroupEntry::InlineGroup { occur, group, span });
     }
 
     let entry_type = self.parse_type(None)?;
 
+    let mut span = (
+      begin_grpent_range,
+      self.parser_position.range.1,
+      begin_grpent_line,
+    );
+
+    if self.cur_token_is(Token::COMMA) {
+      span.1 = self.lexer_position.range.1;
+    }
+
     if member_key.is_some() {
-      return Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
+      return Ok(GroupEntry::ValueMemberKey {
+        ge: Box::from(ValueMemberKeyEntry {
+          occur,
+          member_key,
+          entry_type,
+        }),
+        span,
+      });
+    }
+
+    if let Some((name, generic_arg, _)) = entry_type.groupname_entry() {
+      return Ok(GroupEntry::TypeGroupname {
+        ge: TypeGroupnameEntry {
+          occur,
+          name,
+          generic_arg,
+        },
+        span,
+      });
+    }
+
+    Ok(GroupEntry::ValueMemberKey {
+      ge: Box::from(ValueMemberKeyEntry {
         occur,
         member_key,
         entry_type,
-      })));
-    }
-
-    if let Some((name, generic_arg)) = entry_type.groupname_entry() {
-      return Ok(GroupEntry::TypeGroupname(TypeGroupnameEntry {
-        occur,
-        name,
-        generic_arg,
-      }));
-    }
-
-    Ok(GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-      occur,
-      member_key,
-      entry_type,
-    })))
+      }),
+      span,
+    })
   }
 
   fn parse_memberkey(&mut self, is_optional: bool) -> Result<Option<MemberKey>> {
+    let begin_memberkey_range = self.lexer_position.range.0;
+    let begin_memberkey_line = self.lexer_position.line;
+
     match &self.peek_token {
       Token::ARROWMAP | Token::CUT => {
         let t1 = self.parse_type1(None)?;
@@ -893,31 +1152,63 @@ impl<'a> Parser<'a> {
         }
 
         if self.cur_token_is(Token::CUT) {
+          let end_memberkey_range = self.lexer_position.range.1;
+
           self.next_token()?;
 
           while let Token::COMMENT(_) = self.cur_token {
             self.next_token()?;
           }
 
-          let t1 = Some(MemberKey::Type1(Box::from((t1, true))));
+          let t1 = Some(MemberKey::Type1 {
+            t1: Box::from((t1, true)),
+            span: (
+              begin_memberkey_range,
+              end_memberkey_range,
+              begin_memberkey_line,
+            ),
+          });
 
           self.next_token()?;
 
           return Ok(t1);
         }
 
-        let t1 = Some(MemberKey::Type1(Box::from((t1, false))));
+        self.parser_position.range.1 = self.lexer_position.range.1;
+
+        let t1 = Some(MemberKey::Type1 {
+          t1: Box::from((t1, false)),
+          span: (
+            begin_memberkey_range,
+            self.parser_position.range.1,
+            begin_memberkey_line,
+          ),
+        });
 
         self.next_token()?;
 
         Ok(t1)
       }
       Token::COLON => {
+        self.parser_position.range.1 = self.lexer_position.range.1;
+
         let mk = match &self.cur_token {
-          Token::IDENT(ident) => Some(MemberKey::Bareword(
-            self.identifier_from_ident_token(ident.clone()),
-          )),
-          Token::VALUE(value) => Some(MemberKey::Value(value.clone())),
+          Token::IDENT(ident) => Some(MemberKey::Bareword {
+            ident: self.identifier_from_ident_token(ident.clone()),
+            span: (
+              begin_memberkey_range,
+              self.parser_position.range.1,
+              begin_memberkey_line,
+            ),
+          }),
+          Token::VALUE(value) => Some(MemberKey::Value {
+            value: value.clone(),
+            span: (
+              begin_memberkey_range,
+              self.parser_position.range.1,
+              begin_memberkey_line,
+            ),
+          }),
           _ => {
             self.errors.push(ParserError {
               position: self.parser_position,
@@ -954,20 +1245,53 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_occur(&mut self, is_optional: bool) -> Result<Option<Occur>> {
+    let begin_occur_range = self.lexer_position.range.0;
+    let begin_occur_line = self.lexer_position.line;
+    self.parser_position.line = self.lexer_position.line;
+
     match &self.cur_token {
       Token::OPTIONAL => {
+        self.parser_position.range = self.lexer_position.range;
+
         self.next_token()?;
-        Ok(Some(Occur::Optional))
+        Ok(Some(Occur::Optional((
+          self.parser_position.range.0,
+          self.parser_position.range.1,
+          self.parser_position.line,
+        ))))
       }
       Token::ONEORMORE => {
+        self.parser_position.range = self.lexer_position.range;
+
         self.next_token()?;
-        Ok(Some(Occur::OneOrMore))
+        Ok(Some(Occur::OneOrMore((
+          self.parser_position.range.0,
+          self.parser_position.range.1,
+          self.parser_position.line,
+        ))))
       }
       Token::ASTERISK => {
         let o = if let Token::VALUE(Value::UINT(u)) = &self.peek_token {
-          Some(Occur::Exact((None, Some(*u))))
+          self.parser_position.range.0 = self.lexer_position.range.0;
+          self.parser_position.range.1 = self.peek_lexer_position.range.1;
+
+          Occur::Exact {
+            lower: None,
+            upper: Some(*u),
+            span: (
+              self.parser_position.range.0,
+              self.parser_position.range.1,
+              self.parser_position.line,
+            ),
+          }
         } else {
-          Some(Occur::ZeroOrMore)
+          self.parser_position.range = self.lexer_position.range;
+
+          Occur::ZeroOrMore((
+            self.parser_position.range.0,
+            self.parser_position.range.1,
+            self.parser_position.line,
+          ))
         };
 
         self.next_token()?;
@@ -975,7 +1299,7 @@ impl<'a> Parser<'a> {
         if let Token::VALUE(Value::UINT(_)) = &self.cur_token {
           self.next_token()?;
         }
-        Ok(o)
+        Ok(Some(o))
       }
       Token::VALUE(_) => {
         let lower = if let Token::VALUE(value) = &self.cur_token {
@@ -1014,7 +1338,17 @@ impl<'a> Parser<'a> {
           None
         };
 
-        Ok(Some(Occur::Exact((lower, upper))))
+        self.parser_position.range.1 = self.lexer_position.range.1;
+
+        Ok(Some(Occur::Exact {
+          lower,
+          upper,
+          span: (
+            begin_occur_range,
+            self.parser_position.range.1,
+            begin_occur_line,
+          ),
+        }))
       }
       _ => Ok(None),
     }
@@ -1139,195 +1473,298 @@ message<t, v> = {type: 2, value: v}"#;
 
     let expected_output = CDDL {
       rules: vec![
-        Rule::Type(TypeRule {
-          name: Identifier {
-            ident: "myrule".into(),
-            socket: None,
-            span: (0, 6, 1),
+        Rule::Type {
+          rule: TypeRule {
+            name: Identifier {
+              ident: "myrule".into(),
+              socket: None,
+              span: (0, 6, 1),
+            },
+            generic_param: None,
+            is_type_choice_alternate: false,
+            value: Type {
+              type_choices: vec![Type1 {
+                type2: Type2::Typename {
+                  ident: Identifier {
+                    ident: "secondrule".into(),
+                    socket: None,
+                    span: (9, 19, 1),
+                  },
+                  generic_arg: None,
+                  span: (0, 0, 0),
+                },
+                operator: None,
+                span: (0, 0, 0),
+              }],
+              span: (0, 19, 1),
+            },
           },
-          generic_param: None,
-          is_type_choice_alternate: false,
-          value: Type(vec![Type1 {
-            type2: Type2::Typename((
-              Identifier {
-                ident: "secondrule".into(),
-                socket: None,
-                span: (9, 19, 1),
-              },
-              None,
-            )),
-            operator: None,
-          }]),
           span: (0, 19, 1),
-        }),
-        Rule::Type(TypeRule {
-          name: Identifier {
-            ident: "myrange".into(),
-            socket: None,
-            span: (20, 27, 2),
-          },
-          generic_param: None,
-          is_type_choice_alternate: false,
-          value: Type(vec![Type1 {
-            type2: Type2::UintValue(10),
-            operator: Some((
-              RangeCtlOp::RangeOp(true),
-              Type2::Typename((
-                Identifier {
-                  ident: "upper".into(),
-                  socket: None,
-                  span: (34, 39, 2),
-                },
-                None,
-              )),
-            )),
-          }]),
-          span: (20, 39, 2),
-        }),
-        Rule::Type(TypeRule {
-          name: Identifier {
-            ident: "upper".into(),
-            socket: None,
-            span: (40, 45, 3),
-          },
-          generic_param: None,
-          is_type_choice_alternate: false,
-          value: Type(vec![
-            Type1 {
-              type2: Type2::UintValue(500),
-              operator: None,
+        },
+        Rule::Type {
+          rule: TypeRule {
+            name: Identifier {
+              ident: "myrange".into(),
+              socket: None,
+              span: (20, 27, 2),
             },
-            Type1 {
-              type2: Type2::UintValue(600),
-              operator: None,
-            },
-          ]),
-          span: (40, 57, 3),
-        }),
-        Rule::Group(Box::from(GroupRule {
-          name: Identifier {
-            ident: "gr".into(),
-            socket: None,
-            span: (58, 60, 4),
-          },
-          generic_param: None,
-          is_group_choice_alternate: false,
-          entry: GroupEntry::InlineGroup((
-            Some(Occur::Exact((Some(2), None))),
-            Group(vec![GroupChoice(vec![(
-              GroupEntry::TypeGroupname(TypeGroupnameEntry {
-                occur: None,
-                name: Identifier {
-                  ident: "test".into(),
-                  socket: None,
-                  span: (68, 72, 4),
+            generic_param: None,
+            is_type_choice_alternate: false,
+            value: Type {
+              type_choices: vec![Type1 {
+                type2: Type2::UintValue {
+                  value: 10,
+                  span: (0, 19, 1),
                 },
-                generic_arg: None,
-              }),
-              false,
-            )])]),
-          )),
-          span: (58, 74, 4),
-        })),
-        Rule::Type(TypeRule {
-          name: Identifier {
-            ident: "messages".into(),
-            socket: None,
-            span: (75, 83, 5),
-          },
-          generic_param: None,
-          is_type_choice_alternate: false,
-          value: Type(vec![Type1 {
-            type2: Type2::Typename((
-              Identifier {
-                ident: "message".into(),
-                socket: None,
-                span: (86, 93, 5),
-              },
-              Some(GenericArg {
-                args: vec![
-                  Type1 {
-                    type2: Type2::TextValue("reboot".into()),
-                    operator: None,
+                operator: Some((
+                  RangeCtlOp::RangeOp {
+                    is_inclusive: true,
+                    span: (0, 0, 0),
                   },
-                  Type1 {
-                    type2: Type2::TextValue("now".into()),
-                    operator: None,
+                  Type2::Typename {
+                    ident: Identifier {
+                      ident: "upper".into(),
+                      socket: None,
+                      span: (34, 39, 2),
+                    },
+                    generic_arg: None,
+                    span: (0, 0, 0),
                   },
-                ],
-                span: (93, 110, 5),
-              }),
-            )),
-            operator: None,
-          }]),
-          span: (75, 110, 5),
-        }),
-        Rule::Type(TypeRule {
-          name: Identifier {
-            ident: "message".into(),
-            socket: None,
-            span: (111, 118, 6),
+                )),
+                span: (0, 0, 1),
+              }],
+              span: (0, 19, 1),
+            },
           },
-          generic_param: Some(GenericParm {
-            params: vec![
-              Identifier {
-                ident: "t".into(),
-                socket: None,
-                span: (119, 120, 6),
-              },
-              Identifier {
-                ident: "v".into(),
-                socket: None,
-                span: (122, 123, 6),
-              },
-            ],
-            span: (118, 124, 6),
-          }),
-          is_type_choice_alternate: false,
-          value: Type(vec![Type1 {
-            type2: Type2::Map(Group(vec![GroupChoice(vec![
-              (
-                GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-                  occur: None,
-                  member_key: Some(MemberKey::Bareword(Identifier {
-                    ident: "type".into(),
-                    socket: None,
-                    span: (128, 132, 6),
-                  })),
-                  entry_type: Type(vec![Type1 {
-                    type2: Type2::UintValue(2),
-                    operator: None,
-                  }]),
-                })),
-                true,
-              ),
-              (
-                GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-                  occur: None,
-                  member_key: Some(MemberKey::Bareword(Identifier {
-                    ident: "value".into(),
-                    socket: None,
-                    span: (137, 142, 6),
-                  })),
-                  entry_type: Type(vec![Type1 {
-                    type2: Type2::Typename((
-                      Identifier {
-                        ident: "v".into(),
-                        socket: None,
-                        span: (144, 145, 6),
+          span: (0, 19, 1),
+        },
+        Rule::Type {
+          rule: TypeRule {
+            name: Identifier {
+              ident: "upper".into(),
+              socket: None,
+              span: (40, 45, 3),
+            },
+            generic_param: None,
+            is_type_choice_alternate: false,
+            value: Type {
+              type_choices: vec![
+                Type1 {
+                  type2: Type2::UintValue {
+                    value: 500,
+                    span: (0, 0, 0),
+                  },
+                  operator: None,
+                  span: (0, 0, 0),
+                },
+                Type1 {
+                  type2: Type2::UintValue {
+                    value: 600,
+                    span: (0, 0, 0),
+                  },
+                  operator: None,
+                  span: (0, 0, 0),
+                },
+              ],
+              span: (0, 0, 0),
+            },
+          },
+          span: (0, 0, 0),
+        },
+        Rule::Group {
+          rule: Box::from(GroupRule {
+            name: Identifier {
+              ident: "gr".into(),
+              socket: None,
+              span: (58, 60, 4),
+            },
+            generic_param: None,
+            is_group_choice_alternate: false,
+            entry: GroupEntry::InlineGroup {
+              occur: Some(Occur::Exact {
+                lower: Some(2),
+                upper: None,
+                span: (0, 0, 0),
+              }),
+              group: Group {
+                group_choices: vec![GroupChoice {
+                  group_entries: vec![(
+                    GroupEntry::TypeGroupname {
+                      ge: TypeGroupnameEntry {
+                        occur: None,
+                        name: Identifier {
+                          ident: "test".into(),
+                          socket: None,
+                          span: (68, 72, 4),
+                        },
+                        generic_arg: None,
                       },
-                      None,
-                    )),
-                    operator: None,
-                  }]),
-                })),
-                false,
-              ),
-            ])])),
-            operator: None,
-          }]),
-          span: (111, 146, 6),
-        }),
+                      span: (0, 0, 0),
+                    },
+                    false,
+                  )],
+                  span: (0, 0, 0),
+                }],
+                span: (0, 0, 0),
+              },
+              span: (0, 0, 0),
+            },
+          }),
+          span: (0, 0, 0),
+        },
+        Rule::Type {
+          rule: TypeRule {
+            name: Identifier {
+              ident: "messages".into(),
+              socket: None,
+              span: (75, 83, 5),
+            },
+            generic_param: None,
+            is_type_choice_alternate: false,
+            value: Type {
+              type_choices: vec![Type1 {
+                type2: Type2::Typename {
+                  ident: Identifier {
+                    ident: "message".into(),
+                    socket: None,
+                    span: (86, 93, 5),
+                  },
+                  generic_arg: Some(GenericArg {
+                    args: vec![
+                      Type1 {
+                        type2: Type2::TextValue {
+                          value: "reboot".into(),
+                          span: (0, 0, 0),
+                        },
+                        operator: None,
+                        span: (0, 0, 0),
+                      },
+                      Type1 {
+                        type2: Type2::TextValue {
+                          value: "now".into(),
+                          span: (0, 0, 0),
+                        },
+                        operator: None,
+                        span: (0, 0, 0),
+                      },
+                    ],
+                    span: (93, 110, 5),
+                  }),
+                  span: (0, 0, 0),
+                },
+                operator: None,
+                span: (0, 0, 0),
+              }],
+              span: (0, 0, 0),
+            },
+          },
+          span: (0, 0, 0),
+        },
+        Rule::Type {
+          rule: TypeRule {
+            name: Identifier {
+              ident: "message".into(),
+              socket: None,
+              span: (111, 118, 6),
+            },
+            generic_param: Some(GenericParm {
+              params: vec![
+                Identifier {
+                  ident: "t".into(),
+                  socket: None,
+                  span: (119, 120, 6),
+                },
+                Identifier {
+                  ident: "v".into(),
+                  socket: None,
+                  span: (122, 123, 6),
+                },
+              ],
+              span: (118, 124, 6),
+            }),
+            is_type_choice_alternate: false,
+            value: Type {
+              type_choices: vec![Type1 {
+                type2: Type2::Map {
+                  group: Group {
+                    group_choices: vec![GroupChoice {
+                      group_entries: vec![
+                        (
+                          GroupEntry::ValueMemberKey {
+                            ge: Box::from(ValueMemberKeyEntry {
+                              occur: None,
+                              member_key: Some(MemberKey::Bareword {
+                                ident: Identifier {
+                                  ident: "type".into(),
+                                  socket: None,
+                                  span: (128, 132, 6),
+                                },
+                                span: (0, 0, 0),
+                              }),
+                              entry_type: Type {
+                                type_choices: vec![Type1 {
+                                  type2: Type2::UintValue {
+                                    value: 2,
+                                    span: (0, 0, 0),
+                                  },
+                                  operator: None,
+                                  span: (0, 0, 0),
+                                }],
+                                span: (0, 0, 0),
+                              },
+                            }),
+                            span: (0, 0, 0),
+                          },
+                          true,
+                        ),
+                        (
+                          GroupEntry::ValueMemberKey {
+                            ge: Box::from(ValueMemberKeyEntry {
+                              occur: None,
+                              member_key: Some(MemberKey::Bareword {
+                                ident: Identifier {
+                                  ident: "value".into(),
+                                  socket: None,
+                                  span: (137, 142, 6),
+                                },
+                                span: (0, 0, 0),
+                              }),
+                              entry_type: Type {
+                                type_choices: vec![Type1 {
+                                  type2: Type2::Typename {
+                                    ident: Identifier {
+                                      ident: "v".into(),
+                                      socket: None,
+                                      span: (144, 145, 6),
+                                    },
+                                    generic_arg: None,
+                                    span: (0, 0, 0),
+                                  },
+                                  operator: None,
+                                  span: (0, 0, 0),
+                                }],
+                                span: (0, 0, 0),
+                              },
+                            }),
+                            span: (0, 0, 0),
+                          },
+                          false,
+                        ),
+                      ],
+                      span: (0, 0, 0),
+                    }],
+                    span: (0, 0, 0),
+                  },
+                  span: (0, 0, 0),
+                },
+                operator: None,
+                span: (0, 0, 0),
+              }],
+              span: (0, 0, 0),
+            },
+          },
+          span: (0, 0, 0),
+        },
       ],
     };
 
@@ -1442,12 +1879,20 @@ message<t, v> = {type: 2, value: v}"#;
     let expected_output = GenericArg {
       args: vec![
         Type1 {
-          type2: Type2::TextValue("reboot".into()),
+          type2: Type2::TextValue {
+            value: "reboot".into(),
+            span: (0, 0, 0),
+          },
           operator: None,
+          span: (0, 0, 0),
         },
         Type1 {
-          type2: Type2::TextValue("now".into()),
+          type2: Type2::TextValue {
+            value: "now".into(),
+            span: (0, 0, 0),
+          },
           operator: None,
+          span: (0, 0, 0),
         },
       ],
       span: (0, 17, 1),
@@ -1468,30 +1913,37 @@ message<t, v> = {type: 2, value: v}"#;
 
     let t = p.parse_type(None)?;
 
-    let expected_output = Type(vec![
-      Type1 {
-        type2: Type2::Typename((
-          Identifier {
-            ident: "tchoice1".into(),
-            socket: None,
+    let expected_output = Type {
+      type_choices: vec![
+        Type1 {
+          type2: Type2::Typename {
+            ident: Identifier {
+              ident: "tchoice1".into(),
+              socket: None,
+              span: (0, 8, 1),
+            },
+            generic_arg: None,
             span: (0, 8, 1),
           },
-          None,
-        )),
-        operator: None,
-      },
-      Type1 {
-        type2: Type2::Typename((
-          Identifier {
-            ident: "tchoice2".into(),
-            socket: None,
+          operator: None,
+          span: (0, 8, 1),
+        },
+        Type1 {
+          type2: Type2::Typename {
+            ident: Identifier {
+              ident: "tchoice2".into(),
+              socket: None,
+              span: (11, 19, 1),
+            },
+            generic_arg: None,
             span: (11, 19, 1),
           },
-          None,
-        )),
-        operator: None,
-      },
-    ]);
+          operator: None,
+          span: (11, 19, 1),
+        },
+      ],
+      span: (0, 19, 1),
+    };
 
     assert_eq!(t, expected_output);
     assert_eq!(t.to_string(), expected_output.to_string());
@@ -1512,85 +1964,156 @@ message<t, v> = {type: 2, value: v}"#;
 
     let expected_outputs = [
       Type1 {
-        type2: Type2::UintValue(5),
-        operator: Some((RangeCtlOp::RangeOp(true), Type2::UintValue(10))),
+        type2: Type2::UintValue {
+          value: 5,
+          span: (0, 1, 1),
+        },
+        operator: Some((
+          RangeCtlOp::RangeOp {
+            is_inclusive: true,
+            span: (1, 3, 1),
+          },
+          Type2::UintValue {
+            value: 10,
+            span: (3, 5, 1),
+          },
+        )),
+        span: (0, 5, 1),
       },
       Type1 {
-        type2: Type2::FloatValue(-10.5),
-        operator: Some((RangeCtlOp::RangeOp(false), Type2::FloatValue(10.1))),
+        type2: Type2::FloatValue {
+          value: -10.5,
+          span: (0, 5, 1),
+        },
+        operator: Some((
+          RangeCtlOp::RangeOp {
+            is_inclusive: false,
+            span: (5, 8, 1),
+          },
+          Type2::FloatValue {
+            value: 10.1,
+            span: (8, 12, 1),
+          },
+        )),
+        span: (0, 12, 1),
       },
       Type1 {
-        type2: Type2::FloatValue(1.5),
-        operator: Some((RangeCtlOp::RangeOp(true), Type2::FloatValue(4.5))),
+        type2: Type2::FloatValue {
+          value: 1.5,
+          span: (0, 3, 1),
+        },
+        operator: Some((
+          RangeCtlOp::RangeOp {
+            is_inclusive: true,
+            span: (3, 5, 1),
+          },
+          Type2::FloatValue {
+            value: 4.5,
+            span: (5, 8, 1),
+          },
+        )),
+        span: (0, 8, 1),
       },
       Type1 {
-        type2: Type2::Typename((
-          Identifier {
+        type2: Type2::Typename {
+          ident: Identifier {
             ident: "my..lower".into(),
             socket: None,
             span: (0, 9, 1),
           },
-          None,
-        )),
+          generic_arg: None,
+          span: (0, 9, 1),
+        },
         operator: Some((
-          RangeCtlOp::RangeOp(false),
-          Type2::Typename((
-            Identifier {
+          RangeCtlOp::RangeOp {
+            is_inclusive: false,
+            span: (10, 13, 1),
+          },
+          Type2::Typename {
+            ident: Identifier {
               ident: "upper".into(),
               socket: None,
               span: (14, 19, 1),
             },
-            None,
-          )),
+            generic_arg: None,
+            span: (14, 19, 1),
+          },
         )),
+        span: (0, 19, 1),
       },
       Type1 {
-        type2: Type2::Typename((
-          Identifier {
+        type2: Type2::Typename {
+          ident: Identifier {
             ident: "target".into(),
             socket: None,
             span: (0, 6, 1),
           },
-          None,
-        )),
+          generic_arg: None,
+          span: (0, 6, 1),
+        },
         operator: Some((
-          RangeCtlOp::CtlOp(".lt"),
-          Type2::Typename((
-            Identifier {
+          RangeCtlOp::CtlOp {
+            ctrl: ".lt",
+            span: (7, 10, 1),
+          },
+          Type2::Typename {
+            ident: Identifier {
               ident: "controller".into(),
               socket: None,
               span: (11, 21, 1),
             },
-            None,
-          )),
+            generic_arg: None,
+            span: (11, 21, 1),
+          },
         )),
+        span: (0, 21, 1),
       },
       Type1 {
-        type2: Type2::ParenthesizedType(Type(vec![
-          Type1 {
-            type2: Type2::Typename((
-              Identifier {
-                ident: "text".into(),
-                socket: None,
+        type2: Type2::ParenthesizedType {
+          pt: Type {
+            type_choices: vec![
+              Type1 {
+                type2: Type2::Typename {
+                  ident: Identifier {
+                    ident: "text".into(),
+                    socket: None,
+                    span: (2, 6, 1),
+                  },
+                  generic_arg: None,
+                  span: (2, 6, 1),
+                },
+                operator: None,
                 span: (2, 6, 1),
               },
-              None,
-            )),
-            operator: None,
-          },
-          Type1 {
-            type2: Type2::Typename((
-              Identifier {
-                ident: "tstr".into(),
-                socket: None,
+              Type1 {
+                type2: Type2::Typename {
+                  ident: Identifier {
+                    ident: "tstr".into(),
+                    socket: None,
+                    span: (9, 13, 1),
+                  },
+                  generic_arg: None,
+                  span: (9, 13, 1),
+                },
+                operator: None,
                 span: (9, 13, 1),
               },
-              None,
-            )),
-            operator: None,
+            ],
+            span: (2, 13, 1),
           },
-        ])),
-        operator: Some((RangeCtlOp::CtlOp(".eq"), Type2::TextValue("hello".into()))),
+          span: (0, 15, 1),
+        },
+        operator: Some((
+          RangeCtlOp::CtlOp {
+            ctrl: ".eq",
+            span: (16, 19, 1),
+          },
+          Type2::TextValue {
+            value: "hello".into(),
+            span: (20, 27, 1),
+          },
+        )),
+        span: (0, 27, 1),
       },
     ];
 
@@ -1625,127 +2148,215 @@ message<t, v> = {type: 2, value: v}"#;
     ];
 
     let expected_outputs = [
-      Type2::TextValue("myvalue".into()),
-      Type2::Typename((
-        Identifier {
+      Type2::TextValue {
+        value: "myvalue".into(),
+        span: (0, 9, 1),
+      },
+      Type2::Typename {
+        ident: Identifier {
           ident: "message".into(),
           socket: None,
           span: (0, 7, 1),
         },
-        Some(GenericArg {
+        generic_arg: Some(GenericArg {
           args: vec![
             Type1 {
-              type2: Type2::TextValue("reboot".into()),
+              type2: Type2::TextValue {
+                value: "reboot".into(),
+                span: (8, 16, 1),
+              },
               operator: None,
+              span: (8, 16, 1),
             },
             Type1 {
-              type2: Type2::TextValue("now".into()),
+              type2: Type2::TextValue {
+                value: "now".into(),
+                span: (18, 23, 1),
+              },
               operator: None,
+              span: (18, 23, 1),
             },
           ],
           span: (7, 24, 1),
         }),
-      )),
-      Type2::Typename((
-        Identifier {
+        span: (0, 24, 1),
+      },
+      Type2::Typename {
+        ident: Identifier {
           ident: "tcp-option".into(),
           socket: Some(SocketPlug::GROUP),
           span: (0, 12, 1),
         },
-        None,
-      )),
-      Type2::Unwrap((
-        Identifier {
+        generic_arg: None,
+        span: (0, 12, 1),
+      },
+      Type2::Unwrap {
+        ident: Identifier {
           ident: "group1".into(),
           socket: None,
           span: (1, 7, 1),
         },
-        None,
-      )),
-      Type2::TaggedData((
-        Some(997),
-        Type(vec![Type1 {
-          type2: Type2::Typename((
-            Identifier {
-              ident: "tstr".into(),
-              socket: None,
+        generic_arg: None,
+        span: (0, 0, 0),
+      },
+      Type2::TaggedData {
+        tag: Some(997),
+        t: Type {
+          type_choices: vec![Type1 {
+            type2: Type2::Typename {
+              ident: Identifier {
+                ident: "tstr".into(),
+                socket: None,
+                span: (7, 11, 1),
+              },
+              generic_arg: None,
               span: (7, 11, 1),
             },
-            None,
-          )),
-          operator: None,
-        }]),
-      )),
-      Type2::FloatValue(9.9),
-      Type2::Any,
-      Type2::Array(Group(vec![GroupChoice(vec![(
-        GroupEntry::TypeGroupname(TypeGroupnameEntry {
-          occur: Some(Occur::Exact((None, Some(3)))),
-          name: Identifier {
-            ident: "reputon".into(),
-            socket: None,
-            span: (4, 11, 1),
-          },
-          generic_arg: None,
-        }),
-        false,
-      )])])),
-      Type2::Array(Group(vec![GroupChoice(vec![(
-        GroupEntry::TypeGroupname(TypeGroupnameEntry {
-          occur: Some(Occur::OneOrMore),
-          name: Identifier {
-            ident: "reputon".into(),
-            socket: None,
-            span: (3, 10, 1),
-          },
-          generic_arg: None,
-        }),
-        false,
-      )])])),
-      Type2::ChoiceFromGroup((
-        Identifier {
+            operator: None,
+            span: (7, 11, 1),
+          }],
+          span: (7, 11, 1),
+        },
+        span: (0, 11, 1),
+      },
+      Type2::FloatValue {
+        value: 9.9,
+        span: (0, 3, 1),
+      },
+      Type2::Any((0, 1, 1)),
+      Type2::Array {
+        group: Group {
+          group_choices: vec![GroupChoice {
+            group_entries: vec![(
+              GroupEntry::TypeGroupname {
+                ge: TypeGroupnameEntry {
+                  occur: Some(Occur::Exact {
+                    lower: None,
+                    upper: Some(3),
+                    span: (1, 3, 1),
+                  }),
+                  name: Identifier {
+                    ident: "reputon".into(),
+                    socket: None,
+                    span: (4, 11, 1),
+                  },
+                  generic_arg: None,
+                },
+                span: (1, 11, 1),
+              },
+              false,
+            )],
+            span: (1, 11, 1),
+          }],
+          span: (1, 11, 1),
+        },
+        span: (0, 12, 1),
+      },
+      Type2::Array {
+        group: Group {
+          group_choices: vec![GroupChoice {
+            group_entries: vec![(
+              GroupEntry::TypeGroupname {
+                ge: TypeGroupnameEntry {
+                  occur: Some(Occur::OneOrMore((1, 2, 1))),
+                  name: Identifier {
+                    ident: "reputon".into(),
+                    socket: None,
+                    span: (3, 10, 1),
+                  },
+                  generic_arg: None,
+                },
+                span: (1, 10, 1),
+              },
+              false,
+            )],
+            span: (1, 10, 1),
+          }],
+          span: (1, 10, 1),
+        },
+        span: (0, 11, 1),
+      },
+      Type2::ChoiceFromGroup {
+        ident: Identifier {
           ident: "groupname".into(),
           socket: None,
           span: (1, 10, 1),
         },
-        None,
-      )),
-      Type2::ChoiceFromInlineGroup(Group(vec![GroupChoice(vec![(
-        GroupEntry::TypeGroupname(TypeGroupnameEntry {
-          occur: None,
-          name: Identifier {
-            ident: "inlinegroup".into(),
-            socket: None,
-            span: (3, 14, 1),
-          },
-          generic_arg: None,
-        }),
-        false,
-      )])])),
-      Type2::Map(Group(vec![GroupChoice(vec![(
-        GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-          occur: Some(Occur::Optional),
-          member_key: Some(MemberKey::Type1(Box::from((
-            Type1 {
-              type2: Type2::TextValue("optional-key".into()),
-              operator: None,
-            },
-            true,
-          )))),
-          entry_type: Type(vec![Type1 {
-            type2: Type2::Typename((
-              Identifier {
-                ident: "int".into(),
-                socket: None,
-                span: (24, 27, 1),
+        generic_arg: None,
+        span: (0, 10, 1),
+      },
+      Type2::ChoiceFromInlineGroup {
+        group: Group {
+          group_choices: vec![GroupChoice {
+            group_entries: vec![(
+              GroupEntry::TypeGroupname {
+                ge: TypeGroupnameEntry {
+                  occur: None,
+                  name: Identifier {
+                    ident: "inlinegroup".into(),
+                    socket: None,
+                    span: (3, 14, 1),
+                  },
+                  generic_arg: None,
+                },
+                span: (3, 14, 1),
               },
-              None,
-            )),
-            operator: None,
-          }]),
-        })),
-        true,
-      )])])),
+              false,
+            )],
+            span: (3, 14, 1),
+          }],
+          span: (3, 14, 1),
+        },
+        span: (0, 14, 1),
+      },
+      Type2::Map {
+        group: Group {
+          group_choices: vec![GroupChoice {
+            group_entries: vec![(
+              GroupEntry::ValueMemberKey {
+                ge: Box::from(ValueMemberKeyEntry {
+                  occur: Some(Occur::Optional((2, 3, 1))),
+                  member_key: Some(MemberKey::Type1 {
+                    t1: Box::from((
+                      Type1 {
+                        type2: Type2::TextValue {
+                          value: "optional-key".into(),
+                          span: (4, 18, 1),
+                        },
+                        operator: None,
+                        span: (4, 18, 1),
+                      },
+                      true,
+                    )),
+                    span: (4, 20, 1),
+                  }),
+                  entry_type: Type {
+                    type_choices: vec![Type1 {
+                      type2: Type2::Typename {
+                        ident: Identifier {
+                          ident: "int".into(),
+                          socket: None,
+                          span: (24, 27, 1),
+                        },
+                        generic_arg: None,
+                        span: (24, 27, 1),
+                      },
+                      operator: None,
+                      span: (24, 27, 1),
+                    }],
+                    span: (24, 27, 1),
+                  },
+                }),
+                span: (2, 28, 1),
+              },
+              true,
+            )],
+            span: (2, 28, 1),
+          }],
+          span: (2, 28, 1),
+        },
+        span: (0, 30, 1),
+      },
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -1770,156 +2381,248 @@ message<t, v> = {type: 2, value: v}"#;
     ];
 
     let expected_ouputs = [
-      Type2::Array(Group(vec![GroupChoice(vec![
-        (
-          GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-            occur: None,
-            member_key: None,
-            entry_type: Type(vec![Type1 {
-              type2: Type2::Array(Group(vec![GroupChoice(vec![(
-                GroupEntry::TypeGroupname(TypeGroupnameEntry {
-                  occur: Some(Occur::ZeroOrMore),
-                  name: Identifier {
-                    ident: "file-entry".into(),
-                    socket: None,
-                    span: (5, 15, 1),
-                  },
-                  generic_arg: None,
-                }),
+      Type2::Array {
+        group: Group {
+          group_choices: vec![GroupChoice {
+            group_entries: vec![
+              (
+                GroupEntry::ValueMemberKey {
+                  ge: Box::from(ValueMemberKeyEntry {
+                    occur: None,
+                    member_key: None,
+                    entry_type: Type {
+                      type_choices: vec![Type1 {
+                        type2: Type2::Array {
+                          group: Group {
+                            group_choices: vec![GroupChoice {
+                              group_entries: vec![(
+                                GroupEntry::TypeGroupname {
+                                  ge: TypeGroupnameEntry {
+                                    occur: Some(Occur::ZeroOrMore((3, 4, 1))),
+                                    name: Identifier {
+                                      ident: "file-entry".into(),
+                                      socket: None,
+                                      span: (5, 15, 1),
+                                    },
+                                    generic_arg: None,
+                                  },
+                                  span: (3, 15, 1),
+                                },
+                                false,
+                              )],
+                              span: (3, 15, 1),
+                            }],
+                            span: (3, 15, 1),
+                          },
+                          span: (2, 16, 1),
+                        },
+                        operator: None,
+                        span: (2, 16, 1),
+                      }],
+                      span: (2, 16, 1),
+                    },
+                  }),
+                  span: (2, 17, 1),
+                },
+                true,
+              ),
+              (
+                GroupEntry::ValueMemberKey {
+                  ge: Box::from(ValueMemberKeyEntry {
+                    occur: None,
+                    member_key: None,
+                    entry_type: Type {
+                      type_choices: vec![Type1 {
+                        type2: Type2::Array {
+                          group: Group {
+                            group_choices: vec![GroupChoice {
+                              group_entries: vec![(
+                                GroupEntry::TypeGroupname {
+                                  ge: TypeGroupnameEntry {
+                                    occur: Some(Occur::ZeroOrMore((19, 20, 1))),
+                                    name: Identifier {
+                                      ident: "directory-entry".into(),
+                                      socket: None,
+                                      span: (21, 36, 1),
+                                    },
+                                    generic_arg: None,
+                                  },
+                                  span: (19, 36, 1),
+                                },
+                                false,
+                              )],
+                              span: (19, 36, 1),
+                            }],
+                            span: (19, 36, 1),
+                          },
+                          span: (18, 37, 1),
+                        },
+                        operator: None,
+                        span: (18, 37, 1),
+                      }],
+                      span: (18, 37, 1),
+                    },
+                  }),
+                  span: (18, 37, 1),
+                },
                 false,
-              )])])),
-              operator: None,
-            }]),
-          })),
-          true,
-        ),
-        (
-          GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-            occur: None,
-            member_key: None,
-            entry_type: Type(vec![Type1 {
-              type2: Type2::Array(Group(vec![GroupChoice(vec![(
-                GroupEntry::TypeGroupname(TypeGroupnameEntry {
-                  occur: Some(Occur::ZeroOrMore),
-                  name: Identifier {
-                    ident: "directory-entry".into(),
-                    socket: None,
-                    span: (21, 36, 1),
+              ),
+            ],
+            span: (2, 37, 1),
+          }],
+          span: (2, 37, 1),
+        },
+        span: (0, 39, 1),
+      },
+      Type2::Map {
+        group: Group {
+          group_choices: vec![
+            GroupChoice {
+              group_entries: vec![
+                (
+                  GroupEntry::TypeGroupname {
+                    ge: TypeGroupnameEntry {
+                      occur: None,
+                      name: Identifier {
+                        ident: "int".into(),
+                        socket: None,
+                        span: (2, 5, 1),
+                      },
+                      generic_arg: None,
+                    },
+                    span: (2, 6, 1),
                   },
-                  generic_arg: None,
-                }),
+                  true,
+                ),
+                (
+                  GroupEntry::TypeGroupname {
+                    ge: TypeGroupnameEntry {
+                      occur: None,
+                      name: Identifier {
+                        ident: "int".into(),
+                        socket: None,
+                        span: (7, 10, 1),
+                      },
+                      generic_arg: None,
+                    },
+                    span: (7, 10, 1),
+                  },
+                  false,
+                ),
+              ],
+              span: (2, 10, 1),
+            },
+            GroupChoice {
+              group_entries: vec![
+                (
+                  GroupEntry::TypeGroupname {
+                    ge: TypeGroupnameEntry {
+                      occur: None,
+                      name: Identifier {
+                        ident: "int".into(),
+                        socket: None,
+                        span: (14, 17, 1),
+                      },
+                      generic_arg: None,
+                    },
+                    span: (14, 18, 1),
+                  },
+                  true,
+                ),
+                (
+                  GroupEntry::TypeGroupname {
+                    ge: TypeGroupnameEntry {
+                      occur: None,
+                      name: Identifier {
+                        ident: "tstr".into(),
+                        socket: None,
+                        span: (19, 23, 1),
+                      },
+                      generic_arg: None,
+                    },
+                    span: (19, 23, 1),
+                  },
+                  false,
+                ),
+              ],
+              span: (14, 23, 1),
+            },
+          ],
+          span: (2, 23, 1),
+        },
+        span: (0, 25, 1),
+      },
+      Type2::Map {
+        group: Group {
+          group_choices: vec![GroupChoice {
+            group_entries: vec![
+              (
+                GroupEntry::TypeGroupname {
+                  ge: TypeGroupnameEntry {
+                    occur: None,
+                    name: Identifier {
+                      ident: "int".into(),
+                      socket: None,
+                      span: (2, 5, 1),
+                    },
+                    generic_arg: None,
+                  },
+                  span: (2, 6, 1),
+                },
+                true,
+              ),
+              (
+                GroupEntry::TypeGroupname {
+                  ge: TypeGroupnameEntry {
+                    occur: None,
+                    name: Identifier {
+                      ident: "int".into(),
+                      socket: None,
+                      span: (7, 10, 1),
+                    },
+                    generic_arg: None,
+                  },
+                  span: (7, 11, 1),
+                },
+                true,
+              ),
+              (
+                GroupEntry::TypeGroupname {
+                  ge: TypeGroupnameEntry {
+                    occur: None,
+                    name: Identifier {
+                      ident: "int".into(),
+                      socket: None,
+                      span: (12, 15, 1),
+                    },
+                    generic_arg: None,
+                  },
+                  span: (12, 16, 1),
+                },
+                true,
+              ),
+              (
+                GroupEntry::TypeGroupname {
+                  ge: TypeGroupnameEntry {
+                    occur: None,
+                    name: Identifier {
+                      ident: "tstr".into(),
+                      socket: None,
+                      span: (17, 21, 1),
+                    },
+                    generic_arg: None,
+                  },
+                  span: (17, 21, 1),
+                },
                 false,
-              )])])),
-              operator: None,
-            }]),
-          })),
-          false,
-        ),
-      ])])),
-      Type2::Map(Group(vec![
-        GroupChoice(vec![
-          (
-            GroupEntry::TypeGroupname(TypeGroupnameEntry {
-              occur: None,
-              name: Identifier {
-                ident: "int".into(),
-                socket: None,
-                span: (2, 5, 1),
-              },
-              generic_arg: None,
-            }),
-            true,
-          ),
-          (
-            GroupEntry::TypeGroupname(TypeGroupnameEntry {
-              occur: None,
-              name: Identifier {
-                ident: "int".into(),
-                socket: None,
-                span: (7, 10, 1),
-              },
-              generic_arg: None,
-            }),
-            false,
-          ),
-        ]),
-        GroupChoice(vec![
-          (
-            GroupEntry::TypeGroupname(TypeGroupnameEntry {
-              occur: None,
-              name: Identifier {
-                ident: "int".into(),
-                socket: None,
-                span: (14, 17, 1),
-              },
-              generic_arg: None,
-            }),
-            true,
-          ),
-          (
-            GroupEntry::TypeGroupname(TypeGroupnameEntry {
-              occur: None,
-              name: Identifier {
-                ident: "tstr".into(),
-                socket: None,
-                span: (19, 23, 1),
-              },
-              generic_arg: None,
-            }),
-            false,
-          ),
-        ]),
-      ])),
-      Type2::Map(Group(vec![GroupChoice(vec![
-        (
-          GroupEntry::TypeGroupname(TypeGroupnameEntry {
-            occur: None,
-            name: Identifier {
-              ident: "int".into(),
-              socket: None,
-              span: (2, 5, 1),
-            },
-            generic_arg: None,
-          }),
-          true,
-        ),
-        (
-          GroupEntry::TypeGroupname(TypeGroupnameEntry {
-            occur: None,
-            name: Identifier {
-              ident: "int".into(),
-              socket: None,
-              span: (7, 10, 1),
-            },
-            generic_arg: None,
-          }),
-          true,
-        ),
-        (
-          GroupEntry::TypeGroupname(TypeGroupnameEntry {
-            occur: None,
-            name: Identifier {
-              ident: "int".into(),
-              socket: None,
-              span: (12, 15, 1),
-            },
-            generic_arg: None,
-          }),
-          true,
-        ),
-        (
-          GroupEntry::TypeGroupname(TypeGroupnameEntry {
-            occur: None,
-            name: Identifier {
-              ident: "tstr".into(),
-              socket: None,
-              span: (17, 21, 1),
-            },
-            generic_arg: None,
-          }),
-          false,
-        ),
-      ])])),
+              ),
+            ],
+            span: (2, 21, 1),
+          }],
+          span: (2, 21, 1),
+        },
+        span: (0, 23, 1),
+      },
     ];
 
     for (idx, expected_output) in expected_ouputs.iter().enumerate() {
@@ -1946,98 +2649,151 @@ message<t, v> = {type: 2, value: v}"#;
     ];
 
     let expected_outputs = [
-      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-        occur: Some(Occur::ZeroOrMore),
-        member_key: Some(MemberKey::Type1(Box::from((
-          Type1 {
-            type2: Type2::Typename((
-              Identifier {
-                ident: "type1".into(),
-                socket: None,
-                span: (2, 7, 1),
-              },
-              None,
-            )),
-            operator: None,
-          },
-          true,
-        )))),
-        entry_type: Type(vec![Type1 {
-          type2: Type2::TextValue("value".into()),
-          operator: None,
-        }]),
-      })),
-      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-        occur: None,
-        member_key: Some(MemberKey::Bareword(Identifier {
-          ident: "type1".into(),
-          socket: None,
-          span: (0, 5, 1),
-        })),
-        entry_type: Type(vec![Type1 {
-          type2: Type2::Typename((
-            Identifier {
-              ident: "type2".into(),
-              socket: None,
-              span: (7, 12, 1),
-            },
-            None,
-          )),
-          operator: None,
-        }]),
-      })),
-      GroupEntry::TypeGroupname(TypeGroupnameEntry {
-        occur: None,
-        name: Identifier {
-          ident: "typename".into(),
-          socket: None,
-          span: (0, 8, 1),
-        },
-        generic_arg: None,
-      }),
-      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-        occur: Some(Occur::Optional),
-        member_key: Some(MemberKey::Value(Value::UINT(0))),
-        entry_type: Type(vec![Type1 {
-          type2: Type2::Typename((
-            Identifier {
-              ident: "addrdistr".into(),
-              socket: None,
-              span: (5, 14, 1),
-            },
-            None,
-          )),
-          operator: None,
-        }]),
-      })),
-      GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-        occur: None,
-        member_key: Some(MemberKey::Value(Value::UINT(0))),
-        entry_type: Type(vec![Type1 {
-          type2: Type2::Typename((
-            Identifier {
-              ident: "finite_set".into(),
-              socket: None,
-              span: (3, 13, 1),
-            },
-            Some(GenericArg {
-              args: vec![Type1 {
-                type2: Type2::Typename((
-                  Identifier {
-                    ident: "transaction_input".into(),
+      GroupEntry::ValueMemberKey {
+        ge: Box::from(ValueMemberKeyEntry {
+          occur: Some(Occur::ZeroOrMore((0, 0, 0))),
+          member_key: Some(MemberKey::Type1 {
+            t1: Box::from((
+              Type1 {
+                type2: Type2::Typename {
+                  ident: Identifier {
+                    ident: "type1".into(),
                     socket: None,
-                    span: (14, 31, 1),
+                    span: (2, 7, 1),
                   },
-                  None,
-                )),
+                  generic_arg: None,
+                  span: (0, 0, 0),
+                },
                 operator: None,
-              }],
-              span: (13, 32, 1),
-            }),
-          )),
-          operator: None,
-        }]),
-      })),
+                span: (0, 0, 0),
+              },
+              true,
+            )),
+            span: (0, 0, 0),
+          }),
+          entry_type: Type {
+            type_choices: vec![Type1 {
+              type2: Type2::TextValue {
+                value: "value".into(),
+                span: (0, 0, 0),
+              },
+              operator: None,
+              span: (0, 0, 0),
+            }],
+            span: (0, 0, 0),
+          },
+        }),
+        span: (0, 0, 0),
+      },
+      GroupEntry::ValueMemberKey {
+        ge: Box::from(ValueMemberKeyEntry {
+          occur: None,
+          member_key: Some(MemberKey::Bareword {
+            ident: Identifier {
+              ident: "type1".into(),
+              socket: None,
+              span: (0, 5, 1),
+            },
+            span: (0, 0, 0),
+          }),
+          entry_type: Type {
+            type_choices: vec![Type1 {
+              type2: Type2::Typename {
+                ident: Identifier {
+                  ident: "type2".into(),
+                  socket: None,
+                  span: (7, 12, 1),
+                },
+                generic_arg: None,
+                span: (0, 0, 0),
+              },
+              operator: None,
+              span: (0, 0, 0),
+            }],
+            span: (0, 0, 0),
+          },
+        }),
+        span: (0, 0, 0),
+      },
+      GroupEntry::TypeGroupname {
+        ge: TypeGroupnameEntry {
+          occur: None,
+          name: Identifier {
+            ident: "typename".into(),
+            socket: None,
+            span: (0, 8, 1),
+          },
+          generic_arg: None,
+        },
+        span: (0, 0, 0),
+      },
+      GroupEntry::ValueMemberKey {
+        ge: Box::from(ValueMemberKeyEntry {
+          occur: Some(Occur::Optional((0, 0, 0))),
+          member_key: Some(MemberKey::Value {
+            value: Value::UINT(0),
+            span: (0, 0, 0),
+          }),
+          entry_type: Type {
+            type_choices: vec![Type1 {
+              type2: Type2::Typename {
+                ident: Identifier {
+                  ident: "addrdistr".into(),
+                  socket: None,
+                  span: (5, 14, 1),
+                },
+                generic_arg: None,
+                span: (0, 0, 0),
+              },
+              operator: None,
+              span: (0, 0, 0),
+            }],
+            span: (0, 0, 0),
+          },
+        }),
+        span: (0, 0, 0),
+      },
+      GroupEntry::ValueMemberKey {
+        ge: Box::from(ValueMemberKeyEntry {
+          occur: None,
+          member_key: Some(MemberKey::Value {
+            value: Value::UINT(0),
+            span: (0, 0, 0),
+          }),
+          entry_type: Type {
+            type_choices: vec![Type1 {
+              type2: Type2::Typename {
+                ident: Identifier {
+                  ident: "finite_set".into(),
+                  socket: None,
+                  span: (3, 13, 1),
+                },
+                generic_arg: Some(GenericArg {
+                  args: vec![Type1 {
+                    type2: Type2::Typename {
+                      ident: Identifier {
+                        ident: "transaction_input".into(),
+                        socket: None,
+                        span: (14, 31, 1),
+                      },
+                      generic_arg: None,
+                      span: (0, 0, 0),
+                    },
+                    operator: None,
+                    span: (0, 0, 0),
+                  }],
+                  span: (13, 32, 1),
+                }),
+                span: (0, 0, 0),
+              },
+              operator: None,
+              span: (0, 0, 0),
+            }],
+            span: (0, 0, 0),
+          },
+        }),
+        span: (0, 0, 0),
+      },
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -2065,39 +2821,63 @@ message<t, v> = {type: 2, value: v}"#;
     ];
 
     let expected_outputs = [
-      MemberKey::Type1(Box::from((
-        Type1 {
-          type2: Type2::Typename((
-            Identifier {
-              ident: "type1".into(),
-              socket: None,
-              span: (0, 5, 1),
+      MemberKey::Type1 {
+        t1: Box::from((
+          Type1 {
+            type2: Type2::Typename {
+              ident: Identifier {
+                ident: "type1".into(),
+                socket: None,
+                span: (0, 5, 1),
+              },
+              generic_arg: None,
+              span: (0, 0, 0),
             },
-            None,
-          )),
-          operator: None,
+            operator: None,
+            span: (0, 0, 0),
+          },
+          false,
+        )),
+        span: (0, 0, 0),
+      },
+      MemberKey::Type1 {
+        t1: Box::from((
+          Type1 {
+            type2: Type2::TextValue {
+              value: "mytype1".into(),
+              span: (0, 0, 0),
+            },
+            operator: None,
+            span: (0, 0, 0),
+          },
+          true,
+        )),
+        span: (0, 0, 0),
+      },
+      MemberKey::Bareword {
+        ident: Identifier {
+          ident: "mybareword".into(),
+          socket: None,
+          span: (0, 10, 1),
         },
-        false,
-      ))),
-      MemberKey::Type1(Box::from((
-        Type1 {
-          type2: Type2::TextValue("mytype1".into()),
-          operator: None,
+        span: (0, 0, 0),
+      },
+      MemberKey::Bareword {
+        ident: Identifier {
+          ident: "my..bareword".into(),
+          socket: None,
+          span: (0, 12, 1),
         },
-        true,
-      ))),
-      MemberKey::Bareword(Identifier {
-        ident: "mybareword".into(),
-        socket: None,
-        span: (0, 10, 1),
-      }),
-      MemberKey::Bareword(Identifier {
-        ident: "my..bareword".into(),
-        socket: None,
-        span: (0, 12, 1),
-      }),
-      MemberKey::Value(Value::TEXT("myvalue".into())),
-      MemberKey::Value(Value::UINT(0)),
+        span: (0, 0, 0),
+      },
+      MemberKey::Value {
+        value: Value::TEXT("myvalue".into()),
+        span: (0, 0, 0),
+      },
+      MemberKey::Value {
+        value: Value::UINT(0),
+        span: (0, 0, 0),
+      },
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -2120,12 +2900,24 @@ message<t, v> = {type: 2, value: v}"#;
     let inputs = [r#"1*3"#, r#"*"#, r#"+"#, r#"5*"#, r#"*3"#, r#"?"#];
 
     let expected_outputs = [
-      Occur::Exact((Some(1), Some(3))),
-      Occur::ZeroOrMore,
-      Occur::OneOrMore,
-      Occur::Exact((Some(5), None)),
-      Occur::Exact((None, Some(3))),
-      Occur::Optional,
+      Occur::Exact {
+        lower: Some(1),
+        upper: Some(3),
+        span: (0, 3, 1),
+      },
+      Occur::ZeroOrMore((0, 1, 1)),
+      Occur::OneOrMore((0, 1, 1)),
+      Occur::Exact {
+        lower: Some(5),
+        upper: None,
+        span: (0, 2, 1),
+      },
+      Occur::Exact {
+        lower: None,
+        upper: Some(3),
+        span: (0, 2, 1),
+      },
+      Occur::Optional((0, 1, 1)),
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {

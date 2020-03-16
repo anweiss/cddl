@@ -36,13 +36,13 @@ fn verify_json_validation() -> Result<(), Error> {
   )
 }
 
-#[test]
-fn verify_ast_correctness() -> Result<(), Box<dyn std::error::Error>> {
-  let c = parser::cddl_from_str(std::str::from_utf8(include_bytes!(
-    "data/cddl/reputon.cddl"
-  ))?)?;
+// #[test]
+// fn verify_ast_correctness() -> Result<(), Box<dyn std::error::Error>> {
+//   let c = parser::cddl_from_str(std::str::from_utf8(include_bytes!(
+//     "data/cddl/reputon.cddl"
+//   ))?)?;
 
-  assert_eq!(c, data::reputon());
+//   assert_eq!(c, data::reputon());
 
-  Ok(())
-}
+//   Ok(())
+// }

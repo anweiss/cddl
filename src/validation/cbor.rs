@@ -65,9 +65,9 @@ impl Into<Error> for CBORError {
 
 impl Validator<Value> for CDDL {
   fn validate(&self, value: &Value) -> Result {
-    for rule in self.rules.iter() {
-      if let Rule::Type(tr) = rule {
-        return self.validate_type_rule(tr, None, None, None, value);
+    for r in self.rules.iter() {
+      if let Rule::Type { rule, .. } = r {
+        return self.validate_type_rule(rule, None, None, None, value);
       }
     }
 
@@ -85,11 +85,11 @@ impl Validator<Value> for CDDL {
   ) -> Result {
     for rule in self.rules.iter() {
       match rule {
-        Rule::Type(tr) if tr.name.ident == ident.ident => {
-          return self.validate_type_rule(&tr, expected_memberkey, actual_memberkey, occur, value)
+        Rule::Type { rule, .. } if rule.name.ident == ident.ident => {
+          return self.validate_type_rule(&rule, expected_memberkey, actual_memberkey, occur, value)
         }
-        Rule::Group(gr) if gr.name.ident == ident.ident => {
-          return self.validate_group_rule(&gr, is_enumeration, occur, value)
+        Rule::Group { rule, .. } if rule.name.ident == ident.ident => {
+          return self.validate_group_rule(&rule, is_enumeration, occur, value)
         }
         _ => continue,
       }
@@ -153,7 +153,7 @@ impl Validator<Value> for CDDL {
       }
     };
 
-    if t.0.iter().any(find_type_choice) {
+    if t.type_choices.iter().any(find_type_choice) {
       return Ok(());
     }
 
@@ -206,7 +206,7 @@ impl Validator<Value> for CDDL {
     value: &Value,
   ) -> Result {
     match t2 {
-      Type2::TextValue(t) => match value {
+      Type2::TextValue { value: t, .. } => match value {
         Value::Text(s) if t == s => Ok(()),
         _ => Err(
           CBORError {
@@ -218,7 +218,7 @@ impl Validator<Value> for CDDL {
           .into(),
         ),
       },
-      Type2::IntValue(iv) => match value {
+      Type2::IntValue { value: iv, .. } => match value {
         Value::Integer(i) if *iv as i128 == *i => Ok(()),
         _ => Err(
           CBORError {
@@ -230,7 +230,7 @@ impl Validator<Value> for CDDL {
           .into(),
         ),
       },
-      Type2::UintValue(uiv) => match value {
+      Type2::UintValue { value: uiv, .. } => match value {
         Value::Integer(i) if *uiv as u128 == *i as u128 => Ok(()),
         _ => Err(
           CBORError {
@@ -242,7 +242,7 @@ impl Validator<Value> for CDDL {
           .into(),
         ),
       },
-      Type2::FloatValue(fv) => match value {
+      Type2::FloatValue { value: fv, .. } => match value {
         Value::Float(f) if (fv - f).abs() < f64::EPSILON => Ok(()),
         _ => Err(
           CBORError {
@@ -254,7 +254,7 @@ impl Validator<Value> for CDDL {
           .into(),
         ),
       },
-      Type2::B16ByteString(bs) => match value {
+      Type2::B16ByteString { value: bs, .. } => match value {
         Value::Bytes(b) if b == bs => Ok(()),
         _ => Err(
           CBORError {
@@ -266,7 +266,7 @@ impl Validator<Value> for CDDL {
           .into(),
         ),
       },
-      Type2::B64ByteString(bs) => match value {
+      Type2::B64ByteString { value: bs, .. } => match value {
         Value::Bytes(b) if b == bs => Ok(()),
         _ => Err(
           CBORError {
@@ -279,18 +279,18 @@ impl Validator<Value> for CDDL {
         ),
       },
       // TODO: evaluate genericarg
-      Type2::Typename((tn, _)) => match value {
-        Value::Null => expect_null(&tn.ident),
-        Value::Bool(_) => self.expect_bool(&tn.ident, value),
+      Type2::Typename { ident, .. } => match value {
+        Value::Null => expect_null(&ident.ident),
+        Value::Bool(_) => self.expect_bool(&ident.ident, value),
         Value::Text(_) => {
-          if tn.ident == "tstr" || tn.ident == "text" {
+          if ident.ident == "tstr" || ident.ident == "text" {
             Ok(())
-          } else if is_type_prelude(&tn.ident) {
+          } else if is_type_prelude(&ident.ident) {
             // Expecting non-text type but got text
             Err(
               CBORError {
                 expected_memberkey,
-                expected_value: tn.ident.to_string(),
+                expected_value: ident.ident.to_string(),
                 actual_memberkey,
                 actual_value: value.clone(),
               }
@@ -298,7 +298,7 @@ impl Validator<Value> for CDDL {
             )
           } else {
             self.validate_rule_for_ident(
-              tn,
+              ident,
               false,
               expected_memberkey,
               actual_memberkey,
@@ -308,10 +308,10 @@ impl Validator<Value> for CDDL {
           }
         }
         Value::Integer(_) | Value::Float(_) => {
-          self.validate_numeric_data_type(expected_memberkey, actual_memberkey, &tn.ident, value)
+          self.validate_numeric_data_type(expected_memberkey, actual_memberkey, &ident.ident, value)
         }
         Value::Map(_) => self.validate_rule_for_ident(
-          tn,
+          ident,
           false,
           expected_memberkey,
           actual_memberkey,
@@ -319,7 +319,7 @@ impl Validator<Value> for CDDL {
           value,
         ),
         Value::Array(_) => self.validate_rule_for_ident(
-          tn,
+          ident,
           false,
           expected_memberkey,
           actual_memberkey,
@@ -327,14 +327,14 @@ impl Validator<Value> for CDDL {
           value,
         ),
         Value::Bytes(_) => {
-          if tn.ident == "bstr" || tn.ident == "bytes" {
+          if ident.ident == "bstr" || ident.ident == "bytes" {
             Ok(())
-          } else if is_type_prelude(&tn.ident) {
+          } else if is_type_prelude(&ident.ident) {
             // Expecting non-bytes type but got bytes
             Err(
               CBORError {
                 expected_memberkey,
-                expected_value: tn.ident.to_string(),
+                expected_value: ident.ident.to_string(),
                 actual_memberkey,
                 actual_value: value.clone(),
               }
@@ -342,7 +342,7 @@ impl Validator<Value> for CDDL {
             )
           } else {
             self.validate_rule_for_ident(
-              tn,
+              ident,
               false,
               expected_memberkey,
               actual_memberkey,
@@ -353,8 +353,8 @@ impl Validator<Value> for CDDL {
         }
         _ => unimplemented!(),
       },
-      Type2::Array(g) => match value {
-        Value::Array(_) => self.validate_group(g, occur, value),
+      Type2::Array { group, .. } => match value {
+        Value::Array(_) => self.validate_group(group, occur, value),
         _ => Err(
           CBORError {
             expected_memberkey,
@@ -365,8 +365,8 @@ impl Validator<Value> for CDDL {
           .into(),
         ),
       },
-      Type2::Map(g) => match value {
-        Value::Map(_) => self.validate_group(g, occur, value),
+      Type2::Map { group, .. } => match value {
+        Value::Map(_) => self.validate_group(group, occur, value),
         _ => Err(
           CBORError {
             expected_memberkey,
@@ -377,8 +377,10 @@ impl Validator<Value> for CDDL {
           .into(),
         ),
       },
-      Type2::ChoiceFromInlineGroup(g) => self.validate_group_to_choice_enum(g, occur, value),
-      Type2::ChoiceFromGroup((ident, _)) => self.validate_rule_for_ident(
+      Type2::ChoiceFromInlineGroup { group, .. } => {
+        self.validate_group_to_choice_enum(group, occur, value)
+      }
+      Type2::ChoiceFromGroup { ident, .. } => self.validate_rule_for_ident(
         ident,
         true,
         expected_memberkey,
@@ -398,7 +400,7 @@ impl Validator<Value> for CDDL {
 
     // Find the first group choice that validates to true
     if g
-      .0
+      .group_choices
       .iter()
       .any(|gc| match self.validate_group_choice(gc, occur, value) {
         Ok(()) => true,
@@ -431,16 +433,21 @@ impl Validator<Value> for CDDL {
   ) -> Result {
     let mut errors: Vec<Error> = Vec::new();
 
-    for ge in gc.0.iter() {
+    for ge in gc.group_entries.iter() {
       match value {
         Value::Array(values) => {
-          if let GroupEntry::TypeGroupname(tge) = &ge.0 {
+          if let GroupEntry::TypeGroupname { ge: tge, .. } = &ge.0 {
             if let Some(o) = &tge.occur {
               self.validate_array_occurrence(o, &tge.name.to_string(), values)?;
             }
           }
 
-          if let GroupEntry::InlineGroup((geo, g)) = &ge.0 {
+          if let GroupEntry::InlineGroup {
+            occur: geo,
+            group: g,
+            ..
+          } = &ge.0
+          {
             if let Some(o) = geo {
               self.validate_array_occurrence(&o, &g.to_string(), values)?;
             }
@@ -456,9 +463,9 @@ impl Validator<Value> for CDDL {
               }
             };
 
-          if let GroupEntry::TypeGroupname(tge) = &ge.0 {
+          if let GroupEntry::TypeGroupname { ge: tge, .. } = &ge.0 {
             if self.rules.iter().any(|r| match r {
-              Rule::Type(tr) if tr.name.ident == tge.name.ident => true,
+              Rule::Type { rule, .. } if rule.name.ident == tge.name.ident => true,
               _ => false,
             }) && values.iter().all(validate_all_entries)
             {
@@ -533,11 +540,11 @@ impl Validator<Value> for CDDL {
     value: &Value,
   ) -> Result {
     match ge {
-      GroupEntry::ValueMemberKey(vmke) => {
+      GroupEntry::ValueMemberKey { ge: vmke, .. } => {
         if let Some(mk) = &vmke.member_key {
           match mk {
-            MemberKey::Type1(t1) => match &t1.0.type2 {
-              Type2::TextValue(t) => match value {
+            MemberKey::Type1 { t1, .. } => match &t1.0.type2 {
+              Type2::TextValue { value: t, .. } => match value {
                 // CDDL { "my-key" => tstr, } validates JSON { "my-key": "myvalue" }
                 Value::Map(om) => {
                   if !is_type_prelude(&vmke.entry_type.to_string()) {
@@ -587,7 +594,7 @@ impl Validator<Value> for CDDL {
                 _ => self.validate_type(&vmke.entry_type, Some(mk.to_string()), None, occur, value),
               },
               // CDDL { * tstr => any } validates { "otherkey1": "anyvalue", "otherkey2": true }
-              Type2::Typename((ident, _)) if ident.ident == "tstr" || ident.ident == "text" => {
+              Type2::Typename { ident, .. } if ident.ident == "tstr" || ident.ident == "text" => {
                 Ok(())
               }
               _ => Err(Error::Syntax(
@@ -595,7 +602,7 @@ impl Validator<Value> for CDDL {
                   .to_string(),
               )),
             },
-            MemberKey::Bareword(ident) => match value {
+            MemberKey::Bareword { ident, .. } => match value {
               Value::Map(om) => {
                 if !is_type_prelude(&vmke.entry_type.to_string()) {
                   if let Some(v) = om.get(&Value::Text(ident.ident.to_string())) {
@@ -627,7 +634,7 @@ impl Validator<Value> for CDDL {
                   ),
                   None => match occur {
                     Some(o) => match o {
-                      Occur::Optional | Occur::OneOrMore => Ok(()),
+                      Occur::Optional(_) | Occur::OneOrMore(_) => Ok(()),
                       _ => Err(
                         CBORError {
                           expected_memberkey: Some(mk.to_string()),
@@ -668,7 +675,7 @@ impl Validator<Value> for CDDL {
           unimplemented!()
         }
       }
-      GroupEntry::TypeGroupname(tge) => self.validate_rule_for_ident(
+      GroupEntry::TypeGroupname { ge: tge, .. } => self.validate_rule_for_ident(
         &tge.name,
         is_enumeration,
         None,
@@ -676,7 +683,11 @@ impl Validator<Value> for CDDL {
         tge.occur.as_ref(),
         value,
       ),
-      GroupEntry::InlineGroup((igo, g)) => {
+      GroupEntry::InlineGroup {
+        occur: igo,
+        group: g,
+        ..
+      } => {
         if igo.is_some() {
           if is_enumeration {
             return self.validate_group_to_choice_enum(g, igo.as_ref(), value);
@@ -694,8 +705,8 @@ impl Validator<Value> for CDDL {
 
   fn validate_array_occurrence(&self, occur: &Occur, group: &str, values: &[Value]) -> Result {
     match occur {
-      Occur::ZeroOrMore | Occur::Optional => Ok(()),
-      Occur::OneOrMore => {
+      Occur::ZeroOrMore(_) | Occur::Optional(_) => Ok(()),
+      Occur::OneOrMore(_) => {
         if values.is_empty() {
           Err(Error::Occurrence(format!(
             "Expecting one or more values of group {}",
@@ -705,9 +716,9 @@ impl Validator<Value> for CDDL {
           Ok(())
         }
       }
-      Occur::Exact((l, u)) => {
-        if let Some(li) = l {
-          if let Some(ui) = u {
+      Occur::Exact { lower, upper, .. } => {
+        if let Some(li) = lower {
+          if let Some(ui) = upper {
             if values.len() < *li || values.len() > *ui {
               if li == ui {
                 return Err(Error::Occurrence(format!(
@@ -738,7 +749,7 @@ impl Validator<Value> for CDDL {
           }
         }
 
-        if let Some(ui) = u {
+        if let Some(ui) = upper {
           if values.len() > *ui {
             return Err(Error::Occurrence(format!(
               "Expecting no more than {} values of group {}. Got {} values",
