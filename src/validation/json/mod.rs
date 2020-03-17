@@ -918,7 +918,7 @@ impl Validator<Value> for CDDL {
     // Check for a wildcard entry
     let wildcard_entry = gc.group_entries.iter().find_map(|ge| match &ge.0 {
       GroupEntry::ValueMemberKey { ge, .. } => match &ge.member_key {
-        Some(MemberKey::Type1 { t1, .. }) if !t1.1 => match &t1.0.type2 {
+        Some(MemberKey::Type1 { t1, is_cut, .. }) if !is_cut => match &t1.type2 {
           Type2::Typename {
             ident,
             generic_arg: None,
@@ -1033,7 +1033,7 @@ impl Validator<Value> for CDDL {
       GroupEntry::ValueMemberKey { ge: vmke, .. } => {
         if let Some(mk) = &vmke.member_key {
           match mk {
-            MemberKey::Type1 { t1, .. } => match &t1.0.type2 {
+            MemberKey::Type1 { t1, is_cut, .. } => match &t1.type2 {
               // CDDL { "my-key" => tstr, } validates JSON { "my-key": "myvalue" }
               Type2::TextValue { value: t, .. } => match value {
                 Value::Object(om) => {
@@ -1066,7 +1066,7 @@ impl Validator<Value> for CDDL {
                       v,
                     );
 
-                    if r.is_err() && !t1.1 {
+                    if r.is_err() && !is_cut {
                       if let Some(entry_type) = wildcard_entry {
                         return self.validate_type(
                           entry_type,

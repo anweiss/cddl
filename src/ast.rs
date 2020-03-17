@@ -107,6 +107,7 @@ impl From<&'static str> for Identifier {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq)]
+#[allow(missing_docs)]
 pub enum Rule {
   /// Type expression
   Type { rule: TypeRule, span: Span },
@@ -115,6 +116,7 @@ pub enum Rule {
 }
 
 impl Rule {
+  /// Return `Span` for `Rule`
   pub fn span(&self) -> Span {
     match self {
       Rule::Type { span, .. } => *span,
@@ -290,6 +292,7 @@ impl fmt::Display for GenericArg {
 }
 
 impl GenericArg {
+  /// Default `GenericArg`
   pub fn default() -> Self {
     GenericArg {
       args: Vec::new(),
@@ -306,7 +309,7 @@ impl GenericArg {
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
-  // Type choices
+  /// Type choices
   pub type_choices: Vec<Type1>,
   /// Span
   pub span: Span,
@@ -402,10 +405,11 @@ impl fmt::Display for Type1 {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
+#[allow(missing_docs)]
 pub enum RangeCtlOp {
-  /// Range operator where value is `true` if inclusive
+  /// Range operator
   RangeOp { is_inclusive: bool, span: Span },
-  /// Control operator where value is the identifier of the operator
+  /// Control operator
   CtlOp { ctrl: &'static str, span: Span },
 }
 
@@ -441,6 +445,7 @@ impl fmt::Display for RangeCtlOp {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub enum Type2 {
   /// Integer value
   IntValue { value: isize, span: Span },
@@ -595,7 +600,9 @@ impl From<RangeValue> for Type2 {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub struct Group {
+  /// Group choices
   pub group_choices: Vec<GroupChoice>,
   pub span: Span,
 }
@@ -663,6 +670,7 @@ impl fmt::Display for GroupChoice {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub enum GroupEntry {
   /// Value group entry type
   ValueMemberKey {
@@ -768,9 +776,14 @@ impl fmt::Display for TypeGroupnameEntry {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub enum MemberKey {
-  /// Type expression. If second value in tuple is `true`, a cut is present
-  Type1 { t1: Box<(Type1, bool)>, span: Span },
+  /// Type expression
+  Type1 {
+    t1: Box<Type1>,
+    is_cut: bool,
+    span: Span,
+  },
   /// Bareword string type
   Bareword { ident: Identifier, span: Span },
   /// Value type
@@ -780,12 +793,12 @@ pub enum MemberKey {
 impl fmt::Display for MemberKey {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      MemberKey::Type1 { t1, .. } => {
-        if t1.1 {
-          return write!(f, "{} ^ =>", t1.0);
+      MemberKey::Type1 { t1, is_cut, .. } => {
+        if *is_cut {
+          return write!(f, "{} ^ =>", t1);
         }
 
-        write!(f, "{} =>", t1.0)
+        write!(f, "{} =>", t1)
       }
       MemberKey::Bareword { ident, .. } => write!(f, "{}:", ident),
       MemberKey::Value { value, .. } => write!(f, "{}:", value),
@@ -801,6 +814,7 @@ impl fmt::Display for MemberKey {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub enum Occur {
   /// Occurrence indicator in the form n*m, where n is an optional lower limit
   /// and m is an optional upper limit

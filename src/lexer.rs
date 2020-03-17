@@ -5,7 +5,6 @@ use annotate_snippets::{
   snippet::{Annotation, AnnotationType, Slice, Snippet, SourceAnnotation},
 };
 use base16;
-use base64;
 use itertools;
 use lexical;
 use std::{

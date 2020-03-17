@@ -543,7 +543,7 @@ impl Validator<Value> for CDDL {
       GroupEntry::ValueMemberKey { ge: vmke, .. } => {
         if let Some(mk) = &vmke.member_key {
           match mk {
-            MemberKey::Type1 { t1, .. } => match &t1.0.type2 {
+            MemberKey::Type1 { t1, .. } => match &t1.type2 {
               Type2::TextValue { value: t, .. } => match value {
                 // CDDL { "my-key" => tstr, } validates JSON { "my-key": "myvalue" }
                 Value::Map(om) => {

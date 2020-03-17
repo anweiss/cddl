@@ -1161,7 +1161,8 @@ impl<'a> Parser<'a> {
           let end_memberkey_range = self.lexer_position.range.1;
 
           let t1 = Some(MemberKey::Type1 {
-            t1: Box::from((t1, true)),
+            t1: Box::from(t1),
+            is_cut: true,
             span: (
               begin_memberkey_range,
               end_memberkey_range,
@@ -1177,7 +1178,8 @@ impl<'a> Parser<'a> {
         self.parser_position.range.1 = self.lexer_position.range.1;
 
         let t1 = Some(MemberKey::Type1 {
-          t1: Box::from((t1, false)),
+          t1: Box::from(t1),
+          is_cut: false,
           span: (
             begin_memberkey_range,
             self.parser_position.range.1,
@@ -2317,17 +2319,15 @@ message<t, v> = {type: 2, value: v}"#;
                 ge: Box::from(ValueMemberKeyEntry {
                   occur: Some(Occur::Optional((2, 3, 1))),
                   member_key: Some(MemberKey::Type1 {
-                    t1: Box::from((
-                      Type1 {
-                        type2: Type2::TextValue {
-                          value: "optional-key".into(),
-                          span: (4, 18, 1),
-                        },
-                        operator: None,
+                    t1: Box::from(Type1 {
+                      type2: Type2::TextValue {
+                        value: "optional-key".into(),
                         span: (4, 18, 1),
                       },
-                      true,
-                    )),
+                      operator: None,
+                      span: (4, 18, 1),
+                    }),
+                    is_cut: true,
                     span: (4, 23, 1),
                   }),
                   entry_type: Type {
@@ -2653,22 +2653,20 @@ message<t, v> = {type: 2, value: v}"#;
         ge: Box::from(ValueMemberKeyEntry {
           occur: Some(Occur::ZeroOrMore((0, 1, 1))),
           member_key: Some(MemberKey::Type1 {
-            t1: Box::from((
-              Type1 {
-                type2: Type2::Typename {
-                  ident: Identifier {
-                    ident: "type1".into(),
-                    socket: None,
-                    span: (2, 7, 1),
-                  },
-                  generic_arg: None,
+            t1: Box::from(Type1 {
+              type2: Type2::Typename {
+                ident: Identifier {
+                  ident: "type1".into(),
+                  socket: None,
                   span: (2, 7, 1),
                 },
-                operator: None,
+                generic_arg: None,
                 span: (2, 7, 1),
               },
-              true,
-            )),
+              operator: None,
+              span: (2, 7, 1),
+            }),
+            is_cut: true,
             span: (2, 12, 1),
           }),
           entry_type: Type {
@@ -2822,36 +2820,32 @@ message<t, v> = {type: 2, value: v}"#;
 
     let expected_outputs = [
       MemberKey::Type1 {
-        t1: Box::from((
-          Type1 {
-            type2: Type2::Typename {
-              ident: Identifier {
-                ident: "type1".into(),
-                socket: None,
-                span: (0, 5, 1),
-              },
-              generic_arg: None,
+        t1: Box::from(Type1 {
+          type2: Type2::Typename {
+            ident: Identifier {
+              ident: "type1".into(),
+              socket: None,
               span: (0, 5, 1),
             },
-            operator: None,
+            generic_arg: None,
             span: (0, 5, 1),
           },
-          false,
-        )),
+          operator: None,
+          span: (0, 5, 1),
+        }),
+        is_cut: false,
         span: (0, 8, 1),
       },
       MemberKey::Type1 {
-        t1: Box::from((
-          Type1 {
-            type2: Type2::TextValue {
-              value: "mytype1".into(),
-              span: (0, 9, 1),
-            },
-            operator: None,
+        t1: Box::from(Type1 {
+          type2: Type2::TextValue {
+            value: "mytype1".into(),
             span: (0, 9, 1),
           },
-          true,
-        )),
+          operator: None,
+          span: (0, 9, 1),
+        }),
+        is_cut: true,
         span: (0, 14, 1),
       },
       MemberKey::Bareword {
