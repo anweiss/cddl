@@ -1152,13 +1152,13 @@ impl<'a> Parser<'a> {
         }
 
         if self.cur_token_is(Token::CUT) {
-          let end_memberkey_range = self.lexer_position.range.1;
-
           self.next_token()?;
 
           while let Token::COMMENT(_) = self.cur_token {
             self.next_token()?;
           }
+
+          let end_memberkey_range = self.lexer_position.range.1;
 
           let t1 = Some(MemberKey::Type1 {
             t1: Box::from((t1, true)),
@@ -1190,7 +1190,7 @@ impl<'a> Parser<'a> {
         Ok(t1)
       }
       Token::COLON => {
-        self.parser_position.range.1 = self.lexer_position.range.1;
+        self.parser_position.range.1 = self.peek_lexer_position.range.1;
 
         let mk = match &self.cur_token {
           Token::IDENT(ident) => Some(MemberKey::Bareword {
@@ -1491,12 +1491,12 @@ message<t, v> = {type: 2, value: v}"#;
                     span: (9, 19, 1),
                   },
                   generic_arg: None,
-                  span: (0, 0, 0),
+                  span: (9, 19, 1),
                 },
                 operator: None,
-                span: (0, 0, 0),
+                span: (9, 19, 1),
               }],
-              span: (0, 19, 1),
+              span: (9, 19, 1),
             },
           },
           span: (0, 19, 1),
@@ -1514,12 +1514,12 @@ message<t, v> = {type: 2, value: v}"#;
               type_choices: vec![Type1 {
                 type2: Type2::UintValue {
                   value: 10,
-                  span: (0, 19, 1),
+                  span: (30, 32, 2),
                 },
                 operator: Some((
                   RangeCtlOp::RangeOp {
                     is_inclusive: true,
-                    span: (0, 0, 0),
+                    span: (32, 34, 2),
                   },
                   Type2::Typename {
                     ident: Identifier {
@@ -1528,15 +1528,15 @@ message<t, v> = {type: 2, value: v}"#;
                       span: (34, 39, 2),
                     },
                     generic_arg: None,
-                    span: (0, 0, 0),
+                    span: (34, 39, 2),
                   },
                 )),
-                span: (0, 0, 1),
+                span: (30, 39, 2),
               }],
-              span: (0, 19, 1),
+              span: (30, 39, 2),
             },
           },
-          span: (0, 19, 1),
+          span: (20, 39, 2),
         },
         Rule::Type {
           rule: TypeRule {
@@ -1552,24 +1552,24 @@ message<t, v> = {type: 2, value: v}"#;
                 Type1 {
                   type2: Type2::UintValue {
                     value: 500,
-                    span: (0, 0, 0),
+                    span: (48, 51, 3),
                   },
                   operator: None,
-                  span: (0, 0, 0),
+                  span: (48, 51, 3),
                 },
                 Type1 {
                   type2: Type2::UintValue {
                     value: 600,
-                    span: (0, 0, 0),
+                    span: (54, 57, 3),
                   },
                   operator: None,
-                  span: (0, 0, 0),
+                  span: (54, 57, 3),
                 },
               ],
-              span: (0, 0, 0),
+              span: (48, 57, 3),
             },
           },
-          span: (0, 0, 0),
+          span: (40, 57, 3),
         },
         Rule::Group {
           rule: Box::from(GroupRule {
@@ -1584,7 +1584,7 @@ message<t, v> = {type: 2, value: v}"#;
               occur: Some(Occur::Exact {
                 lower: Some(2),
                 upper: None,
-                span: (0, 0, 0),
+                span: (63, 67, 4),
               }),
               group: Group {
                 group_choices: vec![GroupChoice {
@@ -1599,18 +1599,18 @@ message<t, v> = {type: 2, value: v}"#;
                         },
                         generic_arg: None,
                       },
-                      span: (0, 0, 0),
+                      span: (68, 72, 4),
                     },
                     false,
                   )],
-                  span: (0, 0, 0),
+                  span: (68, 72, 4),
                 }],
-                span: (0, 0, 0),
+                span: (68, 72, 4),
               },
-              span: (0, 0, 0),
+              span: (63, 74, 4),
             },
           }),
-          span: (0, 0, 0),
+          span: (58, 74, 4),
         },
         Rule::Type {
           rule: TypeRule {
@@ -1634,31 +1634,31 @@ message<t, v> = {type: 2, value: v}"#;
                       Type1 {
                         type2: Type2::TextValue {
                           value: "reboot".into(),
-                          span: (0, 0, 0),
+                          span: (94, 102, 5),
                         },
                         operator: None,
-                        span: (0, 0, 0),
+                        span: (94, 102, 5),
                       },
                       Type1 {
                         type2: Type2::TextValue {
                           value: "now".into(),
-                          span: (0, 0, 0),
+                          span: (104, 109, 5),
                         },
                         operator: None,
-                        span: (0, 0, 0),
+                        span: (104, 109, 5),
                       },
                     ],
                     span: (93, 110, 5),
                   }),
-                  span: (0, 0, 0),
+                  span: (86, 110, 5),
                 },
                 operator: None,
-                span: (0, 0, 0),
+                span: (86, 110, 5),
               }],
-              span: (0, 0, 0),
+              span: (86, 110, 5),
             },
           },
-          span: (0, 0, 0),
+          span: (75, 110, 5),
         },
         Rule::Type {
           rule: TypeRule {
@@ -1699,21 +1699,21 @@ message<t, v> = {type: 2, value: v}"#;
                                   socket: None,
                                   span: (128, 132, 6),
                                 },
-                                span: (0, 0, 0),
+                                span: (128, 133, 6),
                               }),
                               entry_type: Type {
                                 type_choices: vec![Type1 {
                                   type2: Type2::UintValue {
                                     value: 2,
-                                    span: (0, 0, 0),
+                                    span: (134, 135, 6),
                                   },
                                   operator: None,
-                                  span: (0, 0, 0),
+                                  span: (134, 135, 6),
                                 }],
-                                span: (0, 0, 0),
+                                span: (134, 135, 6),
                               },
                             }),
-                            span: (0, 0, 0),
+                            span: (128, 136, 6),
                           },
                           true,
                         ),
@@ -1727,7 +1727,7 @@ message<t, v> = {type: 2, value: v}"#;
                                   socket: None,
                                   span: (137, 142, 6),
                                 },
-                                span: (0, 0, 0),
+                                span: (137, 143, 6),
                               }),
                               entry_type: Type {
                                 type_choices: vec![Type1 {
@@ -1738,32 +1738,32 @@ message<t, v> = {type: 2, value: v}"#;
                                       span: (144, 145, 6),
                                     },
                                     generic_arg: None,
-                                    span: (0, 0, 0),
+                                    span: (144, 145, 6),
                                   },
                                   operator: None,
-                                  span: (0, 0, 0),
+                                  span: (144, 145, 6),
                                 }],
-                                span: (0, 0, 0),
+                                span: (144, 145, 6),
                               },
                             }),
-                            span: (0, 0, 0),
+                            span: (137, 145, 6),
                           },
                           false,
                         ),
                       ],
-                      span: (0, 0, 0),
+                      span: (128, 145, 6),
                     }],
-                    span: (0, 0, 0),
+                    span: (128, 145, 6),
                   },
-                  span: (0, 0, 0),
+                  span: (127, 146, 6),
                 },
                 operator: None,
-                span: (0, 0, 0),
+                span: (127, 146, 6),
               }],
-              span: (0, 0, 0),
+              span: (127, 146, 6),
             },
           },
-          span: (0, 0, 0),
+          span: (111, 146, 6),
         },
       ],
     };
@@ -1881,18 +1881,18 @@ message<t, v> = {type: 2, value: v}"#;
         Type1 {
           type2: Type2::TextValue {
             value: "reboot".into(),
-            span: (0, 0, 0),
+            span: (1, 9, 1),
           },
           operator: None,
-          span: (0, 0, 0),
+          span: (1, 9, 1),
         },
         Type1 {
           type2: Type2::TextValue {
             value: "now".into(),
-            span: (0, 0, 0),
+            span: (11, 16, 1),
           },
           operator: None,
-          span: (0, 0, 0),
+          span: (11, 16, 1),
         },
       ],
       span: (0, 17, 1),
@@ -2328,7 +2328,7 @@ message<t, v> = {type: 2, value: v}"#;
                       },
                       true,
                     )),
-                    span: (4, 20, 1),
+                    span: (4, 23, 1),
                   }),
                   entry_type: Type {
                     type_choices: vec![Type1 {
@@ -2651,7 +2651,7 @@ message<t, v> = {type: 2, value: v}"#;
     let expected_outputs = [
       GroupEntry::ValueMemberKey {
         ge: Box::from(ValueMemberKeyEntry {
-          occur: Some(Occur::ZeroOrMore((0, 0, 0))),
+          occur: Some(Occur::ZeroOrMore((0, 1, 1))),
           member_key: Some(MemberKey::Type1 {
             t1: Box::from((
               Type1 {
@@ -2662,28 +2662,28 @@ message<t, v> = {type: 2, value: v}"#;
                     span: (2, 7, 1),
                   },
                   generic_arg: None,
-                  span: (0, 0, 0),
+                  span: (2, 7, 1),
                 },
                 operator: None,
-                span: (0, 0, 0),
+                span: (2, 7, 1),
               },
               true,
             )),
-            span: (0, 0, 0),
+            span: (2, 12, 1),
           }),
           entry_type: Type {
             type_choices: vec![Type1 {
               type2: Type2::TextValue {
                 value: "value".into(),
-                span: (0, 0, 0),
+                span: (13, 20, 1),
               },
               operator: None,
-              span: (0, 0, 0),
+              span: (13, 20, 1),
             }],
-            span: (0, 0, 0),
+            span: (13, 20, 1),
           },
         }),
-        span: (0, 0, 0),
+        span: (0, 20, 1),
       },
       GroupEntry::ValueMemberKey {
         ge: Box::from(ValueMemberKeyEntry {
@@ -2694,7 +2694,7 @@ message<t, v> = {type: 2, value: v}"#;
               socket: None,
               span: (0, 5, 1),
             },
-            span: (0, 0, 0),
+            span: (0, 6, 1),
           }),
           entry_type: Type {
             type_choices: vec![Type1 {
@@ -2705,15 +2705,15 @@ message<t, v> = {type: 2, value: v}"#;
                   span: (7, 12, 1),
                 },
                 generic_arg: None,
-                span: (0, 0, 0),
+                span: (7, 12, 1),
               },
               operator: None,
-              span: (0, 0, 0),
+              span: (7, 12, 1),
             }],
-            span: (0, 0, 0),
+            span: (7, 12, 1),
           },
         }),
-        span: (0, 0, 0),
+        span: (0, 12, 1),
       },
       GroupEntry::TypeGroupname {
         ge: TypeGroupnameEntry {
@@ -2725,14 +2725,14 @@ message<t, v> = {type: 2, value: v}"#;
           },
           generic_arg: None,
         },
-        span: (0, 0, 0),
+        span: (0, 8, 1),
       },
       GroupEntry::ValueMemberKey {
         ge: Box::from(ValueMemberKeyEntry {
-          occur: Some(Occur::Optional((0, 0, 0))),
+          occur: Some(Occur::Optional((0, 1, 1))),
           member_key: Some(MemberKey::Value {
             value: Value::UINT(0),
-            span: (0, 0, 0),
+            span: (2, 4, 1),
           }),
           entry_type: Type {
             type_choices: vec![Type1 {
@@ -2743,22 +2743,22 @@ message<t, v> = {type: 2, value: v}"#;
                   span: (5, 14, 1),
                 },
                 generic_arg: None,
-                span: (0, 0, 0),
+                span: (5, 14, 1),
               },
               operator: None,
-              span: (0, 0, 0),
+              span: (5, 14, 1),
             }],
-            span: (0, 0, 0),
+            span: (5, 14, 1),
           },
         }),
-        span: (0, 0, 0),
+        span: (0, 14, 1),
       },
       GroupEntry::ValueMemberKey {
         ge: Box::from(ValueMemberKeyEntry {
           occur: None,
           member_key: Some(MemberKey::Value {
             value: Value::UINT(0),
-            span: (0, 0, 0),
+            span: (0, 2, 1),
           }),
           entry_type: Type {
             type_choices: vec![Type1 {
@@ -2777,22 +2777,22 @@ message<t, v> = {type: 2, value: v}"#;
                         span: (14, 31, 1),
                       },
                       generic_arg: None,
-                      span: (0, 0, 0),
+                      span: (14, 31, 1),
                     },
                     operator: None,
-                    span: (0, 0, 0),
+                    span: (14, 31, 1),
                   }],
                   span: (13, 32, 1),
                 }),
-                span: (0, 0, 0),
+                span: (3, 32, 1),
               },
               operator: None,
-              span: (0, 0, 0),
+              span: (3, 32, 1),
             }],
-            span: (0, 0, 0),
+            span: (3, 32, 1),
           },
         }),
-        span: (0, 0, 0),
+        span: (0, 32, 1),
       },
     ];
 
@@ -2831,28 +2831,28 @@ message<t, v> = {type: 2, value: v}"#;
                 span: (0, 5, 1),
               },
               generic_arg: None,
-              span: (0, 0, 0),
+              span: (0, 5, 1),
             },
             operator: None,
-            span: (0, 0, 0),
+            span: (0, 5, 1),
           },
           false,
         )),
-        span: (0, 0, 0),
+        span: (0, 8, 1),
       },
       MemberKey::Type1 {
         t1: Box::from((
           Type1 {
             type2: Type2::TextValue {
               value: "mytype1".into(),
-              span: (0, 0, 0),
+              span: (0, 9, 1),
             },
             operator: None,
-            span: (0, 0, 0),
+            span: (0, 9, 1),
           },
           true,
         )),
-        span: (0, 0, 0),
+        span: (0, 14, 1),
       },
       MemberKey::Bareword {
         ident: Identifier {
@@ -2860,7 +2860,7 @@ message<t, v> = {type: 2, value: v}"#;
           socket: None,
           span: (0, 10, 1),
         },
-        span: (0, 0, 0),
+        span: (0, 11, 1),
       },
       MemberKey::Bareword {
         ident: Identifier {
@@ -2868,15 +2868,15 @@ message<t, v> = {type: 2, value: v}"#;
           socket: None,
           span: (0, 12, 1),
         },
-        span: (0, 0, 0),
+        span: (0, 13, 1),
       },
       MemberKey::Value {
         value: Value::TEXT("myvalue".into()),
-        span: (0, 0, 0),
+        span: (0, 10, 1),
       },
       MemberKey::Value {
         value: Value::UINT(0),
-        span: (0, 0, 0),
+        span: (0, 2, 1),
       },
     ];
 
