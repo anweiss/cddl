@@ -1313,7 +1313,7 @@ city = (
         assert_eq!(
           e.to_string(),
           r#"error: Invalid control operator
- --> input:1:16
+ --> input:1:17
   |
 1 | myrule = number .asdf 10
   |                 ^^^^^ Invalid control operator

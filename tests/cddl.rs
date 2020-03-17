@@ -4,13 +4,13 @@ mod data;
 
 use cddl::{
   parser,
-  validation::{json::validate_json_from_str, Error},
+  validation::{self, json::validate_json_from_str},
 };
 use pretty_assertions::assert_eq;
 use std::fs;
 
 #[test]
-fn verify_cddl_compiles() -> Result<(), String> {
+fn verify_cddl_compiles() -> Result<(), parser::Error> {
   for file in fs::read_dir("tests/data/cddl/").unwrap() {
     let file = file.unwrap();
 
@@ -18,18 +18,21 @@ fn verify_cddl_compiles() -> Result<(), String> {
       continue;
     }
 
-    println!("file: {:#?}", file.path());
-    println!(
-      "{:#?}",
-      parser::cddl_from_str(&fs::read_to_string(file.path()).unwrap())?
-    );
+    match parser::cddl_from_str(&fs::read_to_string(file.path()).unwrap()) {
+      Ok(_) => println!("file: {:#?} ... success", file.path()),
+      Err(e) => {
+        println!("{}", e);
+
+        return Err(parser::Error::PARSER);
+      }
+    }
   }
 
   Ok(())
 }
 
 #[test]
-fn verify_json_validation() -> Result<(), Error> {
+fn verify_json_validation() -> Result<(), validation::Error> {
   validate_json_from_str(
     &fs::read_to_string("tests/data/cddl/reputon.cddl").unwrap(),
     &fs::read_to_string("tests/data/json/reputon.json").unwrap(),

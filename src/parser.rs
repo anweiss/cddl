@@ -75,6 +75,14 @@ impl std::error::Error for Error {
   }
 }
 
+// Unix-style newlines are counted as two chars (see
+// https://github.com/rust-lang/annotate-snippets-rs/issues/24).
+fn unix_newline_fix(input: &str, idx: usize) -> usize {
+  let nbr_newlines = input[..idx].chars().filter(|c| *c == '\n').count();
+  let nbr_carriage_returns = input[..idx].chars().filter(|c| *c == '\r').count();
+  idx + nbr_newlines - nbr_carriage_returns
+}
+
 impl<'a> Parser<'a> {
   /// Create a new `Parser` from a given `Lexer`
   pub fn new(l: Lexer<'a>) -> Result<Parser> {
@@ -95,39 +103,44 @@ impl<'a> Parser<'a> {
   }
 
   /// Print parser errors if there are any
-  pub fn print_errors(self) -> Option<String> {
+  pub fn print_errors(&self) -> Option<String> {
     let dlf = DisplayListFormatter::new(false, false);
     if self.errors.is_empty() {
       return None;
     }
 
+    let input = String::from_utf8(self.l.str_input.clone()).ok()?;
+
     let mut errors = String::new();
 
-    for error in self.errors.into_iter() {
-      errors.push_str(&format! {
+    for error in self.errors.iter() {
+      errors.push_str(&format!(
         "{}\n\n",
         dlf
           .format(&DisplayList::from(Snippet {
             title: Some(Annotation {
-              label: Some(error.message.to_string()),
+              label: Some("Parser error".into()),
               id: None,
               annotation_type: AnnotationType::Error,
             }),
             footer: vec![],
             slices: vec![Slice {
-              source: String::from_utf8(self.l.str_input.clone()).ok()?,
-              line_start: error.position.line,
+              source: input.clone(),
+              line_start: 1,
               origin: Some("input".to_string()),
               fold: false,
               annotations: vec![SourceAnnotation {
-                range: error.position.range,
-                label: error.message,
+                range: (
+                  unix_newline_fix(&input.clone(), error.position.range.0),
+                  unix_newline_fix(&input.clone(), error.position.range.1),
+                ),
+                label: error.message.to_string(),
                 annotation_type: AnnotationType::Error,
               }],
             }],
           }))
-          .to_string(),
-      })
+          .to_string()
+      ));
     }
 
     Some(errors)
@@ -153,6 +166,8 @@ impl<'a> Parser<'a> {
           Token::ASSIGN | Token::TCHOICEALT | Token::GCHOICEALT => is_possible_rule = true,
           _ => continue,
         }
+      } else if let Token::EOF = self.cur_token {
+        is_possible_rule = true;
       }
     }
 
@@ -172,7 +187,7 @@ impl<'a> Parser<'a> {
           let rule_exists = |existing_rule: &&Rule| {
             r.name() == existing_rule.name() && !existing_rule.is_choice_alternate()
           };
-          if let Some(r) = c.rules.iter().find(rule_exists) {
+          if let Some(_) = c.rules.iter().find(rule_exists) {
             self.parser_position.range = (r.span().0, r.span().1);
             self.parser_position.line = r.span().2;
 
@@ -181,13 +196,18 @@ impl<'a> Parser<'a> {
               message: format!("Rule with name '{}' already defined", r.name()),
             });
 
-            if !self.cur_token_is(Token::EOF) {
-              self.advance_to_next_rule()?;
-            }
+            continue;
           }
+
           c.rules.push(r);
+
           while let Token::COMMENT(_) = self.cur_token {
             self.next_token()?;
+          }
+        }
+        Err(Error::PARSER) => {
+          if !self.cur_token_is(Token::EOF) {
+            self.advance_to_next_rule()?;
           }
         }
         _ => continue,
@@ -208,6 +228,9 @@ impl<'a> Parser<'a> {
     // a type, or as a group both when "b" is a group and when "b" is a type (a
     // good convention to make the latter case stand out to the human reader is
     // to write "a = (b,)")."
+    if !self.errors.is_empty() {
+      return Err(Error::PARSER);
+    }
 
     Ok(c)
   }
@@ -230,8 +253,6 @@ impl<'a> Parser<'a> {
           position: self.parser_position,
           message: format!("expected rule identifier. Got '{}'", self.cur_token),
         });
-
-        self.advance_to_next_rule()?;
 
         return Err(Error::PARSER);
       }
@@ -420,12 +441,12 @@ impl<'a> Parser<'a> {
           self.next_token()?;
 
           if !self.cur_token_is(Token::COMMA) && !self.cur_token_is(Token::RANGLEBRACKET) {
-            self.parser_position.range = (begin_range, self.lexer_position.range.0);
+            self.parser_position.range = (begin_range + 1, self.peek_lexer_position.range.0);
             self.parser_position.line = self.lexer_position.line;
 
             self.errors.push(ParserError {
               position: self.parser_position,
-              message: "Expecting comma between generic parameters or closing right angle bracket"
+              message: "Generic parameters should be between angle brackets '<' and '>' and separated by a comma ','"
                 .into(),
             });
 
@@ -1369,19 +1390,7 @@ impl<'a> Parser<'a> {
       return self.next_token().map(|_| true);
     }
 
-    self.peek_error(t);
-
     Ok(false)
-  }
-
-  fn peek_error(&mut self, t: &Token) {
-    self.errors.push(ParserError {
-      position: self.lexer_position,
-      message: format!(
-        "expected next token to be {:?}, got {:?} instead",
-        t, self.peek_token
-      ),
-    })
   }
 
   /// Create `Identifier` from `Token::IDENT(ident)`
@@ -1780,35 +1789,30 @@ message<t, v> = {type: 2, value: v}"#;
   #[test]
   fn verify_rule_diagnostic() -> Result<()> {
     let input = r#"a = 1234
+a = b"#;
 
-    a = b"#;
+    let mut p = Parser::new(Lexer::new(input))?;
 
-    let l = Lexer::new(input);
-    let mut p = Parser::new(l)?;
+    match p.parse_cddl() {
+      Ok(_) => Ok(()),
+      Err(Error::PARSER) => {
+        assert_eq!(
+          p.print_errors().unwrap(),
+          r#"error: Parser error
+ --> input:2:1
+  |
+1 | a = 1234
+2 | a = b
+  | ^^^^^ Rule with name 'a' already defined
+  |
 
-    let _ = p.parse_cddl()?;
+"#
+        );
 
-    //   match p.parse_cddl() {
-    //     Ok(_) => Ok(()),
-    //     Err(Error::PARSER) => {
-    //       assert_eq!(
-    //         p.print_errors().unwrap(),
-    //         r#"error: Rule with name 'a' already defined
-    //  --> input:1:1
-    //   |
-    // 1 | a = 1234
-    //   | ^^^^^^^^ Rule with name 'a' already defined
-    // 2 |
-    // 3 |   a = b
-    //   |"#
-    //       );
-
-    //       return Ok(());
-    //     }
-    //     Err(e) => Err(e),
-    //   }
-
-    Ok(())
+        Ok(())
+      }
+      Err(e) => Err(e),
+    }
   }
 
   #[test]
@@ -1846,19 +1850,75 @@ message<t, v> = {type: 2, value: v}"#;
   fn verify_genericparm_diagnostic() -> Result<()> {
     let input = r#"<1, 2>"#;
 
-    let l = Lexer::new(input);
-    let mut p = Parser::new(l)?;
+    let mut p = Parser::new(Lexer::new(input))?;
 
     match p.parse_genericparm() {
       Ok(_) => Ok(()),
       Err(Error::PARSER) => {
         assert_eq!(
           p.print_errors().unwrap(),
-          r#"error: Illegal token 1
- --> input:1:1
+          r#"error: Parser error
+ --> input:1:2
   |
 1 | <1, 2>
   |  ^ Illegal token 1
+  |
+
+"#
+        );
+
+        Ok(())
+      }
+      Err(e) => Err(e),
+    }
+  }
+
+  #[test]
+  fn verify_genericparam_rule_diagnostic() -> Result<()> {
+    let input = r#"rule<paramA paramB> = test
+ruleb = rulec
+ruleb = ruled
+rulec = rulee
+rulec = rulee2"#;
+
+    let mut p = Parser::new(Lexer::new(input))?;
+
+    match p.parse_cddl() {
+      Ok(_) => Ok(()),
+      Err(Error::PARSER) => {
+        assert_eq!(
+          p.print_errors().unwrap(),
+          r#"error: Parser error
+ --> input:1:6
+  |
+1 | rule<paramA paramB> = test
+  |      ^^^^^^^^^^^^^ Generic parameters should be between angle brackets '<' and '>' and separated by a comma ','
+2 | ruleb = rulec
+3 | ruleb = ruled
+4 | rulec = rulee
+5 | rulec = rulee2
+  |
+
+error: Parser error
+ --> input:3:1
+  |
+1 | rule<paramA paramB> = test
+2 | ruleb = rulec
+3 | ruleb = ruled
+  | ^^^^^^^^^^^^^ Rule with name 'ruleb' already defined
+4 | rulec = rulee
+5 | rulec = rulee2
+  |
+
+error: Parser error
+ --> input:5:1
+  |
+1 | rule<paramA paramB> = test
+2 | ruleb = rulec
+3 | ruleb = ruled
+4 | rulec = rulee
+5 | rulec = rulee2
+  | ^^^^^^^^^^^^^^ Rule with name 'rulec' already defined
   |
 
 "#
