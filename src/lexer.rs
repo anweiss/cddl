@@ -5,7 +5,6 @@ use annotate_snippets::{
   snippet::{Annotation, AnnotationType, Slice, Snippet, SourceAnnotation},
 };
 use base16;
-use base64;
 use itertools;
 use lexical;
 use std::{
@@ -310,6 +309,7 @@ impl<'a> From<(Vec<u8>, Position, lexical::Error)> for LexerError {
 }
 
 /// Lexer which holds a byte slice and iterator over the byte slice
+#[derive(Debug)]
 pub struct Lexer<'a> {
   /// CDDL input string
   pub str_input: Vec<u8>,
@@ -1313,7 +1313,7 @@ city = (
         assert_eq!(
           e.to_string(),
           r#"error: Invalid control operator
- --> input:1:16
+ --> input:1:17
   |
 1 | myrule = number .asdf 10
   |                 ^^^^^ Invalid control operator

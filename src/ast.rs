@@ -1,4 +1,4 @@
-use super::token::{ByteValue, RangeValue, SocketPlug, Value};
+use super::token::{RangeValue, SocketPlug, Value};
 use std::fmt;
 
 #[cfg(target_arch = "wasm32")]
@@ -11,11 +11,8 @@ use alloc::{
   vec::Vec,
 };
 
-/// Describes the literal formatting of an AST node
-pub trait Node {
-  /// Returns an optional formatted token literal string of the AST node
-  fn token_literal(&self) -> Option<String>;
-}
+/// Starting index, ending index and line number
+pub type Span = (usize, usize, usize);
 
 /// CDDL AST
 ///
@@ -33,21 +30,11 @@ impl fmt::Display for CDDL {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut cddl_output = String::new();
 
-    for r in self.rules.iter() {
-      cddl_output.push_str(&format!("{}\n\n", r));
+    for rule in self.rules.iter() {
+      cddl_output.push_str(&format!("{}\n\n", rule));
     }
 
     write!(f, "{}", cddl_output)
-  }
-}
-
-impl Node for CDDL {
-  fn token_literal(&self) -> Option<String> {
-    if !self.rules.is_empty() {
-      return self.rules[0].token_literal();
-    }
-
-    None
   }
 }
 
@@ -66,14 +53,8 @@ pub struct Identifier {
   pub ident: String,
   /// Optional socket
   pub socket: Option<SocketPlug>,
-  /// Range
-  pub range: (usize, usize),
-}
-
-impl Node for Identifier {
-  fn token_literal(&self) -> Option<String> {
-    Some(format!("{:?}", self))
-  }
+  /// Span
+  pub span: Span,
 }
 
 impl fmt::Display for Identifier {
@@ -88,24 +69,33 @@ impl fmt::Display for Identifier {
 
 impl From<&'static str> for Identifier {
   fn from(ident: &'static str) -> Self {
-    // TODO: support socketplug
+    let mut socket = ident.chars().take(2);
+
+    if let Some(c) = socket.next() {
+      if c == '$' {
+        if let Some(c) = socket.next() {
+          if c == '$' {
+            return Identifier {
+              ident: ident.into(),
+              socket: Some(SocketPlug::GROUP),
+              span: (0, 0, 0),
+            };
+          }
+        }
+
+        return Identifier {
+          ident: ident.into(),
+          socket: Some(SocketPlug::TYPE),
+          span: (0, 0, 0),
+        };
+      }
+    }
+
     Identifier {
       ident: ident.into(),
       socket: None,
-      range: (0, 0),
+      span: (0, 0, 0),
     }
-  }
-}
-
-/// Create `Identifier` from `Token::IDENT(ident)`
-pub fn identifier_from_ident_token(
-  ident: (String, Option<SocketPlug>),
-  range: (usize, usize),
-) -> Identifier {
-  Identifier {
-    ident: ident.0,
-    socket: ident.1,
-    range,
   }
 }
 
@@ -117,27 +107,29 @@ pub fn identifier_from_ident_token(
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq)]
+#[allow(missing_docs)]
 pub enum Rule {
   /// Type expression
-  Type(TypeRule),
+  Type { rule: TypeRule, span: Span },
   /// Group expression
-  Group(Box<GroupRule>),
+  Group { rule: Box<GroupRule>, span: Span },
+}
+
+impl Rule {
+  /// Return `Span` for `Rule`
+  pub fn span(&self) -> Span {
+    match self {
+      Rule::Type { span, .. } => *span,
+      Rule::Group { span, .. } => *span,
+    }
+  }
 }
 
 impl fmt::Display for Rule {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      Rule::Type(tr) => write!(f, "{}", tr),
-      Rule::Group(gr) => write!(f, "{}", gr),
-    }
-  }
-}
-
-impl Node for Rule {
-  fn token_literal(&self) -> Option<String> {
-    match self {
-      Rule::Type(tr) => tr.token_literal(),
-      Rule::Group(gr) => gr.token_literal(),
+      Rule::Type { rule, .. } => write!(f, "{}", rule),
+      Rule::Group { rule, .. } => write!(f, "{}", rule),
     }
   }
 }
@@ -146,8 +138,8 @@ impl Rule {
   /// Returns the name id of a rule
   pub fn name(&self) -> String {
     match self {
-      Rule::Type(tr) => tr.name.ident.to_string(),
-      Rule::Group(gr) => gr.name.ident.to_string(),
+      Rule::Type { rule, .. } => rule.name.ident.to_string(),
+      Rule::Group { rule, .. } => rule.name.ident.to_string(),
     }
   }
 
@@ -155,16 +147,8 @@ impl Rule {
   /// additional choices
   pub fn is_choice_alternate(&self) -> bool {
     match self {
-      Rule::Type(tr) => tr.is_type_choice_alternate,
-      Rule::Group(gr) => gr.is_group_choice_alternate,
-    }
-  }
-
-  /// Returns the beginning and ending range indices of a rule
-  pub fn range(&self) -> (usize, usize) {
-    match self {
-      Rule::Type(tr) => tr.range,
-      Rule::Group(gr) => gr.range,
+      Rule::Type { rule, .. } => rule.is_type_choice_alternate,
+      Rule::Group { rule, .. } => rule.is_group_choice_alternate,
     }
   }
 }
@@ -185,8 +169,6 @@ pub struct TypeRule {
   pub is_type_choice_alternate: bool,
   /// Type value
   pub value: Type,
-  /// Start and end range of type rule
-  pub range: (usize, usize),
 }
 
 impl fmt::Display for TypeRule {
@@ -209,12 +191,6 @@ impl fmt::Display for TypeRule {
   }
 }
 
-impl Node for TypeRule {
-  fn token_literal(&self) -> Option<String> {
-    Some(format!("{:?}", self))
-  }
-}
-
 /// Group expression
 ///
 /// ```abnf
@@ -231,8 +207,6 @@ pub struct GroupRule {
   pub is_group_choice_alternate: bool,
   /// Group entry
   pub entry: GroupEntry,
-  /// Start and end range of group rule
-  pub range: (usize, usize),
 }
 
 impl fmt::Display for GroupRule {
@@ -255,12 +229,6 @@ impl fmt::Display for GroupRule {
   }
 }
 
-impl Node for GroupRule {
-  fn token_literal(&self) -> Option<String> {
-    Some("".into())
-  }
-}
-
 /// Generic parameters
 ///
 /// ```abnf
@@ -271,8 +239,8 @@ impl Node for GroupRule {
 pub struct GenericParm {
   /// List of generic parameters
   pub params: Vec<Identifier>,
-  /// Start and end range of generic parameters
-  pub range: (usize, usize),
+  /// Span
+  pub span: Span,
 }
 
 impl fmt::Display for GenericParm {
@@ -299,12 +267,17 @@ impl fmt::Display for GenericParm {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct GenericArg(pub Vec<Type1>);
+pub struct GenericArg {
+  /// Generic arguments
+  pub args: Vec<Type1>,
+  /// Span
+  pub span: Span,
+}
 
 impl fmt::Display for GenericArg {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut ga = String::from("<");
-    for (idx, arg) in self.0.iter().enumerate() {
+    for (idx, arg) in self.args.iter().enumerate() {
       if idx != 0 {
         ga.push_str(", ");
       }
@@ -318,6 +291,16 @@ impl fmt::Display for GenericArg {
   }
 }
 
+impl GenericArg {
+  /// Default `GenericArg`
+  pub fn default() -> Self {
+    GenericArg {
+      args: Vec::new(),
+      span: (0, 0, 0),
+    }
+  }
+}
+
 /// Type choices
 ///
 /// ```abnf
@@ -325,19 +308,24 @@ impl fmt::Display for GenericArg {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct Type(pub Vec<Type1>);
+pub struct Type {
+  /// Type choices
+  pub type_choices: Vec<Type1>,
+  /// Span
+  pub span: Span,
+}
 
 impl fmt::Display for Type {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut types = String::new();
 
-    for (idx, t) in self.0.iter().enumerate() {
+    for (idx, t1) in self.type_choices.iter().enumerate() {
       if idx == 0 {
-        types.push_str(&t.to_string());
+        types.push_str(&t1.to_string());
         continue;
       }
 
-      types.push_str(&format!(" / {}", t.to_string()));
+      types.push_str(&format!(" / {}", t1.to_string()));
     }
 
     write!(f, "{}", types)
@@ -347,12 +335,17 @@ impl fmt::Display for Type {
 impl Type {
   /// Used to delineate between grpent with `Type` and group entry with group
   /// name identifier `id`
-  pub fn groupname_entry(&self) -> Option<(Identifier, Option<GenericArg>)> {
-    if self.0.len() == 1 {
-      if let Some(t1) = self.0.first() {
+  pub fn groupname_entry(&self) -> Option<(Identifier, Option<GenericArg>, Span)> {
+    if self.type_choices.len() == 1 {
+      if let Some(t1) = self.type_choices.first() {
         if t1.operator.is_none() {
-          if let Type2::Typename((ident, ga)) = &t1.type2 {
-            return Some((ident.clone(), ga.clone()));
+          if let Type2::Typename {
+            ident,
+            generic_arg,
+            span,
+          } = &t1.type2
+          {
+            return Some((ident.clone(), generic_arg.clone(), *span));
           }
         }
       }
@@ -374,6 +367,8 @@ pub struct Type1 {
   pub type2: Type2,
   /// Range or control operator over a second type
   pub operator: Option<(RangeCtlOp, Type2)>,
+  /// Span
+  pub span: Span,
 }
 
 impl fmt::Display for Type1 {
@@ -382,7 +377,7 @@ impl fmt::Display for Type1 {
 
     t1.push_str(&self.type2.to_string());
 
-    if let Type2::Typename(_) = self.type2 {
+    if let Type2::Typename { .. } = self.type2 {
       if self.operator.is_some() {
         t1.push_str(" ");
       }
@@ -391,7 +386,7 @@ impl fmt::Display for Type1 {
     if let Some((rco, t2)) = &self.operator {
       t1.push_str(&rco.to_string());
 
-      if let Type2::Typename(_) = self.type2 {
+      if let Type2::Typename { .. } = self.type2 {
         t1.push_str(" ");
       }
 
@@ -410,19 +405,25 @@ impl fmt::Display for Type1 {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
+#[allow(missing_docs)]
 pub enum RangeCtlOp {
-  /// Range operator where value is `true` if inclusive
-  RangeOp(bool),
-  /// Control operator where value is the identifier of the operator
-  CtlOp(&'static str),
+  /// Range operator
+  RangeOp { is_inclusive: bool, span: Span },
+  /// Control operator
+  CtlOp { ctrl: &'static str, span: Span },
 }
 
 impl fmt::Display for RangeCtlOp {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      RangeCtlOp::RangeOp(false) => write!(f, "..."),
-      RangeCtlOp::RangeOp(true) => write!(f, ".."),
-      RangeCtlOp::CtlOp(ctrl) => write!(f, "{}", ctrl),
+      RangeCtlOp::RangeOp {
+        is_inclusive: false,
+        ..
+      } => write!(f, "..."),
+      RangeCtlOp::RangeOp {
+        is_inclusive: true, ..
+      } => write!(f, ".."),
+      RangeCtlOp::CtlOp { ctrl, .. } => write!(f, "{}", ctrl),
     }
   }
 }
@@ -444,142 +445,150 @@ impl fmt::Display for RangeCtlOp {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub enum Type2 {
   /// Integer value
-  IntValue(isize),
+  IntValue { value: isize, span: Span },
   /// Unsigned integer value
-  UintValue(usize),
+  UintValue { value: usize, span: Span },
   /// Float value
-  FloatValue(f64),
+  FloatValue { value: f64, span: Span },
   /// Text string value (enclosed by '"')
-  TextValue(String),
+  TextValue { value: String, span: Span },
   /// UTF-8 encoded byte string (enclosed by '')
-  UTF8ByteString(Vec<u8>),
+  UTF8ByteString { value: Vec<u8>, span: Span },
   /// Base 16 encoded prefixed byte string
-  B16ByteString(Vec<u8>),
+  B16ByteString { value: Vec<u8>, span: Span },
   /// Base 64 encoded (URL safe) prefixed byte string
-  B64ByteString(Vec<u8>),
+  B64ByteString { value: Vec<u8>, span: Span },
   /// Type name identifier with optional generic arguments
-  Typename((Identifier, Option<GenericArg>)),
+  Typename {
+    ident: Identifier,
+    generic_arg: Option<GenericArg>,
+    span: Span,
+  },
   /// Parenthesized type expression (for operator precedence)
-  ParenthesizedType(Type),
+  ParenthesizedType { pt: Type, span: Span },
   /// Map expression
-  Map(Group),
+  Map { group: Group, span: Span },
   /// Array expression
-  Array(Group),
+  Array { group: Group, span: Span },
   /// Unwrapped group
-  Unwrap((Identifier, Option<GenericArg>)),
+  Unwrap {
+    ident: Identifier,
+    generic_arg: Option<GenericArg>,
+    span: Span,
+  },
   /// Enumeration expression over an inline group
-  ChoiceFromInlineGroup(Group),
+  ChoiceFromInlineGroup { group: Group, span: Span },
   /// Enumeration expression over previously defined group
-  ChoiceFromGroup((Identifier, Option<GenericArg>)),
+  ChoiceFromGroup {
+    ident: Identifier,
+    generic_arg: Option<GenericArg>,
+    span: Span,
+  },
   /// Tagged data item where the first element is an optional tag and the second
   /// is the type of the tagged value
-  TaggedData((Option<usize>, Type)),
+  TaggedData {
+    tag: Option<usize>,
+    t: Type,
+    span: Span,
+  },
   /// Data item of a major type with optional data constraint
-  TaggedDataMajorType((u8, Option<usize>)),
+  TaggedDataMajorType {
+    mt: u8,
+    constraint: Option<usize>,
+    span: Span,
+  },
   /// Any data item
-  Any,
+  Any(Span),
 }
 
 impl fmt::Display for Type2 {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      Type2::IntValue(value) => write!(f, "{}", value),
-      Type2::UintValue(value) => write!(f, "{}", value),
-      Type2::FloatValue(value) => write!(f, "{}", value),
-      Type2::TextValue(value) => write!(f, "\"{}\"", value),
-      Type2::UTF8ByteString(value) => write!(
+      Type2::IntValue { value, .. } => write!(f, "{}", value),
+      Type2::UintValue { value, .. } => write!(f, "{}", value),
+      Type2::FloatValue { value, .. } => write!(f, "{}", value),
+      Type2::TextValue { value, .. } => write!(f, "\"{}\"", value),
+      Type2::UTF8ByteString { value, .. } => write!(
         f,
         "'{}'",
         std::str::from_utf8(value).map_err(|_| fmt::Error)?
       ),
-      Type2::B16ByteString(value) => {
+      Type2::B16ByteString { value, .. } => {
         write!(f, "{}", std::str::from_utf8(value).map_err(|_| fmt::Error)?)
       }
-      Type2::B64ByteString(value) => {
+      Type2::B64ByteString { value, .. } => {
         write!(f, "{}", std::str::from_utf8(value).map_err(|_| fmt::Error)?)
       }
-      Type2::Typename((tn, ga)) => {
-        if let Some(args) = ga {
-          return write!(f, "{}{}", tn, args);
-        }
-
-        write!(f, "{}", tn)
-      }
-      Type2::ParenthesizedType(t) => write!(f, "({})", t),
-      Type2::Map(g) => write!(f, "{{{}}}", g),
-      Type2::Array(g) => write!(f, "[{}]", g),
-      Type2::Unwrap((ident, ga)) => {
-        if let Some(args) = ga {
+      Type2::Typename {
+        ident, generic_arg, ..
+      } => {
+        if let Some(args) = generic_arg {
           return write!(f, "{}{}", ident, args);
         }
 
         write!(f, "{}", ident)
       }
-      Type2::ChoiceFromInlineGroup(g) => write!(f, "&({})", g),
-      Type2::ChoiceFromGroup((ident, generic_arg)) => {
+      Type2::ParenthesizedType { pt, .. } => write!(f, "({})", pt),
+      Type2::Map { group, .. } => write!(f, "{{{}}}", group),
+      Type2::Array { group, .. } => write!(f, "[{}]", group),
+      Type2::Unwrap {
+        ident, generic_arg, ..
+      } => {
+        if let Some(args) = generic_arg {
+          return write!(f, "{}{}", ident, args);
+        }
+
+        write!(f, "{}", ident)
+      }
+      Type2::ChoiceFromInlineGroup { group, .. } => write!(f, "&({})", group),
+      Type2::ChoiceFromGroup {
+        ident, generic_arg, ..
+      } => {
         if let Some(ga) = generic_arg {
           return write!(f, "&{}{}", ident, ga);
         }
 
         write!(f, "&{}", ident)
       }
-      Type2::TaggedData((tag_uint, tagged_value)) => {
-        if let Some(t) = tag_uint {
-          return write!(f, "#6.{}({})", t, tagged_value);
+      Type2::TaggedData { tag, t, .. } => {
+        if let Some(tag_uint) = tag {
+          return write!(f, "#6.{}({})", tag_uint, t);
         }
 
-        write!(f, "#6({})", tagged_value)
+        write!(f, "#6({})", t)
       }
-      Type2::TaggedDataMajorType((major_type, tag_uint)) => {
-        if let Some(t) = tag_uint {
-          return write!(f, "{}.{}", major_type, t);
+      Type2::TaggedDataMajorType { mt, constraint, .. } => {
+        if let Some(c) = constraint {
+          return write!(f, "{}.{}", mt, c);
         }
 
-        write!(f, "{}", major_type)
+        write!(f, "{}", mt)
       }
-      Type2::Any => write!(f, "#"),
-    }
-  }
-}
-
-impl From<&Value> for Type2 {
-  fn from(value: &Value) -> Self {
-    match value {
-      Value::TEXT(t) => Type2::TextValue(t.to_string()),
-      Value::INT(i) => Type2::IntValue(*i),
-      Value::UINT(ui) => Type2::UintValue(*ui),
-      Value::FLOAT(f) => Type2::FloatValue(*f),
-      Value::BYTE(bv) => bv.into(),
+      Type2::Any(_) => write!(f, "#"),
     }
   }
 }
 
 impl From<RangeValue> for Type2 {
   fn from(rv: RangeValue) -> Self {
+    let span = (0, 0, 0);
+
     match rv {
-      RangeValue::IDENT(ident) => Type2::Typename((
-        Identifier {
+      RangeValue::IDENT(ident) => Type2::Typename {
+        ident: Identifier {
           ident: ident.0,
           socket: ident.1,
-          range: (0, 0),
+          span,
         },
-        None,
-      )),
-      RangeValue::INT(i) => Type2::IntValue(i),
-      RangeValue::UINT(ui) => Type2::UintValue(ui),
-      RangeValue::FLOAT(f) => Type2::FloatValue(f),
-    }
-  }
-}
-
-impl From<&ByteValue> for Type2 {
-  fn from(value: &ByteValue) -> Self {
-    match value {
-      ByteValue::UTF8(utf8) => Type2::UTF8ByteString(utf8.to_vec()),
-      ByteValue::B16(b16) => Type2::B16ByteString(b16.to_vec()),
-      ByteValue::B64(b64) => Type2::B64ByteString(b64.to_vec()),
+        generic_arg: None,
+        span,
+      },
+      RangeValue::INT(value) => Type2::IntValue { value, span },
+      RangeValue::UINT(value) => Type2::UintValue { value, span },
+      RangeValue::FLOAT(value) => Type2::FloatValue { value, span },
     }
   }
 }
@@ -591,13 +600,18 @@ impl From<&ByteValue> for Type2 {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct Group(pub Vec<GroupChoice>);
+#[allow(missing_docs)]
+pub struct Group {
+  /// Group choices
+  pub group_choices: Vec<GroupChoice>,
+  pub span: Span,
+}
 
 impl fmt::Display for Group {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut group_choices = String::new();
 
-    for (idx, gc) in self.0.iter().enumerate() {
+    for (idx, gc) in self.group_choices.iter().enumerate() {
       if idx == 0 {
         group_choices.push_str(&gc.to_string());
         continue;
@@ -619,17 +633,23 @@ impl fmt::Display for Group {
 /// If tuple is true, then entry is marked by a trailing comma
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct GroupChoice(pub Vec<(GroupEntry, bool)>);
+pub struct GroupChoice {
+  /// Group entries where the second item in the tuple indicates where or not a
+  /// trailing comma is present
+  pub group_entries: Vec<(GroupEntry, bool)>,
+  /// Span
+  pub span: Span,
+}
 
 impl fmt::Display for GroupChoice {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    if self.0.len() == 1 {
-      return write!(f, "{}", self.0[0].0);
+    if self.group_entries.len() == 1 {
+      return write!(f, "{}", self.group_entries[0].0);
     }
 
     let mut group_entries = String::new();
 
-    for ge in self.0.iter() {
+    for ge in self.group_entries.iter() {
       if ge.1 {
         group_entries.push_str(&format!("\t{},\n", ge.0));
       } else {
@@ -650,21 +670,29 @@ impl fmt::Display for GroupChoice {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub enum GroupEntry {
   /// Value group entry type
-  ValueMemberKey(Box<ValueMemberKeyEntry>),
+  ValueMemberKey {
+    ge: Box<ValueMemberKeyEntry>,
+    span: Span,
+  },
   /// Group entry from a named group or type
-  TypeGroupname(TypeGroupnameEntry),
+  TypeGroupname { ge: TypeGroupnameEntry, span: Span },
   /// Parenthesized group with optional occurrence indicator
-  InlineGroup((Option<Occur>, Group)),
+  InlineGroup {
+    occur: Option<Occur>,
+    group: Group,
+    span: Span,
+  },
 }
 
 impl fmt::Display for GroupEntry {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      GroupEntry::ValueMemberKey(vmke) => write!(f, "{}", vmke),
-      GroupEntry::TypeGroupname(gne) => write!(f, "{}", gne),
-      GroupEntry::InlineGroup((occur, group)) => {
+      GroupEntry::ValueMemberKey { ge, .. } => write!(f, "{}", ge),
+      GroupEntry::TypeGroupname { ge, .. } => write!(f, "{}", ge),
+      GroupEntry::InlineGroup { occur, group, .. } => {
         if let Some(o) = occur {
           return write!(f, "{} ({})", o, group);
         }
@@ -748,27 +776,32 @@ impl fmt::Display for TypeGroupnameEntry {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub enum MemberKey {
-  /// Type expression. If second value in tuple is `true`, a cut is present
-  Type1(Box<(Type1, bool)>),
+  /// Type expression
+  Type1 {
+    t1: Box<Type1>,
+    is_cut: bool,
+    span: Span,
+  },
   /// Bareword string type
-  Bareword(Identifier),
+  Bareword { ident: Identifier, span: Span },
   /// Value type
-  Value(Value),
+  Value { value: Value, span: Span },
 }
 
 impl fmt::Display for MemberKey {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      MemberKey::Type1(t1) => {
-        if t1.1 {
-          return write!(f, "{} ^ =>", t1.0);
+      MemberKey::Type1 { t1, is_cut, .. } => {
+        if *is_cut {
+          return write!(f, "{} ^ =>", t1);
         }
 
-        write!(f, "{} =>", t1.0)
+        write!(f, "{} =>", t1)
       }
-      MemberKey::Bareword(ident) => write!(f, "{}:", ident),
-      MemberKey::Value(value) => write!(f, "{}:", value),
+      MemberKey::Bareword { ident, .. } => write!(f, "{}:", ident),
+      MemberKey::Value { value, .. } => write!(f, "{}:", value),
     }
   }
 }
@@ -781,39 +814,44 @@ impl fmt::Display for MemberKey {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub enum Occur {
   /// Occurrence indicator in the form n*m, where n is an optional lower limit
   /// and m is an optional upper limit
-  Exact((Option<usize>, Option<usize>)),
+  Exact {
+    lower: Option<usize>,
+    upper: Option<usize>,
+    span: Span,
+  },
   /// Occurrence indicator in the form *, allowing zero or more occurrences
-  ZeroOrMore,
+  ZeroOrMore(Span),
   /// Occurrence indicator in the form +, allowing one or more occurrences
-  OneOrMore,
+  OneOrMore(Span),
   /// Occurrence indicator in the form ?, allowing an optional occurrence
-  Optional,
+  Optional(Span),
 }
 
 impl fmt::Display for Occur {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      Occur::ZeroOrMore => write!(f, "*"),
-      Occur::Exact((l, u)) => {
-        if let Some(li) = l {
-          if let Some(ui) = u {
+      Occur::ZeroOrMore(_) => write!(f, "*"),
+      Occur::Exact { lower, upper, .. } => {
+        if let Some(li) = lower {
+          if let Some(ui) = upper {
             return write!(f, "{}*{}", li, ui);
           }
 
           return write!(f, "{}*", li);
         }
 
-        if let Some(ui) = u {
+        if let Some(ui) = upper {
           return write!(f, "*{}", ui);
         }
 
         write!(f, "*")
       }
-      Occur::OneOrMore => write!(f, "+"),
-      Occur::Optional => write!(f, "?"),
+      Occur::OneOrMore(_) => write!(f, "+"),
+      Occur::Optional(_) => write!(f, "?"),
     }
   }
 }
@@ -826,11 +864,14 @@ mod tests {
   #[test]
   fn verify_groupentry_output() {
     assert_eq!(
-      GroupEntry::TypeGroupname(TypeGroupnameEntry {
-        occur: None,
-        name: Identifier::from("entry1"),
-        generic_arg: None,
-      })
+      GroupEntry::TypeGroupname {
+        ge: TypeGroupnameEntry {
+          occur: None,
+          name: Identifier::from("entry1"),
+          generic_arg: None,
+        },
+        span: (0, 0, 0),
+      }
       .to_string(),
       "entry1".to_string()
     )
@@ -839,30 +880,62 @@ mod tests {
   #[test]
   fn verify_group_output() {
     assert_eq!(
-      Group(vec![GroupChoice(vec![
-        (
-          GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-            occur: None,
-            member_key: Some(MemberKey::Bareword("key1".into())),
-            entry_type: Type(vec![Type1 {
-              type2: Type2::TextValue("value1".into()),
-              operator: None,
-            }]),
-          })),
-          true
-        ),
-        (
-          GroupEntry::ValueMemberKey(Box::from(ValueMemberKeyEntry {
-            occur: None,
-            member_key: Some(MemberKey::Bareword("key2".into())),
-            entry_type: Type(vec![Type1 {
-              type2: Type2::TextValue("value2".into()),
-              operator: None,
-            }]),
-          })),
-          true
-        ),
-      ])])
+      Group {
+        group_choices: vec![GroupChoice {
+          group_entries: vec![
+            (
+              GroupEntry::ValueMemberKey {
+                ge: Box::from(ValueMemberKeyEntry {
+                  occur: None,
+                  member_key: Some(MemberKey::Bareword {
+                    ident: "key1".into(),
+                    span: (0, 0, 0),
+                  }),
+                  entry_type: Type {
+                    type_choices: vec![Type1 {
+                      type2: Type2::TextValue {
+                        value: "value1".into(),
+                        span: (0, 0, 0),
+                      },
+                      operator: None,
+                      span: (0, 0, 0),
+                    }],
+                    span: (0, 0, 0),
+                  },
+                }),
+                span: (0, 0, 0),
+              },
+              true
+            ),
+            (
+              GroupEntry::ValueMemberKey {
+                ge: Box::from(ValueMemberKeyEntry {
+                  occur: None,
+                  member_key: Some(MemberKey::Bareword {
+                    ident: "key2".into(),
+                    span: (0, 0, 0),
+                  }),
+                  entry_type: Type {
+                    type_choices: vec![Type1 {
+                      type2: Type2::TextValue {
+                        value: "value2".into(),
+                        span: (0, 0, 0),
+                      },
+                      operator: None,
+                      span: (0, 0, 0),
+                    }],
+                    span: (0, 0, 0),
+                  },
+                }),
+                span: (0, 0, 0),
+              },
+              true
+            ),
+          ],
+          span: (0, 0, 0),
+        }],
+        span: (0, 0, 0),
+      }
       .to_string(),
       "\tkey1: \"value1\",\n\tkey2: \"value2\",\n".to_string()
     )
