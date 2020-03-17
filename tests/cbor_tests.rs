@@ -172,7 +172,6 @@ fn validate_cbor_array_groups() {
 }
 
 #[test]
-#[ignore] // FIXME: https://github.com/anweiss/cddl/issues/25
 fn validate_cbor_array_record() {
   let cddl_input = r#"thing = [a: int, b: int, c: int]"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
