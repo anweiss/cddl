@@ -1453,6 +1453,7 @@ mod tests {
   use pretty_assertions::assert_eq;
 
   #[test]
+  #[allow(unused_variables)]
   fn verify_cddl() -> Result<()> {
     let input = r#"myrule = secondrule
 myrange = 10..upper
