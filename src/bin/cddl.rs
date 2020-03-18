@@ -4,7 +4,6 @@ extern crate clap;
 use cddl::{compile_cddl_from_str, validate_json_from_str};
 use clap::{App, AppSettings, SubCommand};
 use crossterm::{Color, Colored};
-use serde_json;
 use std::{error::Error, fs};
 
 fn main() -> Result<(), Box<dyn Error>> {

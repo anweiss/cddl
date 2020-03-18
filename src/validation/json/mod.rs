@@ -6,7 +6,6 @@ use crate::{
   parser,
   token::{self, Numeric, Token},
 };
-use chrono;
 use controls::*;
 use serde_json::{self, Value};
 use std::{f64, fmt};
@@ -201,6 +200,7 @@ impl Validator<Value> for CDDL {
   }
 
   // TODO: Reduce cognitive complexity of this function
+  #[allow(clippy::cognitive_complexity)]
   fn validate_range(
     &self,
     lower: &Type2,
