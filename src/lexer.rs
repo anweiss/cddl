@@ -4,9 +4,6 @@ use annotate_snippets::{
   formatter::DisplayListFormatter,
   snippet::{Annotation, AnnotationType, Slice, Snippet, SourceAnnotation},
 };
-use base16;
-use itertools;
-use lexical;
 use std::{
   convert::TryFrom,
   fmt,

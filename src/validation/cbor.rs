@@ -942,7 +942,7 @@ mod tests {
 
   #[test]
   fn validate_cbor_bytes_value() -> Result {
-    let cbor_value = Value::Bytes("68656c6c6f20776f726c64".as_bytes().to_vec());
+    let cbor_value = Value::Bytes(b"68656c6c6f20776f726c64".to_vec());
     let cddl_input = r#"mybytesstring = h'68656c6c6f20776f726c64'"#;
 
     validate_cbor_from_slice(cddl_input, &serde_cbor::to_vec(&cbor_value).unwrap())

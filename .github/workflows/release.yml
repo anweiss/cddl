@@ -41,9 +41,33 @@ jobs:
           command: test
           args: --all
 
+  wasm-compilation-check:
+    strategy:
+      matrix:
+        rust_toolchain: [stable]
+    name: Compilation check for wasm target
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust_toolchain }}
+          target: wasm32-unknown-unknown
+          override: true
+
+      - name: Check compilation for wasm target
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --lib --target wasm32-unknown-unknown
+
   draft-release:
     name: Draft Release
-    needs: compilation-check
+    needs: [compilation-check, wasm-compilation-check]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
