@@ -67,6 +67,12 @@ jobs:
           command: check
           args: --all --bins --examples --tests --no-default-features
 
+      - name: Check compilation for wasm target
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --lib --target wasm32-unknown-unknown
+
       - name: Check compilation with all features
         if: matrix.rust_toolchain == 'nightly'
         uses: actions-rs/cargo@v1
@@ -127,3 +133,9 @@ jobs:
         with:
           command: clippy
           args: --all
+
+      - name: cargo +${{ matrix.rust_toolchain }} clippy (wasm32)
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --lib --target wasm32-unknown-unknown
