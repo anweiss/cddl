@@ -30,6 +30,7 @@
     "copy-webpack-plugin": "^5.1.1",
     "css-loader": "^1.0.0",
     "hello-wasm-pack": "^0.1.0",
+    "minimist": "^1.2.5",
     "monaco-editor": "^0.17.1",
     "style-loader": "^0.23.1",
     "webpack": "^4.42.0",
