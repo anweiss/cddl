@@ -67,18 +67,36 @@ jobs:
           command: check
           args: --all --bins --examples --tests --no-default-features
 
-      - name: Check compilation for wasm target
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --lib --target wasm32-unknown-unknown
-
       - name: Check compilation with all features
         if: matrix.rust_toolchain == 'nightly'
         uses: actions-rs/cargo@v1
         with:
           command: check
           args: --all --bins --examples --tests --all-features
+
+  wasm-compilation-check:
+    strategy:
+      matrix:
+        rust_toolchain: [stable, beta, nightly]
+    name: Compilation check for wasm target
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust_toolchain }}
+          target: wasm32-unknown-unknown
+          override: true
+
+      - name: Check compilation for wasm target
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --lib --target wasm32-unknown-unknown
 
   test-suite:
     strategy:
@@ -134,7 +152,26 @@ jobs:
           command: clippy
           args: --all
 
-      - name: cargo +${{ matrix.rust_toolchain }} clippy (wasm32)
+  wasm-style-linting:
+    strategy:
+      matrix:
+        rust_toolchain: [stable, beta]
+    name: wasm style linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust_toolchain }}
+          target: wasm32-unknown-unknown
+          override: true
+          components: rustfmt, clippy
+
+      - name: cargo +${{ matrix.rust_toolchain }} clippy
         uses: actions-rs/cargo@v1
         with:
           command: clippy
