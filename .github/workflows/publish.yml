@@ -135,9 +135,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp .npmrc pkg/
           echo "//npm.pkg.github.com/:_authToken=$GITHUB_TOKEN" > ~/.npmrc
-          cd www
+          cp .npmrc pkg/
+          cd pkg
           npm publish --access=public
 
   publish-crate:
