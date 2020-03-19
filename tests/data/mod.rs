@@ -1,6 +1,4 @@
-extern crate cddl;
-
-use cddl::ast::*;
+// use cddl::ast::*;
 
 // pub fn reputon() -> CDDL {
 //   CDDL {
