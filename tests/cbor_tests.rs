@@ -116,11 +116,16 @@ fn validate_cbor_array() {
   let cddl_input = r#"thing = []"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap();
   validate_cbor_from_slice(cddl_input, cbor::NULL).unwrap_err();
-  //validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err(); // FIXME: broken
+  // FIXME: broken
+  if false {
+    validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
+  }
 
   // FIXME: unimplemented!() in validation
-  //let cddl_input = r#"thing = [1, 2, 3]"#;
-  //validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
+  if false {
+    let cddl_input = r#"thing = [1, 2, 3]"#;
+    validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
+  }
 }
 
 // These data structures exist so that we can serialize some more complex
