@@ -862,7 +862,7 @@ impl Validator<Value> for CDDL {
         ),
       },
       Value::Float(_n) => match ident {
-        "number" | "float16" | "float32" => Ok(()),
+        "number" | "float" | "float16" | "float32" | "float64" => Ok(()),
         // TODO: Finish rest of numerical data types
         _ => Err(
           CBORError {
