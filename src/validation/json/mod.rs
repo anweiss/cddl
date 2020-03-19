@@ -947,19 +947,65 @@ impl Validator<Value> for CDDL {
             continue;
           }
 
-          // [ * reputon ]
           if let GroupEntry::TypeGroupname { ge: tge, .. } = &ge.0 {
-            if let Some(o) = &tge.occur {
-              self.validate_array_occurrence(o, &tge.name.to_string(), values)?;
-            }
+            // [ * reputon ]
+            if gc.group_entries.len() == 1 {
+              if let Some(o) = &tge.occur {
+                self.validate_array_occurrence(o, &tge.name.to_string(), values)?;
 
-            if self.rules.iter().any(|r| match r {
-              Rule::Type { rule, .. } if rule.name.ident == tge.name.ident => true,
-              _ => false,
-            }) {
-              if let Some(v) = values.get(idx) {
-                self.validate_group_entry(&ge.0, false, None, occur, v)?;
-                continue;
+                if let Occur::ZeroOrMore(_) = o {
+                  if values.is_empty() {
+                    return Ok(());
+                  }
+                }
+
+                if is_type_json_prelude(&tge.name.ident) {
+                  if values.iter().all(|v| {
+                    self
+                      .validate_type2(
+                        &Type2::Typename {
+                          ident: tge.name.clone(),
+                          generic_arg: tge.generic_arg.clone(),
+                          span: (0, 0, 0),
+                        },
+                        None,
+                        None,
+                        None,
+                        v,
+                      )
+                      .is_ok()
+                  }) {
+                    return Ok(());
+                  } else {
+                    return Err(
+                      JSONError {
+                        expected_memberkey: None,
+                        expected_value: gc.to_string(),
+                        actual_memberkey: None,
+                        actual_value: value.clone(),
+                      }
+                      .into(),
+                    );
+                  }
+                }
+
+                if values.iter().all(|v| {
+                  self
+                    .validate_rule_for_ident(&tge.name, false, None, None, None, v)
+                    .is_ok()
+                }) {
+                  return Ok(());
+                } else {
+                  return Err(
+                    JSONError {
+                      expected_memberkey: None,
+                      expected_value: gc.to_string(),
+                      actual_memberkey: None,
+                      actual_value: value.clone(),
+                    }
+                    .into(),
+                  );
+                }
               }
             }
           }
