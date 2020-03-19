@@ -222,12 +222,14 @@ fn validate_cbor_map() {
   let cddl_input = r#"thing = {name: tstr, ? age: int}"#;
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
 
-  // FIXME: broken
-  if false {
-    // TODO: try * and + as well (should be functionally equivalent)
-    let cddl_input = r#"thing = {name: tstr, age: int, ? minor: bool}"#;
-    validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
-  }
+  // Ensure that keys are optional if the occurrence is "?" or "*"
+  // and required if the occurrence is "+"
+  let cddl_input = r#"thing = {name: tstr, age: int, ? minor: bool}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  let cddl_input = r#"thing = {name: tstr, age: int, * minor: bool}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  let cddl_input = r#"thing = {name: tstr, age: int, + minor: bool}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
 
   let cddl_input = r#"thing = {name: tstr, age: tstr}"#;
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();

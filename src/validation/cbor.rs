@@ -600,7 +600,10 @@ impl Validator<Value> for CDDL {
                       vmke.occur.as_ref(),
                       v,
                     );
-                  }
+                  } // REVIEW NEEDED: should there be an "else" path that handles optional
+                    // keys (vmke.occur) ?
+                    // I don't understand why there is different behavior based on
+                    // is_type_prelude().
 
                   return self.validate_type(
                     &vmke.entry_type,
@@ -619,9 +622,17 @@ impl Validator<Value> for CDDL {
                     vmke.occur.as_ref(),
                     v,
                   ),
-                  None => match occur {
+                  None => match &vmke.occur {
+                    // We failed to find a matching key-value pair in the
+                    // value map.  This is OK if the occurrence would allow
+                    // it.
+                    // Occurrences in a map have quirky behavior; see
+                    // rfc8610 section 3.2.
+                    // "? acts as expected: this key is optional
+                    // "*" acts just like ?
+                    // "+" has no effect; this key is required
                     Some(o) => match o {
-                      Occur::Optional(_) | Occur::OneOrMore(_) => Ok(()),
+                      Occur::Optional(_) | Occur::ZeroOrMore(_) => Ok(()),
                       _ => Err(
                         CBORError {
                           expected_memberkey: Some(mk.to_string()),
