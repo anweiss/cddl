@@ -3042,6 +3042,7 @@ mod tests {
       r#"&groupname"#,
       r#"&( inlinegroup )"#,
       r#"{ ? "optional-key" ^ => int, }"#,
+      r#"[ ( a: int, b: tstr ) ]"#,
     ];
 
     let expected_outputs = [
@@ -3251,6 +3252,96 @@ mod tests {
           span: (2, 28, 1),
         },
         span: (0, 30, 1),
+      },
+      Type2::Array {
+        group: Group {
+          group_choices: vec![GroupChoice {
+            group_entries: vec![(
+              GroupEntry::InlineGroup {
+                group: Group {
+                  group_choices: vec![GroupChoice {
+                    group_entries: vec![
+                      (
+                        GroupEntry::ValueMemberKey {
+                          ge: Box::from(ValueMemberKeyEntry {
+                            occur: None,
+                            member_key: Some(MemberKey::Bareword {
+                              ident: Identifier {
+                                ident: "a".into(),
+                                socket: None,
+                                span: (4, 5, 1),
+                              },
+                              span: (4, 6, 1),
+                            }),
+                            entry_type: Type {
+                              type_choices: vec![Type1 {
+                                type2: Type2::Typename {
+                                  ident: Identifier {
+                                    ident: "int".into(),
+                                    socket: None,
+                                    span: (7, 10, 1),
+                                  },
+                                  generic_arg: None,
+                                  span: (7, 10, 1),
+                                },
+                                operator: None,
+                                span: (7, 10, 1),
+                              }],
+                              span: (7, 10, 1),
+                            },
+                          }),
+                          span: (4, 11, 1),
+                        },
+                        true,
+                      ),
+                      (
+                        GroupEntry::ValueMemberKey {
+                          ge: Box::from(ValueMemberKeyEntry {
+                            occur: None,
+                            member_key: Some(MemberKey::Bareword {
+                              ident: Identifier {
+                                ident: "b".into(),
+                                socket: None,
+                                span: (12, 13, 1),
+                              },
+                              span: (12, 14, 1),
+                            }),
+                            entry_type: Type {
+                              type_choices: vec![Type1 {
+                                type2: Type2::Typename {
+                                  ident: Identifier {
+                                    ident: "tstr".into(),
+                                    socket: None,
+                                    span: (15, 19, 1),
+                                  },
+                                  generic_arg: None,
+                                  span: (15, 19, 1),
+                                },
+                                operator: None,
+                                span: (15, 19, 1),
+                              }],
+                              span: (15, 19, 1),
+                            },
+                          }),
+                          span: (12, 19, 1),
+                        },
+                        false,
+                      ),
+                    ],
+                    span: (4, 19, 1),
+                  }],
+                  span: (4, 19, 1),
+                },
+                occur: None,
+                span: (2, 21, 1),
+              },
+              false,
+            )],
+            span: (2, 21, 1),
+          }],
+          span: (2, 21, 1),
+        },
+        span: (0, 23, 1),
       },
     ];
 
