@@ -217,12 +217,12 @@ fn validate_cbor_array_record() {
 
 #[test]
 fn validate_cbor_map() {
-  let cddl_input = r#"thing = {name: tstr, age: int}"#;
   let input = PersonStruct {
     name: "Bob".to_string(),
     age: 43,
   };
   let cbor_bytes = serde_cbor::to_vec(&input).unwrap();
+  let cddl_input = r#"thing = {name: tstr, age: int}"#;
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
   let cddl_input = r#"thing = {name: tstr, ? age: int}"#;
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
@@ -245,6 +245,32 @@ fn validate_cbor_map() {
     validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
   }
 
+  // "* keytype => valuetype" is the expected syntax for collecting
+  // any remaining key/value pairs of the expected type.
+  let cddl_input = r#"thing = {* tstr => any}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  let cddl_input = r#"thing = {name: tstr, * tstr => any}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  let cddl_input = r#"thing = {name: tstr, age: int, * tstr => any}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  let cddl_input = r#"thing = {+ tstr => any}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+
+  // FIXME: broken
+  if false {
+    // Should fail because the CBOR input has one entry that can't be
+    // collected because the value type doesn't match.
+    let cddl_input = r#"thing = {* tstr => int}"#;
+    validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
+  }
+  // Should fail because the CBOR input has two entries that can't be
+  // collected because the key type doesn't match.
+  let cddl_input = r#"thing = {* int => any}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
+
   let cddl_input = r#"thing = {name: tstr, age: int, minor: bool}"#;
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
+
+  let cddl_input = r#"thing = {x: int, y: int, z: int}"#;
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
 }
