@@ -960,7 +960,7 @@ impl Validator<Value> for CDDL {
                 }
 
                 if is_type_json_prelude(&tge.name.ident) {
-                  if values.iter().all(|v| {
+                  let validate_all_values = |v| {
                     self
                       .validate_type2(
                         &Type2::Typename {
@@ -974,7 +974,9 @@ impl Validator<Value> for CDDL {
                         v,
                       )
                       .is_ok()
-                  }) {
+                  };
+
+                  if values.iter().all(validate_all_values) {
                     return Ok(());
                   } else {
                     return Err(
@@ -989,11 +991,13 @@ impl Validator<Value> for CDDL {
                   }
                 }
 
-                if values.iter().all(|v| {
+                let validate_all_values = |v| {
                   self
                     .validate_rule_for_ident(&tge.name, false, None, None, None, v)
                     .is_ok()
-                }) {
+                };
+
+                if values.iter().all(validate_all_values) {
                   return Ok(());
                 } else {
                   return Err(
