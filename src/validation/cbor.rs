@@ -744,7 +744,17 @@ impl Validator<Value> for CDDL {
 
   fn validate_array_occurrence(&self, occur: &Occur, group: &str, values: &[Value]) -> Result {
     match occur {
-      Occur::ZeroOrMore(_) | Occur::Optional(_) => Ok(()),
+      Occur::ZeroOrMore(_) => Ok(()),
+      Occur::Optional(_) => {
+        if values.len() > 1 {
+          Err(Error::Occurrence(format!(
+            "Expecting zero or one values of group {}",
+            group
+          )))
+        } else {
+          Ok(())
+        }
+      }
       Occur::OneOrMore(_) => {
         if values.is_empty() {
           Err(Error::Occurrence(format!(

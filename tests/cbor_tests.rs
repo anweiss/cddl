@@ -159,9 +159,18 @@ fn validate_cbor_group() {
 
 #[test]
 fn validate_cbor_homogenous_array() {
-  let cddl_input = r#"thing = [* int]"#;
+  let cddl_input = r#"thing = [* int]"#; // zero or more
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap();
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
+  let cddl_input = r#"thing = [+ int]"#; // one or more
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap_err();
+  let cddl_input = r#"thing = [? int]"#; // zero or one
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap();
+  let cbor_bytes = serde_cbor::to_vec(&[42]).unwrap();
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
+
   let cddl_input = r#"thing = [* tstr]"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
 
