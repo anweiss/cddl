@@ -2,7 +2,6 @@
 
 [![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![](https://github.com/anweiss/cddl/workflows/Release%20package/badge.svg)](https://github.com/anweiss/cddl/actions) [![](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions)
 
-
 > This crate is very much experimental and is being developed as a personal learning exercise for getting acquainted with Rust and about parsing in general. It does not yet completely conform to the spec. There are likely more performant and stable libraries out there for parsing CDDL. This one should not be used in production in any form or fashion.
 
 A Rust implementation of the Concise data definition language (CDDL). CDDL is an IETF standard that "proposes a notational convention to express CBOR and JSON data structures." As of 2019-06-12, it is published as RFC 8610 (Proposed Standard) at https://tools.ietf.org/html/rfc8610.
@@ -64,7 +63,7 @@ You can also find a simple RFC 8610 conformance tool at https://cddl.anweiss.tec
 - [x] root type
 - [x] occurrence
 - [x] predefined types
-- [X] tags
+- [x] tags
 - [x] unwrapping
 - [x] controls
 - [x] socket/plug
@@ -124,37 +123,37 @@ The first non-group rule defined by a CDDL data structure definition determines 
 
 The following types and features of CDDL are supported by this crate for validating JSON:
 
-|CDDL|JSON|
-|----|----|
-|structs|objects|
-|arrays|arrays|
-|text / tstr|string|
-|number / int / float|number<sup>[1](#number)</sup>|
-|bool / true / false|boolean|
-|null / nil|null|
-|any|any valid JSON|
+| CDDL                 | JSON                          |
+| -------------------- | ----------------------------- |
+| structs              | objects                       |
+| arrays               | arrays                        |
+| text / tstr          | string                        |
+| number / int / float | number<sup>[1](#number)</sup> |
+| bool / true / false  | boolean                       |
+| null / nil           | null                          |
+| any                  | any valid JSON                |
 
 Since JSON objects only support keys whose types are JSON strings, member keys defined in CDDL structs must use either the colon syntax (`mykey: tstr`) or the double arrow syntax with double quotes (`"mykey" => tstr`). Unquoted member keys used with the double arrow syntax must resolve to one of the supported data types that can be used to validate JSON strings (`text` or `tstr`). Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed and monomorphized into their full representations before being evaluated for JSON validation.
 
 Below is the table of supported control operators and whether or not they've been implemented as of the current release:
 
-|Control operator|Implementation status|
-|----------------|---------------------|
-|`.pcre`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup>|
-|`.regex`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup> (alias for `.pcre`)|
-|`.size`|Incomplete|
-|`.bits`|Unsupported for JSON validation|
-|`.cbor`|Unsupported for JSON validation|
-|`.cborseq`|Unsupported for JSON validation|
-|`.within`|Incomplete|
-|`.and`|Incomplete|
-|`.lt`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
-|`.le`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
-|`.gt`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
-|`.ge`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
-|`.eq`|Partial (text and numeric values)|
-|`.ne`|Incomplete|
-|`.default`|Incomplete|
+| Control operator | Implementation status                                                                                                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.pcre`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup>                     |
+| `.regex`         | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup> (alias for `.pcre`) |
+| `.size`          | Incomplete                                                                                                                                                                                  |
+| `.bits`          | Unsupported for JSON validation                                                                                                                                                             |
+| `.cbor`          | Unsupported for JSON validation                                                                                                                                                             |
+| `.cborseq`       | Unsupported for JSON validation                                                                                                                                                             |
+| `.within`        | Incomplete                                                                                                                                                                                  |
+| `.and`           | Incomplete                                                                                                                                                                                  |
+| `.lt`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.le`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.gt`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.ge`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.eq`            | Partial (text and numeric values)                                                                                                                                                           |
+| `.ne`            | Incomplete                                                                                                                                                                                  |
+| `.default`       | Incomplete                                                                                                                                                                                  |
 
 <a name="number">1</a>: While JSON itself does not distinguish between integers and floating-point numbers, this crate does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON.
 
@@ -187,4 +186,4 @@ Both JSON and CBOR validation are dependent on their respective heap allocated `
 
 Below is a graph of the dependencies used by this project. It was generated using [`cargo-deps`](https://github.com/m-cat/cargo-deps).
 
-![cddl dependencies](https://github.com/anweiss/cddl/raw/master/dep-graph.png)
+![cddl dependencies](dep-graph.png)
