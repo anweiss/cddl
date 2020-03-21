@@ -158,9 +158,15 @@ fn validate_cbor_group() {
 }
 
 #[test]
-#[ignore] // FIXME: broken
 fn validate_cbor_homogenous_array() {
   let cddl_input = r#"thing = [* int]"#;
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
+  let cddl_input = r#"thing = [* tstr]"#;
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
+
+  // Alias type.  Note the rule we want to validate must come first.
+  let cddl_input = r#"thing = [* zipcode]  zipcode = int"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap();
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
 }

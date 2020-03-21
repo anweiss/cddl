@@ -438,7 +438,30 @@ impl Validator<Value> for CDDL {
         Value::Array(values) => {
           if let GroupEntry::TypeGroupname { ge: tge, .. } = &ge.0 {
             if let Some(o) = &tge.occur {
+              if gc.group_entries.len() != 1 {
+                // Arrays with multiple occurrences are too hard to parse
+                // correctly.  For now, just return an error instead.
+                return Err(
+                  CBORError {
+                    expected_memberkey: None,
+                    expected_value: gc.to_string(),
+                    actual_memberkey: None,
+                    actual_value: value.clone(),
+                  }
+                  .into(),
+                );
+              }
+
+              // Validate that the number of values is correct according to the
+              // occurrence.
               self.validate_array_occurrence(o, &tge.name.to_string(), values)?;
+
+              // Validate that each member of the value array matches
+              // the groupentry.
+              for value in values {
+                self.validate_group_entry(&ge.0, false, None, occur, value)?;
+              }
+              return Ok(());
             }
           }
 
@@ -673,14 +696,32 @@ impl Validator<Value> for CDDL {
           unimplemented!()
         }
       }
-      GroupEntry::TypeGroupname { ge: tge, .. } => self.validate_rule_for_ident(
-        &tge.name,
-        is_enumeration,
-        None,
-        None,
-        tge.occur.as_ref(),
-        value,
-      ),
+      GroupEntry::TypeGroupname { ge: tge, span } => {
+        if is_type_prelude(&tge.name.ident) {
+          // Substitute a new AST node for the groupentry validation.
+          // FIXME: this seems like an awkward thing to do.
+          self.validate_type2(
+            &Type2::Typename {
+              ident: tge.name.clone(),
+              generic_arg: tge.generic_arg.clone(),
+              span: span.clone(),
+            },
+            None,
+            None,
+            None,
+            value,
+          )
+        } else {
+          self.validate_rule_for_ident(
+            &tge.name,
+            is_enumeration,
+            None,
+            None,
+            tge.occur.as_ref(),
+            value,
+          )
+        }
+      }
       GroupEntry::InlineGroup {
         occur: igo,
         group: g,
