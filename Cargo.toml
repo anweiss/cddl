@@ -21,11 +21,15 @@ lexical = "^4.0"
 clap = "2.33"
 base16 = "0.2"
 base64 = "0.10"
-regex = "1.2"
 chrono = "0.4"
 uriparse = { version = "0.6", optional = true }
 itertools = "0.8"
 annotate-snippets = { git = "https://github.com/rust-lang/annotate-snippets-rs", version = "0.6" }
+
+[dependencies.regex]
+version = "1.3"
+default-features = false
+features = ["std"]
 
 [dev-dependencies]
 pretty_assertions = { git = "https://github.com/colin-kiegel/rust-pretty-assertions" }
