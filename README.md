@@ -181,9 +181,3 @@ cddl = { version = "<version>", default-features = false }
 Zero-copy parsing is implemented to the extent that is possible, with prefixed byte strings containing whitespace being one of the few exceptions where allocation is required. Allocation is also used for error handling and diagnostics.
 
 Both JSON and CBOR validation are dependent on their respective heap allocated `Value` types, but since these types aren't supported in a `no_std` context, they subsequently aren't supported in a `no_std` context in this crate.
-
-## Dependency graph
-
-Below is a graph of the dependencies used by this project. It was generated using [`cargo-deps`](https://github.com/m-cat/cargo-deps).
-
-![cddl dependencies](dep-graph.png)

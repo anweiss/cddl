@@ -243,14 +243,6 @@
 //! allocated `Value` types, but since these types aren't supported in a
 //! `no_std` context, they subsequently aren't supported in a `no_std` context
 //! in this crate.
-//!
-//! ## Dependency graph
-//!
-//! Below is a graph of the dependencies used by this project. It was generated
-//! using [`cargo-deps`](https://github.com/m-cat/cargo-deps).
-//!
-//! ![cddl
-//! dependencies](https://github.com/anweiss/cddl/raw/master/dep-graph.png)
 
 #![allow(dead_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
