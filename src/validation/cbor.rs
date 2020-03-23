@@ -433,12 +433,35 @@ impl Validator<Value> for CDDL {
   ) -> Result {
     let mut errors: Vec<Error> = Vec::new();
 
-    for ge in gc.group_entries.iter() {
+    for (ge_index, ge) in gc.group_entries.iter().enumerate() {
       match value {
         Value::Array(values) => {
           if let GroupEntry::TypeGroupname { ge: tge, .. } = &ge.0 {
             if let Some(o) = &tge.occur {
+              if gc.group_entries.len() != 1 {
+                // Arrays with multiple occurrences are too hard to parse
+                // correctly.  For now, just return an error instead.
+                return Err(
+                  CBORError {
+                    expected_memberkey: None,
+                    expected_value: gc.to_string(),
+                    actual_memberkey: None,
+                    actual_value: value.clone(),
+                  }
+                  .into(),
+                );
+              }
+
+              // Validate that the number of values is correct according to the
+              // occurrence.
               self.validate_array_occurrence(o, &tge.name.to_string(), values)?;
+
+              // Validate that each member of the value array matches
+              // the groupentry.
+              for value in values {
+                self.validate_group_entry(&ge.0, false, None, occur, value)?;
+              }
+              return Ok(());
             }
           }
 
@@ -473,24 +496,9 @@ impl Validator<Value> for CDDL {
             }
           }
 
-          // If an array element is not validated by any of the group entries,
-          // return scoped errors
-          let mut errors: Vec<Error> = Vec::new();
-
-          if values.iter().any(
-            |v| match self.validate_group_entry(&ge.0, false, None, occur, v) {
-              Ok(()) => true,
-              Err(e) => {
-                errors.push(e);
-
-                false
-              }
-            },
-          ) {
-            continue;
-          }
-
-          if !errors.is_empty() {
+          // Match array element 1-on-1
+          // first verify that the array lengths match.
+          if values.len() != gc.group_entries.len() {
             return Err(
               CBORError {
                 expected_memberkey: None,
@@ -501,6 +509,8 @@ impl Validator<Value> for CDDL {
               .into(),
             );
           }
+          let value_at_index = values.get(ge_index).unwrap();
+          self.validate_group_entry(&ge.0, false, None, occur, value_at_index)?;
         }
         Value::Map(_) => {
           // Validate the object key/value pairs against each group entry,
@@ -613,7 +623,10 @@ impl Validator<Value> for CDDL {
                       vmke.occur.as_ref(),
                       v,
                     );
-                  }
+                  } // REVIEW NEEDED: should there be an "else" path that handles optional
+                    // keys (vmke.occur) ?
+                    // I don't understand why there is different behavior based on
+                    // is_type_prelude().
 
                   return self.validate_type(
                     &vmke.entry_type,
@@ -632,9 +645,17 @@ impl Validator<Value> for CDDL {
                     vmke.occur.as_ref(),
                     v,
                   ),
-                  None => match occur {
+                  None => match &vmke.occur {
+                    // We failed to find a matching key-value pair in the
+                    // value map.  This is OK if the occurrence would allow
+                    // it.
+                    // Occurrences in a map have quirky behavior; see
+                    // rfc8610 section 3.2.
+                    // "? acts as expected: this key is optional
+                    // "*" acts just like ?
+                    // "+" has no effect; this key is required
                     Some(o) => match o {
-                      Occur::Optional(_) | Occur::OneOrMore(_) => Ok(()),
+                      Occur::Optional(_) | Occur::ZeroOrMore(_) => Ok(()),
                       _ => Err(
                         CBORError {
                           expected_memberkey: Some(mk.to_string()),
@@ -675,14 +696,32 @@ impl Validator<Value> for CDDL {
           unimplemented!()
         }
       }
-      GroupEntry::TypeGroupname { ge: tge, .. } => self.validate_rule_for_ident(
-        &tge.name,
-        is_enumeration,
-        None,
-        None,
-        tge.occur.as_ref(),
-        value,
-      ),
+      GroupEntry::TypeGroupname { ge: tge, span } => {
+        if is_type_prelude(&tge.name.ident) {
+          // Substitute a new AST node for the groupentry validation.
+          // FIXME: this seems like an awkward thing to do.
+          self.validate_type2(
+            &Type2::Typename {
+              ident: tge.name.clone(),
+              generic_arg: tge.generic_arg.clone(),
+              span: span.clone(),
+            },
+            None,
+            None,
+            None,
+            value,
+          )
+        } else {
+          self.validate_rule_for_ident(
+            &tge.name,
+            is_enumeration,
+            None,
+            None,
+            tge.occur.as_ref(),
+            value,
+          )
+        }
+      }
       GroupEntry::InlineGroup {
         occur: igo,
         group: g,
@@ -705,7 +744,17 @@ impl Validator<Value> for CDDL {
 
   fn validate_array_occurrence(&self, occur: &Occur, group: &str, values: &[Value]) -> Result {
     match occur {
-      Occur::ZeroOrMore(_) | Occur::Optional(_) => Ok(()),
+      Occur::ZeroOrMore(_) => Ok(()),
+      Occur::Optional(_) => {
+        if values.len() > 1 {
+          Err(Error::Occurrence(format!(
+            "Expecting zero or one values of group {}",
+            group
+          )))
+        } else {
+          Ok(())
+        }
+      }
       Occur::OneOrMore(_) => {
         if values.is_empty() {
           Err(Error::Occurrence(format!(
@@ -862,7 +911,7 @@ impl Validator<Value> for CDDL {
         ),
       },
       Value::Float(_n) => match ident {
-        "number" | "float16" | "float32" => Ok(()),
+        "number" | "float" | "float16" | "float32" | "float64" => Ok(()),
         // TODO: Finish rest of numerical data types
         _ => Err(
           CBORError {

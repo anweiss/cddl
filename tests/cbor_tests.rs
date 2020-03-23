@@ -49,13 +49,10 @@ fn validate_cbor_float() {
   validate_cbor_from_slice(cddl_input, cbor::FLOAT_0_0).unwrap();
   validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0).unwrap_err();
 
-  // FIXME: broken, "float" is not handled correctly.
-  if false {
-    let cddl_input = r#"thing = float"#;
-    validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0).unwrap();
-    validate_cbor_from_slice(cddl_input, cbor::FLOAT_1E5).unwrap();
-    validate_cbor_from_slice(cddl_input, cbor::FLOAT_1E300).unwrap();
-  }
+  let cddl_input = r#"thing = float"#;
+  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1E5).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1E300).unwrap();
 
   let cddl_input = r#"thing = float16"#;
   validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0).unwrap();
@@ -68,12 +65,9 @@ fn validate_cbor_float() {
   validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0).unwrap();
   validate_cbor_from_slice(cddl_input, cbor::FLOAT_1E5).unwrap();
 
-  // FIXME: broken, "float64" is not handled correctly.
-  if false {
-    let cddl_input = r#"thing = float64"#;
-    validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0).unwrap();
-    validate_cbor_from_slice(cddl_input, cbor::FLOAT_1E300).unwrap();
-  }
+  let cddl_input = r#"thing = float64"#;
+  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1E300).unwrap();
 
   // TODO: check that large floats don't validate against a smaller size.
   // E.g. CBOR #7.27 (64-bit) shouldn't validate against "float16" or "float32".
@@ -122,11 +116,16 @@ fn validate_cbor_array() {
   let cddl_input = r#"thing = []"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap();
   validate_cbor_from_slice(cddl_input, cbor::NULL).unwrap_err();
-  //validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err(); // FIXME: broken
+  // FIXME: broken
+  if false {
+    validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
+  }
 
   // FIXME: unimplemented!() in validation
-  //let cddl_input = r#"thing = [1, 2, 3]"#;
-  //validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
+  if false {
+    let cddl_input = r#"thing = [1, 2, 3]"#;
+    validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
+  }
 }
 
 // These data structures exist so that we can serialize some more complex
@@ -159,9 +158,24 @@ fn validate_cbor_group() {
 }
 
 #[test]
-#[ignore] // FIXME: broken
 fn validate_cbor_homogenous_array() {
-  let cddl_input = r#"thing = [* int]"#;
+  let cddl_input = r#"thing = [* int]"#; // zero or more
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
+  let cddl_input = r#"thing = [+ int]"#; // one or more
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap_err();
+  let cddl_input = r#"thing = [? int]"#; // zero or one
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap();
+  let cbor_bytes = serde_cbor::to_vec(&[42]).unwrap();
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
+
+  let cddl_input = r#"thing = [* tstr]"#;
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
+
+  // Alias type.  Note the rule we want to validate must come first.
+  let cddl_input = r#"thing = [* zipcode]  zipcode = int"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap();
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
 }
@@ -178,7 +192,6 @@ fn validate_cbor_array_groups() {
 }
 
 #[test]
-#[ignore] // FIXME: https://github.com/anweiss/cddl/issues/25
 fn validate_cbor_array_record() {
   let cddl_input = r#"thing = [a: int, b: int, c: int]"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
@@ -219,22 +232,24 @@ fn validate_cbor_array_record() {
 
 #[test]
 fn validate_cbor_map() {
-  let cddl_input = r#"thing = {name: tstr, age: int}"#;
   let input = PersonStruct {
     name: "Bob".to_string(),
     age: 43,
   };
   let cbor_bytes = serde_cbor::to_vec(&input).unwrap();
+  let cddl_input = r#"thing = {name: tstr, age: int}"#;
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
   let cddl_input = r#"thing = {name: tstr, ? age: int}"#;
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
 
-  // FIXME: broken
-  if false {
-    // TODO: try * and + as well (should be functionally equivalent)
-    let cddl_input = r#"thing = {name: tstr, age: int, ? minor: bool}"#;
-    validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
-  }
+  // Ensure that keys are optional if the occurrence is "?" or "*"
+  // and required if the occurrence is "+"
+  let cddl_input = r#"thing = {name: tstr, age: int, ? minor: bool}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  let cddl_input = r#"thing = {name: tstr, age: int, * minor: bool}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  let cddl_input = r#"thing = {name: tstr, age: int, + minor: bool}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
 
   let cddl_input = r#"thing = {name: tstr, age: tstr}"#;
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
@@ -245,6 +260,32 @@ fn validate_cbor_map() {
     validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
   }
 
+  // "* keytype => valuetype" is the expected syntax for collecting
+  // any remaining key/value pairs of the expected type.
+  let cddl_input = r#"thing = {* tstr => any}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  let cddl_input = r#"thing = {name: tstr, * tstr => any}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  let cddl_input = r#"thing = {name: tstr, age: int, * tstr => any}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  let cddl_input = r#"thing = {+ tstr => any}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+
+  // FIXME: broken
+  if false {
+    // Should fail because the CBOR input has one entry that can't be
+    // collected because the value type doesn't match.
+    let cddl_input = r#"thing = {* tstr => int}"#;
+    validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
+  }
+  // Should fail because the CBOR input has two entries that can't be
+  // collected because the key type doesn't match.
+  let cddl_input = r#"thing = {* int => any}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
+
   let cddl_input = r#"thing = {name: tstr, age: int, minor: bool}"#;
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
+
+  let cddl_input = r#"thing = {x: int, y: int, z: int}"#;
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
 }
