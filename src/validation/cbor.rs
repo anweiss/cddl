@@ -704,7 +704,7 @@ impl Validator<Value> for CDDL {
             &Type2::Typename {
               ident: tge.name.clone(),
               generic_arg: tge.generic_arg.clone(),
-              span: span.clone(),
+              span: *span,
             },
             None,
             None,

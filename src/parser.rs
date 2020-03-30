@@ -1042,6 +1042,7 @@ impl<'a> Parser<'a> {
         && !self.cur_token_is(Token::COMMA)
         && !self.peek_token_is(&Token::COLON)
         && !self.peek_token_is(&Token::ARROWMAP)
+        && !self.cur_token_is(Token::EOF)
       {
         self.parser_position.range.1 = self.lexer_position.range.1;
         self.next_token()?;
@@ -1076,21 +1077,6 @@ impl<'a> Parser<'a> {
     }
 
     let member_key = self.parse_memberkey(true)?;
-
-    if member_key.is_some() {
-      // Two member keys in a row indicates a malformed entry
-      if let Some(mk) = self.parse_memberkey(true)? {
-        self.errors.push(ParserError {
-          position: self.parser_position,
-          message: format!(
-            "Incomplete group entry for memberkey {}. Missing entry type",
-            mk
-          ),
-        });
-
-        return Err(Error::PARSER);
-      }
-    }
 
     while let Token::COMMENT(_) = self.cur_token {
       self.next_token()?;
@@ -1130,56 +1116,285 @@ impl<'a> Parser<'a> {
       return Ok(GroupEntry::InlineGroup { occur, group, span });
     }
 
-    let entry_type = self.parse_type(None)?;
-
     let mut span = (
       begin_grpent_range,
       self.parser_position.range.1,
       begin_grpent_line,
     );
 
-    if self.cur_token_is(Token::COMMA) {
-      span.1 = self.lexer_position.range.1;
-    }
+    match member_key {
+      Some(MemberKey::Type1 {
+        is_mk: false,
+        t1,
+        span: mk_span,
+        ..
+      }) => {
+        if self.cur_token_is(Token::COMMA) {
+          span.1 = self.lexer_position.range.1;
+        }
 
-    if member_key.is_some() {
-      return Ok(GroupEntry::ValueMemberKey {
-        ge: Box::from(ValueMemberKeyEntry {
-          occur,
-          member_key,
-          entry_type,
-        }),
-        span,
-      });
-    }
+        let entry_type = Type {
+          type_choices: vec![*t1],
+          span: mk_span,
+        };
 
-    if let Some((name, generic_arg, _)) = entry_type.groupname_entry() {
-      return Ok(GroupEntry::TypeGroupname {
-        ge: TypeGroupnameEntry {
-          occur,
-          name,
-          generic_arg,
-        },
-        span,
-      });
-    }
+        if let Some((name, generic_arg, _)) = entry_type.groupname_entry() {
+          return Ok(GroupEntry::TypeGroupname {
+            ge: TypeGroupnameEntry {
+              occur,
+              name,
+              generic_arg,
+            },
+            span,
+          });
+        }
 
-    Ok(GroupEntry::ValueMemberKey {
-      ge: Box::from(ValueMemberKeyEntry {
-        occur,
-        member_key,
-        entry_type,
-      }),
-      span,
-    })
+        Ok(GroupEntry::ValueMemberKey {
+          ge: Box::from(ValueMemberKeyEntry {
+            occur,
+            member_key: None,
+            entry_type,
+          }),
+          span,
+        })
+      }
+      member_key @ Some(_) => {
+        let entry_type = self.parse_type(None)?;
+
+        span.1 = self.parser_position.range.1;
+
+        if self.cur_token_is(Token::COMMA) {
+          span.1 = self.lexer_position.range.1;
+        }
+
+        Ok(GroupEntry::ValueMemberKey {
+          ge: Box::from(ValueMemberKeyEntry {
+            occur,
+            member_key,
+            entry_type,
+          }),
+          span,
+        })
+      }
+      _ => {
+        let entry_type = self.parse_type(None)?;
+
+        span.1 = self.parser_position.range.1;
+
+        if self.cur_token_is(Token::COMMA) {
+          span.1 = self.lexer_position.range.1;
+        }
+
+        if let Some((name, generic_arg, _)) = entry_type.groupname_entry() {
+          return Ok(GroupEntry::TypeGroupname {
+            ge: TypeGroupnameEntry {
+              occur,
+              name,
+              generic_arg,
+            },
+            span,
+          });
+        }
+
+        Ok(GroupEntry::ValueMemberKey {
+          ge: Box::from(ValueMemberKeyEntry {
+            occur,
+            member_key,
+            entry_type,
+          }),
+          span,
+        })
+      }
+    }
   }
 
   fn parse_memberkey(&mut self, is_optional: bool) -> Result<Option<MemberKey>> {
     let begin_memberkey_range = self.lexer_position.range.0;
     let begin_memberkey_line = self.lexer_position.line;
 
-    match &self.peek_token {
-      Token::ARROWMAP | Token::CUT => {
+    match &self.cur_token {
+      Token::IDENT(_) | Token::VALUE(_) => {
+        if !self.peek_token_is(&Token::COLON)
+          && !self.peek_token_is(&Token::ARROWMAP)
+          && !self.peek_token_is(&Token::CUT)
+          && is_optional
+        {
+          return Ok(None);
+        }
+
+        self.parser_position.range.1 = self.peek_lexer_position.range.1;
+
+        let mk = match &self.cur_token {
+          Token::IDENT(ident) => {
+            let ident = self.identifier_from_ident_token(ident.clone());
+
+            let end_t1_range = self.lexer_position.range.1;
+
+            self.next_token()?;
+
+            while let Token::COMMENT(_) = self.cur_token {
+              self.next_token()?;
+            }
+
+            if self.cur_token_is(Token::CUT) {
+              self.next_token()?;
+
+              while let Token::COMMENT(_) = self.cur_token {
+                self.next_token()?;
+              }
+
+              if !self.cur_token_is(Token::ARROWMAP) {
+                self.errors.push(ParserError {
+                  position: self.lexer_position,
+                  message: "Malformed memberkey. Missing \"=>\"".into(),
+                });
+                return Err(Error::PARSER);
+              }
+
+              let end_memberkey_range = self.lexer_position.range.1;
+              let t1 = MemberKey::Type1 {
+                t1: Box::from(Type1 {
+                  type2: Type2::Typename {
+                    ident,
+                    generic_arg: None,
+                    span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+                  },
+                  operator: None,
+                  span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+                }),
+                is_cut: true,
+                span: (
+                  begin_memberkey_range,
+                  end_memberkey_range,
+                  begin_memberkey_line,
+                ),
+                is_mk: true,
+              };
+
+              self.next_token()?;
+
+              Some(t1)
+            } else if self.cur_token_is(Token::ARROWMAP) {
+              let end_memberkey_range = self.lexer_position.range.1;
+              let t1 = MemberKey::Type1 {
+                t1: Box::from(Type1 {
+                  type2: Type2::Typename {
+                    ident,
+                    generic_arg: None,
+                    span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+                  },
+                  operator: None,
+                  span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+                }),
+                is_cut: false,
+                span: (
+                  begin_memberkey_range,
+                  end_memberkey_range,
+                  begin_memberkey_line,
+                ),
+                is_mk: true,
+              };
+
+              self.next_token()?;
+
+              Some(t1)
+            } else {
+              Some(MemberKey::Bareword {
+                ident,
+                span: (
+                  begin_memberkey_range,
+                  self.parser_position.range.1,
+                  begin_memberkey_line,
+                ),
+              })
+            }
+          }
+          Token::VALUE(value) => {
+            let value = value.clone();
+            let t1 = self.parse_type1(None)?;
+
+            while let Token::COMMENT(_) = self.cur_token {
+              self.next_token()?;
+            }
+
+            if self.cur_token_is(Token::CUT) {
+              self.next_token()?;
+
+              while let Token::COMMENT(_) = self.cur_token {
+                self.next_token()?;
+              }
+
+              if !self.cur_token_is(Token::ARROWMAP) {
+                self.errors.push(ParserError {
+                  position: self.lexer_position,
+                  message: "Malformed memberkey. Missing \"=>\"".into(),
+                });
+                return Err(Error::PARSER);
+              }
+
+              let end_memberkey_range = self.lexer_position.range.1;
+              let t1 = MemberKey::Type1 {
+                t1: Box::from(t1),
+                is_cut: true,
+                span: (
+                  begin_memberkey_range,
+                  end_memberkey_range,
+                  begin_memberkey_line,
+                ),
+                is_mk: true,
+              };
+
+              self.next_token()?;
+
+              Some(t1)
+            } else {
+              if !self.cur_token_is(Token::ARROWMAP) && !self.cur_token_is(Token::COLON) {
+                self.errors.push(ParserError {
+                  position: self.lexer_position,
+                  message: "Malformed memberkey. Missing \"=>\" or \":\"".into(),
+                });
+                return Err(Error::PARSER);
+              }
+
+              self.parser_position.range.1 = self.lexer_position.range.1;
+
+              self.next_token()?;
+
+              Some(MemberKey::Value {
+                value,
+                span: (
+                  begin_memberkey_range,
+                  self.parser_position.range.1,
+                  begin_memberkey_line,
+                ),
+              })
+            }
+          }
+          _ => {
+            self.errors.push(ParserError {
+              position: self.parser_position,
+              message: "Malformed memberkey".into(),
+            });
+            return Err(Error::PARSER);
+          }
+        };
+
+        if self.cur_token_is(Token::COLON) {
+          self.next_token()?;
+        }
+
+        Ok(mk)
+      }
+      // Too much ambiguity between parenthensized type and inline group. Hence,
+      // return no member key
+      Token::LPAREN => Ok(None),
+      _ => {
+        if let Token::COMMENT(_) = self.cur_token {
+          self.next_token()?;
+
+          return self.parse_memberkey(is_optional);
+        }
+
         let t1 = self.parse_type1(None)?;
 
         while let Token::COMMENT(_) = self.cur_token {
@@ -1193,6 +1408,14 @@ impl<'a> Parser<'a> {
             self.next_token()?;
           }
 
+          if !self.cur_token_is(Token::ARROWMAP) {
+            self.errors.push(ParserError {
+              position: self.lexer_position,
+              message: "Malformed memberkey. Missing \"=>\"".into(),
+            });
+            return Err(Error::PARSER);
+          }
+
           let end_memberkey_range = self.lexer_position.range.1;
 
           let t1 = Some(MemberKey::Type1 {
@@ -1203,6 +1426,7 @@ impl<'a> Parser<'a> {
               end_memberkey_range,
               begin_memberkey_line,
             ),
+            is_mk: true,
           });
 
           self.next_token()?;
@@ -1210,73 +1434,35 @@ impl<'a> Parser<'a> {
           return Ok(t1);
         }
 
-        self.parser_position.range.1 = self.lexer_position.range.1;
-
-        let t1 = Some(MemberKey::Type1 {
-          t1: Box::from(t1),
-          is_cut: false,
-          span: (
-            begin_memberkey_range,
-            self.parser_position.range.1,
-            begin_memberkey_line,
-          ),
-        });
-
-        self.next_token()?;
-
-        Ok(t1)
-      }
-      Token::COLON => {
-        self.parser_position.range.1 = self.peek_lexer_position.range.1;
-
-        let mk = match &self.cur_token {
-          Token::IDENT(ident) => Some(MemberKey::Bareword {
-            ident: self.identifier_from_ident_token(ident.clone()),
-            span: (
-              begin_memberkey_range,
-              self.parser_position.range.1,
-              begin_memberkey_line,
-            ),
-          }),
-          Token::VALUE(value) => Some(MemberKey::Value {
-            value: value.clone(),
-            span: (
-              begin_memberkey_range,
-              self.parser_position.range.1,
-              begin_memberkey_line,
-            ),
-          }),
-          _ => {
-            self.errors.push(ParserError {
-              position: self.parser_position,
-              message: "Malformed memberkey".into(),
-            });
-            return Err(Error::PARSER);
-          }
-        };
-
-        self.next_token()?;
-        self.next_token()?;
-
-        Ok(mk)
-      }
-      _ => {
-        if let Token::COMMENT(_) = self.cur_token {
+        let t1 = if self.cur_token_is(Token::ARROWMAP) {
           self.next_token()?;
 
-          return self.parse_memberkey(is_optional);
-        }
+          self.parser_position.range.1 = self.lexer_position.range.1;
 
-        if !is_optional {
-          self.errors.push(ParserError {
-            position: self.lexer_position,
-            message: "Malformed memberkey. Missing \":\" or \"=>\"".into(),
-          });
+          Some(MemberKey::Type1 {
+            t1: Box::from(t1),
+            is_cut: false,
+            span: (
+              begin_memberkey_range,
+              self.parser_position.range.1,
+              begin_memberkey_line,
+            ),
+            is_mk: true,
+          })
+        } else {
+          Some(MemberKey::Type1 {
+            t1: Box::from(t1),
+            is_cut: false,
+            span: (
+              begin_memberkey_range,
+              self.parser_position.range.1,
+              begin_memberkey_line,
+            ),
+            is_mk: false,
+          })
+        };
 
-          return Err(Error::PARSER);
-        }
-
-        Ok(None)
+        Ok(t1)
       }
     }
   }
@@ -1363,10 +1549,14 @@ impl<'a> Parser<'a> {
         }
 
         self.next_token()?;
+
+        self.parser_position.range.1 = self.lexer_position.range.1;
+
         self.next_token()?;
 
         let upper = if let Token::VALUE(value) = &self.cur_token {
           if let Value::UINT(ui) = value {
+            self.parser_position.range.1 = self.lexer_position.range.1;
             Some(*ui)
           } else {
             None
@@ -1374,8 +1564,6 @@ impl<'a> Parser<'a> {
         } else {
           None
         };
-
-        self.parser_position.range.1 = self.lexer_position.range.1;
 
         Ok(Some(Occur::Exact {
           lower,
@@ -1497,7 +1685,9 @@ myrange = 10..upper
 upper = 500 / 600
 gr = 2* ( test )
 messages = message<"reboot", "now">
-message<t, v> = {type: 2, value: v}"#;
+message<t, v> = {type: 2, value: v}
+color = &colors
+colors = ( red: "red" )"#;
 
     match Parser::new(Lexer::new(input)) {
       Ok(mut p) => match p.parse_cddl() {
@@ -1615,7 +1805,7 @@ message<t, v> = {type: 2, value: v}"#;
                     occur: Some(Occur::Exact {
                       lower: Some(2),
                       upper: None,
-                      span: (63, 67, 4),
+                      span: (63, 65, 4),
                     }),
                     group: Group {
                       group_choices: vec![GroupChoice {
@@ -1795,6 +1985,84 @@ message<t, v> = {type: 2, value: v}"#;
                   },
                 },
                 span: (111, 146, 6),
+              },
+              Rule::Type {
+                rule: TypeRule {
+                  name: Identifier {
+                    ident: "color".into(),
+                    socket: None,
+                    span: (147, 152, 7),
+                  },
+                  generic_param: None,
+                  is_type_choice_alternate: false,
+                  value: Type {
+                    type_choices: vec![Type1 {
+                      type2: Type2::ChoiceFromGroup {
+                        ident: Identifier {
+                          ident: "colors".into(),
+                          socket: None,
+                          span: (156, 162, 7),
+                        },
+                        generic_arg: None,
+                        span: (155, 162, 7),
+                      },
+                      operator: None,
+                      span: (155, 162, 7),
+                    }],
+                    span: (155, 162, 7),
+                  },
+                },
+                span: (147, 162, 7),
+              },
+              Rule::Group {
+                rule: Box::from(GroupRule {
+                  name: Identifier {
+                    ident: "colors".into(),
+                    socket: None,
+                    span: (163, 169, 8),
+                  },
+                  generic_param: None,
+                  is_group_choice_alternate: false,
+                  entry: GroupEntry::InlineGroup {
+                    occur: None,
+                    group: Group {
+                      group_choices: vec![GroupChoice {
+                        group_entries: vec![(
+                          GroupEntry::ValueMemberKey {
+                            ge: Box::from(ValueMemberKeyEntry {
+                              occur: None,
+                              member_key: Some(MemberKey::Bareword {
+                                ident: Identifier {
+                                  ident: "red".into(),
+                                  socket: None,
+                                  span: (174, 177, 8),
+                                },
+                                span: (174, 178, 8),
+                              }),
+                              entry_type: Type {
+                                type_choices: vec![Type1 {
+                                  type2: Type2::TextValue {
+                                    value: "red".into(),
+                                    span: (179, 184, 8),
+                                  },
+                                  operator: None,
+                                  span: (179, 184, 8),
+                                }],
+                                span: (179, 184, 8),
+                              },
+                            }),
+                            span: (174, 184, 8),
+                          },
+                          false,
+                        )],
+                        span: (174, 184, 8),
+                      }],
+                      span: (174, 184, 8),
+                    },
+                    span: (172, 186, 8),
+                  },
+                }),
+                span: (163, 186, 8),
               },
             ],
           };
@@ -2414,6 +2682,7 @@ error: Parser error
                     }),
                     is_cut: true,
                     span: (4, 23, 1),
+                    is_mk: true,
                   }),
                   entry_type: Type {
                     type_choices: vec![Type1 {
@@ -2725,6 +2994,7 @@ error: Parser error
       r#"typename"#,
       r#"? 0: addrdistr"#,
       r#"0: finite_set<transaction_input>"#,
+      r#"* [credential] => coin"#,
     ];
 
     let expected_outputs = [
@@ -2747,6 +3017,7 @@ error: Parser error
             }),
             is_cut: true,
             span: (2, 12, 1),
+            is_mk: true,
           }),
           entry_type: Type {
             type_choices: vec![Type1 {
@@ -2871,6 +3142,61 @@ error: Parser error
         }),
         span: (0, 32, 1),
       },
+      GroupEntry::ValueMemberKey {
+        ge: Box::from(ValueMemberKeyEntry {
+          occur: Some(Occur::ZeroOrMore((0, 1, 1))),
+          member_key: Some(MemberKey::Type1 {
+            t1: Box::from(Type1 {
+              type2: Type2::Array {
+                group: Group {
+                  group_choices: vec![GroupChoice {
+                    group_entries: vec![(
+                      GroupEntry::TypeGroupname {
+                        ge: TypeGroupnameEntry {
+                          occur: None,
+                          name: Identifier {
+                            ident: "credential".into(),
+                            socket: None,
+                            span: (3, 13, 1),
+                          },
+                          generic_arg: None,
+                        },
+                        span: (3, 13, 1),
+                      },
+                      false,
+                    )],
+                    span: (3, 13, 1),
+                  }],
+                  span: (3, 13, 1),
+                },
+                span: (2, 14, 1),
+              },
+              operator: None,
+              span: (2, 14, 1),
+            }),
+            is_cut: false,
+            span: (2, 22, 1),
+            is_mk: true,
+          }),
+          entry_type: Type {
+            type_choices: vec![Type1 {
+              type2: Type2::Typename {
+                ident: Identifier {
+                  ident: "coin".into(),
+                  socket: None,
+                  span: (18, 22, 1),
+                },
+                generic_arg: None,
+                span: (18, 22, 1),
+              },
+              operator: None,
+              span: (18, 22, 1),
+            }],
+            span: (18, 22, 1),
+          },
+        }),
+        span: (0, 22, 1),
+      },
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
@@ -2911,6 +3237,7 @@ error: Parser error
         }),
         is_cut: false,
         span: (0, 8, 1),
+        is_mk: true,
       },
       MemberKey::Type1 {
         t1: Box::from(Type1 {
@@ -2923,6 +3250,7 @@ error: Parser error
         }),
         is_cut: true,
         span: (0, 14, 1),
+        is_mk: true,
       },
       MemberKey::Bareword {
         ident: Identifier {

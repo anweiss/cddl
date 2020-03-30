@@ -783,6 +783,8 @@ pub enum MemberKey {
     t1: Box<Type1>,
     is_cut: bool,
     span: Span,
+    /// Set to false if no trailing "=>"
+    is_mk: bool,
   },
   /// Bareword string type
   Bareword { ident: Identifier, span: Span },
