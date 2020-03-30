@@ -76,14 +76,6 @@ impl std::error::Error for Error {
   }
 }
 
-// Unix-style newlines are counted as two chars (see
-// https://github.com/rust-lang/annotate-snippets-rs/issues/24).
-fn unix_newline_fix(input: &str, idx: usize) -> usize {
-  let nbr_newlines = input[..idx].chars().filter(|c| *c == '\n').count();
-  let nbr_carriage_returns = input[..idx].chars().filter(|c| *c == '\r').count();
-  idx + nbr_newlines - nbr_carriage_returns
-}
-
 impl<'a> Parser<'a> {
   /// Create a new `Parser` from a given `Lexer`
   pub fn new(l: Lexer<'a>) -> Result<Parser> {
@@ -130,10 +122,7 @@ impl<'a> Parser<'a> {
               origin: Some("input".to_string()),
               fold: false,
               annotations: vec![SourceAnnotation {
-                range: (
-                  unix_newline_fix(&input.clone(), error.position.range.0),
-                  unix_newline_fix(&input.clone(), error.position.range.1),
-                ),
+                range: (error.position.range.0, error.position.range.1,),
                 label: error.message.to_string(),
                 annotation_type: AnnotationType::Error,
               }],
