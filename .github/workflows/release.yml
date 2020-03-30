@@ -41,6 +41,12 @@ jobs:
           command: test
           args: --all
 
+      - name: cargo publish --dry-run
+        uses: actions-rs/cargo@v1
+        with:
+          command: publish
+          args: --dry-run
+
   wasm-compilation-check:
     strategy:
       matrix:
