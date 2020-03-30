@@ -4,8 +4,7 @@ use super::{
   token::{self, ByteValue, Token, Value},
 };
 use annotate_snippets::{
-  display_list::DisplayList,
-  formatter::DisplayListFormatter,
+  display_list::{DisplayList, FormatOptions},
   snippet::{Annotation, AnnotationType, Slice, Snippet, SourceAnnotation},
 };
 use std::{fmt, mem, result};
@@ -110,17 +109,15 @@ impl<'a> Parser<'a> {
       return None;
     }
 
-    let dlf = DisplayListFormatter::new(false, false);
-
     let input = String::from_utf8(self.l.str_input.clone()).ok()?;
 
     let mut errors = String::new();
 
     for error in self.errors.iter() {
-      errors.push_str(&format!(
-        "{}\n\n",
-        dlf
-          .format(&DisplayList::from(Snippet {
+      errors.push_str(
+        &format!(
+          "{}\n\n",
+          DisplayList::from(Snippet {
             title: Some(Annotation {
               label: Some("Parser error".into()),
               id: None,
@@ -141,9 +138,14 @@ impl<'a> Parser<'a> {
                 annotation_type: AnnotationType::Error,
               }],
             }],
-          }))
-          .to_string()
-      ));
+            opt: FormatOptions {
+              color: true,
+              ..Default::default()
+            }
+          })
+        )
+        .to_string(),
+      );
     }
 
     Some(errors)

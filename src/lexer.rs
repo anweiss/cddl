@@ -1,7 +1,6 @@
 use super::token::{self, ByteValue, RangeValue, Token, Value};
 use annotate_snippets::{
-  display_list::DisplayList,
-  formatter::DisplayListFormatter,
+  display_list::{DisplayList, FormatOptions},
   snippet::{Annotation, AnnotationType, Slice, Snippet, SourceAnnotation},
 };
 use std::{
@@ -88,13 +87,16 @@ impl Error for LexerError {
 
 impl fmt::Display for LexerError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    let dlf = DisplayListFormatter::new(false, false);
+    let opt = FormatOptions {
+      color: true,
+      ..Default::default()
+    };
 
     match &self.error_type {
       LexerErrorType::LEXER(le) => write!(
         f,
         "{}",
-        dlf.format(&DisplayList::from(Snippet {
+        DisplayList::from(Snippet {
           title: Some(Annotation {
             label: Some((*le).to_string()),
             id: None,
@@ -114,12 +116,13 @@ impl fmt::Display for LexerError {
               annotation_type: AnnotationType::Error,
             }],
           }],
-        }))
+          opt,
+        })
       ),
       LexerErrorType::UTF8(utf8e) => write!(
         f,
         "{}",
-        dlf.format(&DisplayList::from(Snippet {
+        DisplayList::from(Snippet {
           title: Some(Annotation {
             label: Some(utf8e.to_string()),
             id: None,
@@ -139,12 +142,13 @@ impl fmt::Display for LexerError {
               annotation_type: AnnotationType::Error,
             }],
           }],
-        }))
+          opt,
+        })
       ),
       LexerErrorType::BASE16(b16e) => write!(
         f,
         "{}",
-        dlf.format(&DisplayList::from(Snippet {
+        DisplayList::from(Snippet {
           title: Some(Annotation {
             label: Some(b16e.to_string()),
             id: None,
@@ -164,12 +168,13 @@ impl fmt::Display for LexerError {
               annotation_type: AnnotationType::Error,
             }],
           }],
-        }))
+          opt,
+        })
       ),
       LexerErrorType::BASE64(b64e) => write!(
         f,
         "{}",
-        dlf.format(&DisplayList::from(Snippet {
+        DisplayList::from(Snippet {
           title: Some(Annotation {
             label: Some(b64e.to_string()),
             id: None,
@@ -189,12 +194,13 @@ impl fmt::Display for LexerError {
               annotation_type: AnnotationType::Error,
             }],
           }],
-        }))
+          opt,
+        })
       ),
       LexerErrorType::PARSEINT(pie) => write!(
         f,
         "{}",
-        dlf.format(&DisplayList::from(Snippet {
+        DisplayList::from(Snippet {
           title: Some(Annotation {
             label: Some(pie.to_string()),
             id: None,
@@ -214,12 +220,13 @@ impl fmt::Display for LexerError {
               annotation_type: AnnotationType::Error,
             }],
           }],
-        }))
+          opt,
+        })
       ),
       LexerErrorType::PARSEFLOAT(pfe) => write!(
         f,
         "{}",
-        dlf.format(&DisplayList::from(Snippet {
+        DisplayList::from(Snippet {
           title: Some(Annotation {
             label: Some(format!("Error code: {:?}", pfe.code)),
             id: None,
@@ -239,7 +246,8 @@ impl fmt::Display for LexerError {
               annotation_type: AnnotationType::Error,
             }],
           }],
-        }))
+          opt,
+        })
       ),
     }
   }
