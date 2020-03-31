@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate clap;
 
-use cddl::{compile_cddl_from_str, validate_json_from_str};
+use cddl::{cddl_from_str, validate_json_from_str};
 use clap::{App, AppSettings, SubCommand};
 use crossterm::{Color, Colored};
 use std::{error::Error, fs};
@@ -27,8 +27,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   if let Some(matches) = matches.subcommand_matches("compile-cddl") {
     if let Some(c) = matches.value_of("cddl") {
-      match compile_cddl_from_str(&fs::read_to_string(c)?) {
-        Ok(()) => {
+      match cddl_from_str(&fs::read_to_string(c)?) {
+        Ok(_) => {
           println!("{}{} is conformant", Colored::Fg(Color::Green), c);
         }
         Err(e) => {
