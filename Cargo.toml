@@ -24,7 +24,7 @@ base64 = "0.10"
 chrono = "0.4"
 uriparse = { version = "0.6", optional = true }
 itertools = "0.8"
-annotate-snippets = { git = "https://github.com/rust-lang/annotate-snippets-rs", version = "0.6" }
+annotate-snippets = "0.7"
 
 [dependencies.regex]
 version = "1.3"
