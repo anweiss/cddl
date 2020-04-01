@@ -1,4 +1,7 @@
-use super::token::{self, ByteValue, RangeValue, Token, Value};
+use super::{
+  parser,
+  token::{self, ByteValue, RangeValue, Token, Value},
+};
 use annotate_snippets::{
   display_list::{DisplayList, FormatOptions},
   snippet::{Annotation, AnnotationType, Slice, Snippet, SourceAnnotation},
@@ -51,7 +54,7 @@ impl Default for Position {
 #[derive(Debug)]
 pub struct LexerError {
   error_type: LexerErrorType,
-  input: Vec<u8>,
+  input: String,
   position: Position,
 }
 
@@ -104,9 +107,7 @@ impl fmt::Display for LexerError {
           }),
           footer: vec![],
           slices: vec![Slice {
-            source: str::from_utf8(&self.input)
-              .map_err(|_| fmt::Error)?
-              .to_string(),
+            source: self.input.clone(),
             line_start: self.position.line,
             origin: Some("input".to_string()),
             fold: false,
@@ -130,9 +131,7 @@ impl fmt::Display for LexerError {
           }),
           footer: vec![],
           slices: vec![Slice {
-            source: str::from_utf8(&self.input)
-              .map_err(|_| fmt::Error)?
-              .to_string(),
+            source: self.input.clone(),
             line_start: self.position.line,
             origin: Some("input".to_string()),
             fold: false,
@@ -156,9 +155,7 @@ impl fmt::Display for LexerError {
           }),
           footer: vec![],
           slices: vec![Slice {
-            source: str::from_utf8(&self.input)
-              .map_err(|_| fmt::Error)?
-              .to_string(),
+            source: self.input.clone(),
             line_start: self.position.line,
             origin: Some("input".to_string()),
             fold: false,
@@ -182,9 +179,7 @@ impl fmt::Display for LexerError {
           }),
           footer: vec![],
           slices: vec![Slice {
-            source: str::from_utf8(&self.input)
-              .map_err(|_| fmt::Error)?
-              .to_string(),
+            source: self.input.clone(),
             line_start: self.position.line,
             origin: Some("input".to_string()),
             fold: false,
@@ -208,9 +203,7 @@ impl fmt::Display for LexerError {
           }),
           footer: vec![],
           slices: vec![Slice {
-            source: str::from_utf8(&self.input)
-              .map_err(|_| fmt::Error)?
-              .to_string(),
+            source: self.input.clone(),
             line_start: self.position.line,
             origin: Some("input".to_string()),
             fold: false,
@@ -234,9 +227,7 @@ impl fmt::Display for LexerError {
           }),
           footer: vec![],
           slices: vec![Slice {
-            source: str::from_utf8(&self.input)
-              .map_err(|_| fmt::Error)?
-              .to_string(),
+            source: self.input.clone(),
             line_start: self.position.line,
             origin: Some("input".to_string()),
             fold: false,
@@ -253,71 +244,71 @@ impl fmt::Display for LexerError {
   }
 }
 
-impl<'a> From<(Vec<u8>, Position, &'static str)> for LexerError {
-  fn from(e: (Vec<u8>, Position, &'static str)) -> Self {
+impl<'a> From<(&str, Position, &'static str)> for LexerError {
+  fn from(e: (&str, Position, &'static str)) -> Self {
     LexerError {
       error_type: LexerErrorType::LEXER(e.2),
-      input: e.0,
+      input: e.0.to_string(),
       position: e.1,
     }
   }
 }
 
-impl<'a> From<(Vec<u8>, Position, string::FromUtf8Error)> for LexerError {
-  fn from(e: (Vec<u8>, Position, string::FromUtf8Error)) -> Self {
+impl<'a> From<(&str, Position, string::FromUtf8Error)> for LexerError {
+  fn from(e: (&str, Position, string::FromUtf8Error)) -> Self {
     LexerError {
       error_type: LexerErrorType::UTF8(e.2),
-      input: e.0,
+      input: e.0.to_string(),
       position: e.1,
     }
   }
 }
 
-impl<'a> From<(Vec<u8>, Position, base16::DecodeError)> for LexerError {
-  fn from(e: (Vec<u8>, Position, base16::DecodeError)) -> Self {
+impl<'a> From<(&str, Position, base16::DecodeError)> for LexerError {
+  fn from(e: (&str, Position, base16::DecodeError)) -> Self {
     LexerError {
       error_type: LexerErrorType::BASE16(e.2),
-      input: e.0,
+      input: e.0.to_string(),
       position: e.1,
     }
   }
 }
 
-impl<'a> From<(Vec<u8>, Position, base64::DecodeError)> for LexerError {
-  fn from(e: (Vec<u8>, Position, base64::DecodeError)) -> Self {
+impl<'a> From<(&str, Position, base64::DecodeError)> for LexerError {
+  fn from(e: (&str, Position, base64::DecodeError)) -> Self {
     LexerError {
       error_type: LexerErrorType::BASE64(e.2),
-      input: e.0,
+      input: e.0.to_string(),
       position: e.1,
     }
   }
 }
 
-impl<'a> From<(Vec<u8>, Position, num::ParseIntError)> for LexerError {
-  fn from(e: (Vec<u8>, Position, num::ParseIntError)) -> Self {
+impl<'a> From<(&str, Position, num::ParseIntError)> for LexerError {
+  fn from(e: (&str, Position, num::ParseIntError)) -> Self {
     LexerError {
       error_type: LexerErrorType::PARSEINT(e.2),
-      input: e.0,
+      input: e.0.to_string(),
       position: e.1,
     }
   }
 }
 
-impl<'a> From<(Vec<u8>, Position, lexical::Error)> for LexerError {
-  fn from(e: (Vec<u8>, Position, lexical::Error)) -> Self {
+impl<'a> From<(&str, Position, lexical::Error)> for LexerError {
+  fn from(e: (&str, Position, lexical::Error)) -> Self {
     LexerError {
       error_type: LexerErrorType::PARSEFLOAT(e.2),
-      input: e.0,
+      input: e.0.to_string(),
       position: e.1,
     }
   }
 }
 
 /// Lexer which holds a byte slice and iterator over the byte slice
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Lexer<'a> {
   /// CDDL input string
-  pub str_input: Vec<u8>,
+  pub str_input: &'a str,
   // TODO: Remove duplicate iterator in favor of multipeek
   input: Peekable<CharIndices<'a>>,
   multipeek: itertools::MultiPeek<CharIndices<'a>>,
@@ -325,13 +316,28 @@ pub struct Lexer<'a> {
   pub position: Position,
 }
 
+/// Iterator over a lexer
+pub struct IterLexer<'a> {
+  l: &'a mut Lexer<'a>,
+}
+
+impl<'a> Iterator for IterLexer<'a> {
+  type Item = std::result::Result<(Position, Token), parser::Error>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    let next_token = self.l.next_token().map_err(|e| parser::Error::LEXER(e));
+
+    Some(next_token)
+  }
+}
+
 impl<'a> Lexer<'a> {
   /// Creates a new `Lexer` from a given `&str` input
-  pub fn new(input: &'a str) -> Lexer<'a> {
+  pub fn new(str_input: &'a str) -> Lexer<'a> {
     Lexer {
-      str_input: input.as_bytes().to_vec(),
-      input: input.char_indices().peekable(),
-      multipeek: itertools::multipeek(input.char_indices()),
+      str_input,
+      input: str_input.char_indices().peekable(),
+      multipeek: itertools::multipeek(str_input.char_indices()),
       position: Position {
         line: 1,
         column: 1,
@@ -339,6 +345,11 @@ impl<'a> Lexer<'a> {
         index: 0,
       },
     }
+  }
+
+  /// Returns an iterator over a lexer
+  pub fn iter(&'a mut self) -> IterLexer<'a> {
+    IterLexer { l: self }
   }
 
   fn read_char(&mut self) -> Result<(usize, char)> {
@@ -643,10 +654,7 @@ impl<'a> Lexer<'a> {
 
           Ok((
             self.position,
-            Token::ILLEGAL(
-              String::from_utf8(self.str_input[idx..=idx].to_vec())
-                .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
-            ),
+            Token::ILLEGAL(self.str_input[idx..=idx].to_string()),
           ))
         }
       }
@@ -668,10 +676,7 @@ impl<'a> Lexer<'a> {
 
             if let Some(&c) = self.peek_char() {
               if c.1 == '\u{0020}' {
-                return Ok(
-                  String::from_utf8(self.str_input[idx..end_idx].to_vec())
-                    .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
-                );
+                return Ok(self.str_input[idx..end_idx].to_string());
               }
             }
           }
@@ -681,10 +686,7 @@ impl<'a> Lexer<'a> {
         break;
       }
     }
-    Ok(
-      String::from_utf8(self.str_input[idx..=end_idx].to_vec())
-        .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
-    )
+    Ok(self.str_input[idx..=end_idx].to_string())
   }
 
   fn read_text_value(&mut self, idx: usize) -> Result<String> {
@@ -717,10 +719,7 @@ impl<'a> Lexer<'a> {
         }
         // Closing "
         '\x22' => {
-          return Ok(
-            String::from_utf8(self.str_input.clone()[idx + 1..self.read_char()?.0].to_vec())
-              .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
-          );
+          return Ok(self.str_input.clone()[idx + 1..self.read_char()?.0].to_string());
         }
         _ => {
           return Err(
@@ -746,7 +745,7 @@ impl<'a> Lexer<'a> {
           let _ = self.read_char();
         }
         // Closing '
-        '\x27' => return Ok(self.str_input.clone()[idx..self.read_char()?.0].to_vec()),
+        '\x27' => return Ok(self.str_input[idx..self.read_char()?.0].into()),
         _ => {
           return Err(
             (
@@ -798,16 +797,13 @@ impl<'a> Lexer<'a> {
           // Whitespace is ignored for prefixed byte strings and requires allocation
           if has_whitespace {
             return Ok(
-              String::from_utf8(self.str_input.clone()[idx..self.read_char()?.0].to_vec())
-                .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?
+              self.str_input[idx..self.read_char()?.0]
+                .to_string()
                 .replace(" ", ""),
             );
           }
 
-          return Ok(
-            String::from_utf8(self.str_input.clone()[idx..self.read_char()?.0].to_vec())
-              .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
-          );
+          return Ok(self.str_input[idx..self.read_char()?.0].to_string());
         }
         // CRLF
         _ => {
@@ -838,10 +834,7 @@ impl<'a> Lexer<'a> {
       if ch != '\x0a' && ch != '\x0d' {
         let _ = self.read_char()?;
       } else {
-        return Ok(
-          String::from_utf8(self.str_input.clone()[idx + 1..self.read_char()?.0].to_vec())
-            .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
-        );
+        return Ok(self.str_input[idx + 1..self.read_char()?.0].to_string());
       }
     }
 
@@ -865,7 +858,7 @@ impl<'a> Lexer<'a> {
     let mut is_signed = false;
     let mut signed_idx = 0;
 
-    if self.str_input[idx] == b'-' {
+    if self.str_input.as_bytes()[idx] == b'-' {
       is_signed = true;
       signed_idx = idx;
 
@@ -899,10 +892,10 @@ impl<'a> Lexer<'a> {
 
     if is_signed {
       return Ok(Token::VALUE(Value::INT(
-        String::from_utf8(self.str_input[signed_idx..=end_idx].to_vec())
-          .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?
+        self.str_input[signed_idx..=end_idx]
+          .to_string()
           .parse()
-          .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
+          .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
       )));
     }
 
@@ -924,10 +917,10 @@ impl<'a> Lexer<'a> {
 
     Ok((
       end_index,
-      String::from_utf8(self.str_input[idx..=end_index].to_vec())
-        .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?
+      self.str_input[idx..=end_index]
+        .to_string()
         .parse()
-        .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
+        .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
     ))
   }
 

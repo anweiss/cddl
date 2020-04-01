@@ -24,8 +24,12 @@ pub type Result<T> = result::Result<T, Error>;
 
 /// Parser type
 #[derive(Debug)]
-pub struct Parser<'a> {
-  l: Lexer<'a>,
+pub struct Parser<'a, I>
+where
+  I: Iterator<Item = std::result::Result<(Position, Token), Error>>,
+{
+  tokens: I,
+  str_input: &'a str,
   cur_token: Token,
   peek_token: Token,
   lexer_position: Position,
@@ -76,11 +80,15 @@ impl std::error::Error for Error {
   }
 }
 
-impl<'a> Parser<'a> {
+impl<'a, I> Parser<'a, I>
+where
+  I: Iterator<Item = std::result::Result<(Position, Token), Error>>,
+{
   /// Create a new `Parser` from a given `Lexer`
-  pub fn new(l: Lexer<'a>) -> Result<Parser> {
+  pub fn new(tokens: I, str_input: &str) -> Result<Parser<I>> {
     let mut p = Parser {
-      l,
+      tokens,
+      str_input,
       cur_token: Token::EOF,
       peek_token: Token::EOF,
       errors: Vec::default(),
@@ -101,7 +109,7 @@ impl<'a> Parser<'a> {
       return None;
     }
 
-    let input = String::from_utf8(self.l.str_input.clone()).ok()?;
+    let input = self.str_input.to_string();
 
     let mut errors = String::new();
 
@@ -143,9 +151,12 @@ impl<'a> Parser<'a> {
   fn next_token(&mut self) -> Result<()> {
     mem::swap(&mut self.cur_token, &mut self.peek_token);
     mem::swap(&mut self.lexer_position, &mut self.peek_lexer_position);
-    let nt = self.l.next_token().map_err(Error::LEXER)?;
-    self.peek_lexer_position = nt.0;
-    self.peek_token = nt.1;
+
+    if let Some(next_token) = self.tokens.next() {
+      let nt = next_token?;
+      self.peek_lexer_position = nt.0;
+      self.peek_token = nt.1;
+    }
 
     Ok(())
   }
@@ -1114,20 +1125,10 @@ impl<'a> Parser<'a> {
     );
 
     match member_key {
-      Some(MemberKey::Type1 {
-        is_mk: false,
-        t1,
-        span: mk_span,
-        ..
-      }) => {
+      Some(MemberKey::NonMemberKey(NonMemberKey::Type(entry_type))) => {
         if self.cur_token_is(Token::COMMA) {
           span.1 = self.lexer_position.range.1;
         }
-
-        let entry_type = Type {
-          type_choices: vec![*t1],
-          span: mk_span,
-        };
 
         if let Some((name, generic_arg, _)) = entry_type.groupname_entry() {
           return Ok(GroupEntry::TypeGroupname {
@@ -1259,7 +1260,6 @@ impl<'a> Parser<'a> {
                   end_memberkey_range,
                   begin_memberkey_line,
                 ),
-                is_mk: true,
               };
 
               self.next_token()?;
@@ -1283,7 +1283,6 @@ impl<'a> Parser<'a> {
                   end_memberkey_range,
                   begin_memberkey_line,
                 ),
-                is_mk: true,
               };
 
               self.next_token()?;
@@ -1332,7 +1331,6 @@ impl<'a> Parser<'a> {
                   end_memberkey_range,
                   begin_memberkey_line,
                 ),
-                is_mk: true,
               };
 
               self.next_token()?;
@@ -1376,9 +1374,110 @@ impl<'a> Parser<'a> {
 
         Ok(mk)
       }
-      // Too much ambiguity between parenthensized type and inline group. Hence,
-      // return no member key
-      Token::LPAREN => Ok(None),
+      // Indicates either an inline parenthesized type or an inline group. If
+      // the latter, don't parse as memberkey
+      Token::LPAREN => {
+        let begin_memberkey_range = self.lexer_position.range.0;
+        let begin_memberkey_line = self.lexer_position.line;
+
+        self.next_token()?;
+
+        let mut tokens: Vec<Result<(Position, Token)>> = Vec::new();
+
+        let mut has_group_entries = false;
+        let mut closing_parend = false;
+        while !closing_parend {
+          if self.cur_token_is(Token::ARROWMAP) || !self.cur_token_is(Token::COLON) {
+            has_group_entries = true;
+          }
+
+          if self.cur_token_is(Token::RPAREN) {
+            closing_parend = true;
+          }
+
+          let t = self.cur_token.clone();
+          tokens.push(Ok((self.lexer_position, t)));
+
+          self.next_token()?;
+        }
+
+        // Parse tokens vec as group
+        if has_group_entries {
+          return Ok(Some(MemberKey::NonMemberKey(NonMemberKey::Group(
+            Parser::new(tokens.into_iter(), self.str_input)?.parse_group()?,
+          ))));
+        }
+
+        if let Token::COMMENT(_) = self.cur_token {
+          self.next_token()?;
+
+          return self.parse_memberkey(is_optional);
+        }
+
+        // Parse tokens vec as type
+        let t = Parser::new(tokens.into_iter(), self.str_input)?.parse_type(None)?;
+
+        while let Token::COMMENT(_) = self.cur_token {
+          self.next_token()?;
+        }
+
+        if self.cur_token_is(Token::CUT) {
+          self.next_token()?;
+
+          while let Token::COMMENT(_) = self.cur_token {
+            self.next_token()?;
+          }
+
+          if !self.cur_token_is(Token::ARROWMAP) {
+            self.errors.push(ParserError {
+              position: self.lexer_position,
+              message: "Malformed memberkey. Missing \"=>\"".into(),
+            });
+            return Err(Error::PARSER);
+          }
+
+          let end_memberkey_range = self.lexer_position.range.1;
+
+          let t1 = Some(MemberKey::Type1 {
+            t1: Box::from(t.type_choices[0].clone()),
+            is_cut: true,
+            span: (
+              begin_memberkey_range,
+              end_memberkey_range,
+              begin_memberkey_line,
+            ),
+          });
+
+          return Ok(t1);
+        }
+
+        let t1 = if self.cur_token_is(Token::ARROWMAP) {
+          self.next_token()?;
+
+          self.parser_position.range.1 = self.lexer_position.range.1;
+
+          Some(MemberKey::Type1 {
+            t1: Box::from(t.type_choices[0].clone()),
+            is_cut: false,
+            span: (
+              begin_memberkey_range,
+              self.lexer_position.range.0,
+              begin_memberkey_line,
+            ),
+          })
+        } else {
+          Some(MemberKey::NonMemberKey(NonMemberKey::Type(Type {
+            type_choices: t.type_choices,
+            span: (
+              begin_memberkey_range,
+              self.parser_position.range.1,
+              begin_memberkey_line,
+            ),
+          })))
+        };
+
+        Ok(t1)
+      }
       _ => {
         if let Token::COMMENT(_) = self.cur_token {
           self.next_token()?;
@@ -1417,7 +1516,6 @@ impl<'a> Parser<'a> {
               end_memberkey_range,
               begin_memberkey_line,
             ),
-            is_mk: true,
           });
 
           self.next_token()?;
@@ -1438,19 +1536,16 @@ impl<'a> Parser<'a> {
               self.parser_position.range.1,
               begin_memberkey_line,
             ),
-            is_mk: true,
           })
         } else {
-          Some(MemberKey::Type1 {
-            t1: Box::from(t1),
-            is_cut: false,
+          Some(MemberKey::NonMemberKey(NonMemberKey::Type(Type {
+            type_choices: vec![t1],
             span: (
               begin_memberkey_range,
               self.parser_position.range.1,
               begin_memberkey_line,
             ),
-            is_mk: false,
-          })
+          })))
         };
 
         Ok(t1)
@@ -1606,7 +1701,7 @@ impl<'a> Parser<'a> {
 /// Returns a `ast::CDDL` from a `&str`
 #[cfg(not(target_arch = "wasm32"))]
 pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL, String> {
-  match Parser::new(Lexer::new(input)).map_err(|e| e.to_string()) {
+  match Parser::new(Lexer::new(input).iter(), input).map_err(|e| e.to_string()) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c),
       Err(Error::PARSER) if !p.errors.is_empty() => Err(p.print_errors().unwrap()),
@@ -1635,7 +1730,7 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
 /// Validates CDDL input against RFC 8610
 #[cfg(not(target_arch = "wasm32"))]
 pub fn compile_cddl_from_str(input: &str) -> Result<()> {
-  match Parser::new(Lexer::new(input)) {
+  match Parser::new(Lexer::new(input).iter(), input) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(_) => Ok(()),
       Err(Error::PARSER) if !p.errors.is_empty() => Err(Error::CDDL(p.print_errors().unwrap())),
@@ -1680,7 +1775,7 @@ message<t, v> = {type: 2, value: v}
 color = &colors
 colors = ( red: "red" )"#;
 
-    match Parser::new(Lexer::new(input)) {
+    match Parser::new(Lexer::new(input).iter(), input) {
       Ok(mut p) => match p.parse_cddl() {
         Ok(cddl) => {
           let expected_output = CDDL {
@@ -2080,7 +2175,7 @@ colors = ( red: "red" )"#;
     let input = r#"a = 1234
 a = b"#;
 
-    match Parser::new(Lexer::new(input)) {
+    match Parser::new(Lexer::new(input).iter(), input) {
       Ok(mut p) => match p.parse_cddl() {
         Ok(_) => Ok(()),
         Err(Error::PARSER) if !p.errors.is_empty() => {
@@ -2108,7 +2203,7 @@ a = b"#;
   fn verify_genericparm() -> Result<()> {
     let input = r#"<t, v>"#;
 
-    let gps = Parser::new(Lexer::new(input))?.parse_genericparm()?;
+    let gps = Parser::new(Lexer::new(input).iter(), input)?.parse_genericparm()?;
 
     let expected_output = GenericParm {
       params: vec![
@@ -2136,7 +2231,7 @@ a = b"#;
   fn verify_genericparm_diagnostic() -> Result<()> {
     let input = r#"<1, 2>"#;
 
-    match Parser::new(Lexer::new(input)) {
+    match Parser::new(Lexer::new(input).iter(), input) {
       Ok(mut p) => match p.parse_genericparm() {
         Ok(_) => Ok(()),
         Err(Error::PARSER) if !p.errors.is_empty() => {
@@ -2170,7 +2265,7 @@ ruleb = ruled
 rulec = rulee
 rulec = rulee2"#;
 
-    match Parser::new(Lexer::new(input)) {
+    match Parser::new(Lexer::new(input).iter(), input) {
       Ok(mut p) => match p.parse_cddl() {
         Ok(_) => Ok(()),
         Err(Error::PARSER) if !p.errors.is_empty() => {
@@ -2226,7 +2321,7 @@ error: Parser error
   fn verify_genericarg() -> Result<()> {
     let input = r#"<"reboot", "now">"#;
 
-    let generic_args = Parser::new(Lexer::new(input))?.parse_genericarg()?;
+    let generic_args = Parser::new(Lexer::new(input).iter(), input)?.parse_genericarg()?;
 
     let expected_output = GenericArg {
       args: vec![
@@ -2260,7 +2355,7 @@ error: Parser error
   fn verify_type() -> Result<()> {
     let input = r#"tchoice1 / tchoice2"#;
 
-    let t = Parser::new(Lexer::new(input))?.parse_type(None)?;
+    let t = Parser::new(Lexer::new(input).iter(), input)?.parse_type(None)?;
 
     let expected_output = Type {
       type_choices: vec![
@@ -2467,7 +2562,7 @@ error: Parser error
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let t1 = Parser::new(Lexer::new(&inputs[idx]))?.parse_type1(None)?;
+      let t1 = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_type1(None)?;
 
       assert_eq!(&t1, expected_output);
       assert_eq!(t1.to_string(), expected_output.to_string());
@@ -2673,7 +2768,6 @@ error: Parser error
                     }),
                     is_cut: true,
                     span: (4, 23, 1),
-                    is_mk: true,
                   }),
                   entry_type: Type {
                     type_choices: vec![Type1 {
@@ -2705,7 +2799,7 @@ error: Parser error
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let t2 = Parser::new(Lexer::new(&inputs[idx]))?.parse_type2()?;
+      let t2 = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_type2()?;
 
       assert_eq!(&t2, expected_output);
       assert_eq!(t2.to_string(), expected_output.to_string());
@@ -2968,7 +3062,7 @@ error: Parser error
     ];
 
     for (idx, expected_output) in expected_ouputs.iter().enumerate() {
-      let t2 = Parser::new(Lexer::new(&inputs[idx]))?.parse_type2()?;
+      let t2 = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_type2()?;
 
       assert_eq!(&t2, expected_output);
       assert_eq!(t2.to_string(), expected_output.to_string());
@@ -3008,7 +3102,6 @@ error: Parser error
             }),
             is_cut: true,
             span: (2, 12, 1),
-            is_mk: true,
           }),
           entry_type: Type {
             type_choices: vec![Type1 {
@@ -3167,7 +3260,6 @@ error: Parser error
             }),
             is_cut: false,
             span: (2, 22, 1),
-            is_mk: true,
           }),
           entry_type: Type {
             type_choices: vec![Type1 {
@@ -3191,7 +3283,7 @@ error: Parser error
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let grpent = Parser::new(Lexer::new(&inputs[idx]))?.parse_grpent()?;
+      let grpent = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_grpent()?;
 
       assert_eq!(&grpent, expected_output);
       assert_eq!(grpent.to_string(), expected_output.to_string());
@@ -3228,7 +3320,6 @@ error: Parser error
         }),
         is_cut: false,
         span: (0, 8, 1),
-        is_mk: true,
       },
       MemberKey::Type1 {
         t1: Box::from(Type1 {
@@ -3241,7 +3332,6 @@ error: Parser error
         }),
         is_cut: true,
         span: (0, 14, 1),
-        is_mk: true,
       },
       MemberKey::Bareword {
         ident: Identifier {
@@ -3270,7 +3360,7 @@ error: Parser error
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let mk = Parser::new(Lexer::new(&inputs[idx]))?.parse_memberkey(false)?;
+      let mk = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_memberkey(false)?;
 
       if let Some(mk) = mk {
         assert_eq!(&mk, expected_output);
@@ -3307,7 +3397,7 @@ error: Parser error
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let o = Parser::new(Lexer::new(&inputs[idx]))?.parse_occur(false)?;
+      let o = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_occur(false)?;
 
       if let Some(o) = o {
         assert_eq!(&o, expected_output);

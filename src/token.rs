@@ -10,7 +10,7 @@ use alloc::{
 };
 
 /// Token which represents a valids CDDL character or sequence
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum Token {
   /// Illegal sequence of characters
   ILLEGAL(String),
