@@ -783,13 +783,26 @@ pub enum MemberKey {
     t1: Box<Type1>,
     is_cut: bool,
     span: Span,
-    /// Set to false if no trailing "=>"
-    is_mk: bool,
   },
   /// Bareword string type
-  Bareword { ident: Identifier, span: Span },
+  Bareword {
+    ident: Identifier,
+    span: Span,
+  },
   /// Value type
-  Value { value: Value, span: Span },
+  Value {
+    value: Value,
+    span: Span,
+  },
+  NonMemberKey(NonMemberKey),
+}
+
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
+pub enum NonMemberKey {
+  Group(Group),
+  Type(Type),
 }
 
 impl fmt::Display for MemberKey {
@@ -804,6 +817,8 @@ impl fmt::Display for MemberKey {
       }
       MemberKey::Bareword { ident, .. } => write!(f, "{}:", ident),
       MemberKey::Value { value, .. } => write!(f, "{}:", value),
+      MemberKey::NonMemberKey(NonMemberKey::Group(g)) => write!(f, "{}", g),
+      MemberKey::NonMemberKey(NonMemberKey::Type(t)) => write!(f, "{}", t),
     }
   }
 }
