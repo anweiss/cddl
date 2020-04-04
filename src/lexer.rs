@@ -244,7 +244,7 @@ impl fmt::Display for LexerError {
   }
 }
 
-impl<'a> From<(&str, Position, &'static str)> for LexerError {
+impl From<(&str, Position, &'static str)> for LexerError {
   fn from(e: (&str, Position, &'static str)) -> Self {
     LexerError {
       error_type: LexerErrorType::LEXER(e.2),
@@ -254,7 +254,7 @@ impl<'a> From<(&str, Position, &'static str)> for LexerError {
   }
 }
 
-impl<'a> From<(&str, Position, string::FromUtf8Error)> for LexerError {
+impl From<(&str, Position, string::FromUtf8Error)> for LexerError {
   fn from(e: (&str, Position, string::FromUtf8Error)) -> Self {
     LexerError {
       error_type: LexerErrorType::UTF8(e.2),
@@ -264,7 +264,7 @@ impl<'a> From<(&str, Position, string::FromUtf8Error)> for LexerError {
   }
 }
 
-impl<'a> From<(&str, Position, base16::DecodeError)> for LexerError {
+impl From<(&str, Position, base16::DecodeError)> for LexerError {
   fn from(e: (&str, Position, base16::DecodeError)) -> Self {
     LexerError {
       error_type: LexerErrorType::BASE16(e.2),
@@ -274,7 +274,7 @@ impl<'a> From<(&str, Position, base16::DecodeError)> for LexerError {
   }
 }
 
-impl<'a> From<(&str, Position, base64::DecodeError)> for LexerError {
+impl From<(&str, Position, base64::DecodeError)> for LexerError {
   fn from(e: (&str, Position, base64::DecodeError)) -> Self {
     LexerError {
       error_type: LexerErrorType::BASE64(e.2),
@@ -284,7 +284,7 @@ impl<'a> From<(&str, Position, base64::DecodeError)> for LexerError {
   }
 }
 
-impl<'a> From<(&str, Position, num::ParseIntError)> for LexerError {
+impl From<(&str, Position, num::ParseIntError)> for LexerError {
   fn from(e: (&str, Position, num::ParseIntError)) -> Self {
     LexerError {
       error_type: LexerErrorType::PARSEINT(e.2),
@@ -294,7 +294,7 @@ impl<'a> From<(&str, Position, num::ParseIntError)> for LexerError {
   }
 }
 
-impl<'a> From<(&str, Position, lexical::Error)> for LexerError {
+impl From<(&str, Position, lexical::Error)> for LexerError {
   fn from(e: (&str, Position, lexical::Error)) -> Self {
     LexerError {
       error_type: LexerErrorType::PARSEFLOAT(e.2),
@@ -305,7 +305,7 @@ impl<'a> From<(&str, Position, lexical::Error)> for LexerError {
 }
 
 /// Lexer which holds a byte slice and iterator over the byte slice
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Lexer<'a> {
   /// CDDL input string
   pub str_input: &'a str,
