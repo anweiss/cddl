@@ -7,7 +7,7 @@ use annotate_snippets::{
   display_list::{DisplayList, FormatOptions},
   snippet::{Annotation, AnnotationType, Slice, Snippet, SourceAnnotation},
 };
-use std::{fmt, mem, result};
+use std::{cmp::Ordering, fmt, mem, result};
 
 #[cfg(not(feature = "std"))]
 use alloc::{
@@ -309,7 +309,7 @@ where
     }
 
     match self.cur_token {
-      // Check for an occurrence indicator if uint followed by an asterisk '*'
+      // Check for an occurrence indicator of uint followed by an asterisk '*'
       Token::VALUE(Value::UINT(_)) => {
         if self.peek_token_is(&Token::ASTERISK) {
           let ge = self.parse_grpent(true)?;
@@ -356,8 +356,8 @@ where
         // indicator, and its group has only a single element that is not
         // preceded by an occurrence indicator nor member key, treat it as a
         // parenthesized type, subsequently parsing the remaining type and
-        // returning the type rule. This is the only situation where `clone` is
-        // required
+        // returning the type rule. This is one of the few situations where
+        // `clone` is required
         if let GroupEntry::InlineGroup {
           occur: None, group, ..
         } = &ge
@@ -1405,10 +1405,9 @@ where
           }
 
           if self.cur_token_is(Token::RPAREN) {
-            if nested_parend_count > 0 {
-              nested_parend_count -= 1;
-            } else if nested_parend_count == 0 {
-              closing_parend = true;
+            match nested_parend_count.cmp(&0) {
+              Ordering::Greater => nested_parend_count -= 1,
+              Ordering::Equal | Ordering::Less => closing_parend = true,
             }
           }
 

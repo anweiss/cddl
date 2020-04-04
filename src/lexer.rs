@@ -325,7 +325,7 @@ impl<'a> Iterator for IterLexer<'a> {
   type Item = std::result::Result<(Position, Token), parser::Error>;
 
   fn next(&mut self) -> Option<Self::Item> {
-    let next_token = self.l.next_token().map_err(|e| parser::Error::LEXER(e));
+    let next_token = self.l.next_token().map_err(parser::Error::LEXER);
 
     Some(next_token)
   }
@@ -374,7 +374,7 @@ impl<'a> Lexer<'a> {
       })
       .ok_or_else(|| {
         (
-          self.str_input.clone(),
+          self.str_input,
           self.position,
           "Unable to advance to the next token",
         )
@@ -563,11 +563,7 @@ impl<'a> Lexer<'a> {
                 token::lookup_control_from_str(&self.read_identifier(idx)?).ok_or_else(|| {
                   self.position.range = (token_offset, self.position.index + 1);
 
-                  LexerError::from((
-                    self.str_input.clone(),
-                    self.position,
-                    "Invalid control operator",
-                  ))
+                  LexerError::from((self.str_input, self.position, "Invalid control operator"))
                 })?;
 
               self.position.range = (token_offset, self.position.index + 1);
@@ -576,7 +572,7 @@ impl<'a> Lexer<'a> {
           }
 
           self.position.range = (token_offset, self.position.index + 1);
-          Err((self.str_input.clone(), self.position, "Invalid character").into())
+          Err((self.str_input, self.position, "Invalid character").into())
         }
         (idx, ch) => {
           if is_ealpha(ch) {
@@ -590,7 +586,7 @@ impl<'a> Lexer<'a> {
                   // Ensure that the byte string has been properly encoded.
                   let b = self.read_prefixed_byte_string(idx)?;
                   return base16::decode(&b)
-                    .map_err(|e| (self.str_input.clone(), self.position, e).into())
+                    .map_err(|e| (self.str_input, self.position, e).into())
                     .and_then(|_| {
                       self.position.range = (token_offset, self.position.index + 1);
 
@@ -620,7 +616,7 @@ impl<'a> Lexer<'a> {
                           // encoded
                           let bs = self.read_prefixed_byte_string(idx)?;
                           return base64::decode_config(&bs, base64::URL_SAFE)
-                            .map_err(|e| (self.str_input.clone(), self.position, e).into())
+                            .map_err(|e| (self.str_input, self.position, e).into())
                             .and_then(|_| {
                               self.position.range = (token_offset, self.position.index + 1);
 
@@ -707,7 +703,7 @@ impl<'a> Lexer<'a> {
               _ => {
                 return Err(
                   (
-                    self.str_input.clone(),
+                    self.str_input,
                     self.position,
                     "Unexpected escape character in text string",
                   )
@@ -719,12 +715,12 @@ impl<'a> Lexer<'a> {
         }
         // Closing "
         '\x22' => {
-          return Ok(self.str_input.clone()[idx + 1..self.read_char()?.0].to_string());
+          return Ok(self.str_input[idx + 1..self.read_char()?.0].to_string());
         }
         _ => {
           return Err(
             (
-              self.str_input.clone(),
+              self.str_input,
               self.position,
               "Unexpected char in text string. Expected closing \"",
             )
@@ -734,7 +730,7 @@ impl<'a> Lexer<'a> {
       }
     }
 
-    Err((self.str_input.clone(), self.position, "Empty text value").into())
+    Err((self.str_input, self.position, "Empty text value").into())
   }
 
   fn read_byte_string(&mut self, idx: usize) -> Result<Vec<u8>> {
@@ -749,7 +745,7 @@ impl<'a> Lexer<'a> {
         _ => {
           return Err(
             (
-              self.str_input.clone(),
+              self.str_input,
               self.position,
               "Unexpected character in byte string. Expected closing '",
             )
@@ -759,7 +755,7 @@ impl<'a> Lexer<'a> {
       }
     }
 
-    Err((self.str_input.clone(), self.position, "Empty byte string").into())
+    Err((self.str_input, self.position, "Empty byte string").into())
   }
 
   fn read_prefixed_byte_string(&mut self, idx: usize) -> Result<String> {
@@ -782,7 +778,7 @@ impl<'a> Lexer<'a> {
               _ => {
                 return Err(
                   (
-                    self.str_input.clone(),
+                    self.str_input,
                     self.position,
                     "Unexpected escape character in byte string",
                   )
@@ -815,7 +811,7 @@ impl<'a> Lexer<'a> {
           } else {
             return Err(
               (
-                self.str_input.clone(),
+                self.str_input,
                 self.position,
                 "Unexpected char in byte string. Expected closing '",
               )
@@ -826,7 +822,7 @@ impl<'a> Lexer<'a> {
       }
     }
 
-    Err((self.str_input.clone(), self.position, "Empty byte string").into())
+    Err((self.str_input, self.position, "Empty byte string").into())
   }
 
   fn read_comment(&mut self, idx: usize) -> Result<String> {
@@ -877,13 +873,13 @@ impl<'a> Lexer<'a> {
             if is_signed {
               return Ok(Token::VALUE(Value::FLOAT(
                 lexical::parse::<f64, _>(&self.str_input[signed_idx..=fraction_idx])
-                  .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
+                  .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
               )));
             }
 
             return Ok(Token::VALUE(Value::FLOAT(
               lexical::parse::<f64, _>(&self.str_input[idx..=fraction_idx])
-                .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
+                .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
             )));
           }
         }
@@ -978,7 +974,7 @@ impl<'a> Lexer<'a> {
                   }
                   _ => return Err(
                     (
-                      self.str_input.clone(),
+                      self.str_input,
                       self.position,
                       "Only numerical ranges between integers or floating point values are allowed",
                     )
@@ -998,7 +994,7 @@ impl<'a> Lexer<'a> {
               } else {
                 return Err(
                   (
-                    self.str_input.clone(),
+                    self.str_input,
                     self.position,
                     "Only numerical ranges between integers or floating point values are allowed",
                   )
@@ -1017,7 +1013,7 @@ impl<'a> Lexer<'a> {
               } else {
                 return Err(
                   (
-                    self.str_input.clone(),
+                    self.str_input,
                     self.position,
                     "Only numerical ranges between integers or floating point values are allowed",
                   )
@@ -1028,7 +1024,7 @@ impl<'a> Lexer<'a> {
             _ => {
               return Err(
                 (
-                  self.str_input.clone(),
+                  self.str_input,
                   self.position,
                   "Only numerical ranges between integers or floating point values are allowed",
                 )
@@ -1042,9 +1038,9 @@ impl<'a> Lexer<'a> {
             token_position,
             Token::RANGE((
               RangeValue::try_from(lower)
-                .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
+                .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
               RangeValue::try_from(upper)
-                .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
+                .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
               is_inclusive,
             )),
           ))
@@ -1055,15 +1051,15 @@ impl<'a> Lexer<'a> {
         token_position,
         Token::RANGE((
           RangeValue::try_from(lower)
-            .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
+            .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
           RangeValue::try_from(token::lookup_ident(&self.read_identifier(c.0)?))
-            .map_err(|e| LexerError::from((self.str_input.clone(), self.position, e)))?,
+            .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
           is_inclusive,
         )),
       ));
     }
 
-    Err((self.str_input.clone(), self.position, "Invalid range syntax. Ranges must be between integers (matching integer values) or between floating-point values (matching floating-point values)").into())
+    Err((self.str_input, self.position, "Invalid range syntax. Ranges must be between integers (matching integer values) or between floating-point values (matching floating-point values)").into())
   }
 }
 
