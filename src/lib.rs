@@ -56,31 +56,6 @@
 //! around small code and message sizes and constrained nodes, scenarios that
 //! Rust has also been designed for.
 //!
-//! ## CLI
-//!
-//! A CLI has been made available for various platforms and as a Docker image.
-//! It can downloaded from the
-//! [Releases](https://github.com/anweiss/cddl/releases) tab. The tool supports
-//! parsing of `.cddl` files for verifying conformance against RFC 8610. It also
-//! supports validation of `.cddl` documents against `.json` files. Detailed
-//! information about the JSON validation functions can be found in the
-//! [validating JSON](#validating-json) section below. Instructions for using
-//! the tool can be viewed by executing the `help` subcommand:
-//!
-//!     $ cddl help
-//!
-//! If using Docker:
-//!
-//! > Ensure your Docker client has been
-//! > [authenticated](https://help.github.com/en/articles/configuring-docker-for-use-with-github-package-registry#authenticating-to-github-package-registry)
-//! > into GitHub Package Registry. Replace `<version>` with an appropriate
-//! > [release](https://github.com/anweiss/cddl/releases) tag. Requires use of
-//! > the `--volume` argument for mounting `.cddl` and `.json` documents into
-//! > the container when executing the command. The command below assumes these
-//! > documents are in your current working directory.
-//!
-//!     $ docker run -it --rm -v $PWD:/cddl -w /cddl docker.pkg.github.com/anweiss/cddl/cddl:<version> help
-//!
 //! ## Website
 //!
 //! You can also find a simple RFC 8610 conformance tool at

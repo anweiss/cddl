@@ -312,7 +312,7 @@ where
       // Check for an occurrence indicator if uint followed by an asterisk '*'
       Token::VALUE(Value::UINT(_)) => {
         if self.peek_token_is(&Token::ASTERISK) {
-          let ge = self.parse_grpent()?;
+          let ge = self.parse_grpent(true)?;
 
           let span = (
             begin_rule_range,
@@ -348,7 +348,7 @@ where
         }
       }
       Token::LPAREN | Token::ASTERISK | Token::ONEORMORE | Token::OPTIONAL => {
-        let ge = self.parse_grpent()?;
+        let ge = self.parse_grpent(true)?;
 
         let mut end_rule_range = self.parser_position.range.1;
 
@@ -1008,7 +1008,6 @@ where
     };
 
     if self.cur_token_is(Token::LBRACE)
-      || self.cur_token_is(Token::LPAREN)
       || self.cur_token_is(Token::LBRACKET)
       || self.cur_token_is(Token::GCHOICE)
     {
@@ -1025,11 +1024,12 @@ where
       && !self.cur_token_is(Token::RBRACKET)
       && !self.cur_token_is(Token::EOF)
     {
-      let ge = self.parse_grpent()?;
+      let ge = self.parse_grpent(false)?;
 
       if self.cur_token_is(Token::GCHOICE) {
         grpchoice.group_entries.push((ge, false));
         grpchoice.span.1 = self.parser_position.range.1;
+
         return Ok(grpchoice);
       }
 
@@ -1068,7 +1068,7 @@ where
     Ok(grpchoice)
   }
 
-  fn parse_grpent(&mut self) -> Result<GroupEntry> {
+  fn parse_grpent(&mut self, from_rule: bool) -> Result<GroupEntry> {
     let begin_grpent_range = self.lexer_position.range.0;
     let begin_grpent_line = self.lexer_position.line;
 
@@ -1078,7 +1078,12 @@ where
       self.next_token()?;
     }
 
-    let member_key = self.parse_memberkey(true)?;
+    // If parsing group entry from a rule, set member key to none
+    let member_key = if from_rule {
+      None
+    } else {
+      self.parse_memberkey(true)?
+    };
 
     while let Token::COMMENT(_) = self.cur_token {
       self.next_token()?;
@@ -1086,11 +1091,6 @@ where
 
     if self.cur_token_is(Token::LPAREN) {
       self.next_token()?;
-
-      // TODO: Keep track of parenthesis count
-      while self.cur_token_is(Token::LPAREN) {
-        self.next_token()?;
-      }
 
       while let Token::COMMENT(_) = self.cur_token {
         self.next_token()?;
@@ -1108,7 +1108,7 @@ where
         self.next_token()?;
       }
 
-      while self.cur_token_is(Token::RPAREN) {
+      if self.cur_token_is(Token::RPAREN) {
         self.parser_position.range.1 = self.lexer_position.range.1;
         span.1 = self.parser_position.range.1;
 
@@ -1149,6 +1149,13 @@ where
           }),
           span,
         })
+      }
+      Some(MemberKey::NonMemberKey(NonMemberKey::Group(group))) => {
+        if self.cur_token_is(Token::COMMA) {
+          span.1 = self.lexer_position.range.1;
+        }
+
+        Ok(GroupEntry::InlineGroup { occur, group, span })
       }
       member_key @ Some(_) => {
         let entry_type = self.parse_type(None)?;
@@ -1380,6 +1387,8 @@ where
         let begin_memberkey_range = self.lexer_position.range.0;
         let begin_memberkey_line = self.lexer_position.line;
 
+        let mut nested_parend_count = 0;
+
         self.next_token()?;
 
         let mut tokens: Vec<Result<(Position, Token)>> = Vec::new();
@@ -1391,8 +1400,16 @@ where
             has_group_entries = true;
           }
 
+          if self.cur_token_is(Token::LPAREN) {
+            nested_parend_count += 1;
+          }
+
           if self.cur_token_is(Token::RPAREN) {
-            closing_parend = true;
+            if nested_parend_count > 0 {
+              nested_parend_count -= 1;
+            } else if nested_parend_count == 0 {
+              closing_parend = true;
+            }
           }
 
           let t = self.cur_token.clone();
@@ -1403,9 +1420,8 @@ where
 
         // Parse tokens vec as group
         if has_group_entries {
-          return Ok(Some(MemberKey::NonMemberKey(NonMemberKey::Group(
-            Parser::new(tokens.into_iter(), self.str_input)?.parse_group()?,
-          ))));
+          let group = Parser::new(tokens.into_iter(), self.str_input)?.parse_group()?;
+          return Ok(Some(MemberKey::NonMemberKey(NonMemberKey::Group(group))));
         }
 
         if let Token::COMMENT(_) = self.cur_token {
@@ -1715,7 +1731,7 @@ pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL, String> {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
-  match Parser::new(Lexer::new(input)) {
+  match Parser::new(Lexer::new(input).iter(), input) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => JsValue::from_serde(&c)
         .map_err(|e| JsValue::from(e.to_string()))
@@ -1744,7 +1760,7 @@ pub fn compile_cddl_from_str(input: &str) -> Result<()> {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn compile_cddl_from_str(input: &str) -> result::Result<(), JsValue> {
-  match Parser::new(Lexer::new(input)) {
+  match Parser::new(Lexer::new(input).iter(), input) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(_) => Ok(()),
       Err(Error::PARSER) if !p.errors.is_empty() => Err(JsValue::from(p.print_errors().unwrap())),
@@ -3283,7 +3299,7 @@ error: Parser error
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let grpent = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_grpent()?;
+      let grpent = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_grpent(false)?;
 
       assert_eq!(&grpent, expected_output);
       assert_eq!(grpent.to_string(), expected_output.to_string());
