@@ -2368,40 +2368,50 @@ error: Parser error
 
   #[test]
   fn verify_type() -> Result<()> {
-    let input = r#"tchoice1 / tchoice2"#;
+    let input = r#"( tchoice1 / tchoice2 )"#;
 
     let t = Parser::new(Lexer::new(input).iter(), input)?.parse_type(None)?;
 
     let expected_output = Type {
-      type_choices: vec![
-        Type1 {
-          type2: Type2::Typename {
-            ident: Identifier {
-              ident: "tchoice1".into(),
-              socket: None,
-              span: (0, 8, 1),
-            },
-            generic_arg: None,
-            span: (0, 8, 1),
+      type_choices: vec![Type1 {
+        type2: Type2::ParenthesizedType {
+          pt: Type {
+            type_choices: vec![
+              Type1 {
+                type2: Type2::Typename {
+                  ident: Identifier {
+                    ident: "tchoice1".into(),
+                    socket: None,
+                    span: (2, 10, 1),
+                  },
+                  generic_arg: None,
+                  span: (2, 10, 1),
+                },
+                operator: None,
+                span: (2, 10, 1),
+              },
+              Type1 {
+                type2: Type2::Typename {
+                  ident: Identifier {
+                    ident: "tchoice2".into(),
+                    socket: None,
+                    span: (13, 21, 1),
+                  },
+                  generic_arg: None,
+                  span: (13, 21, 1),
+                },
+                operator: None,
+                span: (13, 21, 1),
+              },
+            ],
+            span: (2, 21, 1),
           },
-          operator: None,
-          span: (0, 8, 1),
+          span: (0, 23, 1),
         },
-        Type1 {
-          type2: Type2::Typename {
-            ident: Identifier {
-              ident: "tchoice2".into(),
-              socket: None,
-              span: (11, 19, 1),
-            },
-            generic_arg: None,
-            span: (11, 19, 1),
-          },
-          operator: None,
-          span: (11, 19, 1),
-        },
-      ],
-      span: (0, 19, 1),
+        operator: None,
+        span: (0, 23, 1),
+      }],
+      span: (0, 23, 1),
     };
 
     assert_eq!(t, expected_output);
