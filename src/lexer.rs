@@ -1,7 +1,4 @@
-use super::{
-  parser,
-  token::{self, ByteValue, RangeValue, Token, Value},
-};
+use super::token::{self, ByteValue, RangeValue, Token, Value};
 use annotate_snippets::{
   display_list::{DisplayList, FormatOptions},
   snippet::{Annotation, AnnotationType, Slice, Snippet, SourceAnnotation},
@@ -322,13 +319,13 @@ pub struct IterLexer<'a> {
 }
 
 /// Iterated lexer token item
-pub type Item = std::result::Result<(Position, Token), parser::Error>;
+pub type Item = std::result::Result<(Position, Token), LexerError>;
 
 impl<'a> Iterator for IterLexer<'a> {
   type Item = Item;
 
   fn next(&mut self) -> Option<Self::Item> {
-    let next_token = self.l.next_token().map_err(parser::Error::LEXER);
+    let next_token = self.l.next_token();
 
     Some(next_token)
   }

@@ -89,8 +89,11 @@ where
   /// # Example
   ///
   /// ```
+  /// use cddl::parser::Parser;
+  /// use cddl::lexer::Lexer;
+  ///
   /// let input = r#"mycddl = ( int / float )"#;
-  /// let p = Parser::new(lexer::Lexer::new(input).iter(), input);
+  /// let p = Parser::new(Lexer::new(input).iter(), input);
   /// ```
   pub fn new(tokens: I, str_input: &str) -> Result<Parser<I>> {
     let mut p = Parser {
@@ -116,10 +119,15 @@ where
   /// # Example
   ///
   /// ```
-  /// let p = Parser::new(lexer::Lexer::new(input).iter(), input);
-  /// if let Err(Error::PARSER) = p {
-  ///   if let Some(errors) = p.print_errors() {
-  ///     println!("{}", errors);
+  /// use cddl::parser::{Error, Parser};
+  /// use cddl::lexer::Lexer;
+  ///
+  /// let input = r#"mycddl = ( int / float )"#;
+  /// if let Ok(mut p) = Parser::new(Lexer::new(input).iter(), input) {
+  ///   if let Err(Error::PARSER) = p.parse_cddl() {
+  ///     if let Some(errors) = p.print_errors() {
+  ///       println!("{}", errors);
+  ///     }
   ///   }
   /// }
   /// ```
@@ -172,7 +180,7 @@ where
     mem::swap(&mut self.lexer_position, &mut self.peek_lexer_position);
 
     if let Some(next_token) = self.tokens.next() {
-      let nt = next_token?;
+      let nt = next_token.map_err(Error::LEXER)?;
       self.peek_lexer_position = nt.0;
       self.peek_token = nt.1;
     }
@@ -1462,7 +1470,7 @@ where
 
         self.next_token()?;
 
-        let mut tokens: Vec<Result<(Position, Token)>> = Vec::new();
+        let mut tokens: Vec<std::result::Result<(Position, Token), lexer::LexerError>> = Vec::new();
 
         let mut has_group_entries = false;
         let mut closing_parend = false;
