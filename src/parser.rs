@@ -348,6 +348,8 @@ where
         }
       }
       Token::LPAREN | Token::ASTERISK | Token::ONEORMORE | Token::OPTIONAL => {
+        let begin_pt_range = self.lexer_position.range.0;
+
         let ge = self.parse_grpent(true)?;
 
         let mut end_rule_range = self.parser_position.range.1;
@@ -373,7 +375,11 @@ where
                       if ge.occur.is_none() && ge.member_key.is_none() {
                         let value = self.parse_type(Some(Type2::ParenthesizedType {
                           pt: ge.entry_type.clone(),
-                          span: (0, 0, 0),
+                          span: (
+                            begin_pt_range,
+                            self.parser_position.range.1,
+                            begin_rule_line,
+                          ),
                         }))?;
 
                         end_rule_range = self.parser_position.range.1;
@@ -535,9 +541,15 @@ where
     self.parser_position.range = self.lexer_position.range;
     self.parser_position.line = self.lexer_position.line;
 
+    let begin_type_range = if let Some(Type2::ParenthesizedType { span, .. }) = parenthesized_type {
+      span.0
+    } else {
+      self.parser_position.range.0
+    };
+
     let mut t = Type {
       type_choices: Vec::new(),
-      span: (self.parser_position.range.0, 0, self.parser_position.line),
+      span: (begin_type_range, 0, self.parser_position.line),
     };
 
     t.type_choices.push(self.parse_type1(parenthesized_type)?);
@@ -562,37 +574,46 @@ where
   }
 
   fn parse_type1(&mut self, parenthesized_type: Option<Type2>) -> Result<Type1> {
-    let begin_type1_range = self.lexer_position.range.0;
     let begin_type1_line = self.lexer_position.line;
+    let begin_type1_range = self.lexer_position.range.0;
 
-    let t2_1 = if let Some(t2) = parenthesized_type {
-      t2
-    } else {
-      self.parse_type2()?
-    };
+    let (t2_1, begin_type1_range) =
+      if let Some(Type2::ParenthesizedType { pt, span }) = parenthesized_type {
+        (Type2::ParenthesizedType { pt, span }, span.0)
+      } else {
+        (self.parse_type2()?, begin_type1_range)
+      };
 
     while let Token::COMMENT(_) = self.cur_token {
       self.next_token()?;
     }
 
-    let span = (
-      self.lexer_position.range.0,
+    let mut span = (
+      begin_type1_range,
       self.lexer_position.range.1,
-      self.lexer_position.line,
+      begin_type1_line,
     );
 
     let op = match &self.cur_token {
-      Token::RANGEOP(i) => Some(RangeCtlOp::RangeOp {
-        is_inclusive: *i,
-        span,
-      }),
+      Token::RANGEOP(i) => {
+        span.0 = self.lexer_position.range.0;
+
+        Some(RangeCtlOp::RangeOp {
+          is_inclusive: *i,
+          span,
+        })
+      }
       _ => match token::control_str_from_token(&self.cur_token) {
-        Some(ctrl) => Some(RangeCtlOp::CtlOp { ctrl, span }),
+        Some(ctrl) => {
+          span.0 = self.lexer_position.range.0;
+
+          Some(RangeCtlOp::CtlOp { ctrl, span })
+        }
         None => None,
       },
     };
 
-    let mut span = (
+    span = (
       begin_type1_range,
       self.parser_position.range.1,
       begin_type1_line,
@@ -690,7 +711,6 @@ where
       }
 
       // ( type )
-      // TODO: Develop additional test cases
       Token::LPAREN => {
         let begin_type2_range = self.lexer_position.range.0;
         let begin_type2_line = self.lexer_position.line;
@@ -1207,12 +1227,136 @@ where
     }
   }
 
+  fn parse_memberkey_from_ident(
+    &mut self,
+    is_optional: bool,
+    ident: (String, Option<token::SocketPlug>),
+    begin_memberkey_range: usize,
+    begin_memberkey_line: usize,
+  ) -> Result<Option<MemberKey>> {
+    if !self.peek_token_is(&Token::COLON)
+      && !self.peek_token_is(&Token::ARROWMAP)
+      && !self.peek_token_is(&Token::CUT)
+      && is_optional
+    {
+      return Ok(None);
+    }
+
+    self.parser_position.range.1 = self.peek_lexer_position.range.1;
+
+    let end_t1_range = self.lexer_position.range.1;
+
+    let mut ident = self.identifier_from_ident_token(ident);
+    ident.span = (begin_memberkey_range, end_t1_range, begin_memberkey_line);
+
+    self.next_token()?;
+
+    while let Token::COMMENT(_) = self.cur_token {
+      self.next_token()?;
+    }
+
+    let mk = if self.cur_token_is(Token::CUT) {
+      self.next_token()?;
+
+      while let Token::COMMENT(_) = self.cur_token {
+        self.next_token()?;
+      }
+
+      if !self.cur_token_is(Token::ARROWMAP) {
+        self.errors.push(ParserError {
+          position: self.lexer_position,
+          message: "Malformed memberkey. Missing \"=>\"".into(),
+        });
+        return Err(Error::PARSER);
+      }
+
+      let end_memberkey_range = self.lexer_position.range.1;
+      let t1 = MemberKey::Type1 {
+        t1: Box::from(Type1 {
+          type2: Type2::Typename {
+            ident,
+            generic_arg: None,
+            span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+          },
+          operator: None,
+          span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+        }),
+        is_cut: true,
+        span: (
+          begin_memberkey_range,
+          end_memberkey_range,
+          begin_memberkey_line,
+        ),
+      };
+
+      self.next_token()?;
+
+      Some(t1)
+    } else if self.cur_token_is(Token::ARROWMAP) {
+      let end_memberkey_range = self.lexer_position.range.1;
+      let t1 = MemberKey::Type1 {
+        t1: Box::from(Type1 {
+          type2: Type2::Typename {
+            ident,
+            generic_arg: None,
+            span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+          },
+          operator: None,
+          span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+        }),
+        is_cut: false,
+        span: (
+          begin_memberkey_range,
+          end_memberkey_range,
+          begin_memberkey_line,
+        ),
+      };
+
+      self.next_token()?;
+
+      Some(t1)
+    } else {
+      Some(MemberKey::Bareword {
+        ident,
+        span: (
+          begin_memberkey_range,
+          self.parser_position.range.1,
+          begin_memberkey_line,
+        ),
+      })
+    };
+
+    if self.cur_token_is(Token::COLON) {
+      self.next_token()?;
+    }
+
+    Ok(mk)
+  }
+
   fn parse_memberkey(&mut self, is_optional: bool) -> Result<Option<MemberKey>> {
     let begin_memberkey_range = self.lexer_position.range.0;
     let begin_memberkey_line = self.lexer_position.line;
 
+    if let Some(t) = self.cur_token.in_standard_prelude() {
+      return self.parse_memberkey_from_ident(
+        is_optional,
+        (t.into(), None),
+        begin_memberkey_range,
+        begin_memberkey_line,
+      );
+    }
+
     match &self.cur_token {
-      Token::IDENT(_) | Token::VALUE(_) => {
+      Token::IDENT(ident) => {
+        let ident = ident.clone();
+        self.parse_memberkey_from_ident(
+          is_optional,
+          ident,
+          begin_memberkey_range,
+          begin_memberkey_line,
+        )
+      }
+      Token::VALUE(value) => {
         if !self.peek_token_is(&Token::COLON)
           && !self.peek_token_is(&Token::ARROWMAP)
           && !self.peek_token_is(&Token::CUT)
@@ -1223,156 +1367,64 @@ where
 
         self.parser_position.range.1 = self.peek_lexer_position.range.1;
 
-        let mk = match &self.cur_token {
-          Token::IDENT(ident) => {
-            let ident = self.identifier_from_ident_token(ident.clone());
+        let value = value.clone();
 
-            let end_t1_range = self.lexer_position.range.1;
+        let t1 = self.parse_type1(None)?;
 
+        while let Token::COMMENT(_) = self.cur_token {
+          self.next_token()?;
+        }
+
+        let mk = if self.cur_token_is(Token::CUT) {
+          self.next_token()?;
+
+          while let Token::COMMENT(_) = self.cur_token {
             self.next_token()?;
-
-            while let Token::COMMENT(_) = self.cur_token {
-              self.next_token()?;
-            }
-
-            if self.cur_token_is(Token::CUT) {
-              self.next_token()?;
-
-              while let Token::COMMENT(_) = self.cur_token {
-                self.next_token()?;
-              }
-
-              if !self.cur_token_is(Token::ARROWMAP) {
-                self.errors.push(ParserError {
-                  position: self.lexer_position,
-                  message: "Malformed memberkey. Missing \"=>\"".into(),
-                });
-                return Err(Error::PARSER);
-              }
-
-              let end_memberkey_range = self.lexer_position.range.1;
-              let t1 = MemberKey::Type1 {
-                t1: Box::from(Type1 {
-                  type2: Type2::Typename {
-                    ident,
-                    generic_arg: None,
-                    span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
-                  },
-                  operator: None,
-                  span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
-                }),
-                is_cut: true,
-                span: (
-                  begin_memberkey_range,
-                  end_memberkey_range,
-                  begin_memberkey_line,
-                ),
-              };
-
-              self.next_token()?;
-
-              Some(t1)
-            } else if self.cur_token_is(Token::ARROWMAP) {
-              let end_memberkey_range = self.lexer_position.range.1;
-              let t1 = MemberKey::Type1 {
-                t1: Box::from(Type1 {
-                  type2: Type2::Typename {
-                    ident,
-                    generic_arg: None,
-                    span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
-                  },
-                  operator: None,
-                  span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
-                }),
-                is_cut: false,
-                span: (
-                  begin_memberkey_range,
-                  end_memberkey_range,
-                  begin_memberkey_line,
-                ),
-              };
-
-              self.next_token()?;
-
-              Some(t1)
-            } else {
-              Some(MemberKey::Bareword {
-                ident,
-                span: (
-                  begin_memberkey_range,
-                  self.parser_position.range.1,
-                  begin_memberkey_line,
-                ),
-              })
-            }
           }
-          Token::VALUE(value) => {
-            let value = value.clone();
-            let t1 = self.parse_type1(None)?;
 
-            while let Token::COMMENT(_) = self.cur_token {
-              self.next_token()?;
-            }
-
-            if self.cur_token_is(Token::CUT) {
-              self.next_token()?;
-
-              while let Token::COMMENT(_) = self.cur_token {
-                self.next_token()?;
-              }
-
-              if !self.cur_token_is(Token::ARROWMAP) {
-                self.errors.push(ParserError {
-                  position: self.lexer_position,
-                  message: "Malformed memberkey. Missing \"=>\"".into(),
-                });
-                return Err(Error::PARSER);
-              }
-
-              let end_memberkey_range = self.lexer_position.range.1;
-              let t1 = MemberKey::Type1 {
-                t1: Box::from(t1),
-                is_cut: true,
-                span: (
-                  begin_memberkey_range,
-                  end_memberkey_range,
-                  begin_memberkey_line,
-                ),
-              };
-
-              self.next_token()?;
-
-              Some(t1)
-            } else {
-              if !self.cur_token_is(Token::ARROWMAP) && !self.cur_token_is(Token::COLON) {
-                self.errors.push(ParserError {
-                  position: self.lexer_position,
-                  message: "Malformed memberkey. Missing \"=>\" or \":\"".into(),
-                });
-                return Err(Error::PARSER);
-              }
-
-              self.parser_position.range.1 = self.lexer_position.range.1;
-
-              self.next_token()?;
-
-              Some(MemberKey::Value {
-                value,
-                span: (
-                  begin_memberkey_range,
-                  self.parser_position.range.1,
-                  begin_memberkey_line,
-                ),
-              })
-            }
-          }
-          _ => {
+          if !self.cur_token_is(Token::ARROWMAP) {
             self.errors.push(ParserError {
-              position: self.parser_position,
-              message: "Malformed memberkey".into(),
+              position: self.lexer_position,
+              message: "Malformed memberkey. Missing \"=>\"".into(),
             });
             return Err(Error::PARSER);
           }
+
+          let end_memberkey_range = self.lexer_position.range.1;
+          let t1 = MemberKey::Type1 {
+            t1: Box::from(t1),
+            is_cut: true,
+            span: (
+              begin_memberkey_range,
+              end_memberkey_range,
+              begin_memberkey_line,
+            ),
+          };
+
+          self.next_token()?;
+
+          Some(t1)
+        } else {
+          if !self.cur_token_is(Token::ARROWMAP) && !self.cur_token_is(Token::COLON) {
+            self.errors.push(ParserError {
+              position: self.lexer_position,
+              message: "Malformed memberkey. Missing \"=>\" or \":\"".into(),
+            });
+            return Err(Error::PARSER);
+          }
+
+          self.parser_position.range.1 = self.lexer_position.range.1;
+
+          self.next_token()?;
+
+          Some(MemberKey::Value {
+            value,
+            span: (
+              begin_memberkey_range,
+              self.parser_position.range.1,
+              begin_memberkey_line,
+            ),
+          })
         };
 
         if self.cur_token_is(Token::COLON) {
@@ -1788,7 +1840,8 @@ gr = 2* ( test )
 messages = message<"reboot", "now">
 message<t, v> = {type: 2, value: v}
 color = &colors
-colors = ( red: "red" )"#;
+colors = ( red: "red" )
+thing = ( int / float )"#;
 
     match Parser::new(Lexer::new(input).iter(), input) {
       Ok(mut p) => match p.parse_cddl() {
@@ -2164,6 +2217,60 @@ colors = ( red: "red" )"#;
                   },
                 }),
                 span: (163, 186, 8),
+              },
+              Rule::Type {
+                rule: TypeRule {
+                  name: Identifier {
+                    ident: "thing".into(),
+                    socket: None,
+                    span: (187, 192, 9),
+                  },
+                  generic_param: None,
+                  is_type_choice_alternate: false,
+                  value: Type {
+                    type_choices: vec![Type1 {
+                      type2: Type2::ParenthesizedType {
+                        pt: Type {
+                          type_choices: vec![
+                            Type1 {
+                              type2: Type2::Typename {
+                                ident: Identifier {
+                                  ident: "int".into(),
+                                  socket: None,
+                                  span: (197, 200, 9),
+                                },
+                                generic_arg: None,
+                                span: (197, 200, 9),
+                              },
+                              operator: None,
+                              span: (197, 200, 9),
+                            },
+                            Type1 {
+                              type2: Type2::Typename {
+                                ident: Identifier {
+                                  ident: "float".into(),
+                                  socket: None,
+                                  span: (203, 208, 9),
+                                },
+                                generic_arg: None,
+                                span: (203, 208, 9),
+                              },
+                              operator: None,
+                              span: (203, 208, 9),
+                            },
+                          ],
+                          span: (197, 208, 9),
+                        },
+                        span: (195, 210, 9),
+                      },
+                      operator: None,
+                      span: (195, 210, 9),
+                    }],
+
+                    span: (195, 210, 9),
+                  },
+                },
+                span: (187, 210, 9),
               },
             ],
           };
