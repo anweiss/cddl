@@ -997,7 +997,7 @@ where
 
             self.errors.push(ParserError {
               position: self.parser_position,
-              message: "Missing rule after assignment operator".into(),
+              message: "Entry type syntax error".into(),
             });
 
             Err(Error::PARSER)
