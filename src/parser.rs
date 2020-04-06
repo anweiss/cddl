@@ -1,6 +1,6 @@
 use super::{
   ast::*,
-  lexer::{Lexer, LexerError, Position},
+  lexer::{self, Lexer, LexerError, Position},
   token::{self, ByteValue, Token, Value},
 };
 use annotate_snippets::{
@@ -23,10 +23,9 @@ use wasm_bindgen::prelude::*;
 pub type Result<T> = result::Result<T, Error>;
 
 /// Parser type
-#[derive(Debug)]
 pub struct Parser<'a, I>
 where
-  I: Iterator<Item = std::result::Result<(Position, Token), Error>>,
+  I: Iterator<Item = lexer::Item>,
 {
   tokens: I,
   str_input: &'a str,
@@ -43,7 +42,7 @@ where
 pub enum Error {
   /// Parsing errors
   CDDL(String),
-  /// Parsing error occurred
+  /// Parsing error occurred. Used with the `print_errors()` method
   PARSER,
   /// Lexing error
   LEXER(LexerError),
@@ -82,9 +81,17 @@ impl std::error::Error for Error {
 
 impl<'a, I> Parser<'a, I>
 where
-  I: Iterator<Item = std::result::Result<(Position, Token), Error>>,
+  I: Iterator<Item = lexer::Item>,
 {
-  /// Create a new `Parser` from a given `Lexer`
+  /// Create a new `Parser` from a given str input and iterator over
+  /// `lexer::Item`.
+  ///
+  /// # Example
+  ///
+  /// ```
+  /// let input = r#"mycddl = ( int / float )"#;
+  /// let p = Parser::new(lexer::Lexer::new(input).iter(), input);
+  /// ```
   pub fn new(tokens: I, str_input: &str) -> Result<Parser<I>> {
     let mut p = Parser {
       tokens,
@@ -103,7 +110,19 @@ where
     Ok(p)
   }
 
-  /// Print parser errors if there are any
+  /// Print parser errors if there are any. Used with the `Error::PARSER`
+  /// variant
+  ///
+  /// # Example
+  ///
+  /// ```
+  /// let p = Parser::new(lexer::Lexer::new(input).iter(), input);
+  /// if let Err(Error::PARSER) = p {
+  ///   if let Some(errors) = p.print_errors() {
+  ///     println!("{}", errors);
+  ///   }
+  /// }
+  /// ```
   pub fn print_errors(&self) -> Option<String> {
     if self.errors.is_empty() {
       return None;
@@ -1749,10 +1768,7 @@ where
   }
 
   /// Create `Identifier` from `Token::IDENT(ident)`
-  pub fn identifier_from_ident_token(
-    &self,
-    ident: (String, Option<token::SocketPlug>),
-  ) -> Identifier {
+  fn identifier_from_ident_token(&self, ident: (String, Option<token::SocketPlug>)) -> Identifier {
     Identifier {
       ident: ident.0,
       socket: ident.1,

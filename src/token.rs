@@ -9,7 +9,7 @@ use alloc::{
   vec::Vec,
 };
 
-/// Token which represents a valids CDDL character or sequence
+/// Token which represents a valid CDDL character or sequence
 #[derive(PartialEq, Debug, Clone)]
 pub enum Token {
   /// Illegal sequence of characters
@@ -303,7 +303,7 @@ impl fmt::Display for RangeValue {
   }
 }
 
-/// Literal string value
+/// Literal value
 // TODO: support hexfloat and exponent
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]

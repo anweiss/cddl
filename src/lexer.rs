@@ -321,8 +321,11 @@ pub struct IterLexer<'a> {
   l: &'a mut Lexer<'a>,
 }
 
+/// Iterated lexer token item
+pub type Item = std::result::Result<(Position, Token), parser::Error>;
+
 impl<'a> Iterator for IterLexer<'a> {
-  type Item = std::result::Result<(Position, Token), parser::Error>;
+  type Item = Item;
 
   fn next(&mut self) -> Option<Self::Item> {
     let next_token = self.l.next_token().map_err(parser::Error::LEXER);
