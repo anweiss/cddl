@@ -1,7 +1,8 @@
 use super::token::{self, ByteValue, RangeValue, Token, Value};
-use annotate_snippets::{
-  display_list::{DisplayList, FormatOptions},
-  snippet::{Annotation, AnnotationType, Slice, Snippet, SourceAnnotation},
+use codespan_reporting::{
+  diagnostic::{Diagnostic, Label},
+  files::SimpleFiles,
+  term,
 };
 use std::{
   convert::TryFrom,
@@ -87,156 +88,91 @@ impl Error for LexerError {
 
 impl fmt::Display for LexerError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    let opt = FormatOptions {
-      color: true,
-      ..Default::default()
-    };
+    let mut files = SimpleFiles::new();
+    let file_id = files.add("input", self.input.as_str());
+    let config = term::Config::default();
+    let mut buffer = Vec::new();
+    let mut writer = term::termcolor::NoColor::new(&mut buffer);
 
     match &self.error_type {
-      LexerErrorType::LEXER(le) => write!(
-        f,
-        "{}",
-        DisplayList::from(Snippet {
-          title: Some(Annotation {
-            label: Some((*le).to_string()),
-            id: None,
-            annotation_type: AnnotationType::Error,
-          }),
-          footer: vec![],
-          slices: vec![Slice {
-            source: self.input.clone(),
-            line_start: self.position.line,
-            origin: Some("input".to_string()),
-            fold: false,
-            annotations: vec![SourceAnnotation {
-              range: self.position.range,
-              label: (*le).to_string(),
-              annotation_type: AnnotationType::Error,
-            }],
-          }],
-          opt,
-        })
-      ),
-      LexerErrorType::UTF8(utf8e) => write!(
-        f,
-        "{}",
-        DisplayList::from(Snippet {
-          title: Some(Annotation {
-            label: Some(utf8e.to_string()),
-            id: None,
-            annotation_type: AnnotationType::Error,
-          }),
-          footer: vec![],
-          slices: vec![Slice {
-            source: self.input.clone(),
-            line_start: self.position.line,
-            origin: Some("input".to_string()),
-            fold: false,
-            annotations: vec![SourceAnnotation {
-              range: self.position.range,
-              label: utf8e.to_string(),
-              annotation_type: AnnotationType::Error,
-            }],
-          }],
-          opt,
-        })
-      ),
-      LexerErrorType::BASE16(b16e) => write!(
-        f,
-        "{}",
-        DisplayList::from(Snippet {
-          title: Some(Annotation {
-            label: Some(b16e.to_string()),
-            id: None,
-            annotation_type: AnnotationType::Error,
-          }),
-          footer: vec![],
-          slices: vec![Slice {
-            source: self.input.clone(),
-            line_start: self.position.line,
-            origin: Some("input".to_string()),
-            fold: false,
-            annotations: vec![SourceAnnotation {
-              range: self.position.range,
-              label: b16e.to_string(),
-              annotation_type: AnnotationType::Error,
-            }],
-          }],
-          opt,
-        })
-      ),
-      LexerErrorType::BASE64(b64e) => write!(
-        f,
-        "{}",
-        DisplayList::from(Snippet {
-          title: Some(Annotation {
-            label: Some(b64e.to_string()),
-            id: None,
-            annotation_type: AnnotationType::Error,
-          }),
-          footer: vec![],
-          slices: vec![Slice {
-            source: self.input.clone(),
-            line_start: self.position.line,
-            origin: Some("input".to_string()),
-            fold: false,
-            annotations: vec![SourceAnnotation {
-              range: self.position.range,
-              label: b64e.to_string(),
-              annotation_type: AnnotationType::Error,
-            }],
-          }],
-          opt,
-        })
-      ),
-      LexerErrorType::PARSEINT(pie) => write!(
-        f,
-        "{}",
-        DisplayList::from(Snippet {
-          title: Some(Annotation {
-            label: Some(pie.to_string()),
-            id: None,
-            annotation_type: AnnotationType::Error,
-          }),
-          footer: vec![],
-          slices: vec![Slice {
-            source: self.input.clone(),
-            line_start: self.position.line,
-            origin: Some("input".to_string()),
-            fold: false,
-            annotations: vec![SourceAnnotation {
-              range: self.position.range,
-              label: pie.to_string(),
-              annotation_type: AnnotationType::Error,
-            }],
-          }],
-          opt,
-        })
-      ),
-      LexerErrorType::PARSEFLOAT(pfe) => write!(
-        f,
-        "{}",
-        DisplayList::from(Snippet {
-          title: Some(Annotation {
-            label: Some(format!("Error code: {:?}", pfe.code)),
-            id: None,
-            annotation_type: AnnotationType::Error,
-          }),
-          footer: vec![],
-          slices: vec![Slice {
-            source: self.input.clone(),
-            line_start: self.position.line,
-            origin: Some("input".to_string()),
-            fold: false,
-            annotations: vec![SourceAnnotation {
-              range: self.position.range,
-              label: format!("Error code: {:?}", pfe.code),
-              annotation_type: AnnotationType::Error,
-            }],
-          }],
-          opt,
-        })
-      ),
+      LexerErrorType::LEXER(le) => {
+        let diagnostic = Diagnostic::error()
+          .with_message("lexer error")
+          .with_labels(vec![Label::primary(
+            file_id,
+            self.position.range.0..self.position.range.1,
+          )
+          .with_message(*le)]);
+
+        term::emit(&mut writer, &config, &files, &diagnostic).map_err(|_| fmt::Error)?;
+
+        write!(f, "{}", String::from_utf8(buffer).map_err(|_| fmt::Error)?)
+      }
+      LexerErrorType::UTF8(utf8e) => {
+        let diagnostic = Diagnostic::error()
+          .with_message("lexer error")
+          .with_labels(vec![Label::primary(
+            file_id,
+            self.position.range.0..self.position.range.1,
+          )
+          .with_message(utf8e.to_string())]);
+
+        term::emit(&mut writer, &config, &files, &diagnostic).map_err(|_| fmt::Error)?;
+
+        write!(f, "{}", String::from_utf8(buffer).map_err(|_| fmt::Error)?)
+      }
+      LexerErrorType::BASE16(b16e) => {
+        let diagnostic = Diagnostic::error()
+          .with_message("lexer error")
+          .with_labels(vec![Label::primary(
+            file_id,
+            self.position.range.0..self.position.range.1,
+          )
+          .with_message(b16e.to_string())]);
+
+        term::emit(&mut writer, &config, &files, &diagnostic).map_err(|_| fmt::Error)?;
+
+        write!(f, "{}", String::from_utf8(buffer).map_err(|_| fmt::Error)?)
+      }
+      LexerErrorType::BASE64(b64e) => {
+        let diagnostic = Diagnostic::error()
+          .with_message("lexer error")
+          .with_labels(vec![Label::primary(
+            file_id,
+            self.position.range.0..self.position.range.1,
+          )
+          .with_message(b64e.to_string())]);
+
+        term::emit(&mut writer, &config, &files, &diagnostic).map_err(|_| fmt::Error)?;
+
+        write!(f, "{}", String::from_utf8(buffer).map_err(|_| fmt::Error)?)
+      }
+      LexerErrorType::PARSEINT(pie) => {
+        let diagnostic = Diagnostic::error()
+          .with_message("lexer error")
+          .with_labels(vec![Label::primary(
+            file_id,
+            self.position.range.0..self.position.range.1,
+          )
+          .with_message(pie.to_string())]);
+
+        term::emit(&mut writer, &config, &files, &diagnostic).map_err(|_| fmt::Error)?;
+
+        write!(f, "{}", String::from_utf8(buffer).map_err(|_| fmt::Error)?)
+      }
+      LexerErrorType::PARSEFLOAT(pfe) => {
+        let diagnostic = Diagnostic::error()
+          .with_message("lexer error")
+          .with_labels(vec![Label::primary(
+            file_id,
+            self.position.range.0..self.position.range.1,
+          )
+          .with_message(format!("{:#?}", pfe))]);
+
+        term::emit(&mut writer, &config, &files, &diagnostic).map_err(|_| fmt::Error)?;
+
+        write!(f, "{}", String::from_utf8(buffer).map_err(|_| fmt::Error)?)
+      }
     }
   }
 }
@@ -1080,51 +1016,56 @@ mod tests {
 
   #[cfg(not(feature = "std"))]
   use super::super::alloc::string::ToString;
+  use indoc::indoc;
 
   #[test]
   fn verify_next_token() -> Result<()> {
-    let input = r#"; this is a comment
-; this is another comment
+    let input = indoc!(
+      r#"
+        ; this is a comment
+        ; this is another comment
 
-mynumber = 10.5
+        mynumber = 10.5
 
-mytag = #6.1234(tstr)
-    
-myfirstrule = "myotherrule"
+        mytag = #6.1234(tstr)
+            
+        myfirstrule = "myotherrule"
 
-mybytestring = 'hello there'
+        mybytestring = 'hello there'
 
-mybase16rule = h'68656c6c6f20776f726c64'
+        mybase16rule = h'68656c6c6f20776f726c64'
 
-mybase64rule = b64'aGVsbG8gd29ybGQ='
+        mybase64rule = b64'aGVsbG8gd29ybGQ='
 
-mysecondrule = mynumber .. 100.5
+        mysecondrule = mynumber .. 100.5
 
-myintrule = -10
+        myintrule = -10
 
-mysignedfloat = -10.5
+        mysignedfloat = -10.5
 
-myintrange = -10..10
+        myintrange = -10..10
 
-mycontrol = mynumber .gt 0
+        mycontrol = mynumber .gt 0
 
-@terminal-color = basecolors / othercolors ; an inline comment
-    
-messages = message<"reboot", "now">
+        @terminal-color = basecolors / othercolors ; an inline comment
+            
+        messages = message<"reboot", "now">
 
-address = { delivery }
+        address = { delivery }
 
-delivery = (
-  street: tstr, ? number ^ => uint, city //
-  po-box: uint, city //
-  per-pickup: true
-)
+        delivery = (
+          street: tstr, ? number ^ => uint, city //
+          po-box: uint, city //
+          per-pickup: true
+        )
 
-city = (
-  name: tstr
-  zip-code: uint
-  1*3 $$tcp-option,
-)"#;
+        city = (
+          name: tstr
+          zip-code: uint
+          1*3 $$tcp-option,
+        )
+      "#
+    );
 
     let expected_tok = [
       (COMMENT(" this is a comment".into()), "; this is a comment"),
@@ -1304,14 +1245,23 @@ city = (
     match l.next_token() {
       Ok(_) => Ok(()),
       Err(e) => {
+        #[cfg(feature = "std")]
+        println!("{}", e);
+
         assert_eq!(
           e.to_string(),
-          r#"error: Invalid control operator
- --> input:1:17
-  |
-1 | myrule = number .asdf 10
-  |                 ^^^^^ Invalid control operator
-  |"#
+          indoc!(
+            r#"
+              error: lexer error
+
+                 ┌── input:1:17 ───
+                 │
+               1 │ myrule = number .asdf 10
+                 │                 ^^^^^ Invalid control operator
+                 │
+            
+            "#
+          )
         );
 
         Ok(())

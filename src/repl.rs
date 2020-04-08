@@ -7,7 +7,12 @@ use std::io::{BufRead, Result, Write};
 
 const PROMPT: &[u8] = b">> ";
 
-/// Instantiates a new REPL with a given `io::BufRead` and `io::Write`
+/// Instantiates a new REPL
+///
+/// # Arguments
+///
+/// `reader` - A mutable `io::BufRead`
+/// `writer` - A mutable `io::Write`
 pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<()> {
   loop {
     writer.write_all(PROMPT)?;
@@ -22,7 +27,7 @@ pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<()> {
       writer.write_all(
         format!(
           "{:#?}\n",
-          parser::cddl_from_str(&line)
+          parser::cddl_from_str(&line, false)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
         )
         .as_bytes(),

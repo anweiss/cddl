@@ -3,8 +3,10 @@ extern crate clap;
 
 use cddl::{cddl_from_str, validate_json_from_str};
 use clap::{App, AppSettings, SubCommand};
-use crossterm::{Color, Colored};
-use std::{error::Error, fs};
+use codespan_reporting::term::termcolor::{
+  Color, ColorChoice, ColorSpec, StandardStream, WriteColor,
+};
+use std::{error::Error, fs, io::Write};
 
 fn main() -> Result<(), Box<dyn Error>> {
   let app = App::new("cddl")
@@ -27,16 +29,18 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   if let Some(matches) = matches.subcommand_matches("compile-cddl") {
     if let Some(c) = matches.value_of("cddl") {
-      match cddl_from_str(&fs::read_to_string(c)?) {
-        Ok(_) => {
-          println!("{}{} is conformant", Colored::Fg(Color::Green), c);
-        }
-        Err(e) => {
-          eprintln!("{}{} is not conformant. {}", Colored::Fg(Color::Red), c, e);
+      if let Some(e) = std::path::Path::new(c).extension() {
+        if e.to_string_lossy() != "cddl" {
+          println!("File \"{}\" must have the \".cddl\" extension", c);
+
+          return Ok(());
         }
       }
+      cddl_from_str(&fs::read_to_string(c)?, true).map(|_| ())?;
 
-      return Ok(());
+      let mut stdout = StandardStream::stdout(ColorChoice::Auto);
+      stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
+      writeln!(&mut stdout, "{} is conformant", c)?;
     }
   }
 
@@ -55,10 +59,14 @@ fn main() -> Result<(), Box<dyn Error>> {
       if let Some(json) = matches.value_of("json") {
         match validate_json_from_str(&fs::read_to_string(cddl)?, &fs::read_to_string(json)?) {
           Ok(()) => {
-            println!("{}Validation successful", Colored::Fg(Color::Green));
+            let mut stdout = StandardStream::stdout(ColorChoice::Auto);
+            stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
+            writeln!(&mut stdout, "Validation is successful")?;
           }
           Err(e) => {
-            eprintln!("{}Validation failed. {}", Colored::Fg(Color::Red), e);
+            let mut stderr = StandardStream::stderr(ColorChoice::Auto);
+            stderr.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
+            writeln!(&mut stderr, "Validation failed. {}", e)?;
           }
         }
 
