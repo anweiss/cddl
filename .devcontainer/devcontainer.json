@@ -1,23 +1,27 @@
 {
   "name": "Rust",
   "dockerFile": "Dockerfile",
-  "runArgs": ["--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined"],
-
+  "runArgs": [
+    "--cap-add=SYS_PTRACE",
+    "--security-opt",
+    "seccomp=unconfined"
+  ],
   // Set *default* container specific settings.json values on container create.
   "settings": {
     "terminal.integrated.shell.linux": "/bin/bash",
-    "lldb.executable": "/usr/bin/lldb"
+    "lldb.executable": "/usr/bin/lldb",
+    "rust-analyzer.updates.askBeforeDownload": false
   },
-
   // Add the IDs of extensions you want installed when the container is created.
-  "extensions": ["rust-lang.rust", "bungcip.better-toml", "vadimcn.vscode-lldb"]
-
+  "extensions": [
+    "matklad.rust-analyzer",
+    "bungcip.better-toml",
+    "vadimcn.vscode-lldb",
+  ],
   // Use 'forwardPorts' to make a list of ports inside the container available locally.
   // "forwardPorts": [],
-
   // Use 'postCreateCommand' to run commands after the container is created.
-  // "postCreateCommand": "rustc --version",
-
+  "postCreateCommand": "cargo build",
   // Uncomment to connect as a non-root user. See https://aka.ms/vscode-remote/containers/non-root.
-  // "remoteUser": "vscode"
+  "remoteUser": "vscode",
 }
