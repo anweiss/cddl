@@ -1470,7 +1470,7 @@ fn expect_null(ident: &str) -> Result {
 /// Validates JSON input against given CDDL input
 pub fn validate_json_from_str(cddl_input: &str, json_input: &str) -> Result {
   validate_json(
-    &parser::cddl_from_str(cddl_input)
+    &parser::cddl_from_str(cddl_input, false)
       .map_err(|e| Error::Compilation(CompilationError::CDDL(e)))?,
     &serde_json::from_str(json_input)
       .map_err(|e| Error::Compilation(CompilationError::Target(e.into())))?,

@@ -966,7 +966,7 @@ fn is_type_prelude(t: &str) -> bool {
 /// Validates CBOR input against given CDDL input
 pub fn validate_cbor_from_slice(cddl_input: &str, cbor_input: &[u8]) -> Result {
   validate_cbor(
-    &parser::cddl_from_str(cddl_input)
+    &parser::cddl_from_str(cddl_input, false)
       .map_err(|e| Error::Compilation(CompilationError::CDDL(e)))?,
     &serde_cbor::from_slice(cbor_input).map_err(|e| Error::Target(e.into()))?,
   )

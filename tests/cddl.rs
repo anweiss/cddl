@@ -17,11 +17,9 @@ fn verify_cddl_compiles() -> Result<(), parser::Error> {
       continue;
     }
 
-    match parser::cddl_from_str(&fs::read_to_string(file.path()).unwrap()) {
+    match parser::cddl_from_str(&fs::read_to_string(file.path()).unwrap(), true) {
       Ok(_) => println!("file: {:#?} ... success", file.path()),
-      Err(e) => {
-        println!("{}", e);
-
+      Err(_) => {
         return Err(parser::Error::PARSER);
       }
     }

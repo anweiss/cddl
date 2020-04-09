@@ -3,9 +3,12 @@ use super::{
   lexer::{self, Lexer, LexerError, Position},
   token::{self, ByteValue, Token, Value},
 };
-use annotate_snippets::{
-  display_list::{DisplayList, FormatOptions},
-  snippet::{Annotation, AnnotationType, Slice, Snippet, SourceAnnotation},
+#[cfg(feature = "std")]
+use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
+use codespan_reporting::{
+  diagnostic::{Diagnostic, Label},
+  files::SimpleFiles,
+  term::{self},
 };
 use std::{cmp::Ordering, fmt, mem, result};
 
@@ -116,6 +119,10 @@ where
   /// Print parser errors if there are any. Used with the `Error::PARSER`
   /// variant
   ///
+  /// # Arguments
+  ///
+  /// * `to_stderr` - When true, outputs formatted errors to stderr
+  ///
   /// # Example
   ///
   /// ```
@@ -125,54 +132,101 @@ where
   /// let input = r#"mycddl = ( int / float )"#;
   /// if let Ok(mut p) = Parser::new(Lexer::new(input).iter(), input) {
   ///   if let Err(Error::PARSER) = p.parse_cddl() {
-  ///     if let Some(errors) = p.print_errors() {
-  ///       println!("{}", errors);
-  ///     }
+  ///     let _ = p.report_errors(true);
   ///   }
   /// }
   /// ```
-  pub fn print_errors(&self) -> Option<String> {
+  #[cfg(feature = "std")]
+  pub fn report_errors(
+    &self,
+    to_stderr: bool,
+  ) -> std::result::Result<Option<String>, Box<dyn std::error::Error>> {
+    if self.errors.is_empty() {
+      return Ok(None);
+    }
+
+    let mut files = SimpleFiles::new();
+
+    let file_id = files.add("input", self.str_input);
+
+    let mut labels = Vec::new();
+    for error in self.errors.iter() {
+      labels.push(
+        Label::primary(file_id, error.position.range.0..error.position.range.1)
+          .with_message(error.message.to_string()),
+      );
+    }
+
+    let diagnostic = Diagnostic::error()
+      .with_message("parser errors")
+      .with_labels(labels);
+
+    let config = term::Config::default();
+
+    if to_stderr {
+      let writer = StandardStream::stderr(ColorChoice::Auto);
+      // TODO: Use `map_or_else()` once it is determined this crate should set
+      // its minimum version to 1.41
+      match term::emit(&mut writer.lock(), &config, &files, &diagnostic) {
+        Ok(_) => return Ok(None),
+        Err(e) => return Err(Box::from(e)),
+      };
+    }
+
+    let mut buffer = Vec::new();
+    let mut writer = term::termcolor::NoColor::new(&mut buffer);
+
+    term::emit(&mut writer, &config, &files, &diagnostic)?;
+
+    Ok(Some(String::from_utf8(buffer)?))
+  }
+
+  /// Print parser errors if there are any. Used with the `Error::PARSER`
+  /// variant
+  ///
+  /// # Example
+  ///
+  /// ```
+  /// use cddl::parser::{Error, Parser};
+  /// use cddl::lexer::Lexer;
+  ///
+  /// let input = r#"mycddl = ( int / float )"#;
+  /// if let Ok(mut p) = Parser::new(Lexer::new(input).iter(), input) {
+  ///   if let Err(Error::PARSER) = p.parse_cddl() {
+  ///     let _ = p.report_errors();
+  ///   }
+  /// }
+  /// ```
+  #[cfg(not(feature = "std"))]
+  pub fn report_errors(&self) -> Option<String> {
     if self.errors.is_empty() {
       return None;
     }
 
-    let input = self.str_input.to_string();
+    let mut files = SimpleFiles::new();
 
-    let mut errors = String::new();
+    let file_id = files.add("input", self.str_input);
 
+    let mut labels = Vec::new();
     for error in self.errors.iter() {
-      errors.push_str(
-        &format!(
-          "{}\n\n",
-          DisplayList::from(Snippet {
-            title: Some(Annotation {
-              label: Some("Parser error".into()),
-              id: None,
-              annotation_type: AnnotationType::Error,
-            }),
-            footer: vec![],
-            slices: vec![Slice {
-              source: input.clone(),
-              line_start: 1,
-              origin: Some("input".to_string()),
-              fold: false,
-              annotations: vec![SourceAnnotation {
-                range: (error.position.range.0, error.position.range.1,),
-                label: error.message.to_string(),
-                annotation_type: AnnotationType::Error,
-              }],
-            }],
-            opt: FormatOptions {
-              color: true,
-              ..Default::default()
-            }
-          })
-        )
-        .to_string(),
+      labels.push(
+        Label::primary(file_id, error.position.range.0..error.position.range.1)
+          .with_message(error.message.to_string()),
       );
     }
 
-    Some(errors)
+    let diagnostic = Diagnostic::error()
+      .with_message("parser errors")
+      .with_labels(labels);
+
+    let config = term::Config::default();
+
+    let mut buffer = Vec::new();
+    let mut writer = term::termcolor::NoColor::new(&mut buffer);
+
+    term::emit(&mut writer, &config, &files, &diagnostic).ok()?;
+
+    Some(String::from_utf8(buffer).ok()?)
   }
 
   fn next_token(&mut self) -> Result<()> {
@@ -569,6 +623,8 @@ where
     self.parser_position.line = self.lexer_position.line;
 
     let begin_type_range = if let Some(Type2::ParenthesizedType { span, .. }) = parenthesized_type {
+      self.parser_position.line = span.2;
+
       span.0
     } else {
       self.parser_position.range.0
@@ -601,11 +657,13 @@ where
   }
 
   fn parse_type1(&mut self, parenthesized_type: Option<Type2>) -> Result<Type1> {
-    let begin_type1_line = self.lexer_position.line;
+    let mut begin_type1_line = self.lexer_position.line;
     let begin_type1_range = self.lexer_position.range.0;
 
     let (t2_1, begin_type1_range) =
       if let Some(Type2::ParenthesizedType { pt, span }) = parenthesized_type {
+        begin_type1_line = span.2;
+
         (Type2::ParenthesizedType { pt, span }, span.0)
       } else {
         (self.parse_type2()?, begin_type1_range)
@@ -1790,12 +1848,38 @@ where
 }
 
 /// Returns a `ast::CDDL` from a `&str`
+///
+/// # Arguments
+///
+/// * `input` - A string slice with the CDDL text input
+/// * `print_stderr` - When true, print any errors to stderr
+///
+/// # Example
+///
+/// ```
+/// use cddl::parser::cddl_from_str;
+///
+/// let input = r#"myrule = int"#;
+/// let _ = cddl_from_str(input, true);
 #[cfg(not(target_arch = "wasm32"))]
-pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL, String> {
+#[cfg(feature = "std")]
+pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDDL, String> {
   match Parser::new(Lexer::new(input).iter(), input).map_err(|e| e.to_string()) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c),
-      Err(Error::PARSER) if !p.errors.is_empty() => Err(p.print_errors().unwrap()),
+      Err(Error::PARSER) => {
+        let e = if print_stderr {
+          p.report_errors(true)
+        } else {
+          p.report_errors(false)
+        };
+
+        if let Ok(Some(e)) = e {
+          return Err(e);
+        }
+
+        Err(Error::PARSER.to_string())
+      }
       Err(e) => Err(e.to_string()),
     },
     Err(e) => Err(e),
@@ -1803,6 +1887,52 @@ pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL, String> {
 }
 
 /// Returns a `ast::CDDL` from a `&str`
+///
+/// # Arguments
+///
+/// * `input` - A string slice with the CDDL text input
+///
+/// # Example
+///
+/// ```
+/// use cddl::parser::cddl_from_str;
+///
+/// let input = r#"myrule = int"#;
+/// let c = cddl_from_str(input)?;
+/// ```
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "std"))]
+pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL, String> {
+  match Parser::new(Lexer::new(input).iter(), input).map_err(|e| e.to_string()) {
+    Ok(mut p) => match p.parse_cddl() {
+      Ok(c) => Ok(c),
+      Err(Error::PARSER) => {
+        if let Some(e) = p.report_errors() {
+          return Err(e);
+        }
+
+        Err(Error::PARSER.to_string())
+      }
+      Err(e) => Err(e.to_string()),
+    },
+    Err(e) => Err(e),
+  }
+}
+
+/// Returns a `ast::CDDL` wrapped in `JsValue` from a `&str`
+///
+/// # Arguments
+///
+/// * `input` - A string slice with the CDDL text input
+///
+/// # Example
+///
+/// ```
+/// use cddl::parser::cddl_from_str;
+///
+/// let input = r#"myrule = int"#;
+/// let c = cddl_from_str(input)?;
+/// ```
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
@@ -1811,7 +1941,13 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
       Ok(c) => JsValue::from_serde(&c)
         .map_err(|e| JsValue::from(e.to_string()))
         .map(|c| c),
-      Err(Error::PARSER) if !p.errors.is_empty() => Err(JsValue::from(p.print_errors().unwrap())),
+      Err(Error::PARSER) => {
+        if let Ok(Some(e)) = p.report_errors(false) {
+          return Err(JsValue::from(e));
+        }
+
+        Err(JsValue::from(Error::PARSER.to_string()))
+      }
       Err(e) => Err(JsValue::from(e.to_string())),
     },
     Err(e) => Err(JsValue::from(e.to_string())),
@@ -1819,26 +1955,105 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
 }
 
 /// Validates CDDL input against RFC 8610
+///
+/// # Arguments
+///
+/// * `input` - A string slice with the CDDL text input
+/// * `print_stderr` - When true, prints any errors to stderr
+///
+/// # Example
+///
+/// ```
+/// use cddl::parser::compile_cddl_from_str;
+///
+/// let input = r#"myrule = int"#;
+/// let _ = compile_cddl_from_str(input, true);
+/// ```
 #[cfg(not(target_arch = "wasm32"))]
-pub fn compile_cddl_from_str(input: &str) -> Result<()> {
-  match Parser::new(Lexer::new(input).iter(), input) {
+#[cfg(feature = "std")]
+pub fn compile_cddl_from_str(input: &str, print_stderr: bool) -> Result<()> {
+  match Parser::new(Lexer::new(input).iter(), input).map_err(|e| e.to_string()) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(_) => Ok(()),
-      Err(Error::PARSER) if !p.errors.is_empty() => Err(Error::CDDL(p.print_errors().unwrap())),
+      Err(Error::PARSER) => {
+        let e = if print_stderr {
+          p.report_errors(true)
+        } else {
+          p.report_errors(false)
+        };
+
+        if let Ok(Some(e)) = e {
+          return Err(Error::CDDL(e));
+        }
+
+        Err(Error::CDDL(Error::PARSER.to_string()))
+      }
       Err(e) => Err(e),
     },
-    Err(e) => Err(e),
+    Err(e) => Err(Error::CDDL(e)),
   }
 }
 
 /// Validates CDDL input against RFC 8610
+///
+/// # Arguments
+///
+/// * `input` - A string slice with the CDDL text input
+///
+/// # Example
+///
+/// ```
+/// use cddl::parser::compile_cddl_from_str;
+///
+/// let input = r#"myrule = int"#;
+/// let _ = compile_cddl_from_str(input);
+/// ```
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "std"))]
+pub fn compile_cddl_from_str(input: &str) -> Result<()> {
+  match Parser::new(Lexer::new(input).iter(), input).map_err(|e| e.to_string()) {
+    Ok(mut p) => match p.parse_cddl() {
+      Ok(_) => Ok(()),
+      Err(Error::PARSER) => {
+        if let Some(e) = p.report_errors() {
+          return Err(Error::CDDL(e));
+        }
+
+        Err(Error::CDDL(Error::PARSER.to_string()))
+      }
+      Err(e) => Err(e),
+    },
+    Err(e) => Err(Error::CDDL(e)),
+  }
+}
+
+/// Validates CDDL input against RFC 8610
+///
+/// # Arguments
+///
+/// * `input` - A string slice with the CDDL text input
+///
+/// # Example
+///
+/// ```
+/// use cddl::parser::compile_cddl_from_str;
+///
+/// let input = r#"myrule = int"#;
+/// let _ = compile_cddl_from_str(input);
+/// ```
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn compile_cddl_from_str(input: &str) -> result::Result<(), JsValue> {
   match Parser::new(Lexer::new(input).iter(), input) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(_) => Ok(()),
-      Err(Error::PARSER) if !p.errors.is_empty() => Err(JsValue::from(p.print_errors().unwrap())),
+      Err(Error::PARSER) => {
+        if let Ok(Some(e)) = p.report_errors(false) {
+          return Err(JsValue::from(e));
+        }
+
+        Err(JsValue::from(Error::PARSER.to_string()))
+      }
       Err(e) => Err(JsValue::from(e.to_string())),
     },
     Err(e) => Err(JsValue::from(e.to_string())),
@@ -1852,20 +2067,25 @@ mod tests {
     super::{ast, lexer::Lexer, token::SocketPlug},
     *,
   };
+  use indoc::indoc;
   use pretty_assertions::assert_eq;
 
   #[test]
   #[allow(unused_variables)]
   fn verify_cddl() -> Result<()> {
-    let input = r#"myrule = secondrule
-myrange = 10..upper
-upper = 500 / 600
-gr = 2* ( test )
-messages = message<"reboot", "now">
-message<t, v> = {type: 2, value: v}
-color = &colors
-colors = ( red: "red" )
-thing = ( int / float )"#;
+    let input = indoc!(
+      r#"
+        myrule = secondrule
+        myrange = 10..upper
+        upper = 500 / 600
+        gr = 2* ( test )
+        messages = message<"reboot", "now">
+        message<t, v> = {type: 2, value: v}
+        color = &colors
+        colors = ( red: "red" )
+        thing = ( int / float )
+      "#
+    );
 
     match Parser::new(Lexer::new(input).iter(), input) {
       Ok(mut p) => match p.parse_cddl() {
@@ -2304,11 +2524,18 @@ thing = ( int / float )"#;
 
           Ok(())
         }
-        Err(Error::PARSER) if !p.errors.is_empty() => {
-          #[cfg(feature = "std")]
-          println!("{}", p.print_errors().unwrap());
 
-          Err(Error::CDDL(p.print_errors().unwrap()))
+        #[cfg(feature = "std")]
+        Err(Error::PARSER) if !p.errors.is_empty() => {
+          let _ = p.report_errors(true);
+
+          Err(Error::CDDL(p.report_errors(false).unwrap().unwrap()))
+        }
+        #[cfg(not(feature = "std"))]
+        Err(Error::PARSER) if !p.errors.is_empty() => {
+          let _ = p.report_errors();
+
+          Err(Error::CDDL(p.report_errors().unwrap()))
         }
         Err(e) => Err(e),
       },
@@ -2318,24 +2545,56 @@ thing = ( int / float )"#;
 
   #[test]
   fn verify_rule_diagnostic() -> Result<()> {
-    let input = r#"a = 1234
-a = b"#;
+    let input = indoc!(
+      r#"
+        a = 1234
+        a = b
+      "#
+    );
 
     match Parser::new(Lexer::new(input).iter(), input) {
       Ok(mut p) => match p.parse_cddl() {
         Ok(_) => Ok(()),
+        #[cfg(feature = "std")]
+        Err(Error::PARSER) if !p.errors.is_empty() => {
+          let e = p.report_errors(false).unwrap().unwrap();
+
+          #[cfg(feature = "std")]
+          println!("{}", e);
+
+          assert_eq!(
+            e,
+            indoc!(
+              r#"
+                error: parser errors
+
+                   ┌── input:2:1 ───
+                   │
+                 2 │ a = b
+                   │ ^^^^^ Rule with name 'a' already defined
+                   │
+
+              "#
+            )
+          );
+          Ok(())
+        }
+        #[cfg(not(feature = "std"))]
         Err(Error::PARSER) if !p.errors.is_empty() => {
           assert_eq!(
-            p.print_errors().unwrap(),
-            r#"error: Parser error
- --> input:2:1
-  |
-1 | a = 1234
-2 | a = b
-  | ^^^^^ Rule with name 'a' already defined
-  |
+            p.report_errors().unwrap(),
+            indoc!(
+              r#"
+                error: parser errors
 
-"#
+                   ┌── input:2:1 ───
+                   │
+                 2 │ a = b
+                   │ ^^^^^ Rule with name 'a' already defined
+                   │
+
+              "#
+            )
           );
           Ok(())
         }
@@ -2380,20 +2639,46 @@ a = b"#;
     match Parser::new(Lexer::new(input).iter(), input) {
       Ok(mut p) => match p.parse_genericparm() {
         Ok(_) => Ok(()),
+        #[cfg(feature = "std")]
         Err(Error::PARSER) if !p.errors.is_empty() => {
+          let e = p.report_errors(false).unwrap().unwrap();
+
           #[cfg(feature = "std")]
-          println!("{}", p.print_errors().unwrap());
+          println!("{}", e);
 
           assert_eq!(
-            p.print_errors().unwrap(),
-            r#"error: Parser error
- --> input:1:2
-  |
-1 | <1, 2>
-  |  ^ Generic parameters must be named identifiers
-  |
+            e,
+            indoc!(
+              r#"
+                error: parser errors
 
-"#
+                   ┌── input:1:2 ───
+                   │
+                 1 │ <1, 2>
+                   │  ^ Generic parameters must be named identifiers
+                   │
+
+              "#
+            )
+          );
+          Ok(())
+        }
+        #[cfg(not(feature = "std"))]
+        Err(Error::PARSER) if !p.errors.is_empty() => {
+          assert_eq!(
+            p.report_errors().unwrap(),
+            indoc!(
+              r#"
+                error: parser errors
+
+                   ┌── input:1:2 ───
+                   │
+                 1 │ <1, 2>
+                   │  ^ Generic parameters must be named identifiers
+                   │
+
+              "#
+            )
           );
           Ok(())
         }
@@ -2405,55 +2690,70 @@ a = b"#;
 
   #[test]
   fn verify_genericparm_rule_diagnostic() -> Result<()> {
-    let input = r#"rule<paramA paramB> = test
-ruleb = rulec
-ruleb = ruled
-rulec = rulee
-rulec = rulee2"#;
+    let input = indoc!(
+      r#"
+        rule<paramA paramB> = test
+        ruleb = rulec
+        ruleb = ruled
+        rulec = rulee
+        rulec = rulee2
+      "#
+    );
 
     match Parser::new(Lexer::new(input).iter(), input) {
       Ok(mut p) => match p.parse_cddl() {
         Ok(_) => Ok(()),
+        #[cfg(feature = "std")]
         Err(Error::PARSER) if !p.errors.is_empty() => {
-          #[cfg(feature = "std")]
-          println!("{}", p.print_errors().unwrap());
+          let e = p.report_errors(false).unwrap().unwrap();
+
+          println!("{}", e);
 
           assert_eq!(
-            p.print_errors().unwrap(),
-            r#"error: Parser error
- --> input:1:6
-  |
-1 | rule<paramA paramB> = test
-  |      ^^^^^^^^^^^^^ Generic parameters should be between angle brackets '<' and '>' and separated by a comma ','
-2 | ruleb = rulec
-3 | ruleb = ruled
-4 | rulec = rulee
-5 | rulec = rulee2
-  |
+            e,
+            indoc!(
+              r#"
+                error: parser errors
 
-error: Parser error
- --> input:3:1
-  |
-1 | rule<paramA paramB> = test
-2 | ruleb = rulec
-3 | ruleb = ruled
-  | ^^^^^^^^^^^^^ Rule with name 'ruleb' already defined
-4 | rulec = rulee
-5 | rulec = rulee2
-  |
+                   ┌── input:1:6 ───
+                   │
+                 1 │ rule<paramA paramB> = test
+                   │      ^^^^^^^^^^^^^ Generic parameters should be between angle brackets '<' and '>' and separated by a comma ','
+                 2 │ ruleb = rulec
+                 3 │ ruleb = ruled
+                   │ ^^^^^^^^^^^^^ Rule with name 'ruleb' already defined
+                 4 │ rulec = rulee
+                 5 │ rulec = rulee2
+                   │ ^^^^^^^^^^^^^^ Rule with name 'rulec' already defined
+                   │
 
-error: Parser error
- --> input:5:1
-  |
-1 | rule<paramA paramB> = test
-2 | ruleb = rulec
-3 | ruleb = ruled
-4 | rulec = rulee
-5 | rulec = rulee2
-  | ^^^^^^^^^^^^^^ Rule with name 'rulec' already defined
-  |
+              "#
+            )
+          );
+          Ok(())
+        }
+        #[cfg(not(feature = "std"))]
+        Err(Error::PARSER) if !p.errors.is_empty() => {
+          assert_eq!(
+            p.report_errors().unwrap(),
+            indoc!(
+              r#"
+                error: parser errors
 
-"#
+                   ┌── input:1:6 ───
+                   │
+                 1 │ rule<paramA paramB> = test
+                   │      ^^^^^^^^^^^^^ Generic parameters should be between angle brackets '<' and '>' and separated by a comma ','
+                 2 │ ruleb = rulec
+                 3 │ ruleb = ruled
+                   │ ^^^^^^^^^^^^^ Rule with name 'ruleb' already defined
+                 4 │ rulec = rulee
+                 5 │ rulec = rulee2
+                   │ ^^^^^^^^^^^^^^ Rule with name 'rulec' already defined
+                   │
+
+              "#
+            )
           );
           Ok(())
         }

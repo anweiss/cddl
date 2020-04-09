@@ -203,7 +203,16 @@ pub enum Token {
 }
 
 impl Token {
-  /// Returns optional string literal of token in standard prelude
+  /// Returns optional string literal of token if it is in the standard prelude
+  ///
+  /// # Example
+  ///
+  /// ```
+  /// use cddl::token::Token;
+  ///
+  /// let t = Token::ANY;
+  /// assert_eq!(t.in_standard_prelude(), Some("any"));
+  /// ```
   pub fn in_standard_prelude(&self) -> Option<&'static str> {
     match self {
       Token::ANY => Some("any"),
@@ -513,6 +522,18 @@ impl fmt::Display for Token {
 }
 
 /// Return an optional control token from a given string
+///
+/// # Arguments
+///
+/// `ident` - String slice with ident literal
+///
+/// # Example
+///
+/// ```
+/// use cddl::token::{lookup_control_from_str, Token};
+///
+/// assert_eq!(lookup_control_from_str(".size"), Some(Token::SIZE));
+/// ```
 pub fn lookup_control_from_str(ident: &str) -> Option<Token> {
   match ident {
     ".size" => Some(Token::SIZE),
@@ -534,7 +555,20 @@ pub fn lookup_control_from_str(ident: &str) -> Option<Token> {
   }
 }
 
-/// Return an optional string from a given token
+/// Return an optional string from a given token if it is a control operator.
+/// Inverse of `lookup_control_from_str`
+///
+/// # Arguments
+///
+/// `t` - Reference to a `Token`
+///
+/// # Example
+///
+/// ```
+/// use cddl::token::{control_str_from_token, Token};
+///
+/// assert_eq!(control_str_from_token(&Token::SIZE), Some(".size"));
+/// ```
 pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
   match t {
     Token::SIZE => Some(".size"),
@@ -557,6 +591,18 @@ pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
 }
 
 /// Returns token in standard prelude from given string
+///
+/// # Arguments
+///
+/// `ident` - String slice with the token literal
+///
+/// # Example
+///
+/// ```
+/// use cddl::token::{lookup_ident, Token};
+///
+/// assert_eq!(lookup_ident("false"), Token::FALSE);
+/// ```
 pub fn lookup_ident(ident: &str) -> Token {
   match ident {
     "false" => Token::FALSE,
