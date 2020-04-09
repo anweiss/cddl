@@ -1898,7 +1898,7 @@ pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDD
 /// use cddl::parser::cddl_from_str;
 ///
 /// let input = r#"myrule = int"#;
-/// let c = cddl_from_str(input)?;
+/// let _ = cddl_from_str(input);
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(not(feature = "std"))]
