@@ -8,7 +8,7 @@ use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
   files::SimpleFiles,
-  term::{self},
+  term,
 };
 use std::{cmp::Ordering, fmt, mem, result};
 
