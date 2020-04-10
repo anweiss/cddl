@@ -916,80 +916,112 @@ impl Validator<Value> for CDDL {
     let mut errors: Vec<Error> = Vec::new();
 
     // Check for a wildcard entry
+    // * tstr => any
     let wildcard_entry = gc.group_entries.iter().find_map(|ge| match &ge.0 {
-      GroupEntry::ValueMemberKey { ge, .. } => match &ge.member_key {
-        Some(MemberKey::Type1 { t1, is_cut, .. }) if !is_cut => match &t1.type2 {
-          Type2::Typename {
-            ident,
-            generic_arg: None,
-            ..
-          } if ident.ident == "tstr" => Some(&ge.entry_type),
-          _ => None,
-        },
-        _ => None,
-      },
+      GroupEntry::ValueMemberKey { ge, .. } => {
+        if let Some(Occur::ZeroOrMore(_)) = ge.occur {
+          match &ge.member_key {
+            Some(MemberKey::Type1 { t1, is_cut, .. }) if !is_cut => match &t1.type2 {
+              Type2::Typename {
+                ident,
+                generic_arg: None,
+                ..
+              } if ident.ident == "tstr" => Some(&ge.entry_type),
+              _ => None,
+            },
+            _ => None,
+          }
+        } else {
+          None
+        }
+      }
       _ => None,
     });
 
-    for ge in gc.group_entries.iter() {
+    for (idx, ge) in gc.group_entries.iter().enumerate() {
       match value {
         Value::Array(values) => {
-          if let GroupEntry::TypeGroupname { ge: tge, .. } = &ge.0 {
-            if let Some(o) = &tge.occur {
-              self.validate_array_occurrence(o, &tge.name.to_string(), values)?;
-            }
-          }
-
-          if let GroupEntry::InlineGroup {
-            occur: geo,
-            group: g,
-            ..
-          } = &ge.0
-          {
-            if let Some(o) = geo {
-              self.validate_array_occurrence(&o, &g.to_string(), values)?;
-            }
-          }
-
-          let validate_all_entries =
-            |v: &Value| match self.validate_group_entry(&ge.0, false, None, occur, v) {
-              Ok(()) => true,
-              Err(e) => {
-                errors.push(e);
-
-                false
-              }
-            };
-
-          if let GroupEntry::TypeGroupname { ge: tge, .. } = &ge.0 {
-            if self.rules.iter().any(|r| match r {
-              Rule::Type { rule, .. } if rule.name == tge.name => true,
-              _ => false,
-            }) && values.iter().all(validate_all_entries)
-            {
-              return Ok(());
-            }
-          }
-
-          // If an array element is not validated by any of the group entries,
-          // return scoped errors
-          let mut errors: Vec<Error> = Vec::new();
-
-          if values.iter().any(
-            |v| match self.validate_group_entry(&ge.0, false, None, occur, v) {
-              Ok(()) => true,
-              Err(e) => {
-                errors.push(e);
-
-                false
-              }
-            },
-          ) {
+          // [ ( a: int, b: tstr ) ]
+          if let GroupEntry::InlineGroup { group, .. } = &ge.0 {
+            self.validate_group(group, None, value)?;
             continue;
           }
 
-          if !errors.is_empty() {
-            return Err(Error::MultiError(errors));
+          if let GroupEntry::TypeGroupname { ge: tge, .. } = &ge.0 {
+            // [ * reputon ]
+            if gc.group_entries.len() == 1 {
+              if let Some(o) = &tge.occur {
+                self.validate_array_occurrence(o, &tge.name.to_string(), values)?;
+
+                if let Occur::ZeroOrMore(_) = o {
+                  if values.is_empty() {
+                    return Ok(());
+                  }
+                }
+
+                if is_type_json_prelude(&tge.name.ident) {
+                  let validate_all_values = |v| {
+                    self
+                      .validate_type2(
+                        &Type2::Typename {
+                          ident: tge.name.clone(),
+                          generic_arg: tge.generic_arg.clone(),
+                          span: (0, 0, 0),
+                        },
+                        None,
+                        None,
+                        None,
+                        v,
+                      )
+                      .is_ok()
+                  };
+
+                  if values.iter().all(validate_all_values) {
+                    return Ok(());
+                  } else {
+                    return Err(
+                      JSONError {
+                        expected_memberkey: None,
+                        expected_value: gc.to_string(),
+                        actual_memberkey: None,
+                        actual_value: value.clone(),
+                      }
+                      .into(),
+                    );
+                  }
+                }
+
+                let validate_all_values = |v| {
+                  self
+                    .validate_rule_for_ident(&tge.name, false, None, None, None, v)
+                    .is_ok()
+                };
+
+                if values.iter().all(validate_all_values) {
+                  return Ok(());
+                } else {
+                  return Err(
+                    JSONError {
+                      expected_memberkey: None,
+                      expected_value: gc.to_string(),
+                      actual_memberkey: None,
+                      actual_value: value.clone(),
+                    }
+                    .into(),
+                  );
+                }
+              }
+            }
+          }
+
+          // [ a: int, b: tstr ]
+          if let GroupEntry::ValueMemberKey { ge: vmke, .. } = &ge.0 {
+            // Ignore name/value entries with an occurrence indicator to avoid ambiguity
+            if vmke.occur.is_none() {
+              if let Some(v) = values.get(idx) {
+                self.validate_group_entry(&ge.0, false, None, occur, v)?;
+              }
+            }
           }
         }
         // Validate the object key/value pairs against each group entry,

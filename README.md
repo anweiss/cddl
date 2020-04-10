@@ -126,9 +126,9 @@ The following types and features of CDDL are supported by this crate for validat
 | CDDL                 | JSON                          |
 | -------------------- | ----------------------------- |
 | structs              | objects                       |
-| arrays               | arrays                        |
+| arrays               | arrays<sup>[1](#arrays)</sup> |
 | text / tstr          | string                        |
-| number / int / float | number<sup>[1](#number)</sup> |
+| number / int / float | number<sup>[2](#number)</sup> |
 | bool / true / false  | boolean                       |
 | null / nil           | null                          |
 | any                  | any valid JSON                |
@@ -139,8 +139,8 @@ Below is the table of supported control operators and whether or not they've bee
 
 | Control operator | Implementation status                                                                                                                                                                       |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.pcre`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup>                     |
-| `.regex`         | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[2](#regex)</sup> (alias for `.pcre`) |
+| `.pcre`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup>                     |
+| `.regex`         | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup> (alias for `.pcre`) |
 | `.size`          | Incomplete                                                                                                                                                                                  |
 | `.bits`          | Unsupported for JSON validation                                                                                                                                                             |
 | `.cbor`          | Unsupported for JSON validation                                                                                                                                                             |
@@ -155,9 +155,11 @@ Below is the table of supported control operators and whether or not they've bee
 | `.ne`            | Incomplete                                                                                                                                                                                  |
 | `.default`       | Incomplete                                                                                                                                                                                  |
 
-<a name="number">1</a>: While JSON itself does not distinguish between integers and floating-point numbers, this crate does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON.
+<a name="arrays">1</a>: When groups are used to validate arrays, group entries with occurrence indicators are ignored due to complexities involved with processing these ambiguities. For proper JSON validation, avoid writing CDDL that looks like the following: `[ * a: int, b: tstr, ? c: int ]`.
 
-<a name="regex">2</a>: Due to Perl-Compatible Regular Expressions (PCREs) being more widely used than XSD regular expressions, this crate also provides support for the proposed `.pcre` control extension in place of the `.regexp` operator (see [Discussion](https://tools.ietf.org/html/rfc8610#section-3.8.3.2) and [CDDL-Freezer proposal](https://tools.ietf.org/html/draft-bormann-cbor-cddl-freezer-02#section-5.1)). Ensure that your regex string is properly JSON escaped when using this control.
+<a name="number">2</a>: While JSON itself does not distinguish between integers and floating-point numbers, this crate does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON.
+
+<a name="regex">3</a>: Due to Perl-Compatible Regular Expressions (PCREs) being more widely used than XSD regular expressions, this crate also provides support for the proposed `.pcre` control extension in place of the `.regexp` operator (see [Discussion](https://tools.ietf.org/html/rfc8610#section-3.8.3.2) and [CDDL-Freezer proposal](https://tools.ietf.org/html/draft-bormann-cbor-cddl-freezer-02#section-5.1)). Ensure that your regex string is properly JSON escaped when using this control.
 
 ### Comparing with JSON schema and JSON schema language
 
