@@ -1551,6 +1551,8 @@ where
           let t = self.cur_token.clone();
           tokens.push(Ok((self.lexer_position, t)));
 
+          self.parser_position.range.1 = self.lexer_position.range.1;
+
           self.next_token()?;
         }
 

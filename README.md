@@ -123,37 +123,37 @@ The first non-group rule defined by a CDDL data structure definition determines 
 
 The following types and features of CDDL are supported by this crate for validating JSON:
 
-|CDDL|JSON|
-|----|----|
-|structs|objects|
-|arrays|arrays<sup>[1](#arrays)</sup>|
-|text / tstr|string|
-|number / int / float|number<sup>[2](#number)</sup>|
-|bool / true / false|boolean|
-|null / nil|null|
-|any|any valid JSON|
+| CDDL                 | JSON                          |
+| -------------------- | ----------------------------- |
+| structs              | objects                       |
+| arrays               | arrays<sup>[1](#arrays)</sup> |
+| text / tstr          | string                        |
+| number / int / float | number<sup>[2](#number)</sup> |
+| bool / true / false  | boolean                       |
+| null / nil           | null                          |
+| any                  | any valid JSON                |
 
 Since JSON objects only support keys whose types are JSON strings, member keys defined in CDDL structs must use either the colon syntax (`mykey: tstr`) or the double arrow syntax with double quotes (`"mykey" => tstr`). Unquoted member keys used with the double arrow syntax must resolve to one of the supported data types that can be used to validate JSON strings (`text` or `tstr`). Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed and monomorphized into their full representations before being evaluated for JSON validation.
 
 Below is the table of supported control operators and whether or not they've been implemented as of the current release:
 
-|Control operator|Implementation status|
-|----------------|---------------------|
-|`.pcre`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup>|
-|`.regex`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup> (alias for `.pcre`)|
-|`.size`|Incomplete|
-|`.bits`|Unsupported for JSON validation|
-|`.cbor`|Unsupported for JSON validation|
-|`.cborseq`|Unsupported for JSON validation|
-|`.within`|Incomplete|
-|`.and`|Incomplete|
-|`.lt`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
-|`.le`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
-|`.gt`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
-|`.ge`|<g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>|
-|`.eq`|Partial (text and numeric values)|
-|`.ne`|Incomplete|
-|`.default`|Incomplete|
+| Control operator | Implementation status                                                                                                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.pcre`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup>                     |
+| `.regex`         | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup> (alias for `.pcre`) |
+| `.size`          | Incomplete                                                                                                                                                                                  |
+| `.bits`          | Unsupported for JSON validation                                                                                                                                                             |
+| `.cbor`          | Unsupported for JSON validation                                                                                                                                                             |
+| `.cborseq`       | Unsupported for JSON validation                                                                                                                                                             |
+| `.within`        | Incomplete                                                                                                                                                                                  |
+| `.and`           | Incomplete                                                                                                                                                                                  |
+| `.lt`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.le`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.gt`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.ge`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.eq`            | Partial (text and numeric values)                                                                                                                                                           |
+| `.ne`            | Incomplete                                                                                                                                                                                  |
+| `.default`       | Incomplete                                                                                                                                                                                  |
 
 <a name="arrays">1</a>: When groups are used to validate arrays, group entries with occurrence indicators are ignored due to complexities involved with processing these ambiguities. For proper JSON validation, avoid writing CDDL that looks like the following: `[ * a: int, b: tstr, ? c: int ]`.
 
