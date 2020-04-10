@@ -2,8 +2,12 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use super::parser;
-use crossterm::{terminal, ClearType};
-use std::io::{BufRead, Result, Write};
+use crossterm::{
+  cursor, execute,
+  terminal::{Clear, ClearType},
+  Result,
+};
+use std::io::{stdout, BufRead, Write};
 
 const PROMPT: &[u8] = b">> ";
 
@@ -24,14 +28,9 @@ pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<()> {
     if let Ok(Some(_)) = control(&line) {
       writer.flush()?;
     } else {
-      writer.write_all(
-        format!(
-          "{:#?}\n",
-          parser::cddl_from_str(&line, false)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
-        )
-        .as_bytes(),
-      )?;
+      if let Ok(c) = parser::cddl_from_str(&line, true) {
+        writer.write_all(format!("{:#?}\n", c).as_bytes())?;
+      }
 
       writer.flush()?;
     }
@@ -39,15 +38,21 @@ pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<()> {
 }
 
 fn control(line: &str) -> Result<Option<()>> {
+  let mut stdout = stdout();
+
   match line {
     "clear\n" => {
-      let terminal = terminal();
-
-      terminal.clear(ClearType::All)?;
+      execute!(stdout, Clear(ClearType::All))?;
+      execute!(stdout, cursor::MoveTo(0, 0))?;
 
       Ok(Some(()))
     }
-    "quit\n" | "exit\n" => std::process::exit(0),
+    "quit\n" | "exit\n" => {
+      execute!(stdout, Clear(ClearType::All))?;
+      execute!(stdout, cursor::MoveTo(0, 0))?;
+
+      std::process::exit(0)
+    }
     _ => Ok(None),
   }
 }
