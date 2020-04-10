@@ -1,7 +1,7 @@
 #![cfg(feature = "std")]
 #![cfg(not(target_arch = "wasm32"))]
 
-use super::parser;
+use super::{lexer, parser};
 use crossterm::{
   cursor, execute,
   terminal::{Clear, ClearType},
@@ -28,7 +28,7 @@ pub fn start<R: BufRead, W: Write>(mut reader: R, mut writer: W) -> Result<()> {
     if let Ok(Some(_)) = control(&line) {
       writer.flush()?;
     } else {
-      if let Ok(c) = parser::cddl_from_str(&line, true) {
+      if let Ok(c) = parser::cddl_from_str(&mut lexer::Lexer::new(&line), &line, true) {
         writer.write_all(format!("{:#?}\n", c).as_bytes())?;
       }
 

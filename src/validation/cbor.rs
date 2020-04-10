@@ -1,10 +1,10 @@
 use crate::{
   ast::*,
-  parser,
+  lexer, parser,
   validation::{CompilationError, Error, Result, Validator},
 };
 use serde_cbor::{self, Value};
-use std::{f64, fmt};
+use std::{borrow::Cow, f64, fmt};
 
 /// Error type when validating CDDL
 #[derive(Debug)]
@@ -63,7 +63,7 @@ impl Into<Error> for CBORError {
   }
 }
 
-impl Validator<Value> for CDDL {
+impl<'a> Validator<Value> for CDDL<'a> {
   fn validate(&self, value: &Value) -> Result {
     for r in self.rules.iter() {
       if let Rule::Type { rule, .. } = r {
@@ -254,7 +254,10 @@ impl Validator<Value> for CDDL {
           .into(),
         ),
       },
-      Type2::B16ByteString { value: bs, .. } => match value {
+      Type2::B16ByteString {
+        value: Cow::Borrowed(bs),
+        ..
+      } => match value {
         Value::Bytes(b) if b == bs => Ok(()),
         _ => Err(
           CBORError {
@@ -266,7 +269,40 @@ impl Validator<Value> for CDDL {
           .into(),
         ),
       },
-      Type2::B64ByteString { value: bs, .. } => match value {
+      Type2::B16ByteString {
+        value: Cow::Owned(bs),
+        ..
+      } => match value {
+        Value::Bytes(b) if b == bs => Ok(()),
+        _ => Err(
+          CBORError {
+            expected_memberkey,
+            expected_value: t2.to_string(),
+            actual_memberkey,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Type2::B64ByteString {
+        value: Cow::Borrowed(bs),
+        ..
+      } => match value {
+        Value::Bytes(b) if b == bs => Ok(()),
+        _ => Err(
+          CBORError {
+            expected_memberkey,
+            expected_value: t2.to_string(),
+            actual_memberkey,
+            actual_value: value.clone(),
+          }
+          .into(),
+        ),
+      },
+      Type2::B64ByteString {
+        value: Cow::Owned(bs),
+        ..
+      } => match value {
         Value::Bytes(b) if b == bs => Ok(()),
         _ => Err(
           CBORError {
@@ -558,11 +594,11 @@ impl Validator<Value> for CDDL {
                 // CDDL { "my-key" => tstr, } validates JSON { "my-key": "myvalue" }
                 Value::Map(om) => {
                   if !is_type_prelude(&vmke.entry_type.to_string()) {
-                    if let Some(v) = om.get(&Value::Text(t.to_string())) {
+                    if let Some(v) = om.get(&Value::Text((*t).to_string())) {
                       return self.validate_type(
                         &vmke.entry_type,
                         Some(mk.to_string()),
-                        Some(t.to_string()),
+                        Some((*t).to_string()),
                         occur,
                         v,
                       );
@@ -577,11 +613,11 @@ impl Validator<Value> for CDDL {
                     );
                   }
 
-                  if let Some(v) = om.get(&Value::Text(t.to_string())) {
+                  if let Some(v) = om.get(&Value::Text((*t).to_string())) {
                     self.validate_type(
                       &vmke.entry_type,
                       Some(mk.to_string()),
-                      Some(t.to_string()),
+                      Some((*t).to_string()),
                       occur,
                       v,
                     )
@@ -966,7 +1002,7 @@ fn is_type_prelude(t: &str) -> bool {
 /// Validates CBOR input against given CDDL input
 pub fn validate_cbor_from_slice(cddl_input: &str, cbor_input: &[u8]) -> Result {
   validate_cbor(
-    &parser::cddl_from_str(cddl_input, false)
+    &parser::cddl_from_str(&mut lexer::Lexer::new(cddl_input), cddl_input, false)
       .map_err(|e| Error::Compilation(CompilationError::CDDL(e)))?,
     &serde_cbor::from_slice(cbor_input).map_err(|e| Error::Target(e.into()))?,
   )

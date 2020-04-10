@@ -3,7 +3,7 @@
 mod data;
 
 use cddl::{
-  parser,
+  lexer_from_str, parser,
   validation::{self, json::validate_json_from_str},
 };
 use std::fs;
@@ -17,7 +17,8 @@ fn verify_cddl_compiles() -> Result<(), parser::Error> {
       continue;
     }
 
-    match parser::cddl_from_str(&fs::read_to_string(file.path()).unwrap(), true) {
+    let file_content = fs::read_to_string(file.path()).unwrap();
+    match parser::cddl_from_str(&mut lexer_from_str(&file_content), &file_content, true) {
       Ok(_) => println!("file: {:#?} ... success", file.path()),
       Err(_) => {
         return Err(parser::Error::PARSER);

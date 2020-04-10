@@ -1,11 +1,15 @@
 use super::token::{RangeValue, SocketPlug, Value};
 use std::fmt;
 
+#[cfg(feature = "std")]
+use std::borrow::Cow;
+
 #[cfg(target_arch = "wasm32")]
 use serde::Serialize;
 
 #[cfg(not(feature = "std"))]
 use alloc::{
+  borrow::Cow,
   boxed::Box,
   string::{String, ToString},
   vec::Vec,
@@ -21,12 +25,12 @@ pub type Span = (usize, usize, usize);
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Default, Debug, PartialEq)]
-pub struct CDDL {
+pub struct CDDL<'a> {
   /// Zero or more production rules
-  pub rules: Vec<Rule>,
+  pub rules: Vec<Rule<'a>>,
 }
 
-impl fmt::Display for CDDL {
+impl<'a> fmt::Display for CDDL<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut cddl_output = String::new();
 
@@ -48,16 +52,16 @@ impl fmt::Display for CDDL {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
-pub struct Identifier {
+pub struct Identifier<'a> {
   /// Identifier
-  pub ident: String,
+  pub ident: &'a str,
   /// Optional socket
   pub socket: Option<SocketPlug>,
   /// Span
   pub span: Span,
 }
 
-impl fmt::Display for Identifier {
+impl<'a> fmt::Display for Identifier<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if let Some(sp) = &self.socket {
       return write!(f, "{}{}", sp, self.ident);
@@ -67,7 +71,7 @@ impl fmt::Display for Identifier {
   }
 }
 
-impl From<&'static str> for Identifier {
+impl<'a> From<&'static str> for Identifier<'a> {
   fn from(ident: &'static str) -> Self {
     let mut socket = ident.chars().take(2);
 
@@ -76,7 +80,7 @@ impl From<&'static str> for Identifier {
         if let Some(c) = socket.next() {
           if c == '$' {
             return Identifier {
-              ident: ident.into(),
+              ident,
               socket: Some(SocketPlug::GROUP),
               span: (0, 0, 0),
             };
@@ -84,7 +88,7 @@ impl From<&'static str> for Identifier {
         }
 
         return Identifier {
-          ident: ident.into(),
+          ident,
           socket: Some(SocketPlug::TYPE),
           span: (0, 0, 0),
         };
@@ -92,7 +96,7 @@ impl From<&'static str> for Identifier {
     }
 
     Identifier {
-      ident: ident.into(),
+      ident,
       socket: None,
       span: (0, 0, 0),
     }
@@ -108,14 +112,17 @@ impl From<&'static str> for Identifier {
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq)]
 #[allow(missing_docs)]
-pub enum Rule {
+pub enum Rule<'a> {
   /// Type expression
-  Type { rule: TypeRule, span: Span },
+  Type { rule: TypeRule<'a>, span: Span },
   /// Group expression
-  Group { rule: Box<GroupRule>, span: Span },
+  Group {
+    rule: Box<GroupRule<'a>>,
+    span: Span,
+  },
 }
 
-impl Rule {
+impl<'a> Rule<'a> {
   /// Return `Span` for `Rule`
   pub fn span(&self) -> Span {
     match self {
@@ -125,7 +132,7 @@ impl Rule {
   }
 }
 
-impl fmt::Display for Rule {
+impl<'a> fmt::Display for Rule<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Rule::Type { rule, .. } => write!(f, "{}", rule),
@@ -134,7 +141,7 @@ impl fmt::Display for Rule {
   }
 }
 
-impl Rule {
+impl<'a> Rule<'a> {
   /// Returns the name id of a rule
   pub fn name(&self) -> String {
     match self {
@@ -160,18 +167,18 @@ impl Rule {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq)]
-pub struct TypeRule {
+pub struct TypeRule<'a> {
   /// Type name identifier
-  pub name: Identifier,
+  pub name: Identifier<'a>,
   /// Optional generic parameters
-  pub generic_param: Option<GenericParm>,
+  pub generic_param: Option<GenericParm<'a>>,
   /// Extends an existing type choice
   pub is_type_choice_alternate: bool,
   /// Type value
-  pub value: Type,
+  pub value: Type<'a>,
 }
 
-impl fmt::Display for TypeRule {
+impl<'a> fmt::Display for TypeRule<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut tr_output = self.name.to_string();
 
@@ -198,18 +205,18 @@ impl fmt::Display for TypeRule {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq)]
-pub struct GroupRule {
+pub struct GroupRule<'a> {
   /// Group name identifier
-  pub name: Identifier,
+  pub name: Identifier<'a>,
   /// Optional generic parameters
-  pub generic_param: Option<GenericParm>,
+  pub generic_param: Option<GenericParm<'a>>,
   /// Extends an existing group choice
   pub is_group_choice_alternate: bool,
   /// Group entry
-  pub entry: GroupEntry,
+  pub entry: GroupEntry<'a>,
 }
 
-impl fmt::Display for GroupRule {
+impl<'a> fmt::Display for GroupRule<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut gr_output = self.name.to_string();
 
@@ -236,14 +243,14 @@ impl fmt::Display for GroupRule {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Default, PartialEq)]
-pub struct GenericParm {
+pub struct GenericParm<'a> {
   /// List of generic parameters
-  pub params: Vec<Identifier>,
+  pub params: Vec<Identifier<'a>>,
   /// Span
   pub span: Span,
 }
 
-impl fmt::Display for GenericParm {
+impl<'a> fmt::Display for GenericParm<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut gp = String::from("<");
     for (idx, parm) in self.params.iter().enumerate() {
@@ -267,14 +274,14 @@ impl fmt::Display for GenericParm {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct GenericArg {
+pub struct GenericArg<'a> {
   /// Generic arguments
-  pub args: Vec<Type1>,
+  pub args: Vec<Type1<'a>>,
   /// Span
   pub span: Span,
 }
 
-impl fmt::Display for GenericArg {
+impl<'a> fmt::Display for GenericArg<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut ga = String::from("<");
     for (idx, arg) in self.args.iter().enumerate() {
@@ -291,7 +298,7 @@ impl fmt::Display for GenericArg {
   }
 }
 
-impl GenericArg {
+impl<'a> GenericArg<'a> {
   /// Default `GenericArg`
   pub fn default() -> Self {
     GenericArg {
@@ -308,14 +315,14 @@ impl GenericArg {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct Type {
+pub struct Type<'a> {
   /// Type choices
-  pub type_choices: Vec<Type1>,
+  pub type_choices: Vec<Type1<'a>>,
   /// Span
   pub span: Span,
 }
 
-impl fmt::Display for Type {
+impl<'a> fmt::Display for Type<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut types = String::new();
 
@@ -332,10 +339,10 @@ impl fmt::Display for Type {
   }
 }
 
-impl Type {
+impl<'a> Type<'a> {
   /// Used to delineate between grpent with `Type` and group entry with group
   /// name identifier `id`
-  pub fn groupname_entry(&self) -> Option<(Identifier, Option<GenericArg>, Span)> {
+  pub fn groupname_entry(&self) -> Option<(Identifier<'a>, Option<GenericArg<'a>>, Span)> {
     if self.type_choices.len() == 1 {
       if let Some(t1) = self.type_choices.first() {
         if t1.operator.is_none() {
@@ -362,16 +369,16 @@ impl Type {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct Type1 {
+pub struct Type1<'a> {
   /// Type
-  pub type2: Type2,
+  pub type2: Type2<'a>,
   /// Range or control operator over a second type
-  pub operator: Option<(RangeCtlOp, Type2)>,
+  pub operator: Option<(RangeCtlOp, Type2<'a>)>,
   /// Span
   pub span: Span,
 }
 
-impl fmt::Display for Type1 {
+impl<'a> fmt::Display for Type1<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut t1 = String::new();
 
@@ -446,7 +453,7 @@ impl fmt::Display for RangeCtlOp {
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 #[allow(missing_docs)]
-pub enum Type2 {
+pub enum Type2<'a> {
   /// Integer value
   IntValue { value: isize, span: Span },
   /// Unsigned integer value
@@ -454,44 +461,44 @@ pub enum Type2 {
   /// Float value
   FloatValue { value: f64, span: Span },
   /// Text string value (enclosed by '"')
-  TextValue { value: String, span: Span },
+  TextValue { value: &'a str, span: Span },
   /// UTF-8 encoded byte string (enclosed by '')
-  UTF8ByteString { value: Vec<u8>, span: Span },
+  UTF8ByteString { value: Cow<'a, [u8]>, span: Span },
   /// Base 16 encoded prefixed byte string
-  B16ByteString { value: Vec<u8>, span: Span },
+  B16ByteString { value: Cow<'a, [u8]>, span: Span },
   /// Base 64 encoded (URL safe) prefixed byte string
-  B64ByteString { value: Vec<u8>, span: Span },
+  B64ByteString { value: Cow<'a, [u8]>, span: Span },
   /// Type name identifier with optional generic arguments
   Typename {
-    ident: Identifier,
-    generic_arg: Option<GenericArg>,
+    ident: Identifier<'a>,
+    generic_arg: Option<GenericArg<'a>>,
     span: Span,
   },
   /// Parenthesized type expression (for operator precedence)
-  ParenthesizedType { pt: Type, span: Span },
+  ParenthesizedType { pt: Type<'a>, span: Span },
   /// Map expression
-  Map { group: Group, span: Span },
+  Map { group: Group<'a>, span: Span },
   /// Array expression
-  Array { group: Group, span: Span },
+  Array { group: Group<'a>, span: Span },
   /// Unwrapped group
   Unwrap {
-    ident: Identifier,
-    generic_arg: Option<GenericArg>,
+    ident: Identifier<'a>,
+    generic_arg: Option<GenericArg<'a>>,
     span: Span,
   },
   /// Enumeration expression over an inline group
-  ChoiceFromInlineGroup { group: Group, span: Span },
+  ChoiceFromInlineGroup { group: Group<'a>, span: Span },
   /// Enumeration expression over previously defined group
   ChoiceFromGroup {
-    ident: Identifier,
-    generic_arg: Option<GenericArg>,
+    ident: Identifier<'a>,
+    generic_arg: Option<GenericArg<'a>>,
     span: Span,
   },
   /// Tagged data item where the first element is an optional tag and the second
   /// is the type of the tagged value
   TaggedData {
     tag: Option<usize>,
-    t: Type,
+    t: Type<'a>,
     span: Span,
   },
   /// Data item of a major type with optional data constraint
@@ -504,7 +511,7 @@ pub enum Type2 {
   Any(Span),
 }
 
-impl fmt::Display for Type2 {
+impl<'a> fmt::Display for Type2<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Type2::IntValue { value, .. } => write!(f, "{}", value),
@@ -572,8 +579,8 @@ impl fmt::Display for Type2 {
   }
 }
 
-impl From<RangeValue> for Type2 {
-  fn from(rv: RangeValue) -> Self {
+impl<'a> From<RangeValue<'a>> for Type2<'a> {
+  fn from(rv: RangeValue<'a>) -> Self {
     let span = (0, 0, 0);
 
     match rv {
@@ -601,13 +608,13 @@ impl From<RangeValue> for Type2 {
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 #[allow(missing_docs)]
-pub struct Group {
+pub struct Group<'a> {
   /// Group choices
-  pub group_choices: Vec<GroupChoice>,
+  pub group_choices: Vec<GroupChoice<'a>>,
   pub span: Span,
 }
 
-impl fmt::Display for Group {
+impl<'a> fmt::Display for Group<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut group_choices = String::new();
 
@@ -633,15 +640,15 @@ impl fmt::Display for Group {
 /// If tuple is true, then entry is marked by a trailing comma
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct GroupChoice {
+pub struct GroupChoice<'a> {
   /// Group entries where the second item in the tuple indicates where or not a
   /// trailing comma is present
-  pub group_entries: Vec<(GroupEntry, bool)>,
+  pub group_entries: Vec<(GroupEntry<'a>, bool)>,
   /// Span
   pub span: Span,
 }
 
-impl fmt::Display for GroupChoice {
+impl<'a> fmt::Display for GroupChoice<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if self.group_entries.len() == 1 {
       return write!(f, "{}", self.group_entries[0].0);
@@ -671,23 +678,26 @@ impl fmt::Display for GroupChoice {
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 #[allow(missing_docs)]
-pub enum GroupEntry {
+pub enum GroupEntry<'a> {
   /// Value group entry type
   ValueMemberKey {
-    ge: Box<ValueMemberKeyEntry>,
+    ge: Box<ValueMemberKeyEntry<'a>>,
     span: Span,
   },
   /// Group entry from a named group or type
-  TypeGroupname { ge: TypeGroupnameEntry, span: Span },
+  TypeGroupname {
+    ge: TypeGroupnameEntry<'a>,
+    span: Span,
+  },
   /// Parenthesized group with optional occurrence indicator
   InlineGroup {
     occur: Option<Occur>,
-    group: Group,
+    group: Group<'a>,
     span: Span,
   },
 }
 
-impl fmt::Display for GroupEntry {
+impl<'a> fmt::Display for GroupEntry<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       GroupEntry::ValueMemberKey { ge, .. } => write!(f, "{}", ge),
@@ -711,16 +721,16 @@ impl fmt::Display for GroupEntry {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct ValueMemberKeyEntry {
+pub struct ValueMemberKeyEntry<'a> {
   /// Optional occurrence indicator
   pub occur: Option<Occur>,
   /// Optional member key
-  pub member_key: Option<MemberKey>,
+  pub member_key: Option<MemberKey<'a>>,
   /// Entry type
-  pub entry_type: Type,
+  pub entry_type: Type<'a>,
 }
 
-impl fmt::Display for ValueMemberKeyEntry {
+impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if let Some(o) = &self.occur {
       if let Some(mk) = &self.member_key {
@@ -741,16 +751,16 @@ impl fmt::Display for ValueMemberKeyEntry {
 /// Group entry from a named type or group
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypeGroupnameEntry {
+pub struct TypeGroupnameEntry<'a> {
   /// Optional occurrence indicator
   pub occur: Option<Occur>,
   /// Type or group name identifier
-  pub name: Identifier,
+  pub name: Identifier<'a>,
   /// Optional generic arguments
-  pub generic_arg: Option<GenericArg>,
+  pub generic_arg: Option<GenericArg<'a>>,
 }
 
-impl fmt::Display for TypeGroupnameEntry {
+impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if let Some(o) = &self.occur {
       if let Some(ga) = &self.generic_arg {
@@ -777,35 +787,35 @@ impl fmt::Display for TypeGroupnameEntry {
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 #[allow(missing_docs)]
-pub enum MemberKey {
+pub enum MemberKey<'a> {
   /// Type expression
   Type1 {
-    t1: Box<Type1>,
+    t1: Box<Type1<'a>>,
     is_cut: bool,
     span: Span,
   },
   /// Bareword string type
   Bareword {
-    ident: Identifier,
+    ident: Identifier<'a>,
     span: Span,
   },
   /// Value type
   Value {
-    value: Value,
+    value: Value<'a>,
     span: Span,
   },
-  NonMemberKey(NonMemberKey),
+  NonMemberKey(NonMemberKey<'a>),
 }
 
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 #[allow(missing_docs)]
-pub enum NonMemberKey {
-  Group(Group),
-  Type(Type),
+pub enum NonMemberKey<'a> {
+  Group(Group<'a>),
+  Type(Type<'a>),
 }
 
-impl fmt::Display for MemberKey {
+impl<'a> fmt::Display for MemberKey<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       MemberKey::Type1 { t1, is_cut, .. } => {

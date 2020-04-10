@@ -3,7 +3,7 @@ mod controls;
 use super::{CompilationError, Error, Result, Validator};
 use crate::{
   ast::*,
-  parser,
+  lexer, parser,
   token::{self, Numeric, Token},
 };
 use controls::*;
@@ -73,7 +73,7 @@ impl Into<Error> for JSONError {
   }
 }
 
-impl Validator<Value> for CDDL {
+impl<'a> Validator<Value> for CDDL<'a> {
   fn validate(&self, value: &Value) -> Result {
     for r in self.rules.iter() {
       // First type rule is root
@@ -527,7 +527,7 @@ impl Validator<Value> for CDDL {
           )));
         }
 
-        let find_valid_value = |c: String| -> bool {
+        let find_valid_value = |c: &str| -> bool {
           match validate_pcre_control(&c, value) {
             Ok(()) => true,
             Err(e) => {
@@ -691,7 +691,7 @@ impl Validator<Value> for CDDL {
             Err(Error::MultiError(errors))
           }
         } else if self.is_type_string_data_type(target) {
-          let find_valid_value = |c: String| -> bool {
+          let find_valid_value = |c: &str| -> bool {
             match validate_eq_text_control(&c, value) {
               Ok(()) => true,
               Err(e) => {
@@ -758,7 +758,7 @@ impl Validator<Value> for CDDL {
       Type2::Typename { ident, .. } => match value {
         Value::Null => expect_null(&ident.ident),
         Value::Bool(_) => self.expect_bool(&ident.ident, value),
-        Value::String(s) => match ident.ident.as_ref() {
+        Value::String(s) => match ident.ident {
           "tstr" | "text" => Ok(()),
           "tdate" => validate_tdate(s),
           #[cfg(feature = "nightly")]
@@ -1070,11 +1070,11 @@ impl Validator<Value> for CDDL {
               Type2::TextValue { value: t, .. } => match value {
                 Value::Object(om) => {
                   if !is_type_json_prelude(&vmke.entry_type.to_string()) {
-                    if let Some(v) = om.get(t) {
+                    if let Some(v) = om.get(*t) {
                       return self.validate_type(
                         &vmke.entry_type,
                         Some(mk.to_string()),
-                        Some(t.to_string()),
+                        Some((*t).to_string()),
                         occur,
                         v,
                       );
@@ -1089,11 +1089,11 @@ impl Validator<Value> for CDDL {
                     );
                   }
 
-                  if let Some(v) = om.get(t) {
+                  if let Some(v) = om.get(*t) {
                     let r = self.validate_type(
                       &vmke.entry_type,
                       Some(mk.to_string()),
-                      Some(t.to_string()),
+                      Some((*t).to_string()),
                       occur,
                       v,
                     );
@@ -1103,7 +1103,7 @@ impl Validator<Value> for CDDL {
                         return self.validate_type(
                           entry_type,
                           Some(mk.to_string()),
-                          Some(t.to_string()),
+                          Some((*t).to_string()),
                           occur,
                           v,
                         );
@@ -1142,7 +1142,7 @@ impl Validator<Value> for CDDL {
             MemberKey::Bareword { ident, .. } => match value {
               Value::Object(om) => {
                 if !is_type_json_prelude(&vmke.entry_type.to_string()) {
-                  if let Some(v) = om.get(&ident.ident) {
+                  if let Some(v) = om.get(ident.ident) {
                     return self.validate_type(
                       &vmke.entry_type,
                       Some(mk.to_string()),
@@ -1161,7 +1161,7 @@ impl Validator<Value> for CDDL {
                   );
                 }
 
-                match om.get(&ident.ident) {
+                match om.get(ident.ident) {
                   Some(v) => self.validate_type(
                     &vmke.entry_type,
                     Some(mk.to_string()),
@@ -1502,7 +1502,7 @@ fn expect_null(ident: &str) -> Result {
 /// Validates JSON input against given CDDL input
 pub fn validate_json_from_str(cddl_input: &str, json_input: &str) -> Result {
   validate_json(
-    &parser::cddl_from_str(cddl_input, false)
+    &parser::cddl_from_str(&mut lexer::Lexer::new(cddl_input), cddl_input, false)
       .map_err(|e| Error::Compilation(CompilationError::CDDL(e)))?,
     &serde_json::from_str(json_input)
       .map_err(|e| Error::Compilation(CompilationError::Target(e.into())))?,

@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate clap;
 
-use cddl::{cddl_from_str, validate_json_from_str};
+use cddl::{cddl_from_str, lexer_from_str, validate_json_from_str};
 use clap::{App, AppSettings, SubCommand};
 use codespan_reporting::term::termcolor::{
   Color, ColorChoice, ColorSpec, StandardStream, WriteColor,
@@ -36,7 +36,9 @@ fn main() -> Result<(), Box<dyn Error>> {
           return Ok(());
         }
       }
-      cddl_from_str(&fs::read_to_string(c)?, true).map(|_| ())?;
+
+      let file_content = fs::read_to_string(c)?;
+      cddl_from_str(&mut lexer_from_str(&file_content), &file_content, true).map(|_| ())?;
 
       let mut stdout = StandardStream::stdout(ColorChoice::Auto);
       stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;

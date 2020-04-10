@@ -1,7 +1,7 @@
 use super::{
   ast::*,
   lexer::{self, Lexer, LexerError, Position},
-  token::{self, ByteValue, Token, Value},
+  token::{self, Token},
 };
 #[cfg(feature = "std")]
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
@@ -10,10 +10,15 @@ use codespan_reporting::{
   files::SimpleFiles,
   term,
 };
+
+#[cfg(feature = "std")]
+use std::borrow::Cow;
+
 use std::{cmp::Ordering, fmt, mem, result};
 
 #[cfg(not(feature = "std"))]
 use alloc::{
+  borrow::{Cow, ToOwned},
   boxed::Box,
   string::{String, ToString},
   vec::Vec,
@@ -28,12 +33,12 @@ pub type Result<T> = result::Result<T, Error>;
 /// Parser type
 pub struct Parser<'a, I>
 where
-  I: Iterator<Item = lexer::Item>,
+  I: Iterator<Item = lexer::Item<'a>>,
 {
   tokens: I,
   str_input: &'a str,
-  cur_token: Token,
-  peek_token: Token,
+  cur_token: Token<'a>,
+  peek_token: Token<'a>,
   lexer_position: Position,
   peek_lexer_position: Position,
   parser_position: Position,
@@ -84,7 +89,7 @@ impl std::error::Error for Error {
 
 impl<'a, I> Parser<'a, I>
 where
-  I: Iterator<Item = lexer::Item>,
+  I: Iterator<Item = lexer::Item<'a>>,
 {
   /// Create a new `Parser` from a given str input and iterator over
   /// `lexer::Item`.
@@ -98,7 +103,7 @@ where
   /// let input = r#"mycddl = ( int / float )"#;
   /// let p = Parser::new(Lexer::new(input).iter(), input);
   /// ```
-  pub fn new(tokens: I, str_input: &str) -> Result<Parser<I>> {
+  pub fn new(tokens: I, str_input: &'a str) -> Result<Parser<I>> {
     let mut p = Parser {
       tokens,
       str_input,
@@ -261,7 +266,7 @@ where
   }
 
   /// Parses into a `CDDL` AST
-  pub fn parse_cddl(&mut self) -> Result<CDDL> {
+  pub fn parse_cddl(&mut self) -> Result<CDDL<'a>> {
     let mut c = CDDL::default();
 
     while self.cur_token != Token::EOF {
@@ -321,7 +326,7 @@ where
     Ok(c)
   }
 
-  fn parse_rule(&mut self) -> Result<Rule> {
+  fn parse_rule(&mut self) -> Result<Rule<'a>> {
     let begin_rule_range = self.lexer_position.range.0;
     let begin_rule_line = self.lexer_position.line;
 
@@ -330,7 +335,7 @@ where
     }
 
     let ident = match &self.cur_token {
-      Token::IDENT(i) => self.identifier_from_ident_token(i.clone()),
+      Token::IDENT(i) => self.identifier_from_ident_token(*i),
       _ => {
         self.parser_position.range = self.lexer_position.range;
         self.parser_position.line = self.lexer_position.line;
@@ -391,7 +396,7 @@ where
 
     match self.cur_token {
       // Check for an occurrence indicator of uint followed by an asterisk '*'
-      Token::VALUE(Value::UINT(_)) => {
+      Token::VALUE(token::Value::UINT(_)) => {
         if self.peek_token_is(&Token::ASTERISK) {
           let ge = self.parse_grpent(true)?;
 
@@ -515,7 +520,7 @@ where
     }
   }
 
-  fn parse_genericparm(&mut self) -> Result<GenericParm> {
+  fn parse_genericparm(&mut self) -> Result<GenericParm<'a>> {
     let begin_range = self.lexer_position.range.0;
 
     if self.cur_token_is(Token::LANGLEBRACKET) {
@@ -529,7 +534,7 @@ where
         Token::IDENT(ident) => {
           generic_params
             .params
-            .push(self.identifier_from_ident_token(ident.clone()));
+            .push(self.identifier_from_ident_token(*ident));
           self.next_token()?;
 
           if !self.cur_token_is(Token::COMMA) && !self.cur_token_is(Token::RANGLEBRACKET) {
@@ -582,7 +587,7 @@ where
     Ok(generic_params)
   }
 
-  fn parse_genericarg(&mut self) -> Result<GenericArg> {
+  fn parse_genericarg(&mut self) -> Result<GenericArg<'a>> {
     if self.peek_token_is(&Token::LANGLEBRACKET) {
       self.next_token()?;
     }
@@ -618,7 +623,7 @@ where
     Ok(generic_args)
   }
 
-  fn parse_type(&mut self, parenthesized_type: Option<Type2>) -> Result<Type> {
+  fn parse_type(&mut self, parenthesized_type: Option<Type2<'a>>) -> Result<Type<'a>> {
     self.parser_position.range = self.lexer_position.range;
     self.parser_position.line = self.lexer_position.line;
 
@@ -656,7 +661,7 @@ where
     Ok(t)
   }
 
-  fn parse_type1(&mut self, parenthesized_type: Option<Type2>) -> Result<Type1> {
+  fn parse_type1(&mut self, parenthesized_type: Option<Type2<'a>>) -> Result<Type1<'a>> {
     let mut begin_type1_line = self.lexer_position.line;
     let begin_type1_range = self.lexer_position.range.0;
 
@@ -726,7 +731,7 @@ where
     }
   }
 
-  fn parse_type2(&mut self) -> Result<Type2> {
+  fn parse_type2(&mut self) -> Result<Type2<'a>> {
     let t2 = match &self.cur_token {
       // value
       Token::VALUE(value) => {
@@ -740,23 +745,40 @@ where
         );
 
         match value {
-          Value::TEXT(t) => Ok(Type2::TextValue {
-            value: t.to_string(),
+          token::Value::TEXT(t) => Ok(Type2::TextValue { value: t, span }),
+          token::Value::INT(i) => Ok(Type2::IntValue { value: *i, span }),
+          token::Value::UINT(ui) => Ok(Type2::UintValue { value: *ui, span }),
+          token::Value::FLOAT(f) => Ok(Type2::FloatValue { value: *f, span }),
+          token::Value::BYTE(token::ByteValue::UTF8(Cow::Borrowed(utf8))) => {
+            Ok(Type2::UTF8ByteString {
+              value: Cow::Borrowed(utf8),
+              span,
+            })
+          }
+          token::Value::BYTE(token::ByteValue::UTF8(Cow::Owned(utf8))) => {
+            Ok(Type2::UTF8ByteString {
+              value: Cow::Owned(utf8.to_owned()),
+              span,
+            })
+          }
+          token::Value::BYTE(token::ByteValue::B16(Cow::Borrowed(b16))) => {
+            Ok(Type2::B16ByteString {
+              value: Cow::Borrowed(b16),
+              span,
+            })
+          }
+          token::Value::BYTE(token::ByteValue::B16(Cow::Owned(b16))) => Ok(Type2::B16ByteString {
+            value: Cow::Owned(b16.to_owned()),
             span,
           }),
-          Value::INT(i) => Ok(Type2::IntValue { value: *i, span }),
-          Value::UINT(ui) => Ok(Type2::UintValue { value: *ui, span }),
-          Value::FLOAT(f) => Ok(Type2::FloatValue { value: *f, span }),
-          Value::BYTE(ByteValue::UTF8(utf8)) => Ok(Type2::UTF8ByteString {
-            value: utf8.to_vec(),
-            span,
-          }),
-          Value::BYTE(ByteValue::B16(b16)) => Ok(Type2::B16ByteString {
-            value: b16.to_vec(),
-            span,
-          }),
-          Value::BYTE(ByteValue::B64(b64)) => Ok(Type2::B64ByteString {
-            value: b64.to_vec(),
+          token::Value::BYTE(token::ByteValue::B64(Cow::Borrowed(b64))) => {
+            Ok(Type2::B64ByteString {
+              value: Cow::Borrowed(b64),
+              span,
+            })
+          }
+          token::Value::BYTE(token::ByteValue::B64(Cow::Owned(b64))) => Ok(Type2::B64ByteString {
+            value: Cow::Owned(b64.to_owned()),
             span,
           }),
         }
@@ -769,7 +791,7 @@ where
 
         // optional genericarg detected
         if self.peek_token_is(&Token::LANGLEBRACKET) {
-          let ident = self.identifier_from_ident_token(ident.clone());
+          let ident = self.identifier_from_ident_token(*ident);
           let ga = self.parse_genericarg()?;
 
           let end_type2_range = self.parser_position.range.1;
@@ -785,7 +807,7 @@ where
         self.parser_position.line = self.lexer_position.line;
 
         Ok(Type2::Typename {
-          ident: self.identifier_from_ident_token(ident.clone()),
+          ident: self.identifier_from_ident_token(*ident),
           generic_arg: None,
           span: (
             self.parser_position.range.0,
@@ -869,7 +891,7 @@ where
         self.next_token()?;
 
         if let Token::IDENT(ident) = &self.cur_token {
-          let ident = self.identifier_from_ident_token(ident.clone());
+          let ident = self.identifier_from_ident_token(*ident);
 
           if self.peek_token_is(&Token::LANGLEBRACKET) {
             self.next_token()?;
@@ -924,7 +946,7 @@ where
             })
           }
           Token::IDENT(ident) => {
-            let ident = self.identifier_from_ident_token(ident.clone());
+            let ident = self.identifier_from_ident_token(*ident);
             if self.peek_token_is(&Token::LANGLEBRACKET) {
               self.next_token()?;
 
@@ -1035,7 +1057,7 @@ where
 
         match self.cur_token.in_standard_prelude() {
           Some(s) => {
-            let ident = self.identifier_from_ident_token((s.into(), None));
+            let ident = self.identifier_from_ident_token((s, None));
             self.parser_position.range = self.lexer_position.range;
             self.parser_position.line = self.lexer_position.line;
 
@@ -1071,7 +1093,7 @@ where
     t2
   }
 
-  fn parse_group(&mut self) -> Result<Group> {
+  fn parse_group(&mut self) -> Result<Group<'a>> {
     let begin_group_range = if self.cur_token_is(Token::LBRACE)
       || self.cur_token_is(Token::LPAREN)
       || self.cur_token_is(Token::LBRACKET)
@@ -1106,7 +1128,7 @@ where
     Ok(group)
   }
 
-  fn parse_grpchoice(&mut self) -> Result<GroupChoice> {
+  fn parse_grpchoice(&mut self) -> Result<GroupChoice<'a>> {
     let mut grpchoice = GroupChoice {
       group_entries: Vec::new(),
       span: (self.lexer_position.range.0, 0, self.lexer_position.line),
@@ -1173,7 +1195,7 @@ where
     Ok(grpchoice)
   }
 
-  fn parse_grpent(&mut self, from_rule: bool) -> Result<GroupEntry> {
+  fn parse_grpent(&mut self, from_rule: bool) -> Result<GroupEntry<'a>> {
     let begin_grpent_range = self.lexer_position.range.0;
     let begin_grpent_line = self.lexer_position.line;
 
@@ -1315,10 +1337,10 @@ where
   fn parse_memberkey_from_ident(
     &mut self,
     is_optional: bool,
-    ident: (String, Option<token::SocketPlug>),
+    ident: (&'a str, Option<token::SocketPlug>),
     begin_memberkey_range: usize,
     begin_memberkey_line: usize,
-  ) -> Result<Option<MemberKey>> {
+  ) -> Result<Option<MemberKey<'a>>> {
     if !self.peek_token_is(&Token::COLON)
       && !self.peek_token_is(&Token::ARROWMAP)
       && !self.peek_token_is(&Token::CUT)
@@ -1331,7 +1353,7 @@ where
 
     let end_t1_range = self.lexer_position.range.1;
 
-    let mut ident = self.identifier_from_ident_token(ident);
+    let mut ident = self.identifier_from_ident_token((&ident.0, ident.1));
     ident.span = (begin_memberkey_range, end_t1_range, begin_memberkey_line);
 
     self.next_token()?;
@@ -1418,14 +1440,14 @@ where
     Ok(mk)
   }
 
-  fn parse_memberkey(&mut self, is_optional: bool) -> Result<Option<MemberKey>> {
+  fn parse_memberkey(&mut self, is_optional: bool) -> Result<Option<MemberKey<'a>>> {
     let begin_memberkey_range = self.lexer_position.range.0;
     let begin_memberkey_line = self.lexer_position.line;
 
     if let Some(t) = self.cur_token.in_standard_prelude() {
       return self.parse_memberkey_from_ident(
         is_optional,
-        (t.into(), None),
+        (t, None),
         begin_memberkey_range,
         begin_memberkey_line,
       );
@@ -1433,7 +1455,7 @@ where
 
     match &self.cur_token {
       Token::IDENT(ident) => {
-        let ident = ident.clone();
+        let ident = *ident;
         self.parse_memberkey_from_ident(
           is_optional,
           ident,
@@ -1734,7 +1756,7 @@ where
         ))))
       }
       Token::ASTERISK => {
-        let o = if let Token::VALUE(Value::UINT(u)) = &self.peek_token {
+        let o = if let Token::VALUE(token::Value::UINT(u)) = &self.peek_token {
           self.parser_position.range.0 = self.lexer_position.range.0;
           self.parser_position.range.1 = self.peek_lexer_position.range.1;
 
@@ -1759,14 +1781,14 @@ where
 
         self.next_token()?;
 
-        if let Token::VALUE(Value::UINT(_)) = &self.cur_token {
+        if let Token::VALUE(token::Value::UINT(_)) = &self.cur_token {
           self.next_token()?;
         }
         Ok(Some(o))
       }
       Token::VALUE(_) => {
         let lower = if let Token::VALUE(value) = &self.cur_token {
-          if let Value::UINT(li) = value {
+          if let token::Value::UINT(li) = value {
             Some(*li)
           } else {
             None
@@ -1795,7 +1817,7 @@ where
         self.next_token()?;
 
         let upper = if let Token::VALUE(value) = &self.cur_token {
-          if let Value::UINT(ui) = value {
+          if let token::Value::UINT(ui) = value {
             self.parser_position.range.1 = self.lexer_position.range.1;
             Some(*ui)
           } else {
@@ -1836,7 +1858,10 @@ where
   }
 
   /// Create `Identifier` from `Token::IDENT(ident)`
-  fn identifier_from_ident_token(&self, ident: (String, Option<token::SocketPlug>)) -> Identifier {
+  fn identifier_from_ident_token(
+    &self,
+    ident: (&'a str, Option<token::SocketPlug>),
+  ) -> Identifier<'a> {
     Identifier {
       ident: ident.0,
       socket: ident.1,
@@ -1853,20 +1878,26 @@ where
 ///
 /// # Arguments
 ///
+/// * `lexer` - A mutable reference to a `lexer::Lexer`. Can be created from
+///   `cddl::lexer_from_str()`
 /// * `input` - A string slice with the CDDL text input
 /// * `print_stderr` - When true, print any errors to stderr
 ///
 /// # Example
 ///
 /// ```
-/// use cddl::parser::cddl_from_str;
+/// use cddl::{lexer_from_str, parser::cddl_from_str};
 ///
 /// let input = r#"myrule = int"#;
-/// let _ = cddl_from_str(input, true);
+/// let _ = cddl_from_str(&mut lexer_from_str(input), input, true);
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(feature = "std")]
-pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDDL, String> {
-  match Parser::new(Lexer::new(input).iter(), input).map_err(|e| e.to_string()) {
+pub fn cddl_from_str<'a>(
+  lexer: &'a mut Lexer<'a>,
+  input: &'a str,
+  print_stderr: bool,
+) -> std::result::Result<CDDL<'a>, String> {
+  match Parser::new(lexer.iter(), input).map_err(|e| e.to_string()) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c),
       Err(Error::PARSER) => {
@@ -1892,20 +1923,26 @@ pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDD
 ///
 /// # Arguments
 ///
+/// * `lexer` - A mutable reference to a `lexer::Lexer`. Can be created from
+///   `cddl::lexer_from_str()`
 /// * `input` - A string slice with the CDDL text input
 ///
 /// # Example
 ///
 /// ```
-/// use cddl::parser::cddl_from_str;
+/// use cddl::{parser::cddl_from_str, lexer_from_str};
 ///
 /// let input = r#"myrule = int"#;
-/// let _ = cddl_from_str(input);
+///
+/// let _ = cddl_from_str(lexer_from_str(input), input);
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(not(feature = "std"))]
-pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL, String> {
-  match Parser::new(Lexer::new(input).iter(), input).map_err(|e| e.to_string()) {
+pub fn cddl_from_str<'a>(
+  lexer: &'a mut Lexer<'a>,
+  input: &'a str,
+) -> std::result::Result<CDDL<'a>, String> {
+  match Parser::new(lexer.iter(), input).map_err(|e| e.to_string()) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c),
       Err(Error::PARSER) => {
@@ -2610,7 +2647,8 @@ mod tests {
   fn verify_genericparm() -> Result<()> {
     let input = r#"<t, v>"#;
 
-    let gps = Parser::new(Lexer::new(input).iter(), input)?.parse_genericparm()?;
+    let mut l = Lexer::new(input);
+    let gps = Parser::new(&mut l.iter(), input)?.parse_genericparm()?;
 
     let expected_output = GenericParm {
       params: vec![
@@ -2769,7 +2807,9 @@ mod tests {
   fn verify_genericarg() -> Result<()> {
     let input = r#"<"reboot", "now">"#;
 
-    let generic_args = Parser::new(Lexer::new(input).iter(), input)?.parse_genericarg()?;
+    let mut l = Lexer::new(input);
+
+    let generic_args = Parser::new(l.iter(), input)?.parse_genericarg()?;
 
     let expected_output = GenericArg {
       args: vec![
@@ -2803,7 +2843,9 @@ mod tests {
   fn verify_type() -> Result<()> {
     let input = r#"( tchoice1 / tchoice2 )"#;
 
-    let t = Parser::new(Lexer::new(input).iter(), input)?.parse_type(None)?;
+    let mut l = Lexer::new(input);
+
+    let t = Parser::new(l.iter(), input)?.parse_type(None)?;
 
     let expected_output = Type {
       type_choices: vec![Type1 {
@@ -3020,7 +3062,8 @@ mod tests {
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let t1 = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_type1(None)?;
+      let mut l = Lexer::new(inputs[idx]);
+      let t1 = Parser::new(l.iter(), inputs[idx])?.parse_type1(None)?;
 
       assert_eq!(&t1, expected_output);
       assert_eq!(t1.to_string(), expected_output.to_string());
@@ -3348,7 +3391,8 @@ mod tests {
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let t2 = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_type2()?;
+      let mut l = Lexer::new(inputs[idx]);
+      let t2 = Parser::new(l.iter(), inputs[idx])?.parse_type2()?;
 
       assert_eq!(&t2, expected_output);
       assert_eq!(t2.to_string(), expected_output.to_string());
@@ -3611,7 +3655,8 @@ mod tests {
     ];
 
     for (idx, expected_output) in expected_ouputs.iter().enumerate() {
-      let t2 = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_type2()?;
+      let mut l = Lexer::new(inputs[idx]);
+      let t2 = Parser::new(l.iter(), inputs[idx])?.parse_type2()?;
 
       assert_eq!(&t2, expected_output);
       assert_eq!(t2.to_string(), expected_output.to_string());
@@ -3712,7 +3757,7 @@ mod tests {
         ge: Box::from(ValueMemberKeyEntry {
           occur: Some(Occur::Optional((0, 1, 1))),
           member_key: Some(MemberKey::Value {
-            value: Value::UINT(0),
+            value: token::Value::UINT(0),
             span: (2, 4, 1),
           }),
           entry_type: Type {
@@ -3738,7 +3783,7 @@ mod tests {
         ge: Box::from(ValueMemberKeyEntry {
           occur: None,
           member_key: Some(MemberKey::Value {
-            value: Value::UINT(0),
+            value: token::Value::UINT(0),
             span: (0, 2, 1),
           }),
           entry_type: Type {
@@ -3832,7 +3877,8 @@ mod tests {
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let grpent = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_grpent(false)?;
+      let mut l = Lexer::new(inputs[idx]);
+      let grpent = Parser::new(l.iter(), inputs[idx])?.parse_grpent(false)?;
 
       assert_eq!(&grpent, expected_output);
       assert_eq!(grpent.to_string(), expected_output.to_string());
@@ -3899,17 +3945,18 @@ mod tests {
         span: (0, 13, 1),
       },
       MemberKey::Value {
-        value: Value::TEXT("myvalue".into()),
+        value: token::Value::TEXT("myvalue".into()),
         span: (0, 10, 1),
       },
       MemberKey::Value {
-        value: Value::UINT(0),
+        value: token::Value::UINT(0),
         span: (0, 2, 1),
       },
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let mk = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_memberkey(false)?;
+      let mut l = Lexer::new(inputs[idx]);
+      let mk = Parser::new(l.iter(), inputs[idx])?.parse_memberkey(false)?;
 
       if let Some(mk) = mk {
         assert_eq!(&mk, expected_output);

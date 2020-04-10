@@ -291,7 +291,7 @@ pub mod validation;
 
 #[doc(inline)]
 pub use self::{
-  lexer::LexerError,
+  lexer::{lexer_from_str, LexerError},
   parser::{cddl_from_str, compile_cddl_from_str, ParserError},
   token::Token,
 };
