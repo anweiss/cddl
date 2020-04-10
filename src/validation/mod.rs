@@ -202,7 +202,7 @@ pub trait Validator<T> {
   ) -> Result;
 }
 
-impl CDDL {
+impl<'a> CDDL<'a> {
   fn numerical_value_type_from_ident(&self, ident: &Identifier) -> Option<Vec<&Type2>> {
     let mut type_choices = Vec::new();
 
@@ -263,9 +263,9 @@ impl CDDL {
   }
 
   // Returns the text value(s) from a given type
-  fn text_values_from_type(&self, ident: &Type2) -> result::Result<Vec<String>, Error> {
+  fn text_values_from_type(&'a self, ident: &'a Type2) -> result::Result<Vec<&'a str>, Error> {
     match ident {
-      Type2::TextValue { value, .. } => Ok(vec![value.into()]),
+      Type2::TextValue { value, .. } => Ok(vec![value]),
       Type2::Typename { ident, .. } => {
         let mut text_values = Vec::new();
 
@@ -313,7 +313,7 @@ impl CDDL {
         Err(Error::Syntax("Target data type must be a 'uint' or 'number' in order to validate against an unsigned integer value".into()))
       }
       Type2::FloatValue{ value, .. } => {
-        if target_idents.into_iter().any(|ti| match ti.as_ref() {
+        if target_idents.into_iter().any(|ti| match ti {
           "float" | "float16" | "float32" | "float64" | "float16-32" | "float32-64" | "number" => true,
           _ => false,
         }) {
@@ -344,12 +344,12 @@ impl CDDL {
     }
   }
 
-  fn numerical_ident_from_type(&self, t2: &Type2) -> result::Result<Vec<String>, Error> {
+  fn numerical_ident_from_type(&'a self, t2: &'a Type2) -> result::Result<Vec<&'a str>, Error> {
     let mut numeric_type_idents = Vec::new();
 
     match t2 {
       Type2::Typename { ident, .. } if is_numeric_data_type(&ident.ident) => {
-        numeric_type_idents.push(ident.ident.clone());
+        numeric_type_idents.push(ident.ident);
         Ok(numeric_type_idents)
       }
       Type2::Typename { ident, .. } => {

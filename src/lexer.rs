@@ -13,13 +13,15 @@ use std::{
 };
 
 #[cfg(feature = "std")]
-use std::{error::Error, string};
+use std::{borrow::Cow, error::Error, string};
 
 #[cfg(not(feature = "std"))]
 use alloc::{
+  borrow::Cow,
   string::{self, String, ToString},
   vec::Vec,
 };
+use lexical_core as lexical;
 
 /// Alias for `Result` with an error of type `cddl::LexerError`
 pub type Result<T> = result::Result<T, LexerError>;
@@ -255,16 +257,25 @@ pub struct IterLexer<'a> {
 }
 
 /// Iterated lexer token item
-pub type Item = std::result::Result<(Position, Token), LexerError>;
+pub type Item<'a> = std::result::Result<(Position, Token<'a>), LexerError>;
 
 impl<'a> Iterator for IterLexer<'a> {
-  type Item = Item;
+  type Item = Item<'a>;
 
   fn next(&mut self) -> Option<Self::Item> {
     let next_token = self.l.next_token();
 
     Some(next_token)
   }
+}
+
+/// Creates a `Lexer` from a string slice
+///
+/// # Arguments
+///
+/// `str_input` - String slice with input
+pub fn lexer_from_str(str_input: &str) -> Lexer {
+  Lexer::new(str_input)
 }
 
 impl<'a> Lexer<'a> {
@@ -320,7 +331,7 @@ impl<'a> Lexer<'a> {
 
   /// Advances the index of the str iterator over the input and returns a
   /// `Token`
-  pub fn next_token(&mut self) -> Result<(Position, Token)> {
+  pub fn next_token(&mut self) -> Result<(Position, Token<'a>)> {
     self.skip_whitespace()?;
 
     let token_offset = self.position.index;
@@ -471,7 +482,7 @@ impl<'a> Lexer<'a> {
 
           Ok((
             self.position,
-            Token::VALUE(Value::BYTE(ByteValue::UTF8(bsv))),
+            Token::VALUE(Value::BYTE(ByteValue::UTF8(bsv.into()))),
           ))
         }
         (idx, '.') => {
@@ -526,10 +537,7 @@ impl<'a> Lexer<'a> {
                     .and_then(|_| {
                       self.position.range = (token_offset, self.position.index + 1);
 
-                      Ok((
-                        self.position,
-                        Token::VALUE(Value::BYTE(ByteValue::B16(b.into_bytes()))),
-                      ))
+                      Ok((self.position, Token::VALUE(Value::BYTE(ByteValue::B16(b)))))
                     });
                 }
               }
@@ -556,10 +564,7 @@ impl<'a> Lexer<'a> {
                             .and_then(|_| {
                               self.position.range = (token_offset, self.position.index + 1);
 
-                              Ok((
-                                self.position,
-                                Token::VALUE(Value::BYTE(ByteValue::B64(bs.into_bytes()))),
-                              ))
+                              Ok((self.position, Token::VALUE(Value::BYTE(ByteValue::B64(bs)))))
                             });
                         }
                       }
@@ -584,10 +589,7 @@ impl<'a> Lexer<'a> {
 
           self.position.range = (token_offset, self.position.index + 1);
 
-          Ok((
-            self.position,
-            Token::ILLEGAL(self.str_input[idx..=idx].to_string()),
-          ))
+          Ok((self.position, Token::ILLEGAL(&self.str_input[idx..=idx])))
         }
       }
     } else {
@@ -596,7 +598,7 @@ impl<'a> Lexer<'a> {
     }
   }
 
-  fn read_identifier(&mut self, idx: usize) -> Result<String> {
+  fn read_identifier(&mut self, idx: usize) -> Result<&'a str> {
     let mut end_idx = idx;
 
     while let Some(&c) = self.peek_char() {
@@ -608,7 +610,7 @@ impl<'a> Lexer<'a> {
 
             if let Some(&c) = self.peek_char() {
               if c.1 == '\u{0020}' {
-                return Ok(self.str_input[idx..end_idx].to_string());
+                return Ok(&self.str_input[idx..end_idx]);
               }
             }
           }
@@ -618,10 +620,10 @@ impl<'a> Lexer<'a> {
         break;
       }
     }
-    Ok(self.str_input[idx..=end_idx].to_string())
+    Ok(&self.str_input[idx..=end_idx])
   }
 
-  fn read_text_value(&mut self, idx: usize) -> Result<String> {
+  fn read_text_value(&mut self, idx: usize) -> Result<&'a str> {
     while let Some(&(_, ch)) = self.peek_char() {
       match ch {
         // SCHAR
@@ -651,7 +653,7 @@ impl<'a> Lexer<'a> {
         }
         // Closing "
         '\x22' => {
-          return Ok(self.str_input[idx + 1..self.read_char()?.0].to_string());
+          return Ok(&self.str_input[idx + 1..self.read_char()?.0]);
         }
         _ => {
           return Err(
@@ -694,7 +696,7 @@ impl<'a> Lexer<'a> {
     Err((self.str_input, self.position, "Empty byte string").into())
   }
 
-  fn read_prefixed_byte_string(&mut self, idx: usize) -> Result<String> {
+  fn read_prefixed_byte_string(&mut self, idx: usize) -> Result<Cow<'a, [u8]>> {
     let mut has_whitespace = false;
 
     while let Some(&(_, ch)) = self.peek_char() {
@@ -731,11 +733,13 @@ impl<'a> Lexer<'a> {
             return Ok(
               self.str_input[idx..self.read_char()?.0]
                 .to_string()
-                .replace(" ", ""),
+                .replace(" ", "")
+                .into_bytes()
+                .into(),
             );
           }
 
-          return Ok(self.str_input[idx..self.read_char()?.0].to_string());
+          return Ok(self.str_input[idx..self.read_char()?.0].as_bytes().into());
         }
         // CRLF
         _ => {
@@ -761,16 +765,16 @@ impl<'a> Lexer<'a> {
     Err((self.str_input, self.position, "Empty byte string").into())
   }
 
-  fn read_comment(&mut self, idx: usize) -> Result<String> {
+  fn read_comment(&mut self, idx: usize) -> Result<&'a str> {
     while let Some(&(_, ch)) = self.peek_char() {
       if ch != '\x0a' && ch != '\x0d' {
         let _ = self.read_char()?;
       } else {
-        return Ok(self.str_input[idx + 1..self.read_char()?.0].to_string());
+        return Ok(&self.str_input[idx + 1..self.read_char()?.0]);
       }
     }
 
-    Ok("".into())
+    Ok("")
   }
 
   fn skip_whitespace(&mut self) -> Result<()> {
@@ -786,7 +790,7 @@ impl<'a> Lexer<'a> {
     Ok(())
   }
 
-  fn read_int_or_float(&mut self, mut idx: usize) -> Result<Token> {
+  fn read_int_or_float(&mut self, mut idx: usize) -> Result<Token<'a>> {
     let mut is_signed = false;
     let mut signed_idx = 0;
 
@@ -808,13 +812,13 @@ impl<'a> Lexer<'a> {
 
             if is_signed {
               return Ok(Token::VALUE(Value::FLOAT(
-                lexical::parse::<f64, _>(&self.str_input[signed_idx..=fraction_idx])
+                lexical::parse::<f64>(&self.str_input[signed_idx..=fraction_idx].as_bytes())
                   .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
               )));
             }
 
             return Ok(Token::VALUE(Value::FLOAT(
-              lexical::parse::<f64, _>(&self.str_input[idx..=fraction_idx])
+              lexical::parse::<f64>(&self.str_input[idx..=fraction_idx].as_bytes())
                 .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
             )));
           }
@@ -860,7 +864,7 @@ impl<'a> Lexer<'a> {
     self.input.peek()
   }
 
-  fn read_range(&mut self, lower: Token) -> Result<(Position, Token)> {
+  fn read_range(&mut self, lower: Token<'a>) -> Result<(Position, Token<'a>)> {
     let token_position = self.position;
 
     let mut is_inclusive = true;
@@ -1088,21 +1092,23 @@ mod tests {
       (IDENT(("mybytestring".into(), None)), "mybytestring"),
       (ASSIGN, "="),
       (
-        VALUE(Value::BYTE(ByteValue::UTF8(b"hello there".to_vec()))),
+        VALUE(Value::BYTE(ByteValue::UTF8(b"hello there".as_ref().into()))),
         "'hello there'",
       ),
       (IDENT(("mybase16rule".into(), None)), "mybase16rule"),
       (ASSIGN, "="),
       (
         VALUE(Value::BYTE(ByteValue::B16(
-          b"68656c6c6f20776f726c64".to_vec(),
+          b"68656c6c6f20776f726c64".as_ref().into(),
         ))),
         "h'68656c6c6f20776f726c64'",
       ),
       (IDENT(("mybase64rule".into(), None)), "mybase64rule"),
       (ASSIGN, "="),
       (
-        VALUE(Value::BYTE(ByteValue::B64(b"aGVsbG8gd29ybGQ=".to_vec()))),
+        VALUE(Value::BYTE(ByteValue::B64(
+          b"aGVsbG8gd29ybGQ=".as_ref().into(),
+        ))),
         "b64'aGVsbG8gd29ybGQ='",
       ),
       (IDENT(("mysecondrule".into(), None)), "mysecondrule"),
