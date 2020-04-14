@@ -1,11 +1,10 @@
-use super::token::{self, ByteValue, RangeValue, Token, Value};
+use super::token::{self, ByteValue, Token, Value};
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
   files::SimpleFiles,
   term,
 };
 use std::{
-  convert::TryFrom,
   fmt,
   iter::Peekable,
   num, result,
@@ -66,9 +65,9 @@ pub enum LexerErrorType {
   /// UTF-8 parsing error
   UTF8(string::FromUtf8Error),
   /// Byte string not properly encoded as base 16
-  BASE16(base16::DecodeError),
+  BASE16(String),
   /// Byte string not properly encoded as base 64
-  BASE64(base64::DecodeError),
+  BASE64(String),
   /// Error parsing integer
   PARSEINT(num::ParseIntError),
   /// Error parsing float
@@ -80,8 +79,6 @@ impl Error for LexerError {
   fn source(&self) -> Option<&(dyn Error + 'static)> {
     match &self.error_type {
       LexerErrorType::UTF8(utf8e) => Some(utf8e),
-      LexerErrorType::BASE16(b16e) => Some(b16e),
-      LexerErrorType::BASE64(b64e) => Some(b64e),
       LexerErrorType::PARSEINT(pie) => Some(pie),
       _ => None,
     }
@@ -202,7 +199,7 @@ impl From<(&str, Position, string::FromUtf8Error)> for LexerError {
 impl From<(&str, Position, base16::DecodeError)> for LexerError {
   fn from(e: (&str, Position, base16::DecodeError)) -> Self {
     LexerError {
-      error_type: LexerErrorType::BASE16(e.2),
+      error_type: LexerErrorType::BASE16(e.2.to_string()),
       input: e.0.to_string(),
       position: e.1,
     }
@@ -212,7 +209,7 @@ impl From<(&str, Position, base16::DecodeError)> for LexerError {
 impl From<(&str, Position, base64::DecodeError)> for LexerError {
   fn from(e: (&str, Position, base64::DecodeError)) -> Self {
     LexerError {
-      error_type: LexerErrorType::BASE64(e.2),
+      error_type: LexerErrorType::BASE64(e.2.to_string()),
       input: e.0.to_string(),
       position: e.1,
     }
@@ -482,7 +479,7 @@ impl<'a> Lexer<'a> {
 
           Ok((
             self.position,
-            Token::VALUE(Value::BYTE(ByteValue::UTF8(bsv.into()))),
+            Token::VALUE(Value::BYTE(ByteValue::UTF8(bsv.as_bytes().into()))),
           ))
         }
         (idx, '.') => {
@@ -532,7 +529,8 @@ impl<'a> Lexer<'a> {
 
                   // Ensure that the byte string has been properly encoded.
                   let b = self.read_prefixed_byte_string(idx)?;
-                  return base16::decode(&b)
+                  let mut buf = [0u8; 1024];
+                  return base16::decode_slice(&b[..], &mut buf)
                     .map_err(|e| (self.str_input, self.position, e).into())
                     .and_then(|_| {
                       self.position.range = (token_offset, self.position.index + 1);
@@ -559,7 +557,8 @@ impl<'a> Lexer<'a> {
                           // Ensure that the byte string has been properly
                           // encoded
                           let bs = self.read_prefixed_byte_string(idx)?;
-                          return base64::decode_config(&bs, base64::URL_SAFE)
+                          let mut buf = [0u8; 1024];
+                          return base64::decode_config_slice(&bs, base64::URL_SAFE, &mut buf)
                             .map_err(|e| (self.str_input, self.position, e).into())
                             .and_then(|_| {
                               self.position.range = (token_offset, self.position.index + 1);
@@ -671,7 +670,7 @@ impl<'a> Lexer<'a> {
     Err((self.str_input, self.position, "Empty text value").into())
   }
 
-  fn read_byte_string(&mut self, idx: usize) -> Result<Vec<u8>> {
+  fn read_byte_string(&mut self, idx: usize) -> Result<&'a str> {
     while let Some(&(_, ch)) = self.peek_char() {
       match ch {
         // BCHAR
@@ -679,7 +678,7 @@ impl<'a> Lexer<'a> {
           let _ = self.read_char();
         }
         // Closing '
-        '\x27' => return Ok(self.str_input[idx..self.read_char()?.0].into()),
+        '\x27' => return Ok(&self.str_input[idx..self.read_char()?.0]),
         _ => {
           return Err(
             (
@@ -829,7 +828,6 @@ impl<'a> Lexer<'a> {
     if is_signed {
       return Ok(Token::VALUE(Value::INT(
         self.str_input[signed_idx..=end_idx]
-          .to_string()
           .parse()
           .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
       )));
@@ -854,7 +852,6 @@ impl<'a> Lexer<'a> {
     Ok((
       end_index,
       self.str_input[idx..=end_index]
-        .to_string()
         .parse()
         .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
     ))
@@ -862,144 +859,6 @@ impl<'a> Lexer<'a> {
 
   fn peek_char(&mut self) -> Option<&(usize, char)> {
     self.input.peek()
-  }
-
-  fn read_range(&mut self, lower: Token<'a>) -> Result<(Position, Token<'a>)> {
-    let token_position = self.position;
-
-    let mut is_inclusive = true;
-
-    if let Some(&c) = self.peek_char() {
-      if c.1 == '.' {
-        let _ = self.read_char()?;
-
-        if let Some(&c) = self.peek_char() {
-          if c.1 == '.' {
-            let _ = self.read_char()?;
-
-            is_inclusive = false;
-          }
-        }
-      }
-    }
-
-    if let Some(&c) = self.peek_char() {
-      if c.1 == '\u{0020}' {
-        let _ = self.read_char()?;
-      }
-    }
-
-    let c = self.read_char()?;
-
-    if is_digit(c.1) || c.1 == '-' {
-      let upper = self.read_int_or_float(c.0)?;
-
-      match lower {
-        Token::VALUE(value) => {
-          match value {
-            Value::INT(li) => {
-              if let Token::VALUE(value) = upper {
-                match value {
-                  Value::INT(ui) => {
-                    return Ok((
-                      token_position,
-                      Token::RANGE((RangeValue::INT(li), RangeValue::INT(ui), is_inclusive)),
-                    ))
-                  }
-                  Value::UINT(ui) => {
-                    return Ok((
-                      token_position,
-                      Token::RANGE((RangeValue::INT(li), RangeValue::UINT(ui), is_inclusive)),
-                    ))
-                  }
-                  _ => return Err(
-                    (
-                      self.str_input,
-                      self.position,
-                      "Only numerical ranges between integers or floating point values are allowed",
-                    )
-                      .into(),
-                  ),
-                }
-              }
-            }
-            Value::UINT(li) => {
-              if let Token::VALUE(value) = upper {
-                if let Value::UINT(ui) = value {
-                  return Ok((
-                    token_position,
-                    Token::RANGE((RangeValue::UINT(li), RangeValue::UINT(ui), is_inclusive)),
-                  ));
-                }
-              } else {
-                return Err(
-                  (
-                    self.str_input,
-                    self.position,
-                    "Only numerical ranges between integers or floating point values are allowed",
-                  )
-                    .into(),
-                );
-              }
-            }
-            Value::FLOAT(lf) => {
-              if let Token::VALUE(value) = upper {
-                if let Value::FLOAT(uf) = value {
-                  return Ok((
-                    token_position,
-                    Token::RANGE((RangeValue::FLOAT(lf), RangeValue::FLOAT(uf), is_inclusive)),
-                  ));
-                }
-              } else {
-                return Err(
-                  (
-                    self.str_input,
-                    self.position,
-                    "Only numerical ranges between integers or floating point values are allowed",
-                  )
-                    .into(),
-                );
-              }
-            }
-            _ => {
-              return Err(
-                (
-                  self.str_input,
-                  self.position,
-                  "Only numerical ranges between integers or floating point values are allowed",
-                )
-                  .into(),
-              )
-            }
-          }
-        }
-        _ => {
-          return Ok((
-            token_position,
-            Token::RANGE((
-              RangeValue::try_from(lower)
-                .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
-              RangeValue::try_from(upper)
-                .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
-              is_inclusive,
-            )),
-          ))
-        }
-      }
-    } else if is_ealpha(c.1) {
-      return Ok((
-        token_position,
-        Token::RANGE((
-          RangeValue::try_from(lower)
-            .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
-          RangeValue::try_from(token::lookup_ident(&self.read_identifier(c.0)?))
-            .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
-          is_inclusive,
-        )),
-      ));
-    }
-
-    Err((self.str_input, self.position, "Invalid range syntax. Ranges must be between integers (matching integer values) or between floating-point values (matching floating-point values)").into())
   }
 }
 
