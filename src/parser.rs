@@ -1934,7 +1934,7 @@ pub fn cddl_from_str<'a>(
 ///
 /// let input = r#"myrule = int"#;
 ///
-/// let _ = cddl_from_str(lexer_from_str(input), input);
+/// let _ = cddl_from_str(&mut lexer_from_str(input), input);
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(not(feature = "std"))]
