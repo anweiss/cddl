@@ -849,6 +849,8 @@ where
         let begin_type2_range = self.lexer_position.range.0;
         let begin_type2_line = self.lexer_position.line;
 
+        self.next_token()?;
+
         while let Token::COMMENT(_) = self.cur_token {
           self.next_token()?;
         }
@@ -1272,6 +1274,13 @@ where
             },
             span,
           });
+        }
+
+        // A parse tree that returns a type instead of a member key needs to
+        // advance the token in the case of "(", "{" or "[". Otherwise, infinite
+        // recursive loop occurs
+        if let Token::LPAREN | Token::LBRACE | Token::LBRACKET = self.cur_token {
+          self.next_token()?;
         }
 
         Ok(GroupEntry::ValueMemberKey {
