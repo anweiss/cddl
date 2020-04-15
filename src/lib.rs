@@ -3,7 +3,7 @@
 //! [![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl)
 //! [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl)
 //! [![Publish
-//! packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.5.6&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22)
+//! packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.6.0&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22)
 //! [![Build and
 //! Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22)
 //!
@@ -19,15 +19,15 @@
 //! (Proposed Standard) at https://tools.ietf.org/html/rfc8610.
 //!
 //! This crate includes a handwritten parser and lexer for CDDL and is heavily
-//! inspired by Thorsten Ball's book ["Writing An Interpretor In
-//! Go"](https://interpreterbook.com/). The AST has been built to closely match
-//! the rules defined by the ABNF grammar in [Appendix
+//! inspired by the techniques outlined in Thorsten Ball's book ["Writing An
+//! Interpretor In Go"](https://interpreterbook.com/). The AST has been built to
+//! closely match the rules defined by the ABNF grammar in [Appendix
 //! B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL
 //! must use UTF-8 for its encoding per the spec.
 //!
 //! This crate supports validation of both CBOR and JSON data structures. An
-//! extremely basic REPL is included as well, with plans to compile it for use
-//! in the browser with WebAssembly.
+//! extremely basic REPL is included as well, along with a compiled WebAssembly
+//! target. The minimum version of Rust that this crate supports is 1.37.0.
 //!
 //! ## Goals
 //!
