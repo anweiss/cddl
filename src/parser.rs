@@ -1235,12 +1235,18 @@ where
         self.next_token()?;
       }
 
-      if self.cur_token_is(Token::RPAREN) {
-        self.parser_position.range.1 = self.lexer_position.range.1;
-        span.1 = self.parser_position.range.1;
-
-        self.next_token()?;
+      if !self.cur_token_is(Token::RPAREN) {
+        self.errors.push(ParserError {
+          position: self.lexer_position,
+          message: "Missing closing parend \")\"".into(),
+        });
+        return Err(Error::PARSER);
       }
+
+      self.parser_position.range.1 = self.lexer_position.range.1;
+      span.1 = self.parser_position.range.1;
+
+      self.next_token()?;
 
       return Ok(GroupEntry::InlineGroup { occur, group, span });
     }
@@ -1550,7 +1556,7 @@ where
 
         self.next_token()?;
 
-        let mut tokens: Vec<std::result::Result<(Position, Token), lexer::LexerError>> = Vec::new();
+        let mut tokens: Vec<lexer::Item> = Vec::new();
 
         let mut has_group_entries = false;
         let mut closing_parend = false;
@@ -1576,6 +1582,15 @@ where
           self.parser_position.range.1 = self.lexer_position.range.1;
 
           self.next_token()?;
+
+          if self.cur_token_is(Token::EOF) {
+            self.errors.push(ParserError {
+              position: self.lexer_position,
+              message: "Missing closing parend \")\"".into(),
+            });
+
+            return Err(Error::PARSER);
+          }
         }
 
         // Parse tokens vec as group
