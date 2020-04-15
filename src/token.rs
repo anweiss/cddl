@@ -661,3 +661,14 @@ pub fn lookup_ident(ident: &str) -> Token {
     }
   }
 }
+
+/// If token is an opening delimiter, return its matching closing delimiter
+pub fn closing_delimiter<'a>(token: &Token) -> Option<Token<'a>> {
+  match token {
+    Token::LBRACE => Some(Token::RBRACE),
+    Token::LBRACKET => Some(Token::RBRACKET),
+    Token::LPAREN => Some(Token::RPAREN),
+    Token::LANGLEBRACKET => Some(Token::RANGLEBRACKET),
+    _ => None,
+  }
+}

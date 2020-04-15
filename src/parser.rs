@@ -42,7 +42,8 @@ where
   lexer_position: Position,
   peek_lexer_position: Position,
   parser_position: Position,
-  errors: Vec<ParserError>,
+  /// Vec of collected parsing errors
+  pub errors: Vec<ParserError>,
 }
 
 /// Parsing error types
@@ -607,6 +608,15 @@ where
       if let Token::COMMA | Token::COMMENT(_) = self.cur_token {
         self.next_token()?;
       }
+
+      if self.cur_token_is(Token::EOF) {
+        self.errors.push(ParserError {
+          position: self.parser_position,
+          message: "Missing closing \">\"".into(),
+        });
+
+        return Err(Error::PARSER);
+      }
     }
 
     if self.cur_token_is(Token::RANGLEBRACKET) {
@@ -849,10 +859,6 @@ where
         let begin_type2_range = self.lexer_position.range.0;
         let begin_type2_line = self.lexer_position.line;
 
-        while let Token::COMMENT(_) = self.cur_token {
-          self.next_token()?;
-        }
-
         let group = self.parse_group()?;
 
         Ok(Type2::Map {
@@ -869,10 +875,6 @@ where
       Token::LBRACKET => {
         let begin_type2_range = self.lexer_position.range.0;
         let begin_type2_line = self.lexer_position.line;
-
-        while let Token::COMMENT(_) = self.cur_token {
-          self.next_token()?;
-        }
 
         let group = self.parse_group()?;
 
@@ -1104,6 +1106,8 @@ where
       self.lexer_position.range.0
     };
 
+    let closing_delimiter = token::closing_delimiter(&self.cur_token);
+
     let mut group = Group {
       group_choices: Vec::new(),
       span: (begin_group_range, 0, self.lexer_position.line),
@@ -1125,6 +1129,20 @@ where
 
     group.span.1 = self.parser_position.range.1;
 
+    if let Some(cd) = closing_delimiter.as_ref() {
+      if cd != &self.cur_token {
+        self.errors.push(ParserError {
+          position: self.lexer_position,
+          message: format!(
+            "Missing closing delimiter \"{}\"",
+            closing_delimiter.unwrap()
+          ),
+        });
+
+        return Err(Error::PARSER);
+      }
+    }
+
     Ok(group)
   }
 
@@ -1141,7 +1159,7 @@ where
       self.next_token()?;
 
       grpchoice.span.0 = self.lexer_position.range.0;
-    }
+    };
 
     // TODO: The logic in this while loop is quite messy. Need to figure out a
     // better way to advance the token when parsing the entries in a group
@@ -1235,12 +1253,18 @@ where
         self.next_token()?;
       }
 
-      if self.cur_token_is(Token::RPAREN) {
-        self.parser_position.range.1 = self.lexer_position.range.1;
-        span.1 = self.parser_position.range.1;
-
-        self.next_token()?;
+      if !self.cur_token_is(Token::RPAREN) {
+        self.errors.push(ParserError {
+          position: self.lexer_position,
+          message: "Missing closing parend \")\"".into(),
+        });
+        return Err(Error::PARSER);
       }
+
+      self.parser_position.range.1 = self.lexer_position.range.1;
+      span.1 = self.parser_position.range.1;
+
+      self.next_token()?;
 
       return Ok(GroupEntry::InlineGroup { occur, group, span });
     }
@@ -1266,6 +1290,13 @@ where
             },
             span,
           });
+        }
+
+        // A parse tree that returns a type instead of a member key needs to
+        // advance the token in the case of "(", "{" or "[". Otherwise, infinite
+        // recursive loop occurs
+        if let Token::LPAREN | Token::LBRACE | Token::LBRACKET = self.cur_token {
+          self.next_token()?;
         }
 
         Ok(GroupEntry::ValueMemberKey {
@@ -1550,7 +1581,7 @@ where
 
         self.next_token()?;
 
-        let mut tokens: Vec<std::result::Result<(Position, Token), lexer::LexerError>> = Vec::new();
+        let mut tokens: Vec<lexer::Item> = Vec::new();
 
         let mut has_group_entries = false;
         let mut closing_parend = false;
@@ -1576,11 +1607,32 @@ where
           self.parser_position.range.1 = self.lexer_position.range.1;
 
           self.next_token()?;
+
+          if self.cur_token_is(Token::EOF) {
+            self.errors.push(ParserError {
+              position: self.lexer_position,
+              message: "Missing closing parend \")\"".into(),
+            });
+
+            return Err(Error::PARSER);
+          }
         }
 
         // Parse tokens vec as group
         if has_group_entries {
-          let group = Parser::new(tokens.into_iter(), self.str_input)?.parse_group()?;
+          let mut p = Parser::new(tokens.into_iter(), self.str_input)?;
+          let group = match p.parse_group() {
+            Ok(g) => g,
+            Err(Error::PARSER) => {
+              for e in p.errors.into_iter() {
+                self.errors.push(e);
+              }
+
+              return Err(Error::PARSER);
+            }
+            Err(e) => return Err(e),
+          };
+
           return Ok(Some(MemberKey::NonMemberKey(NonMemberKey::Group(group))));
         }
 
@@ -1591,7 +1643,18 @@ where
         }
 
         // Parse tokens vec as type
-        let t = Parser::new(tokens.into_iter(), self.str_input)?.parse_type(None)?;
+        let mut p = Parser::new(tokens.into_iter(), self.str_input)?;
+        let t = match p.parse_type(None) {
+          Ok(t) => t,
+          Err(Error::PARSER) => {
+            for e in p.errors.into_iter() {
+              self.errors.push(e);
+            }
+
+            return Err(Error::PARSER);
+          }
+          Err(e) => return Err(e),
+        };
 
         while let Token::COMMENT(_) = self.cur_token {
           self.next_token()?;
