@@ -59,7 +59,11 @@ path = "src/bin/repl.rs"
 [[test]]
 name = "cddl"
 required-features = ["std"]
+path = "tests/cddl.rs"
 
 [profile.release]
 opt-level = "s"
 lto = true
+
+[badges]
+maintenance = { status = "actively-developed" }

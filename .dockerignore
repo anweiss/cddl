@@ -1,10 +1,14 @@
+.devcontainer/
 .git/
+.github/
 .gitignore
 .rustfmt.toml
-azure-pipelines.yml
+Cargo.lock
 dep-graph.png
 LICENSE
+pkg/
 README.md
 tests/
 target/
+www/
 Dockerfile
