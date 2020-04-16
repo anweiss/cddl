@@ -1,0 +1,20 @@
+{
+  "name": "cddl-lsp-server",
+  "description": "Language server implementation for the Concise Data Definition Language (CDDL)",
+  "version": "0.1.0",
+  "author": "Andrew Weiss <andrew.weiss@outlook.com>",
+  "license": "MIT",
+  "engines": {
+    "node": "*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anweiss/cddl"
+  },
+  "dependencies": {
+    "vscode-languageserver": "^6.1.1",
+    "vscode-languageserver-textdocument": "^1.0.1",
+    "cddl": "file:../../pkg"
+  },
+  "scripts": {}
+}

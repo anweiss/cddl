@@ -1,4 +1,5 @@
 #![cfg(feature = "std")]
+#![cfg(not(target_arch = "wasm32"))]
 
 mod data;
 

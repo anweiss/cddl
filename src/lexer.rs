@@ -1,4 +1,10 @@
-use super::token::{self, ByteValue, Token, Value};
+use super::{
+  error::{
+    ErrorMsg,
+    MsgType::{self, *},
+  },
+  token::{self, ByteValue, Token, Value},
+};
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
   files::SimpleFiles,
@@ -22,10 +28,14 @@ use alloc::{
 };
 use lexical_core as lexical;
 
+#[cfg(target_arch = "wasm32")]
+use serde::Serialize;
+
 /// Alias for `Result` with an error of type `cddl::LexerError`
 pub type Result<T> = result::Result<T, LexerError>;
 
 /// Lexer position
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Copy, Clone)]
 pub struct Position {
   /// Line number
@@ -61,7 +71,7 @@ pub struct LexerError {
 #[derive(Debug)]
 pub enum LexerErrorType {
   /// CDDL lexing syntax error
-  LEXER(&'static str),
+  LEXER(MsgType),
   /// UTF-8 parsing error
   UTF8(string::FromUtf8Error),
   /// Byte string not properly encoded as base 16
@@ -101,7 +111,7 @@ impl fmt::Display for LexerError {
             file_id,
             self.position.range.0..self.position.range.1,
           )
-          .with_message(*le)]);
+          .with_message(ErrorMsg::from(*le).to_string())]);
 
         term::emit(&mut writer, &config, &files, &diagnostic).map_err(|_| fmt::Error)?;
 
@@ -176,8 +186,8 @@ impl fmt::Display for LexerError {
   }
 }
 
-impl From<(&str, Position, &'static str)> for LexerError {
-  fn from(e: (&str, Position, &'static str)) -> Self {
+impl From<(&str, Position, MsgType)> for LexerError {
+  fn from(e: (&str, Position, MsgType)) -> Self {
     LexerError {
       error_type: LexerErrorType::LEXER(e.2),
       input: e.0.to_string(),
@@ -249,14 +259,14 @@ pub struct Lexer<'a> {
 }
 
 /// Iterator over a lexer
-pub struct IterLexer<'a> {
+pub struct LexerIter<'a> {
   l: &'a mut Lexer<'a>,
 }
 
 /// Iterated lexer token item
 pub type Item<'a> = std::result::Result<(Position, Token<'a>), LexerError>;
 
-impl<'a> Iterator for IterLexer<'a> {
+impl<'a> Iterator for LexerIter<'a> {
   type Item = Item<'a>;
 
   fn next(&mut self) -> Option<Self::Item> {
@@ -292,8 +302,8 @@ impl<'a> Lexer<'a> {
   }
 
   /// Returns an iterator over a lexer
-  pub fn iter(&'a mut self) -> IterLexer<'a> {
-    IterLexer { l: self }
+  pub fn iter(&'a mut self) -> LexerIter<'a> {
+    LexerIter { l: self }
   }
 
   fn read_char(&mut self) -> Result<(usize, char)> {
@@ -316,14 +326,7 @@ impl<'a> Lexer<'a> {
 
         Some(c)
       })
-      .ok_or_else(|| {
-        (
-          self.str_input,
-          self.position,
-          "Unable to advance to the next token",
-        )
-          .into()
-      })
+      .ok_or_else(|| (self.str_input, self.position, UnableToAdvanceToken).into())
   }
 
   /// Advances the index of the str iterator over the input and returns a
@@ -335,6 +338,10 @@ impl<'a> Lexer<'a> {
 
     if let Ok(c) = self.read_char() {
       match c {
+        (_, '\n') => {
+          self.position.range = (token_offset, self.position.index + 1);
+          Ok((self.position, Token::NEWLINE))
+        }
         (_, '=') => match self.peek_char() {
           Some(&c) if c.1 == '>' => {
             let _ = self.read_char()?;
@@ -507,7 +514,7 @@ impl<'a> Lexer<'a> {
                 token::lookup_control_from_str(&self.read_identifier(idx)?).ok_or_else(|| {
                   self.position.range = (token_offset, self.position.index + 1);
 
-                  LexerError::from((self.str_input, self.position, "Invalid control operator"))
+                  LexerError::from((self.str_input, self.position, InvalidControlOperator))
                 })?;
 
               self.position.range = (token_offset, self.position.index + 1);
@@ -516,7 +523,7 @@ impl<'a> Lexer<'a> {
           }
 
           self.position.range = (token_offset, self.position.index + 1);
-          Err((self.str_input, self.position, "Invalid character").into())
+          Err((self.str_input, self.position, InvalidCharacter).into())
         }
         (idx, ch) => {
           if is_ealpha(ch) {
@@ -637,16 +644,7 @@ impl<'a> Lexer<'a> {
               '\x20'..='\x7e' | '\u{0128}'..='\u{10FFFD}' => {
                 let _ = self.read_char()?;
               }
-              _ => {
-                return Err(
-                  (
-                    self.str_input,
-                    self.position,
-                    "Unexpected escape character in text string",
-                  )
-                    .into(),
-                )
-              }
+              _ => return Err((self.str_input, self.position, InvalidEscapeCharacter).into()),
             }
           }
         }
@@ -659,7 +657,7 @@ impl<'a> Lexer<'a> {
             (
               self.str_input,
               self.position,
-              "Unexpected char in text string. Expected closing \"",
+              InvalidTextStringLiteralCharacter,
             )
               .into(),
           )
@@ -667,7 +665,7 @@ impl<'a> Lexer<'a> {
       }
     }
 
-    Err((self.str_input, self.position, "Empty text value").into())
+    Err((self.str_input, self.position, EmptyTextStringLiteral).into())
   }
 
   fn read_byte_string(&mut self, idx: usize) -> Result<&'a str> {
@@ -684,7 +682,7 @@ impl<'a> Lexer<'a> {
             (
               self.str_input,
               self.position,
-              "Unexpected character in byte string. Expected closing '",
+              InvalidByteStringLiteralCharacter,
             )
               .into(),
           )
@@ -692,7 +690,7 @@ impl<'a> Lexer<'a> {
       }
     }
 
-    Err((self.str_input, self.position, "Empty byte string").into())
+    Err((self.str_input, self.position, EmptyByteStringLiteral).into())
   }
 
   fn read_prefixed_byte_string(&mut self, idx: usize) -> Result<Cow<'a, [u8]>> {
@@ -712,16 +710,7 @@ impl<'a> Lexer<'a> {
               '\x20'..='\x7e' | '\u{0128}'..='\u{10FFFD}' => {
                 let _ = self.read_char()?;
               }
-              _ => {
-                return Err(
-                  (
-                    self.str_input,
-                    self.position,
-                    "Unexpected escape character in byte string",
-                  )
-                    .into(),
-                )
-              }
+              _ => return Err((self.str_input, self.position, InvalidEscapeCharacter).into()),
             }
           }
         }
@@ -752,7 +741,7 @@ impl<'a> Lexer<'a> {
               (
                 self.str_input,
                 self.position,
-                "Unexpected char in byte string. Expected closing '",
+                InvalidByteStringLiteralCharacter,
               )
                 .into(),
             );
@@ -761,23 +750,30 @@ impl<'a> Lexer<'a> {
       }
     }
 
-    Err((self.str_input, self.position, "Empty byte string").into())
+    Err((self.str_input, self.position, EmptyByteStringLiteral).into())
   }
 
   fn read_comment(&mut self, idx: usize) -> Result<&'a str> {
+    let mut comment_char = (idx, char::default());
+
     while let Some(&(_, ch)) = self.peek_char() {
       if ch != '\x0a' && ch != '\x0d' {
-        let _ = self.read_char()?;
+        comment_char = self.read_char()?;
       } else {
         return Ok(&self.str_input[idx + 1..self.read_char()?.0]);
       }
     }
 
-    Ok("")
+    Ok(&self.str_input[idx + 1..=comment_char.0])
   }
 
   fn skip_whitespace(&mut self) -> Result<()> {
     while let Some(&(idx, ch)) = self.peek_char() {
+      if ch == '\n' {
+        self.position.index = idx;
+        return Ok(());
+      }
+
       if ch.is_whitespace() {
         let _ = self.read_char()?;
       } else {
@@ -876,6 +872,7 @@ mod tests {
     super::token::{SocketPlug, Token::*},
     *,
   };
+  use pretty_assertions::assert_eq;
 
   #[cfg(not(feature = "std"))]
   use super::super::alloc::string::ToString;
@@ -926,8 +923,7 @@ mod tests {
           name: tstr
           zip-code: uint
           1*3 $$tcp-option,
-        )
-      "#
+        ) ; test"#
     );
 
     let expected_tok = [
@@ -936,24 +932,33 @@ mod tests {
         COMMENT(" this is another comment".into()),
         "; this is another comment",
       ),
+      (NEWLINE, ""),
       (IDENT(("mynumber".into(), None)), "mynumber"),
       (ASSIGN, "="),
       (VALUE(Value::FLOAT(10.5)), "10.5"),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("mytag".into(), None)), "mytag"),
       (ASSIGN, "="),
       (TAG((Some(6), Some(1234))), "#6.1234"),
       (LPAREN, "("),
       (TSTR, "tstr"),
       (RPAREN, ")"),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("myfirstrule".into(), None)), "myfirstrule"),
       (ASSIGN, "="),
       (VALUE(Value::TEXT("myotherrule".into())), "\"myotherrule\""),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("mybytestring".into(), None)), "mybytestring"),
       (ASSIGN, "="),
       (
         VALUE(Value::BYTE(ByteValue::UTF8(b"hello there".as_ref().into()))),
         "'hello there'",
       ),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("mybase16rule".into(), None)), "mybase16rule"),
       (ASSIGN, "="),
       (
@@ -962,6 +967,8 @@ mod tests {
         ))),
         "h'68656c6c6f20776f726c64'",
       ),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("mybase64rule".into(), None)), "mybase64rule"),
       (ASSIGN, "="),
       (
@@ -970,33 +977,46 @@ mod tests {
         ))),
         "b64'aGVsbG8gd29ybGQ='",
       ),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("mysecondrule".into(), None)), "mysecondrule"),
       (ASSIGN, "="),
       (IDENT(("mynumber".into(), None)), "mynumber"),
       (RANGEOP(true), ".."),
       (VALUE(Value::FLOAT(100.5)), "100.5"),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("myintrule".into(), None)), "myintrule"),
       (ASSIGN, "="),
       (VALUE(Value::INT(-10)), "-10"),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("mysignedfloat".into(), None)), "mysignedfloat"),
       (ASSIGN, "="),
       (VALUE(Value::FLOAT(-10.5)), "-10.5"),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("myintrange".into(), None)), "myintrange"),
       (ASSIGN, "="),
       (VALUE(Value::INT(-10)), "-10"),
       (RANGEOP(true), ".."),
       (VALUE(Value::UINT(10)), "10"),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("mycontrol".into(), None)), "mycontrol"),
       (ASSIGN, "="),
       (IDENT(("mynumber".into(), None)), "mynumber"),
       (GT, ".gt"),
       (VALUE(Value::UINT(0)), "0"),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("@terminal-color".into(), None)), "@terminal-color"),
       (ASSIGN, "="),
       (IDENT(("basecolors".into(), None)), "basecolors"),
       (TCHOICE, "/"),
       (IDENT(("othercolors".into(), None)), "othercolors"),
       (COMMENT(" an inline comment".into()), "; an inline comment"),
+      (NEWLINE, ""),
       (IDENT(("messages".into(), None)), "messages"),
       (ASSIGN, "="),
       (IDENT(("message".into(), None)), "message"),
@@ -1005,14 +1025,19 @@ mod tests {
       (COMMA, ","),
       (VALUE(Value::TEXT("now".into())), "\"now\""),
       (RANGLEBRACKET, ">"),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("address".into(), None)), "address"),
       (ASSIGN, "="),
       (LBRACE, "{"),
       (IDENT(("delivery".into(), None)), "delivery"),
       (RBRACE, "}"),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("delivery".into(), None)), "delivery"),
       (ASSIGN, "="),
       (LPAREN, "("),
+      (NEWLINE, ""),
       (IDENT(("street".into(), None)), "street"),
       (COLON, ":"),
       (TSTR, "tstr"),
@@ -1025,25 +1050,33 @@ mod tests {
       (COMMA, ","),
       (IDENT(("city".into(), None)), "city"),
       (GCHOICE, "//"),
+      (NEWLINE, ""),
       (IDENT(("po-box".into(), None)), "po-box"),
       (COLON, ":"),
       (UINT, "uint"),
       (COMMA, ","),
       (IDENT(("city".into(), None)), "city"),
       (GCHOICE, "//"),
+      (NEWLINE, ""),
       (IDENT(("per-pickup".into(), None)), "per-pickup"),
       (COLON, ":"),
       (TRUE, "true"),
+      (NEWLINE, ""),
       (RPAREN, ")"),
+      (NEWLINE, ""),
+      (NEWLINE, ""),
       (IDENT(("city".into(), None)), "city"),
       (ASSIGN, "="),
       (LPAREN, "("),
+      (NEWLINE, ""),
       (IDENT(("name".into(), None)), "name"),
       (COLON, ":"),
       (TSTR, "tstr"),
+      (NEWLINE, ""),
       (IDENT(("zip-code".into(), None)), "zip-code"),
       (COLON, ":"),
       (UINT, "uint"),
+      (NEWLINE, ""),
       (VALUE(Value::UINT(1)), "1"),
       (ASTERISK, "*"),
       (VALUE(Value::UINT(3)), "3"),
@@ -1052,14 +1085,16 @@ mod tests {
         "$$tcp-option",
       ),
       (COMMA, ","),
+      (NEWLINE, ""),
       (RPAREN, ")"),
+      (COMMENT(" test".into()), "; test"),
     ];
 
     let mut l = Lexer::new(input);
 
     for (expected_tok, literal) in expected_tok.iter() {
       let tok = l.next_token()?;
-      assert_eq!((expected_tok, *literal), (&tok.1, &*tok.1.to_string()))
+      assert_eq!((&tok.1, &*tok.1.to_string()), (expected_tok, *literal))
     }
 
     Ok(())
@@ -1118,13 +1153,12 @@ mod tests {
           indoc!(
             r#"
               error: lexer error
+                ┌─ input:1:17
+                │
+              1 │ myrule = number .asdf 10
+                │                 ^^^^^ invalid control operator
+                │
 
-                 ┌── input:1:17 ───
-                 │
-               1 │ myrule = number .asdf 10
-                 │                 ^^^^^ Invalid control operator
-                 │
-            
             "#
           )
         );

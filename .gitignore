@@ -1,8 +1,10 @@
 /target
 **/*.rs.bk
 Cargo.lock
+.cargo/
 
 .DS_STORE
 
-/www/node_modules/
+node_modules/
+
 /www/dist/

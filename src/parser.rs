@@ -1,5 +1,9 @@
 use super::{
   ast::*,
+  error::{
+    ErrorMsg,
+    MsgType::{self, *},
+  },
   lexer::{self, Lexer, LexerError, Position},
   token::{self, Token},
 };
@@ -26,6 +30,9 @@ use alloc::{
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+use serde::Serialize;
 
 /// Alias for `Result` with an error of type `cddl::ParserError`
 pub type Result<T> = result::Result<T, Error>;
@@ -60,10 +67,11 @@ pub enum Error {
 }
 
 /// Parser error information and position
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug)]
 pub struct ParserError {
   position: Position,
-  message: String,
+  msg: ErrorMsg,
 }
 
 impl fmt::Display for Error {
@@ -159,7 +167,7 @@ where
     for error in self.errors.iter() {
       labels.push(
         Label::primary(file_id, error.position.range.0..error.position.range.1)
-          .with_message(error.message.to_string()),
+          .with_message(error.msg.to_string()),
       );
     }
 
@@ -217,7 +225,7 @@ where
     for error in self.errors.iter() {
       labels.push(
         Label::primary(file_id, error.position.range.0..error.position.range.1)
-          .with_message(error.message.to_string()),
+          .with_message(error.msg.to_string()),
       );
     }
 
@@ -241,8 +249,8 @@ where
 
     if let Some(next_token) = self.tokens.next() {
       let nt = next_token.map_err(Error::LEXER)?;
-      self.peek_lexer_position = nt.0;
       self.peek_token = nt.1;
+      self.peek_lexer_position = nt.0;
     }
 
     Ok(())
@@ -266,14 +274,43 @@ where
     Ok(())
   }
 
+  fn collect_comments(&mut self) -> Result<Option<Comments<'a>>> {
+    #[cfg_attr(not(feature = "lsp"), allow(unused_mut))]
+    let mut comments: Option<Comments> = None;
+
+    while let Token::COMMENT(_comment) = self.cur_token {
+      #[cfg(feature = "lsp")]
+      comments.get_or_insert(Comments::default()).0.push(_comment);
+
+      self.next_token()?;
+    }
+
+    while let Token::NEWLINE = self.cur_token {
+      #[cfg(feature = "lsp")]
+      comments.get_or_insert(Comments::default()).0.push("\n");
+
+      self.next_token()?;
+    }
+
+    if let Token::COMMENT(_) = self.cur_token {
+      if let Some(c) = self.collect_comments()? {
+        #[cfg_attr(not(feature = "lsp"), allow(unused_mut))]
+        for comment in c.0.iter() {
+          comments.get_or_insert(Comments::default()).0.push(comment);
+        }
+      }
+    }
+
+    Ok(comments)
+  }
+
   /// Parses into a `CDDL` AST
   pub fn parse_cddl(&mut self) -> Result<CDDL<'a>> {
     let mut c = CDDL::default();
 
+    c.comments = self.collect_comments()?;
+
     while self.cur_token != Token::EOF {
-      while let Token::COMMENT(_) = self.cur_token {
-        self.next_token()?;
-      }
       match self.parse_rule() {
         Ok(r) => {
           let rule_exists = |existing_rule: &Rule| {
@@ -285,17 +322,13 @@ where
 
             self.errors.push(ParserError {
               position: self.parser_position,
-              message: format!("Rule with name '{}' already defined", r.name()),
+              msg: DuplicateRuleIdentifier.into(),
             });
 
             continue;
           }
 
           c.rules.push(r);
-
-          while let Token::COMMENT(_) = self.cur_token {
-            self.next_token()?;
-          }
         }
         Err(Error::PARSER) => {
           if !self.cur_token_is(Token::EOF) {
@@ -324,16 +357,22 @@ where
       return Err(Error::PARSER);
     }
 
+    if c.rules.is_empty() {
+      self.errors.push(ParserError {
+        position: self.parser_position,
+        msg: NoRulesDefined.into(),
+      });
+
+      return Err(Error::PARSER);
+    }
+
     Ok(c)
   }
 
   fn parse_rule(&mut self) -> Result<Rule<'a>> {
     let begin_rule_range = self.lexer_position.range.0;
     let begin_rule_line = self.lexer_position.line;
-
-    while let Token::COMMENT(_) = self.cur_token {
-      self.next_token()?;
-    }
+    let begin_rule_col = self.lexer_position.column;
 
     let ident = match &self.cur_token {
       Token::IDENT(i) => self.identifier_from_ident_token(*i),
@@ -343,7 +382,7 @@ where
 
         self.errors.push(ParserError {
           position: self.parser_position,
-          message: format!("expected rule identifier. Got '{}'", self.cur_token),
+          msg: InvalidRuleIdentifier.into(),
         });
 
         return Err(Error::PARSER);
@@ -358,9 +397,7 @@ where
       None
     };
 
-    while let Token::COMMENT(_) = self.cur_token {
-      self.next_token()?;
-    }
+    let comments_before_assign = self.collect_comments()?;
 
     if !self.expect_peek(&Token::ASSIGN)?
       && !self.expect_peek(&Token::TCHOICEALT)?
@@ -371,10 +408,7 @@ where
 
       self.errors.push(ParserError {
         position: self.parser_position,
-        message: format!(
-          "Expected assignment '=', '/=' or '//=' after identifier {}",
-          self.cur_token
-        ),
+        msg: MsgType::MissingAssignmentToken.into(),
       });
 
       return Err(Error::PARSER);
@@ -391,15 +425,15 @@ where
 
     self.next_token()?;
 
-    while let Token::COMMENT(_) = self.cur_token {
-      self.next_token()?;
-    }
+    let comments_after_assign = self.collect_comments()?;
 
     match self.cur_token {
       // Check for an occurrence indicator of uint followed by an asterisk '*'
       Token::VALUE(token::Value::UINT(_)) => {
         if self.peek_token_is(&Token::ASTERISK) {
           let ge = self.parse_grpent(true)?;
+
+          let comments_after_rule = self.collect_comments()?;
 
           let span = (
             begin_rule_range,
@@ -410,26 +444,36 @@ where
           Ok(Rule::Group {
             rule: Box::from(GroupRule {
               name: ident,
-              generic_param: gp,
+              generic_params: gp,
               is_group_choice_alternate,
               entry: ge,
+              comments_before_assigng: comments_before_assign,
+              comments_after_assigng: comments_after_assign,
             }),
+            comments_after_rule,
             span,
           })
         } else {
           let t = self.parse_type(None)?;
+
           let span = (
             begin_rule_range,
             self.parser_position.range.1,
             begin_rule_line,
           );
+
+          let comments_after_rule = self.collect_comments()?;
+
           Ok(Rule::Type {
             rule: TypeRule {
               name: ident,
-              generic_param: gp,
+              generic_params: gp,
               is_type_choice_alternate,
               value: t,
+              comments_before_assignt: comments_before_assign,
+              comments_after_assignt: comments_after_assign,
             },
+            comments_after_rule,
             span,
           })
         }
@@ -441,6 +485,8 @@ where
 
         let mut end_rule_range = self.parser_position.range.1;
 
+        let comments_after_rule = self.collect_comments()?;
+
         // If a group entry is an inline group with no leading occurrence
         // indicator, and its group has only a single element that is not
         // preceded by an occurrence indicator nor member key, treat it as a
@@ -448,20 +494,26 @@ where
         // returning the type rule. This is one of the few situations where
         // `clone` is required
         if let GroupEntry::InlineGroup {
-          occur: None, group, ..
+          occur: None,
+          group,
+          comments_before_group,
+          comments_after_group,
+          ..
         } = &ge
         {
           if group.group_choices.len() == 1 {
             if let Some(gc) = group.group_choices.get(0) {
               if gc.group_entries.len() == 1 {
-                if let Some(ge) = gc.group_entries.get(0) {
+                if let Some(group_entry) = gc.group_entries.get(0) {
                   // Check that there is no trailing comma
-                  if !ge.1 {
+                  if !group_entry.1.optional_comma {
                     // TODO: Replace with box pattern destructuring once supported in stable
-                    if let GroupEntry::ValueMemberKey { ge, .. } = &ge.0 {
+                    if let GroupEntry::ValueMemberKey { ge, .. } = &group_entry.0 {
                       if ge.occur.is_none() && ge.member_key.is_none() {
                         let value = self.parse_type(Some(Type2::ParenthesizedType {
+                          comments_before_type: comments_before_group.clone(),
                           pt: ge.entry_type.clone(),
+                          comments_after_type: comments_after_group.clone(),
                           span: (
                             begin_pt_range,
                             self.parser_position.range.1,
@@ -474,10 +526,13 @@ where
                         return Ok(Rule::Type {
                           rule: TypeRule {
                             name: ident,
-                            generic_param: gp,
+                            generic_params: gp,
                             is_type_choice_alternate,
                             value,
+                            comments_before_assignt: comments_before_assign,
+                            comments_after_assignt: comments_after_assign,
                           },
+                          comments_after_rule,
                           span: (begin_rule_range, end_rule_range, begin_rule_line),
                         });
                       }
@@ -492,15 +547,41 @@ where
         Ok(Rule::Group {
           rule: Box::from(GroupRule {
             name: ident,
-            generic_param: gp,
+            generic_params: gp,
             is_group_choice_alternate,
             entry: ge,
+            comments_before_assigng: comments_before_assign,
+            comments_after_assigng: comments_after_assign,
           }),
+          comments_after_rule,
           span: (begin_rule_range, end_rule_range, begin_rule_line),
         })
       }
       _ => {
-        let t = self.parse_type(None)?;
+        let mut t = self.parse_type(None)?;
+
+        let comments_after_rule = if let Some(comments) = t.comments_after_type() {
+          Some(comments)
+        } else {
+          self.collect_comments()?
+        };
+
+        if self.cur_token_is(Token::ASSIGN)
+          || self.cur_token_is(Token::TCHOICEALT)
+          || self.cur_token_is(Token::GCHOICEALT)
+        {
+          self.errors.push(ParserError {
+            position: Position {
+              line: begin_rule_line,
+              column: begin_rule_col,
+              range: (ident.span.0, ident.span.1),
+              index: self.parser_position.range.0,
+            },
+            msg: IncompleteRuleEntry.into(),
+          });
+
+          return Err(Error::PARSER);
+        }
 
         let span = (
           begin_rule_range,
@@ -511,32 +592,44 @@ where
         Ok(Rule::Type {
           rule: TypeRule {
             name: ident,
-            generic_param: gp,
+            generic_params: gp,
             is_type_choice_alternate,
             value: t,
+            comments_before_assignt: comments_before_assign,
+            comments_after_assignt: comments_after_assign,
           },
+          comments_after_rule,
           span,
         })
       }
     }
   }
 
-  fn parse_genericparm(&mut self) -> Result<GenericParm<'a>> {
+  fn parse_genericparm(&mut self) -> Result<GenericParams<'a>> {
     let begin_range = self.lexer_position.range.0;
 
     if self.cur_token_is(Token::LANGLEBRACKET) {
       self.next_token()?;
     }
 
-    let mut generic_params = GenericParm::default();
+    let mut generic_params = GenericParams::default();
 
     while !self.cur_token_is(Token::RANGLEBRACKET) {
+      let comments_before_ident = self.collect_comments()?;
+
       match &self.cur_token {
         Token::IDENT(ident) => {
-          generic_params
-            .params
-            .push(self.identifier_from_ident_token(*ident));
+          let param = self.identifier_from_ident_token(*ident);
+
           self.next_token()?;
+
+          let comments_after_ident = self.collect_comments()?;
+
+          generic_params.params.push(GenericParam {
+            comments_before_ident,
+            param,
+            comments_after_ident,
+          });
 
           if !self.cur_token_is(Token::COMMA) && !self.cur_token_is(Token::RANGLEBRACKET) {
             self.parser_position.range = (begin_range + 1, self.peek_lexer_position.range.0);
@@ -544,22 +637,20 @@ where
 
             self.errors.push(ParserError {
               position: self.parser_position,
-              message: "Generic parameters should be between angle brackets '<' and '>' and separated by a comma ','"
-                .into(),
+              msg: InvalidGenericSyntax.into(),
             });
 
             return Err(Error::PARSER);
           }
         }
         Token::COMMA => self.next_token()?,
-        Token::COMMENT(_) => self.next_token()?,
         Token::VALUE(_) => {
           self.parser_position.range = (self.lexer_position.range.0, self.lexer_position.range.1);
           self.parser_position.line = self.lexer_position.line;
 
           self.errors.push(ParserError {
             position: self.parser_position,
-            message: "Generic parameters must be named identifiers".into(),
+            msg: InvalidGenericIdentifier.into(),
           });
 
           return Err(Error::PARSER);
@@ -570,7 +661,7 @@ where
 
           self.errors.push(ParserError {
             position: self.parser_position,
-            message: "Generic parameters should be between angle brackets '<' and '>' and separated by a comma ','".into()
+            msg: InvalidGenericSyntax.into(),
           });
 
           return Err(Error::PARSER);
@@ -588,7 +679,7 @@ where
     Ok(generic_params)
   }
 
-  fn parse_genericarg(&mut self) -> Result<GenericArg<'a>> {
+  fn parse_genericargs(&mut self) -> Result<GenericArgs<'a>> {
     if self.peek_token_is(&Token::LANGLEBRACKET) {
       self.next_token()?;
     }
@@ -601,18 +692,29 @@ where
       self.next_token()?;
     }
 
-    let mut generic_args = GenericArg::default();
+    let mut generic_args = GenericArgs::default();
 
     while !self.cur_token_is(Token::RANGLEBRACKET) {
-      generic_args.args.push(self.parse_type1(None)?);
-      if let Token::COMMA | Token::COMMENT(_) = self.cur_token {
+      let leading_comments = self.collect_comments()?;
+
+      let t1 = self.parse_type1(None)?;
+
+      let trailing_comments = self.collect_comments()?;
+
+      generic_args.args.push(GenericArg {
+        comments_before_type: leading_comments,
+        arg: Box::from(t1),
+        comments_after_type: trailing_comments,
+      });
+
+      if let Token::COMMA = self.cur_token {
         self.next_token()?;
       }
 
       if self.cur_token_is(Token::EOF) {
         self.errors.push(ParserError {
           position: self.parser_position,
-          message: "Missing closing \">\"".into(),
+          msg: MissingGenericClosingDelimiter.into(),
         });
 
         return Err(Error::PARSER);
@@ -650,20 +752,30 @@ where
       span: (begin_type_range, 0, self.parser_position.line),
     };
 
-    t.type_choices.push(self.parse_type1(parenthesized_type)?);
+    let mut tc = TypeChoice {
+      type1: self.parse_type1(parenthesized_type)?,
+      comments_before_type: None,
+      comments_after_type: None,
+    };
 
-    while let Token::COMMENT(_) = self.cur_token {
-      self.next_token()?;
-    }
+    tc.comments_after_type = self.collect_comments()?;
+
+    t.type_choices.push(tc);
 
     while self.cur_token_is(Token::TCHOICE) {
       self.next_token()?;
 
-      while let Token::COMMENT(_) = self.cur_token {
-        self.next_token()?;
-      }
+      let comments_before_type = self.collect_comments()?;
 
-      t.type_choices.push(self.parse_type1(None)?);
+      let mut tc = TypeChoice {
+        comments_before_type,
+        comments_after_type: None,
+        type1: self.parse_type1(None)?,
+      };
+
+      tc.comments_after_type = self.collect_comments()?;
+
+      t.type_choices.push(tc);
     }
 
     t.span.1 = self.parser_position.range.1;
@@ -675,24 +787,35 @@ where
     let mut begin_type1_line = self.lexer_position.line;
     let begin_type1_range = self.lexer_position.range.0;
 
-    let (t2_1, begin_type1_range) =
-      if let Some(Type2::ParenthesizedType { pt, span }) = parenthesized_type {
-        begin_type1_line = span.2;
+    let (t2_1, begin_type1_range) = if let Some(Type2::ParenthesizedType {
+      comments_before_type,
+      pt,
+      comments_after_type,
+      span,
+    }) = parenthesized_type
+    {
+      begin_type1_line = span.2;
 
-        (Type2::ParenthesizedType { pt, span }, span.0)
-      } else {
-        (self.parse_type2()?, begin_type1_range)
-      };
-
-    while let Token::COMMENT(_) = self.cur_token {
-      self.next_token()?;
-    }
+      (
+        Type2::ParenthesizedType {
+          comments_before_type,
+          pt,
+          comments_after_type,
+          span,
+        },
+        span.0,
+      )
+    } else {
+      (self.parse_type2()?, begin_type1_range)
+    };
 
     let mut span = (
       begin_type1_range,
       self.lexer_position.range.1,
       begin_type1_line,
     );
+
+    let comments_after_type = self.collect_comments()?;
 
     let op = match &self.cur_token {
       Token::RANGEOP(i) => {
@@ -720,8 +843,10 @@ where
     );
 
     match op {
-      Some(o) => {
+      Some(operator) => {
         self.next_token()?;
+
+        let comments_after_operator = self.collect_comments()?;
 
         let t2 = self.parse_type2()?;
 
@@ -729,13 +854,20 @@ where
 
         Ok(Type1 {
           type2: t2_1,
-          operator: Some((o, t2)),
+          operator: Some(Operator {
+            comments_before_operator: comments_after_type,
+            operator,
+            comments_after_operator,
+            type2: t2,
+          }),
+          comments_after_type: None,
           span,
         })
       }
       None => Ok(Type1 {
         type2: t2_1,
         operator: None,
+        comments_after_type,
         span,
       }),
     }
@@ -802,13 +934,13 @@ where
         // optional genericarg detected
         if self.peek_token_is(&Token::LANGLEBRACKET) {
           let ident = self.identifier_from_ident_token(*ident);
-          let ga = self.parse_genericarg()?;
+          let ga = self.parse_genericargs()?;
 
           let end_type2_range = self.parser_position.range.1;
 
           return Ok(Type2::Typename {
             ident,
-            generic_arg: Some(ga),
+            generic_args: Some(ga),
             span: (begin_type2_range, end_type2_range, begin_type2_line),
           });
         }
@@ -818,7 +950,7 @@ where
 
         Ok(Type2::Typename {
           ident: self.identifier_from_ident_token(*ident),
-          generic_arg: None,
+          generic_args: None,
           span: (
             self.parser_position.range.0,
             self.parser_position.range.1,
@@ -834,9 +966,7 @@ where
 
         self.next_token()?;
 
-        while let Token::COMMENT(_) = self.cur_token {
-          self.next_token()?;
-        }
+        let comments_before_type = self.collect_comments()?;
 
         let pt = self.parse_type(None)?;
 
@@ -844,7 +974,11 @@ where
         self.parser_position.range.1 = self.lexer_position.range.1;
         self.parser_position.line = begin_type2_line;
 
+        let comments_after_type = self.collect_comments()?;
+
         Ok(Type2::ParenthesizedType {
+          comments_before_type,
+          comments_after_type,
           pt,
           span: (
             self.parser_position.range.0,
@@ -859,15 +993,31 @@ where
         let begin_type2_range = self.lexer_position.range.0;
         let begin_type2_line = self.lexer_position.line;
 
-        let group = self.parse_group()?;
+        let mut group = self.parse_group()?;
+
+        let comments_before_group = if let Some(GroupChoice {
+          comments_before_grpchoice,
+          ..
+        }) = group.group_choices.first_mut()
+        {
+          comments_before_grpchoice.take()
+        } else {
+          None
+        };
+
+        let span = (
+          begin_type2_range,
+          self.lexer_position.range.1,
+          begin_type2_line,
+        );
+
+        let comments_after_group = self.collect_comments()?;
 
         Ok(Type2::Map {
+          comments_before_group,
           group,
-          span: (
-            begin_type2_range,
-            self.lexer_position.range.1,
-            begin_type2_line,
-          ),
+          span,
+          comments_after_group,
         })
       }
 
@@ -876,21 +1026,43 @@ where
         let begin_type2_range = self.lexer_position.range.0;
         let begin_type2_line = self.lexer_position.line;
 
-        let group = self.parse_group()?;
+        let mut group = self.parse_group()?;
+
+        let comments_before_group = if let Some(GroupChoice {
+          comments_before_grpchoice,
+          ..
+        }) = group.group_choices.first_mut()
+        {
+          if comments_before_grpchoice.is_some() {
+            comments_before_grpchoice.take()
+          } else {
+            None
+          }
+        } else {
+          None
+        };
+
+        let span = (
+          begin_type2_range,
+          self.lexer_position.range.1,
+          begin_type2_line,
+        );
+
+        let comments_after_group = self.collect_comments()?;
 
         Ok(Type2::Array {
+          comments_before_group,
           group,
-          span: (
-            begin_type2_range,
-            self.lexer_position.range.1,
-            begin_type2_line,
-          ),
+          comments_after_group,
+          span,
         })
       }
 
       // ~ typename [genericarg]
       Token::UNWRAP => {
         self.next_token()?;
+
+        let comments = self.collect_comments()?;
 
         if let Token::IDENT(ident) = &self.cur_token {
           let ident = self.identifier_from_ident_token(*ident);
@@ -899,22 +1071,24 @@ where
             self.next_token()?;
 
             return Ok(Type2::Unwrap {
+              comments,
               ident,
-              generic_arg: Some(self.parse_genericarg()?),
+              generic_args: Some(self.parse_genericargs()?),
               span: (0, 0, 0),
             });
           }
 
           return Ok(Type2::Unwrap {
+            comments,
             ident,
-            generic_arg: None,
+            generic_args: None,
             span: (0, 0, 0),
           });
         }
 
         self.errors.push(ParserError {
           position: self.parser_position,
-          message: "Invalid unwrap syntax".into(),
+          msg: InvalidUnwrapSyntax.into(),
         });
 
         Err(Error::PARSER)
@@ -928,18 +1102,23 @@ where
 
         self.next_token()?;
 
-        while let Token::COMMENT(_) = self.cur_token {
-          self.next_token()?;
-        }
+        let comments = self.collect_comments()?;
 
         match &self.cur_token {
           Token::LPAREN => {
             self.next_token()?;
 
+            let comments_before_group = self.collect_comments()?;
+
             let group = self.parse_group()?;
 
+            let comments_after_group = self.collect_comments()?;
+
             Ok(Type2::ChoiceFromInlineGroup {
+              comments,
+              comments_before_group,
               group,
+              comments_after_group,
               span: (
                 begin_type2_range,
                 self.parser_position.range.1,
@@ -952,11 +1131,12 @@ where
             if self.peek_token_is(&Token::LANGLEBRACKET) {
               self.next_token()?;
 
-              let generic_arg = Some(self.parse_genericarg()?);
+              let generic_args = Some(self.parse_genericargs()?);
 
               return Ok(Type2::ChoiceFromGroup {
+                comments,
                 ident,
-                generic_arg,
+                generic_args,
                 span: (
                   begin_type2_range,
                   self.parser_position.range.1,
@@ -968,8 +1148,9 @@ where
             self.parser_position.range.1 = self.lexer_position.range.1;
 
             Ok(Type2::ChoiceFromGroup {
+              comments,
               ident,
-              generic_arg: None,
+              generic_args: None,
               span: (
                 begin_type2_range,
                 self.parser_position.range.1,
@@ -980,7 +1161,7 @@ where
           _ => {
             self.errors.push(ParserError {
               position: self.parser_position,
-              message: "Invalid group to choice enumeration syntax".into(),
+              msg: InvalidGroupToChoiceEnumSyntax.into(),
             });
             Err(Error::PARSER)
           }
@@ -1006,7 +1187,7 @@ where
             if !self.cur_token_is(Token::LPAREN) {
               self.errors.push(ParserError {
                 position: self.parser_position,
-                message: format!("Malformed tag. Unknown token: {:#?}", self.cur_token),
+                msg: InvalidTagSyntax.into(),
               });
 
               return Err(Error::PARSER);
@@ -1014,12 +1195,16 @@ where
 
             self.next_token()?;
 
+            let comments_before_type = self.collect_comments()?;
+
             let t = self.parse_type(None)?;
+
+            let comments_after_type = self.collect_comments()?;
 
             if !self.cur_token_is(Token::RPAREN) {
               self.errors.push(ParserError {
                 position: self.parser_position,
-                message: format!("Malformed tag. Unknown token: {:#?}", self.cur_token),
+                msg: InvalidTagSyntax.into(),
               });
 
               return Err(Error::PARSER);
@@ -1027,7 +1212,9 @@ where
 
             Ok(Type2::TaggedData {
               tag,
+              comments_before_type,
               t,
+              comments_after_type,
               span: (
                 begin_type2_range,
                 self.parser_position.range.1,
@@ -1052,40 +1239,55 @@ where
           ))),
         }
       }
-      _ => {
-        while let Token::COMMENT(_) = self.cur_token {
-          self.next_token()?;
+      _ => match self.cur_token.in_standard_prelude() {
+        Some(s) => {
+          let ident = self.identifier_from_ident_token((s, None));
+          self.parser_position.range = self.lexer_position.range;
+          self.parser_position.line = self.lexer_position.line;
+
+          Ok(Type2::Typename {
+            ident,
+            generic_args: None,
+            span: (
+              self.parser_position.range.0,
+              self.parser_position.range.1,
+              self.parser_position.line,
+            ),
+          })
         }
+        None => {
+          self.parser_position.line = self.lexer_position.line;
+          self.parser_position.range = self.lexer_position.range;
 
-        match self.cur_token.in_standard_prelude() {
-          Some(s) => {
-            let ident = self.identifier_from_ident_token((s, None));
-            self.parser_position.range = self.lexer_position.range;
-            self.parser_position.line = self.lexer_position.line;
-
-            Ok(Type2::Typename {
-              ident,
-              generic_arg: None,
-              span: (
-                self.parser_position.range.0,
-                self.parser_position.range.1,
-                self.parser_position.line,
-              ),
-            })
-          }
-          None => {
-            self.parser_position.line = self.lexer_position.line;
-            self.parser_position.range = self.lexer_position.range;
-
+          if self.cur_token_is(Token::COLON) || self.cur_token_is(Token::ARROWMAP) {
             self.errors.push(ParserError {
               position: self.parser_position,
-              message: "Entry type syntax error".into(),
+              msg: MissingGroupEntryMemberKey.into(),
             });
 
-            Err(Error::PARSER)
+            return Err(Error::PARSER);
           }
+
+          if self.cur_token_is(Token::RBRACE)
+            || self.cur_token_is(Token::RBRACKET)
+            || self.cur_token_is(Token::RPAREN)
+          {
+            self.errors.push(ParserError {
+              position: self.parser_position,
+              msg: MissingGroupEntry.into(),
+            });
+
+            return Err(Error::PARSER);
+          }
+
+          self.errors.push(ParserError {
+            position: self.parser_position,
+            msg: InvalidGroupEntrySyntax.into(),
+          });
+
+          Err(Error::PARSER)
         }
-      }
+      },
     };
 
     self.parser_position.range.1 = self.lexer_position.range.1;
@@ -1115,15 +1317,7 @@ where
 
     group.group_choices.push(self.parse_grpchoice()?);
 
-    while let Token::COMMENT(_) = self.cur_token {
-      self.next_token()?;
-    }
-
     while self.cur_token_is(Token::GCHOICE) {
-      while let Token::COMMENT(_) = self.cur_token {
-        self.next_token()?;
-      }
-
       group.group_choices.push(self.parse_grpchoice()?);
     }
 
@@ -1133,10 +1327,7 @@ where
       if cd != &self.cur_token {
         self.errors.push(ParserError {
           position: self.lexer_position,
-          message: format!(
-            "Missing closing delimiter \"{}\"",
-            closing_delimiter.unwrap()
-          ),
+          msg: MissingClosingDelimiter.into(),
         });
 
         return Err(Error::PARSER);
@@ -1149,17 +1340,23 @@ where
   fn parse_grpchoice(&mut self) -> Result<GroupChoice<'a>> {
     let mut grpchoice = GroupChoice {
       group_entries: Vec::new(),
+      comments_before_grpchoice: None,
       span: (self.lexer_position.range.0, 0, self.lexer_position.line),
     };
 
-    if self.cur_token_is(Token::LBRACE)
-      || self.cur_token_is(Token::LBRACKET)
-      || self.cur_token_is(Token::GCHOICE)
-    {
+    if self.cur_token_is(Token::GCHOICE) {
+      self.next_token()?;
+
+      grpchoice.comments_before_grpchoice = self.collect_comments()?;
+
+      grpchoice.span.0 = self.lexer_position.range.0;
+    } else if self.cur_token_is(Token::LBRACE) || self.cur_token_is(Token::LBRACKET) {
       self.next_token()?;
 
       grpchoice.span.0 = self.lexer_position.range.0;
     };
+
+    grpchoice.comments_before_grpchoice = self.collect_comments()?;
 
     // TODO: The logic in this while loop is quite messy. Need to figure out a
     // better way to advance the token when parsing the entries in a group
@@ -1172,7 +1369,14 @@ where
       let ge = self.parse_grpent(false)?;
 
       if self.cur_token_is(Token::GCHOICE) {
-        grpchoice.group_entries.push((ge, false));
+        grpchoice.group_entries.push((
+          ge,
+          OptionalComma {
+            optional_comma: false,
+            trailing_comments: None,
+          },
+        ));
+
         grpchoice.span.1 = self.parser_position.range.1;
 
         return Ok(grpchoice);
@@ -1195,17 +1399,24 @@ where
         self.next_token()?;
       }
 
+      let mut optional_comma = false;
+
       if self.cur_token_is(Token::COMMA) {
-        grpchoice.group_entries.push((ge, true));
+        optional_comma = true;
+
         self.parser_position.range.1 = self.lexer_position.range.1;
         self.next_token()?;
-      } else {
-        grpchoice.group_entries.push((ge, false));
       }
 
-      while let Token::COMMENT(_) = self.cur_token {
-        self.next_token()?;
-      }
+      let trailing_comments = self.collect_comments()?;
+
+      grpchoice.group_entries.push((
+        ge,
+        OptionalComma {
+          optional_comma,
+          trailing_comments,
+        },
+      ));
     }
 
     grpchoice.span.1 = self.parser_position.range.1;
@@ -1219,10 +1430,6 @@ where
 
     let occur = self.parse_occur(true)?;
 
-    while let Token::COMMENT(_) = self.cur_token {
-      self.next_token()?;
-    }
-
     // If parsing group entry from a rule, set member key to none
     let member_key = if from_rule {
       None
@@ -1230,16 +1437,10 @@ where
       self.parse_memberkey(true)?
     };
 
-    while let Token::COMMENT(_) = self.cur_token {
-      self.next_token()?;
-    }
-
     if self.cur_token_is(Token::LPAREN) {
       self.next_token()?;
 
-      while let Token::COMMENT(_) = self.cur_token {
-        self.next_token()?;
-      }
+      let comments_before_group = self.collect_comments()?;
 
       let group = self.parse_group()?;
 
@@ -1249,24 +1450,29 @@ where
         begin_grpent_line,
       );
 
-      while let Token::COMMENT(_) = self.cur_token {
-        self.next_token()?;
-      }
+      self.parser_position.range.1 = self.lexer_position.range.1;
+
+      let comments_after_group = self.collect_comments()?;
 
       if !self.cur_token_is(Token::RPAREN) {
         self.errors.push(ParserError {
           position: self.lexer_position,
-          message: "Missing closing parend \")\"".into(),
+          msg: MissingClosingParend.into(),
         });
         return Err(Error::PARSER);
       }
 
-      self.parser_position.range.1 = self.lexer_position.range.1;
       span.1 = self.parser_position.range.1;
 
       self.next_token()?;
 
-      return Ok(GroupEntry::InlineGroup { occur, group, span });
+      return Ok(GroupEntry::InlineGroup {
+        occur,
+        group,
+        comments_before_group,
+        comments_after_group,
+        span,
+      });
     }
 
     let mut span = (
@@ -1276,18 +1482,30 @@ where
     );
 
     match member_key {
-      Some(MemberKey::NonMemberKey(NonMemberKey::Type(entry_type))) => {
+      Some(MemberKey::NonMemberKey {
+        non_member_key: NonMemberKey::Type(mut entry_type),
+        comments_before_type_or_group,
+        comments_after_type_or_group,
+      }) => {
         if self.cur_token_is(Token::COMMA) {
           span.1 = self.lexer_position.range.1;
         }
 
-        if let Some((name, generic_arg, _)) = entry_type.groupname_entry() {
+        let trailing_comments = if let Some(comments) = entry_type.comments_after_type() {
+          Some(comments)
+        } else {
+          None
+        };
+
+        if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
           return Ok(GroupEntry::TypeGroupname {
             ge: TypeGroupnameEntry {
               occur,
               name,
-              generic_arg,
+              generic_args,
             },
+            leading_comments: comments_before_type_or_group,
+            trailing_comments,
             span,
           });
         }
@@ -1299,24 +1517,48 @@ where
           self.next_token()?;
         }
 
+        let trailing_comments = if let Some(comments) = entry_type.comments_after_type() {
+          Some(comments)
+        } else {
+          comments_after_type_or_group
+        };
+
         Ok(GroupEntry::ValueMemberKey {
           ge: Box::from(ValueMemberKeyEntry {
             occur,
             member_key: None,
             entry_type,
           }),
+          leading_comments: comments_before_type_or_group,
+          trailing_comments,
           span,
         })
       }
-      Some(MemberKey::NonMemberKey(NonMemberKey::Group(group))) => {
+      Some(MemberKey::NonMemberKey {
+        non_member_key: NonMemberKey::Group(group),
+        comments_before_type_or_group,
+        comments_after_type_or_group,
+      }) => {
         if self.cur_token_is(Token::COMMA) {
           span.1 = self.lexer_position.range.1;
         }
 
-        Ok(GroupEntry::InlineGroup { occur, group, span })
+        Ok(GroupEntry::InlineGroup {
+          occur,
+          group,
+          span,
+          comments_before_group: comments_before_type_or_group,
+          comments_after_group: comments_after_type_or_group,
+        })
       }
       member_key @ Some(_) => {
-        let entry_type = self.parse_type(None)?;
+        let mut entry_type = self.parse_type(None)?;
+
+        let trailing_comments = if let Some(comments) = entry_type.comments_after_type() {
+          Some(comments)
+        } else {
+          None
+        };
 
         span.1 = self.parser_position.range.1;
 
@@ -1330,25 +1572,35 @@ where
             member_key,
             entry_type,
           }),
+          leading_comments: None,
+          trailing_comments,
           span,
         })
       }
-      _ => {
-        let entry_type = self.parse_type(None)?;
+      None => {
+        let mut entry_type = self.parse_type(None)?;
 
         span.1 = self.parser_position.range.1;
+
+        let trailing_comments = if let Some(comments) = entry_type.comments_after_type() {
+          Some(comments)
+        } else {
+          self.collect_comments()?
+        };
 
         if self.cur_token_is(Token::COMMA) {
           span.1 = self.lexer_position.range.1;
         }
 
-        if let Some((name, generic_arg, _)) = entry_type.groupname_entry() {
+        if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
           return Ok(GroupEntry::TypeGroupname {
             ge: TypeGroupnameEntry {
               occur,
               name,
-              generic_arg,
+              generic_args,
             },
+            leading_comments: None,
+            trailing_comments,
             span,
           });
         }
@@ -1356,15 +1608,20 @@ where
         Ok(GroupEntry::ValueMemberKey {
           ge: Box::from(ValueMemberKeyEntry {
             occur,
-            member_key,
+            member_key: None,
             entry_type,
           }),
+          leading_comments: None,
+          trailing_comments,
           span,
         })
       }
     }
   }
 
+  // An ident memberkey could one of the following:
+  //    type1 S ["^" S] "=>"
+  //  / bareword S ":
   fn parse_memberkey_from_ident(
     &mut self,
     is_optional: bool,
@@ -1389,37 +1646,46 @@ where
 
     self.next_token()?;
 
-    while let Token::COMMENT(_) = self.cur_token {
-      self.next_token()?;
-    }
+    let comments_before_cut = self.collect_comments()?;
 
     let mk = if self.cur_token_is(Token::CUT) {
       self.next_token()?;
 
-      while let Token::COMMENT(_) = self.cur_token {
-        self.next_token()?;
-      }
+      let comments_after_cut = self.collect_comments()?;
 
       if !self.cur_token_is(Token::ARROWMAP) {
         self.errors.push(ParserError {
           position: self.lexer_position,
-          message: "Malformed memberkey. Missing \"=>\"".into(),
+          msg: InvalidMemberKeyArrowMapSyntax.into(),
         });
         return Err(Error::PARSER);
       }
 
       let end_memberkey_range = self.lexer_position.range.1;
+
+      let comments_after_arrowmap = if let Token::COMMENT(_) = self.peek_token {
+        self.next_token()?;
+
+        self.collect_comments()?
+      } else {
+        None
+      };
+
       let t1 = MemberKey::Type1 {
         t1: Box::from(Type1 {
           type2: Type2::Typename {
             ident,
-            generic_arg: None,
+            generic_args: None,
             span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
           },
           operator: None,
+          comments_after_type: None,
           span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
         }),
+        comments_before_cut,
         is_cut: true,
+        comments_after_cut,
+        comments_after_arrowmap,
         span: (
           begin_memberkey_range,
           end_memberkey_range,
@@ -1432,17 +1698,30 @@ where
       Some(t1)
     } else if self.cur_token_is(Token::ARROWMAP) {
       let end_memberkey_range = self.lexer_position.range.1;
+
+      let comments_after_arrowmap = if let Token::COMMENT(_) = self.peek_token {
+        self.next_token()?;
+
+        self.collect_comments()?
+      } else {
+        None
+      };
+
       let t1 = MemberKey::Type1 {
         t1: Box::from(Type1 {
           type2: Type2::Typename {
             ident,
-            generic_arg: None,
+            generic_args: None,
             span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
           },
           operator: None,
+          comments_after_type: None,
           span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
         }),
+        comments_before_cut,
         is_cut: false,
+        comments_after_cut: None,
+        comments_after_arrowmap,
         span: (
           begin_memberkey_range,
           end_memberkey_range,
@@ -1454,8 +1733,16 @@ where
 
       Some(t1)
     } else {
+      if self.cur_token_is(Token::COLON) {
+        self.next_token()?;
+      }
+
+      let comments_after_colon = self.collect_comments()?;
+
       Some(MemberKey::Bareword {
         ident,
+        comments: comments_before_cut,
+        comments_after_colon,
         span: (
           begin_memberkey_range,
           self.parser_position.range.1,
@@ -1463,10 +1750,6 @@ where
         ),
       })
     };
-
-    if self.cur_token_is(Token::COLON) {
-      self.next_token()?;
-    }
 
     Ok(mk)
   }
@@ -1487,6 +1770,7 @@ where
     match &self.cur_token {
       Token::IDENT(ident) => {
         let ident = *ident;
+
         self.parse_memberkey_from_ident(
           is_optional,
           ident,
@@ -1509,44 +1793,46 @@ where
 
         let t1 = self.parse_type1(None)?;
 
-        while let Token::COMMENT(_) = self.cur_token {
-          self.next_token()?;
-        }
+        let comments_before_cut = self.collect_comments()?;
 
         let mk = if self.cur_token_is(Token::CUT) {
           self.next_token()?;
 
-          while let Token::COMMENT(_) = self.cur_token {
-            self.next_token()?;
-          }
+          let comments_after_cut = self.collect_comments()?;
 
           if !self.cur_token_is(Token::ARROWMAP) {
             self.errors.push(ParserError {
               position: self.lexer_position,
-              message: "Malformed memberkey. Missing \"=>\"".into(),
+              msg: InvalidMemberKeyArrowMapSyntax.into(),
             });
             return Err(Error::PARSER);
           }
 
           let end_memberkey_range = self.lexer_position.range.1;
-          let t1 = MemberKey::Type1 {
+
+          self.next_token()?;
+
+          let memberkey_comments = self.collect_comments()?;
+
+          Some(MemberKey::Type1 {
             t1: Box::from(t1),
+            comments_before_cut,
             is_cut: true,
+            comments_after_cut,
+            comments_after_arrowmap: memberkey_comments,
             span: (
               begin_memberkey_range,
               end_memberkey_range,
               begin_memberkey_line,
             ),
-          };
-
-          self.next_token()?;
-
-          Some(t1)
+          })
         } else {
+          let comments = self.collect_comments()?;
+
           if !self.cur_token_is(Token::ARROWMAP) && !self.cur_token_is(Token::COLON) {
             self.errors.push(ParserError {
               position: self.lexer_position,
-              message: "Malformed memberkey. Missing \"=>\" or \":\"".into(),
+              msg: InvalidMemberKeySyntax.into(),
             });
             return Err(Error::PARSER);
           }
@@ -1555,8 +1841,12 @@ where
 
           self.next_token()?;
 
+          let memberkey_comments = self.collect_comments()?;
+
           Some(MemberKey::Value {
             value,
+            comments,
+            comments_after_colon: memberkey_comments,
             span: (
               begin_memberkey_range,
               self.parser_position.range.1,
@@ -1581,7 +1871,11 @@ where
 
         self.next_token()?;
 
+        let comments_before_type_or_group = self.collect_comments()?;
+
         let mut tokens: Vec<lexer::Item> = Vec::new();
+
+        let mut comments_after_type_or_group = None;
 
         let mut has_group_entries = false;
         let mut closing_parend = false;
@@ -1590,6 +1884,7 @@ where
             has_group_entries = true;
           }
 
+          // TODO: parse nested comments
           if self.cur_token_is(Token::LPAREN) {
             nested_parend_count += 1;
           }
@@ -1608,10 +1903,12 @@ where
 
           self.next_token()?;
 
+          comments_after_type_or_group = self.collect_comments()?;
+
           if self.cur_token_is(Token::EOF) {
             self.errors.push(ParserError {
               position: self.lexer_position,
-              message: "Missing closing parend \")\"".into(),
+              msg: MissingClosingParend.into(),
             });
 
             return Err(Error::PARSER);
@@ -1633,13 +1930,11 @@ where
             Err(e) => return Err(e),
           };
 
-          return Ok(Some(MemberKey::NonMemberKey(NonMemberKey::Group(group))));
-        }
-
-        if let Token::COMMENT(_) = self.cur_token {
-          self.next_token()?;
-
-          return self.parse_memberkey(is_optional);
+          return Ok(Some(MemberKey::NonMemberKey {
+            non_member_key: NonMemberKey::Group(group),
+            comments_before_type_or_group,
+            comments_after_type_or_group,
+          }));
         }
 
         // Parse tokens vec as type
@@ -1656,21 +1951,17 @@ where
           Err(e) => return Err(e),
         };
 
-        while let Token::COMMENT(_) = self.cur_token {
-          self.next_token()?;
-        }
+        let comments_before_cut = self.collect_comments()?;
 
         if self.cur_token_is(Token::CUT) {
           self.next_token()?;
 
-          while let Token::COMMENT(_) = self.cur_token {
-            self.next_token()?;
-          }
+          let comments_after_cut = self.collect_comments()?;
 
           if !self.cur_token_is(Token::ARROWMAP) {
             self.errors.push(ParserError {
               position: self.lexer_position,
-              message: "Malformed memberkey. Missing \"=>\"".into(),
+              msg: InvalidMemberKeyArrowMapSyntax.into(),
             });
             return Err(Error::PARSER);
           }
@@ -1678,8 +1969,11 @@ where
           let end_memberkey_range = self.lexer_position.range.1;
 
           let t1 = Some(MemberKey::Type1 {
-            t1: Box::from(t.type_choices[0].clone()),
+            t1: Box::from(t.type_choices[0].type1.clone()),
+            comments_before_cut,
             is_cut: true,
+            comments_after_cut,
+            comments_after_arrowmap: None,
             span: (
               begin_memberkey_range,
               end_memberkey_range,
@@ -1695,9 +1989,14 @@ where
 
           self.parser_position.range.1 = self.lexer_position.range.1;
 
+          let memberkey_comments = self.collect_comments()?;
+
           Some(MemberKey::Type1 {
-            t1: Box::from(t.type_choices[0].clone()),
+            t1: Box::from(t.type_choices[0].type1.clone()),
+            comments_before_cut,
             is_cut: false,
+            comments_after_cut: None,
+            comments_after_arrowmap: memberkey_comments,
             span: (
               begin_memberkey_range,
               self.lexer_position.range.0,
@@ -1705,61 +2004,58 @@ where
             ),
           })
         } else {
-          Some(MemberKey::NonMemberKey(NonMemberKey::Type(Type {
-            type_choices: t.type_choices,
-            span: (
-              begin_memberkey_range,
-              self.parser_position.range.1,
-              begin_memberkey_line,
-            ),
-          })))
+          Some(MemberKey::NonMemberKey {
+            non_member_key: NonMemberKey::Type(Type {
+              type_choices: t.type_choices,
+              span: (
+                begin_memberkey_range,
+                self.parser_position.range.1,
+                begin_memberkey_line,
+              ),
+            }),
+            comments_before_type_or_group,
+            comments_after_type_or_group,
+          })
         };
 
         Ok(t1)
       }
       _ => {
-        if let Token::COMMENT(_) = self.cur_token {
-          self.next_token()?;
-
-          return self.parse_memberkey(is_optional);
-        }
-
         let t1 = self.parse_type1(None)?;
 
-        while let Token::COMMENT(_) = self.cur_token {
-          self.next_token()?;
-        }
+        let comments_before_cut = self.collect_comments()?;
 
         if self.cur_token_is(Token::CUT) {
           self.next_token()?;
 
-          while let Token::COMMENT(_) = self.cur_token {
-            self.next_token()?;
-          }
+          let comments_after_cut = self.collect_comments()?;
 
           if !self.cur_token_is(Token::ARROWMAP) {
             self.errors.push(ParserError {
               position: self.lexer_position,
-              message: "Malformed memberkey. Missing \"=>\"".into(),
+              msg: InvalidMemberKeyArrowMapSyntax.into(),
             });
             return Err(Error::PARSER);
           }
 
           let end_memberkey_range = self.lexer_position.range.1;
 
-          let t1 = Some(MemberKey::Type1 {
+          self.next_token()?;
+
+          let memberkey_comments = self.collect_comments()?;
+
+          return Ok(Some(MemberKey::Type1 {
             t1: Box::from(t1),
+            comments_before_cut,
             is_cut: true,
+            comments_after_cut,
+            comments_after_arrowmap: memberkey_comments,
             span: (
               begin_memberkey_range,
               end_memberkey_range,
               begin_memberkey_line,
             ),
-          });
-
-          self.next_token()?;
-
-          return Ok(t1);
+          }));
         }
 
         let t1 = if self.cur_token_is(Token::ARROWMAP) {
@@ -1767,9 +2063,14 @@ where
 
           self.parser_position.range.1 = self.lexer_position.range.1;
 
+          let memberkey_comments = self.collect_comments()?;
+
           Some(MemberKey::Type1 {
             t1: Box::from(t1),
+            comments_before_cut,
             is_cut: false,
+            comments_after_cut: None,
+            comments_after_arrowmap: memberkey_comments,
             span: (
               begin_memberkey_range,
               self.parser_position.range.1,
@@ -1777,14 +2078,22 @@ where
             ),
           })
         } else {
-          Some(MemberKey::NonMemberKey(NonMemberKey::Type(Type {
-            type_choices: vec![t1],
-            span: (
-              begin_memberkey_range,
-              self.parser_position.range.1,
-              begin_memberkey_line,
-            ),
-          })))
+          Some(MemberKey::NonMemberKey {
+            non_member_key: NonMemberKey::Type(Type {
+              type_choices: vec![TypeChoice {
+                comments_before_type: None,
+                comments_after_type: None,
+                type1: t1,
+              }],
+              span: (
+                begin_memberkey_range,
+                self.parser_position.range.1,
+                begin_memberkey_line,
+              ),
+            }),
+            comments_before_type_or_group: None,
+            comments_after_type_or_group: comments_before_cut,
+          })
         };
 
         Ok(t1)
@@ -1792,7 +2101,7 @@ where
     }
   }
 
-  fn parse_occur(&mut self, is_optional: bool) -> Result<Option<Occur>> {
+  fn parse_occur(&mut self, is_optional: bool) -> Result<Option<Occurrence<'a>>> {
     let begin_occur_range = self.lexer_position.range.0;
     let begin_occur_line = self.lexer_position.line;
     self.parser_position.line = self.lexer_position.line;
@@ -1802,24 +2111,36 @@ where
         self.parser_position.range = self.lexer_position.range;
 
         self.next_token()?;
-        Ok(Some(Occur::Optional((
-          self.parser_position.range.0,
-          self.parser_position.range.1,
-          self.parser_position.line,
-        ))))
+
+        let comments = self.collect_comments()?;
+
+        Ok(Some(Occurrence {
+          occur: Occur::Optional((
+            self.parser_position.range.0,
+            self.parser_position.range.1,
+            self.parser_position.line,
+          )),
+          comments,
+        }))
       }
       Token::ONEORMORE => {
         self.parser_position.range = self.lexer_position.range;
 
         self.next_token()?;
-        Ok(Some(Occur::OneOrMore((
-          self.parser_position.range.0,
-          self.parser_position.range.1,
-          self.parser_position.line,
-        ))))
+
+        let comments = self.collect_comments()?;
+
+        Ok(Some(Occurrence {
+          occur: Occur::OneOrMore((
+            self.parser_position.range.0,
+            self.parser_position.range.1,
+            self.parser_position.line,
+          )),
+          comments,
+        }))
       }
       Token::ASTERISK => {
-        let o = if let Token::VALUE(token::Value::UINT(u)) = &self.peek_token {
+        let occur = if let Token::VALUE(token::Value::UINT(u)) = &self.peek_token {
           self.parser_position.range.0 = self.lexer_position.range.0;
           self.parser_position.range.1 = self.peek_lexer_position.range.1;
 
@@ -1847,12 +2168,15 @@ where
         if let Token::VALUE(token::Value::UINT(_)) = &self.cur_token {
           self.next_token()?;
         }
-        Ok(Some(o))
+
+        let comments = self.collect_comments()?;
+
+        Ok(Some(Occurrence { occur, comments }))
       }
       Token::VALUE(_) => {
         let lower = if let Token::VALUE(value) = &self.cur_token {
-          if let token::Value::UINT(li) = value {
-            Some(*li)
+          if let token::Value::UINT(li) = *value {
+            Some(li)
           } else {
             None
           }
@@ -1867,7 +2191,7 @@ where
 
           self.errors.push(ParserError {
             position: self.lexer_position,
-            message: "Malformed occurrence syntax".into(),
+            msg: InvalidOccurrenceSyntax.into(),
           });
 
           return Err(Error::PARSER);
@@ -1880,9 +2204,12 @@ where
         self.next_token()?;
 
         let upper = if let Token::VALUE(value) = &self.cur_token {
-          if let token::Value::UINT(ui) = value {
+          if let token::Value::UINT(ui) = *value {
             self.parser_position.range.1 = self.lexer_position.range.1;
-            Some(*ui)
+
+            self.next_token()?;
+
+            Some(ui)
           } else {
             None
           }
@@ -1890,14 +2217,19 @@ where
           None
         };
 
-        Ok(Some(Occur::Exact {
-          lower,
-          upper,
-          span: (
-            begin_occur_range,
-            self.parser_position.range.1,
-            begin_occur_line,
-          ),
+        let comments = self.collect_comments()?;
+
+        Ok(Some(Occurrence {
+          occur: Occur::Exact {
+            lower,
+            upper,
+            span: (
+              begin_occur_range,
+              self.parser_position.range.1,
+              begin_occur_line,
+            ),
+          },
+          comments,
         }))
       }
       _ => Ok(None),
@@ -1920,7 +2252,7 @@ where
     Ok(false)
   }
 
-  /// Create `Identifier` from `Token::IDENT(ident)`
+  /// Create `ast::Identifier` from `Token::IDENT(ident)`
   fn identifier_from_ident_token(
     &self,
     ident: (&'a str, Option<token::SocketPlug>),
@@ -2029,11 +2361,15 @@ pub fn cddl_from_str<'a>(
 ///
 /// # Example
 ///
-/// ```
-/// use cddl::parser::cddl_from_str;
+/// ```typescript
+/// import * as wasm from 'cddl';
 ///
-/// let input = r#"myrule = int"#;
-/// let c = cddl_from_str(input)?;
+/// let cddl: any;
+/// try {
+///   cddl = wasm.cddl_from_str(text);
+/// } catch (e) {
+///   console.error(e);
+/// }
 /// ```
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
@@ -2044,8 +2380,8 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
         .map_err(|e| JsValue::from(e.to_string()))
         .map(|c| c),
       Err(Error::PARSER) => {
-        if let Ok(Some(e)) = p.report_errors(false) {
-          return Err(JsValue::from(e));
+        if !p.errors.is_empty() {
+          return Err(JsValue::from_serde(&p.errors).map_err(|e| JsValue::from(e.to_string()))?);
         }
 
         Err(JsValue::from(Error::PARSER.to_string()))
@@ -2056,102 +2392,17 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
   }
 }
 
-/// Validates CDDL input against RFC 8610
-///
-/// # Arguments
-///
-/// * `input` - A string slice with the CDDL text input
-/// * `print_stderr` - When true, prints any errors to stderr
-///
-/// # Example
-///
-/// ```
-/// use cddl::parser::compile_cddl_from_str;
-///
-/// let input = r#"myrule = int"#;
-/// let _ = compile_cddl_from_str(input, true);
-/// ```
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg(feature = "std")]
-pub fn compile_cddl_from_str(input: &str, print_stderr: bool) -> Result<()> {
-  match Parser::new(Lexer::new(input).iter(), input).map_err(|e| e.to_string()) {
-    Ok(mut p) => match p.parse_cddl() {
-      Ok(_) => Ok(()),
-      Err(Error::PARSER) => {
-        let e = if print_stderr {
-          p.report_errors(true)
-        } else {
-          p.report_errors(false)
-        };
-
-        if let Ok(Some(e)) = e {
-          return Err(Error::CDDL(e));
-        }
-
-        Err(Error::CDDL(Error::PARSER.to_string()))
-      }
-      Err(e) => Err(e),
-    },
-    Err(e) => Err(Error::CDDL(e)),
-  }
-}
-
-/// Validates CDDL input against RFC 8610
-///
-/// # Arguments
-///
-/// * `input` - A string slice with the CDDL text input
-///
-/// # Example
-///
-/// ```
-/// use cddl::parser::compile_cddl_from_str;
-///
-/// let input = r#"myrule = int"#;
-/// let _ = compile_cddl_from_str(input);
-/// ```
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg(not(feature = "std"))]
-pub fn compile_cddl_from_str(input: &str) -> Result<()> {
-  match Parser::new(Lexer::new(input).iter(), input).map_err(|e| e.to_string()) {
-    Ok(mut p) => match p.parse_cddl() {
-      Ok(_) => Ok(()),
-      Err(Error::PARSER) => {
-        if let Some(e) = p.report_errors() {
-          return Err(Error::CDDL(e));
-        }
-
-        Err(Error::CDDL(Error::PARSER.to_string()))
-      }
-      Err(e) => Err(e),
-    },
-    Err(e) => Err(Error::CDDL(e)),
-  }
-}
-
-/// Validates CDDL input against RFC 8610
-///
-/// # Arguments
-///
-/// * `input` - A string slice with the CDDL text input
-///
-/// # Example
-///
-/// ```
-/// use cddl::parser::compile_cddl_from_str;
-///
-/// let input = r#"myrule = int"#;
-/// let _ = compile_cddl_from_str(input);
-/// ```
+#[cfg(feature = "lsp")]
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
-pub fn compile_cddl_from_str(input: &str) -> result::Result<(), JsValue> {
+/// Formats cddl from input string
+pub fn format_cddl_from_str(input: &str) -> result::Result<String, JsValue> {
   match Parser::new(Lexer::new(input).iter(), input) {
     Ok(mut p) => match p.parse_cddl() {
-      Ok(_) => Ok(()),
+      Ok(c) => Ok(c.to_string()),
       Err(Error::PARSER) => {
-        if let Ok(Some(e)) = p.report_errors(false) {
-          return Err(JsValue::from(e));
+        if !p.errors.is_empty() {
+          return Err(JsValue::from_serde(&p.errors).map_err(|e| JsValue::from(e.to_string()))?);
         }
 
         Err(JsValue::from(Error::PARSER.to_string()))
@@ -2171,479 +2422,6 @@ mod tests {
   };
   use indoc::indoc;
   use pretty_assertions::assert_eq;
-
-  #[test]
-  #[allow(unused_variables)]
-  fn verify_cddl() -> Result<()> {
-    let input = indoc!(
-      r#"
-        myrule = secondrule
-        myrange = 10..upper
-        upper = 500 / 600
-        gr = 2* ( test )
-        messages = message<"reboot", "now">
-        message<t, v> = {type: 2, value: v}
-        color = &colors
-        colors = ( red: "red" )
-        thing = ( int / float )
-      "#
-    );
-
-    match Parser::new(Lexer::new(input).iter(), input) {
-      Ok(mut p) => match p.parse_cddl() {
-        Ok(cddl) => {
-          let expected_output = CDDL {
-            rules: vec![
-              Rule::Type {
-                rule: TypeRule {
-                  name: Identifier {
-                    ident: "myrule".into(),
-                    socket: None,
-                    span: (0, 6, 1),
-                  },
-                  generic_param: None,
-                  is_type_choice_alternate: false,
-                  value: Type {
-                    type_choices: vec![Type1 {
-                      type2: Type2::Typename {
-                        ident: Identifier {
-                          ident: "secondrule".into(),
-                          socket: None,
-                          span: (9, 19, 1),
-                        },
-                        generic_arg: None,
-                        span: (9, 19, 1),
-                      },
-                      operator: None,
-                      span: (9, 19, 1),
-                    }],
-                    span: (9, 19, 1),
-                  },
-                },
-                span: (0, 19, 1),
-              },
-              Rule::Type {
-                rule: TypeRule {
-                  name: Identifier {
-                    ident: "myrange".into(),
-                    socket: None,
-                    span: (20, 27, 2),
-                  },
-                  generic_param: None,
-                  is_type_choice_alternate: false,
-                  value: Type {
-                    type_choices: vec![Type1 {
-                      type2: Type2::UintValue {
-                        value: 10,
-                        span: (30, 32, 2),
-                      },
-                      operator: Some((
-                        RangeCtlOp::RangeOp {
-                          is_inclusive: true,
-                          span: (32, 34, 2),
-                        },
-                        Type2::Typename {
-                          ident: Identifier {
-                            ident: "upper".into(),
-                            socket: None,
-                            span: (34, 39, 2),
-                          },
-                          generic_arg: None,
-                          span: (34, 39, 2),
-                        },
-                      )),
-                      span: (30, 39, 2),
-                    }],
-                    span: (30, 39, 2),
-                  },
-                },
-                span: (20, 39, 2),
-              },
-              Rule::Type {
-                rule: TypeRule {
-                  name: Identifier {
-                    ident: "upper".into(),
-                    socket: None,
-                    span: (40, 45, 3),
-                  },
-                  generic_param: None,
-                  is_type_choice_alternate: false,
-                  value: Type {
-                    type_choices: vec![
-                      Type1 {
-                        type2: Type2::UintValue {
-                          value: 500,
-                          span: (48, 51, 3),
-                        },
-                        operator: None,
-                        span: (48, 51, 3),
-                      },
-                      Type1 {
-                        type2: Type2::UintValue {
-                          value: 600,
-                          span: (54, 57, 3),
-                        },
-                        operator: None,
-                        span: (54, 57, 3),
-                      },
-                    ],
-                    span: (48, 57, 3),
-                  },
-                },
-                span: (40, 57, 3),
-              },
-              Rule::Group {
-                rule: Box::from(GroupRule {
-                  name: Identifier {
-                    ident: "gr".into(),
-                    socket: None,
-                    span: (58, 60, 4),
-                  },
-                  generic_param: None,
-                  is_group_choice_alternate: false,
-                  entry: GroupEntry::InlineGroup {
-                    occur: Some(Occur::Exact {
-                      lower: Some(2),
-                      upper: None,
-                      span: (63, 65, 4),
-                    }),
-                    group: Group {
-                      group_choices: vec![GroupChoice {
-                        group_entries: vec![(
-                          GroupEntry::TypeGroupname {
-                            ge: TypeGroupnameEntry {
-                              occur: None,
-                              name: Identifier {
-                                ident: "test".into(),
-                                socket: None,
-                                span: (68, 72, 4),
-                              },
-                              generic_arg: None,
-                            },
-                            span: (68, 72, 4),
-                          },
-                          false,
-                        )],
-                        span: (68, 72, 4),
-                      }],
-                      span: (68, 72, 4),
-                    },
-                    span: (63, 74, 4),
-                  },
-                }),
-                span: (58, 74, 4),
-              },
-              Rule::Type {
-                rule: TypeRule {
-                  name: Identifier {
-                    ident: "messages".into(),
-                    socket: None,
-                    span: (75, 83, 5),
-                  },
-                  generic_param: None,
-                  is_type_choice_alternate: false,
-                  value: Type {
-                    type_choices: vec![Type1 {
-                      type2: Type2::Typename {
-                        ident: Identifier {
-                          ident: "message".into(),
-                          socket: None,
-                          span: (86, 93, 5),
-                        },
-                        generic_arg: Some(GenericArg {
-                          args: vec![
-                            Type1 {
-                              type2: Type2::TextValue {
-                                value: "reboot".into(),
-                                span: (94, 102, 5),
-                              },
-                              operator: None,
-                              span: (94, 102, 5),
-                            },
-                            Type1 {
-                              type2: Type2::TextValue {
-                                value: "now".into(),
-                                span: (104, 109, 5),
-                              },
-                              operator: None,
-                              span: (104, 109, 5),
-                            },
-                          ],
-                          span: (93, 110, 5),
-                        }),
-                        span: (86, 110, 5),
-                      },
-                      operator: None,
-                      span: (86, 110, 5),
-                    }],
-                    span: (86, 110, 5),
-                  },
-                },
-                span: (75, 110, 5),
-              },
-              Rule::Type {
-                rule: TypeRule {
-                  name: Identifier {
-                    ident: "message".into(),
-                    socket: None,
-                    span: (111, 118, 6),
-                  },
-                  generic_param: Some(GenericParm {
-                    params: vec![
-                      Identifier {
-                        ident: "t".into(),
-                        socket: None,
-                        span: (119, 120, 6),
-                      },
-                      Identifier {
-                        ident: "v".into(),
-                        socket: None,
-                        span: (122, 123, 6),
-                      },
-                    ],
-                    span: (118, 124, 6),
-                  }),
-                  is_type_choice_alternate: false,
-                  value: Type {
-                    type_choices: vec![Type1 {
-                      type2: Type2::Map {
-                        group: Group {
-                          group_choices: vec![GroupChoice {
-                            group_entries: vec![
-                              (
-                                GroupEntry::ValueMemberKey {
-                                  ge: Box::from(ValueMemberKeyEntry {
-                                    occur: None,
-                                    member_key: Some(MemberKey::Bareword {
-                                      ident: Identifier {
-                                        ident: "type".into(),
-                                        socket: None,
-                                        span: (128, 132, 6),
-                                      },
-                                      span: (128, 133, 6),
-                                    }),
-                                    entry_type: Type {
-                                      type_choices: vec![Type1 {
-                                        type2: Type2::UintValue {
-                                          value: 2,
-                                          span: (134, 135, 6),
-                                        },
-                                        operator: None,
-                                        span: (134, 135, 6),
-                                      }],
-                                      span: (134, 135, 6),
-                                    },
-                                  }),
-                                  span: (128, 136, 6),
-                                },
-                                true,
-                              ),
-                              (
-                                GroupEntry::ValueMemberKey {
-                                  ge: Box::from(ValueMemberKeyEntry {
-                                    occur: None,
-                                    member_key: Some(MemberKey::Bareword {
-                                      ident: Identifier {
-                                        ident: "value".into(),
-                                        socket: None,
-                                        span: (137, 142, 6),
-                                      },
-                                      span: (137, 143, 6),
-                                    }),
-                                    entry_type: Type {
-                                      type_choices: vec![Type1 {
-                                        type2: Type2::Typename {
-                                          ident: Identifier {
-                                            ident: "v".into(),
-                                            socket: None,
-                                            span: (144, 145, 6),
-                                          },
-                                          generic_arg: None,
-                                          span: (144, 145, 6),
-                                        },
-                                        operator: None,
-                                        span: (144, 145, 6),
-                                      }],
-                                      span: (144, 145, 6),
-                                    },
-                                  }),
-                                  span: (137, 145, 6),
-                                },
-                                false,
-                              ),
-                            ],
-                            span: (128, 145, 6),
-                          }],
-                          span: (128, 145, 6),
-                        },
-                        span: (127, 146, 6),
-                      },
-                      operator: None,
-                      span: (127, 146, 6),
-                    }],
-                    span: (127, 146, 6),
-                  },
-                },
-                span: (111, 146, 6),
-              },
-              Rule::Type {
-                rule: TypeRule {
-                  name: Identifier {
-                    ident: "color".into(),
-                    socket: None,
-                    span: (147, 152, 7),
-                  },
-                  generic_param: None,
-                  is_type_choice_alternate: false,
-                  value: Type {
-                    type_choices: vec![Type1 {
-                      type2: Type2::ChoiceFromGroup {
-                        ident: Identifier {
-                          ident: "colors".into(),
-                          socket: None,
-                          span: (156, 162, 7),
-                        },
-                        generic_arg: None,
-                        span: (155, 162, 7),
-                      },
-                      operator: None,
-                      span: (155, 162, 7),
-                    }],
-                    span: (155, 162, 7),
-                  },
-                },
-                span: (147, 162, 7),
-              },
-              Rule::Group {
-                rule: Box::from(GroupRule {
-                  name: Identifier {
-                    ident: "colors".into(),
-                    socket: None,
-                    span: (163, 169, 8),
-                  },
-                  generic_param: None,
-                  is_group_choice_alternate: false,
-                  entry: GroupEntry::InlineGroup {
-                    occur: None,
-                    group: Group {
-                      group_choices: vec![GroupChoice {
-                        group_entries: vec![(
-                          GroupEntry::ValueMemberKey {
-                            ge: Box::from(ValueMemberKeyEntry {
-                              occur: None,
-                              member_key: Some(MemberKey::Bareword {
-                                ident: Identifier {
-                                  ident: "red".into(),
-                                  socket: None,
-                                  span: (174, 177, 8),
-                                },
-                                span: (174, 178, 8),
-                              }),
-                              entry_type: Type {
-                                type_choices: vec![Type1 {
-                                  type2: Type2::TextValue {
-                                    value: "red".into(),
-                                    span: (179, 184, 8),
-                                  },
-                                  operator: None,
-                                  span: (179, 184, 8),
-                                }],
-                                span: (179, 184, 8),
-                              },
-                            }),
-                            span: (174, 184, 8),
-                          },
-                          false,
-                        )],
-                        span: (174, 184, 8),
-                      }],
-                      span: (174, 184, 8),
-                    },
-                    span: (172, 186, 8),
-                  },
-                }),
-                span: (163, 186, 8),
-              },
-              Rule::Type {
-                rule: TypeRule {
-                  name: Identifier {
-                    ident: "thing".into(),
-                    socket: None,
-                    span: (187, 192, 9),
-                  },
-                  generic_param: None,
-                  is_type_choice_alternate: false,
-                  value: Type {
-                    type_choices: vec![Type1 {
-                      type2: Type2::ParenthesizedType {
-                        pt: Type {
-                          type_choices: vec![
-                            Type1 {
-                              type2: Type2::Typename {
-                                ident: Identifier {
-                                  ident: "int".into(),
-                                  socket: None,
-                                  span: (197, 200, 9),
-                                },
-                                generic_arg: None,
-                                span: (197, 200, 9),
-                              },
-                              operator: None,
-                              span: (197, 200, 9),
-                            },
-                            Type1 {
-                              type2: Type2::Typename {
-                                ident: Identifier {
-                                  ident: "float".into(),
-                                  socket: None,
-                                  span: (203, 208, 9),
-                                },
-                                generic_arg: None,
-                                span: (203, 208, 9),
-                              },
-                              operator: None,
-                              span: (203, 208, 9),
-                            },
-                          ],
-                          span: (197, 208, 9),
-                        },
-                        span: (195, 210, 9),
-                      },
-                      operator: None,
-                      span: (195, 210, 9),
-                    }],
-
-                    span: (195, 210, 9),
-                  },
-                },
-                span: (187, 210, 9),
-              },
-            ],
-          };
-
-          assert_eq!(cddl, expected_output);
-          assert_eq!(cddl.to_string(), expected_output.to_string());
-
-          Ok(())
-        }
-
-        #[cfg(feature = "std")]
-        Err(Error::PARSER) if !p.errors.is_empty() => {
-          let _ = p.report_errors(true);
-
-          Err(Error::CDDL(p.report_errors(false).unwrap().unwrap()))
-        }
-        #[cfg(not(feature = "std"))]
-        Err(Error::PARSER) if !p.errors.is_empty() => {
-          let _ = p.report_errors();
-
-          Err(Error::CDDL(p.report_errors().unwrap()))
-        }
-        Err(e) => Err(e),
-      },
-      Err(e) => Err(e),
-    }
-  }
 
   #[test]
   fn verify_rule_diagnostic() -> Result<()> {
@@ -2669,12 +2447,11 @@ mod tests {
             indoc!(
               r#"
                 error: parser errors
-
-                   ┌── input:2:1 ───
-                   │
-                 2 │ a = b
-                   │ ^^^^^ Rule with name 'a' already defined
-                   │
+                  ┌─ input:2:1
+                  │
+                2 │ a = b
+                  │ ^^^^^ rule with the same identifier is already defined
+                  │
 
               "#
             )
@@ -2692,7 +2469,7 @@ mod tests {
                    ┌── input:2:1 ───
                    │
                  2 │ a = b
-                   │ ^^^^^ Rule with name 'a' already defined
+                   │ ^^^^^ rule with the same identifier is already defined
                    │
 
               "#
@@ -2707,23 +2484,31 @@ mod tests {
   }
 
   #[test]
-  fn verify_genericparm() -> Result<()> {
+  fn verify_genericparams() -> Result<()> {
     let input = r#"<t, v>"#;
 
     let mut l = Lexer::new(input);
     let gps = Parser::new(&mut l.iter(), input)?.parse_genericparm()?;
 
-    let expected_output = GenericParm {
+    let expected_output = GenericParams {
       params: vec![
-        Identifier {
-          ident: "t".into(),
-          socket: None,
-          span: (1, 2, 1),
+        GenericParam {
+          param: Identifier {
+            ident: "t".into(),
+            socket: None,
+            span: (1, 2, 1),
+          },
+          comments_before_ident: None,
+          comments_after_ident: None,
         },
-        Identifier {
-          ident: "v".into(),
-          socket: None,
-          span: (4, 5, 1),
+        GenericParam {
+          param: Identifier {
+            ident: "v".into(),
+            socket: None,
+            span: (4, 5, 1),
+          },
+          comments_before_ident: None,
+          comments_after_ident: None,
         },
       ],
       span: (0, 6, 1),
@@ -2753,13 +2538,12 @@ mod tests {
             e,
             indoc!(
               r#"
-                error: parser errors
-
-                   ┌── input:1:2 ───
-                   │
-                 1 │ <1, 2>
-                   │  ^ Generic parameters must be named identifiers
-                   │
+              error: parser errors
+                ┌─ input:1:2
+                │
+              1 │ <1, 2>
+                │  ^ generic parameters must be named identifiers
+                │
 
               "#
             )
@@ -2777,7 +2561,7 @@ mod tests {
                    ┌── input:1:2 ───
                    │
                  1 │ <1, 2>
-                   │  ^ Generic parameters must be named identifiers
+                   │  ^ generic parameters must be named identifiers
                    │
 
               "#
@@ -2817,18 +2601,17 @@ mod tests {
             indoc!(
               r#"
                 error: parser errors
-
-                   ┌── input:1:6 ───
-                   │
-                 1 │ rule<paramA paramB> = test
-                   │      ^^^^^^^^^^^^^ Generic parameters should be between angle brackets '<' and '>' and separated by a comma ','
-                 2 │ ruleb = rulec
-                 3 │ ruleb = ruled
-                   │ ^^^^^^^^^^^^^ Rule with name 'ruleb' already defined
-                 4 │ rulec = rulee
-                 5 │ rulec = rulee2
-                   │ ^^^^^^^^^^^^^^ Rule with name 'rulec' already defined
-                   │
+                  ┌─ input:1:6
+                  │
+                1 │ rule<paramA paramB> = test
+                  │      ^^^^^^^^^^^^^ generic parameters should be between angle brackets '<' and '>' and separated by a comma ','
+                2 │ ruleb = rulec
+                3 │ ruleb = ruled
+                  │ ^^^^^^^^^^^^^ rule with the same identifier is already defined
+                4 │ rulec = rulee
+                5 │ rulec = rulee2
+                  │ ^^^^^^^^^^^^^^ rule with the same identifier is already defined
+                  │
 
               "#
             )
@@ -2849,10 +2632,10 @@ mod tests {
                    │      ^^^^^^^^^^^^^ Generic parameters should be between angle brackets '<' and '>' and separated by a comma ','
                  2 │ ruleb = rulec
                  3 │ ruleb = ruled
-                   │ ^^^^^^^^^^^^^ Rule with name 'ruleb' already defined
+                   │ ^^^^^^^^^^^^^ rule with the same identifier is already defined
                  4 │ rulec = rulee
                  5 │ rulec = rulee2
-                   │ ^^^^^^^^^^^^^^ Rule with name 'rulec' already defined
+                   │ ^^^^^^^^^^^^^^ rule with the same identifier is already defined
                    │
 
               "#
@@ -2867,30 +2650,40 @@ mod tests {
   }
 
   #[test]
-  fn verify_genericarg() -> Result<()> {
+  fn verify_genericargs() -> Result<()> {
     let input = r#"<"reboot", "now">"#;
 
     let mut l = Lexer::new(input);
 
-    let generic_args = Parser::new(l.iter(), input)?.parse_genericarg()?;
+    let generic_args = Parser::new(l.iter(), input)?.parse_genericargs()?;
 
-    let expected_output = GenericArg {
+    let expected_output = GenericArgs {
       args: vec![
-        Type1 {
-          type2: Type2::TextValue {
-            value: "reboot".into(),
+        GenericArg {
+          arg: Box::from(Type1 {
+            type2: Type2::TextValue {
+              value: "reboot".into(),
+              span: (1, 9, 1),
+            },
+            operator: None,
+            comments_after_type: None,
             span: (1, 9, 1),
-          },
-          operator: None,
-          span: (1, 9, 1),
+          }),
+          comments_before_type: None,
+          comments_after_type: None,
         },
-        Type1 {
-          type2: Type2::TextValue {
-            value: "now".into(),
+        GenericArg {
+          arg: Box::from(Type1 {
+            type2: Type2::TextValue {
+              value: "now".into(),
+              span: (11, 16, 1),
+            },
+            operator: None,
+            comments_after_type: None,
             span: (11, 16, 1),
-          },
-          operator: None,
-          span: (11, 16, 1),
+          }),
+          comments_before_type: None,
+          comments_after_type: None,
         },
       ],
       span: (0, 17, 1),
@@ -2911,43 +2704,60 @@ mod tests {
     let t = Parser::new(l.iter(), input)?.parse_type(None)?;
 
     let expected_output = Type {
-      type_choices: vec![Type1 {
-        type2: Type2::ParenthesizedType {
-          pt: Type {
-            type_choices: vec![
-              Type1 {
-                type2: Type2::Typename {
-                  ident: Identifier {
-                    ident: "tchoice1".into(),
-                    socket: None,
+      type_choices: vec![TypeChoice {
+        type1: Type1 {
+          type2: Type2::ParenthesizedType {
+            pt: Type {
+              type_choices: vec![
+                TypeChoice {
+                  type1: Type1 {
+                    type2: Type2::Typename {
+                      ident: Identifier {
+                        ident: "tchoice1".into(),
+                        socket: None,
+                        span: (2, 10, 1),
+                      },
+                      generic_args: None,
+                      span: (2, 10, 1),
+                    },
+                    operator: None,
+                    comments_after_type: None,
                     span: (2, 10, 1),
                   },
-                  generic_arg: None,
-                  span: (2, 10, 1),
+                  comments_before_type: None,
+                  comments_after_type: None,
                 },
-                operator: None,
-                span: (2, 10, 1),
-              },
-              Type1 {
-                type2: Type2::Typename {
-                  ident: Identifier {
-                    ident: "tchoice2".into(),
-                    socket: None,
+                TypeChoice {
+                  type1: Type1 {
+                    type2: Type2::Typename {
+                      ident: Identifier {
+                        ident: "tchoice2".into(),
+                        socket: None,
+                        span: (13, 21, 1),
+                      },
+                      generic_args: None,
+                      span: (13, 21, 1),
+                    },
+                    operator: None,
+                    comments_after_type: None,
                     span: (13, 21, 1),
                   },
-                  generic_arg: None,
-                  span: (13, 21, 1),
+                  comments_before_type: None,
+                  comments_after_type: None,
                 },
-                operator: None,
-                span: (13, 21, 1),
-              },
-            ],
-            span: (2, 21, 1),
+              ],
+              span: (2, 21, 1),
+            },
+            comments_before_type: None,
+            comments_after_type: None,
+            span: (0, 23, 1),
           },
+          operator: None,
+          comments_after_type: None,
           span: (0, 23, 1),
         },
-        operator: None,
-        span: (0, 23, 1),
+        comments_before_type: None,
+        comments_after_type: None,
       }],
       span: (0, 23, 1),
     };
@@ -2975,16 +2785,19 @@ mod tests {
           value: 5,
           span: (0, 1, 1),
         },
-        operator: Some((
-          RangeCtlOp::RangeOp {
+        operator: Some(Operator {
+          operator: RangeCtlOp::RangeOp {
             is_inclusive: true,
             span: (1, 3, 1),
           },
-          Type2::UintValue {
+          type2: Type2::UintValue {
             value: 10,
             span: (3, 5, 1),
           },
-        )),
+          comments_before_operator: None,
+          comments_after_operator: None,
+        }),
+        comments_after_type: None,
         span: (0, 5, 1),
       },
       Type1 {
@@ -2992,16 +2805,19 @@ mod tests {
           value: -10.5,
           span: (0, 5, 1),
         },
-        operator: Some((
-          RangeCtlOp::RangeOp {
+        operator: Some(Operator {
+          operator: RangeCtlOp::RangeOp {
             is_inclusive: false,
             span: (5, 8, 1),
           },
-          Type2::FloatValue {
+          type2: Type2::FloatValue {
             value: 10.1,
             span: (8, 12, 1),
           },
-        )),
+          comments_before_operator: None,
+          comments_after_operator: None,
+        }),
+        comments_after_type: None,
         span: (0, 12, 1),
       },
       Type1 {
@@ -3009,16 +2825,19 @@ mod tests {
           value: 1.5,
           span: (0, 3, 1),
         },
-        operator: Some((
-          RangeCtlOp::RangeOp {
+        operator: Some(Operator {
+          operator: RangeCtlOp::RangeOp {
             is_inclusive: true,
             span: (3, 5, 1),
           },
-          Type2::FloatValue {
+          type2: Type2::FloatValue {
             value: 4.5,
             span: (5, 8, 1),
           },
-        )),
+          comments_before_operator: None,
+          comments_after_operator: None,
+        }),
+        comments_after_type: None,
         span: (0, 8, 1),
       },
       Type1 {
@@ -3028,24 +2847,27 @@ mod tests {
             socket: None,
             span: (0, 9, 1),
           },
-          generic_arg: None,
+          generic_args: None,
           span: (0, 9, 1),
         },
-        operator: Some((
-          RangeCtlOp::RangeOp {
+        operator: Some(Operator {
+          operator: RangeCtlOp::RangeOp {
             is_inclusive: false,
             span: (10, 13, 1),
           },
-          Type2::Typename {
+          type2: Type2::Typename {
             ident: Identifier {
               ident: "upper".into(),
               socket: None,
               span: (14, 19, 1),
             },
-            generic_arg: None,
+            generic_args: None,
             span: (14, 19, 1),
           },
-        )),
+          comments_before_operator: None,
+          comments_after_operator: None,
+        }),
+        comments_after_type: None,
         span: (0, 19, 1),
       },
       Type1 {
@@ -3055,71 +2877,90 @@ mod tests {
             socket: None,
             span: (0, 6, 1),
           },
-          generic_arg: None,
+          generic_args: None,
           span: (0, 6, 1),
         },
-        operator: Some((
-          RangeCtlOp::CtlOp {
+        operator: Some(Operator {
+          operator: RangeCtlOp::CtlOp {
             ctrl: ".lt",
             span: (7, 10, 1),
           },
-          Type2::Typename {
+          type2: Type2::Typename {
             ident: Identifier {
               ident: "controller".into(),
               socket: None,
               span: (11, 21, 1),
             },
-            generic_arg: None,
+            generic_args: None,
             span: (11, 21, 1),
           },
-        )),
+          comments_before_operator: None,
+          comments_after_operator: None,
+        }),
+        comments_after_type: None,
         span: (0, 21, 1),
       },
       Type1 {
         type2: Type2::ParenthesizedType {
           pt: Type {
             type_choices: vec![
-              Type1 {
-                type2: Type2::Typename {
-                  ident: Identifier {
-                    ident: "text".into(),
-                    socket: None,
+              TypeChoice {
+                type1: Type1 {
+                  type2: Type2::Typename {
+                    ident: Identifier {
+                      ident: "text".into(),
+                      socket: None,
+                      span: (2, 6, 1),
+                    },
+                    generic_args: None,
                     span: (2, 6, 1),
                   },
-                  generic_arg: None,
+                  operator: None,
+                  comments_after_type: None,
                   span: (2, 6, 1),
                 },
-                operator: None,
-                span: (2, 6, 1),
+                comments_before_type: None,
+                comments_after_type: None,
               },
-              Type1 {
-                type2: Type2::Typename {
-                  ident: Identifier {
-                    ident: "tstr".into(),
-                    socket: None,
+              TypeChoice {
+                type1: Type1 {
+                  type2: Type2::Typename {
+                    ident: Identifier {
+                      ident: "tstr".into(),
+                      socket: None,
+                      span: (9, 13, 1),
+                    },
+                    generic_args: None,
                     span: (9, 13, 1),
                   },
-                  generic_arg: None,
+                  operator: None,
+                  comments_after_type: None,
                   span: (9, 13, 1),
                 },
-                operator: None,
-                span: (9, 13, 1),
+                comments_before_type: None,
+                comments_after_type: None,
               },
             ],
+
             span: (2, 13, 1),
           },
+          comments_before_type: None,
+          comments_after_type: None,
           span: (0, 15, 1),
         },
-        operator: Some((
-          RangeCtlOp::CtlOp {
+        operator: Some(Operator {
+          operator: RangeCtlOp::CtlOp {
             ctrl: ".eq",
             span: (16, 19, 1),
           },
-          Type2::TextValue {
+          type2: Type2::TextValue {
             value: "hello".into(),
             span: (20, 27, 1),
           },
-        )),
+          comments_before_operator: None,
+          comments_after_operator: None,
+        }),
+        comments_after_type: None,
         span: (0, 27, 1),
       },
     ];
@@ -3164,23 +3005,33 @@ mod tests {
           socket: None,
           span: (0, 7, 1),
         },
-        generic_arg: Some(GenericArg {
+        generic_args: Some(GenericArgs {
           args: vec![
-            Type1 {
-              type2: Type2::TextValue {
-                value: "reboot".into(),
+            GenericArg {
+              arg: Box::from(Type1 {
+                type2: Type2::TextValue {
+                  value: "reboot".into(),
+                  span: (8, 16, 1),
+                },
+                operator: None,
+                comments_after_type: None,
                 span: (8, 16, 1),
-              },
-              operator: None,
-              span: (8, 16, 1),
+              }),
+              comments_before_type: None,
+              comments_after_type: None,
             },
-            Type1 {
-              type2: Type2::TextValue {
-                value: "now".into(),
+            GenericArg {
+              arg: Box::from(Type1 {
+                type2: Type2::TextValue {
+                  value: "now".into(),
+                  span: (18, 23, 1),
+                },
+                operator: None,
+                comments_after_type: None,
                 span: (18, 23, 1),
-              },
-              operator: None,
-              span: (18, 23, 1),
+              }),
+              comments_before_type: None,
+              comments_after_type: None,
             },
           ],
           span: (7, 24, 1),
@@ -3193,7 +3044,7 @@ mod tests {
           socket: Some(SocketPlug::GROUP),
           span: (0, 12, 1),
         },
-        generic_arg: None,
+        generic_args: None,
         span: (0, 12, 1),
       },
       Type2::Unwrap {
@@ -3202,27 +3053,35 @@ mod tests {
           socket: None,
           span: (1, 7, 1),
         },
-        generic_arg: None,
+        generic_args: None,
+        comments: None,
         span: (0, 0, 0),
       },
       Type2::TaggedData {
         tag: Some(997),
         t: Type {
-          type_choices: vec![Type1 {
-            type2: Type2::Typename {
-              ident: Identifier {
-                ident: "tstr".into(),
-                socket: None,
+          type_choices: vec![TypeChoice {
+            type1: Type1 {
+              type2: Type2::Typename {
+                ident: Identifier {
+                  ident: "tstr".into(),
+                  socket: None,
+                  span: (7, 11, 1),
+                },
+                generic_args: None,
                 span: (7, 11, 1),
               },
-              generic_arg: None,
+              operator: None,
+              comments_after_type: None,
               span: (7, 11, 1),
             },
-            operator: None,
-            span: (7, 11, 1),
+            comments_before_type: None,
+            comments_after_type: None,
           }],
           span: (7, 11, 1),
         },
+        comments_before_type: None,
+        comments_after_type: None,
         span: (0, 11, 1),
       },
       Type2::FloatValue {
@@ -3236,26 +3095,37 @@ mod tests {
             group_entries: vec![(
               GroupEntry::TypeGroupname {
                 ge: TypeGroupnameEntry {
-                  occur: Some(Occur::Exact {
-                    lower: None,
-                    upper: Some(3),
-                    span: (1, 3, 1),
+                  occur: Some(Occurrence {
+                    occur: Occur::Exact {
+                      lower: None,
+                      upper: Some(3),
+                      span: (1, 3, 1),
+                    },
+                    comments: None,
                   }),
                   name: Identifier {
                     ident: "reputon".into(),
                     socket: None,
                     span: (4, 11, 1),
                   },
-                  generic_arg: None,
+                  generic_args: None,
                 },
+                leading_comments: None,
+                trailing_comments: None,
                 span: (1, 11, 1),
               },
-              false,
+              OptionalComma {
+                optional_comma: false,
+                trailing_comments: None,
+              },
             )],
+            comments_before_grpchoice: None,
             span: (1, 11, 1),
           }],
           span: (1, 11, 1),
         },
+        comments_before_group: None,
+        comments_after_group: None,
         span: (0, 12, 1),
       },
       Type2::Array {
@@ -3264,22 +3134,33 @@ mod tests {
             group_entries: vec![(
               GroupEntry::TypeGroupname {
                 ge: TypeGroupnameEntry {
-                  occur: Some(Occur::OneOrMore((1, 2, 1))),
+                  occur: Some(Occurrence {
+                    occur: Occur::OneOrMore((1, 2, 1)),
+                    comments: None,
+                  }),
                   name: Identifier {
                     ident: "reputon".into(),
                     socket: None,
                     span: (3, 10, 1),
                   },
-                  generic_arg: None,
+                  generic_args: None,
                 },
+                leading_comments: None,
+                trailing_comments: None,
                 span: (1, 10, 1),
               },
-              false,
+              OptionalComma {
+                optional_comma: false,
+                trailing_comments: None,
+              },
             )],
+            comments_before_grpchoice: None,
             span: (1, 10, 1),
           }],
           span: (1, 10, 1),
         },
+        comments_before_group: None,
+        comments_after_group: None,
         span: (0, 11, 1),
       },
       Type2::ChoiceFromGroup {
@@ -3288,7 +3169,8 @@ mod tests {
           socket: None,
           span: (1, 10, 1),
         },
-        generic_arg: None,
+        generic_args: None,
+        comments: None,
         span: (0, 10, 1),
       },
       Type2::ChoiceFromInlineGroup {
@@ -3303,16 +3185,25 @@ mod tests {
                     socket: None,
                     span: (3, 14, 1),
                   },
-                  generic_arg: None,
+                  generic_args: None,
                 },
+                leading_comments: None,
+                trailing_comments: None,
                 span: (3, 14, 1),
               },
-              false,
+              OptionalComma {
+                optional_comma: false,
+                trailing_comments: None,
+              },
             )],
+            comments_before_grpchoice: None,
             span: (3, 14, 1),
           }],
           span: (3, 14, 1),
         },
+        comments: None,
+        comments_before_group: None,
+        comments_after_group: None,
         span: (0, 14, 1),
       },
       Type2::Map {
@@ -3321,7 +3212,10 @@ mod tests {
             group_entries: vec![(
               GroupEntry::ValueMemberKey {
                 ge: Box::from(ValueMemberKeyEntry {
-                  occur: Some(Occur::Optional((2, 3, 1))),
+                  occur: Some(Occurrence {
+                    occur: Occur::Optional((2, 3, 1)),
+                    comments: None,
+                  }),
                   member_key: Some(MemberKey::Type1 {
                     t1: Box::from(Type1 {
                       type2: Type2::TextValue {
@@ -3329,36 +3223,53 @@ mod tests {
                         span: (4, 18, 1),
                       },
                       operator: None,
+                      comments_after_type: None,
                       span: (4, 18, 1),
                     }),
                     is_cut: true,
+                    comments_before_cut: None,
+                    comments_after_cut: None,
+                    comments_after_arrowmap: None,
                     span: (4, 23, 1),
                   }),
                   entry_type: Type {
-                    type_choices: vec![Type1 {
-                      type2: Type2::Typename {
-                        ident: Identifier {
-                          ident: "int".into(),
-                          socket: None,
+                    type_choices: vec![TypeChoice {
+                      type1: Type1 {
+                        type2: Type2::Typename {
+                          ident: Identifier {
+                            ident: "int".into(),
+                            socket: None,
+                            span: (24, 27, 1),
+                          },
+                          generic_args: None,
                           span: (24, 27, 1),
                         },
-                        generic_arg: None,
+                        operator: None,
+                        comments_after_type: None,
                         span: (24, 27, 1),
                       },
-                      operator: None,
-                      span: (24, 27, 1),
+                      comments_before_type: None,
+                      comments_after_type: None,
                     }],
                     span: (24, 27, 1),
                   },
                 }),
+                leading_comments: None,
+                trailing_comments: None,
                 span: (2, 28, 1),
               },
-              true,
+              OptionalComma {
+                optional_comma: true,
+                trailing_comments: None,
+              },
             )],
+            comments_before_grpchoice: None,
             span: (2, 28, 1),
           }],
           span: (2, 28, 1),
         },
+        comments_before_group: None,
+        comments_after_group: None,
         span: (0, 30, 1),
       },
       Type2::Array {
@@ -3379,28 +3290,40 @@ mod tests {
                                 socket: None,
                                 span: (4, 5, 1),
                               },
+                              comments: None,
+                              comments_after_colon: None,
                               span: (4, 6, 1),
                             }),
                             entry_type: Type {
-                              type_choices: vec![Type1 {
-                                type2: Type2::Typename {
-                                  ident: Identifier {
-                                    ident: "int".into(),
-                                    socket: None,
+                              type_choices: vec![TypeChoice {
+                                type1: Type1 {
+                                  type2: Type2::Typename {
+                                    ident: Identifier {
+                                      ident: "int".into(),
+                                      socket: None,
+                                      span: (7, 10, 1),
+                                    },
+                                    generic_args: None,
                                     span: (7, 10, 1),
                                   },
-                                  generic_arg: None,
+                                  operator: None,
+                                  comments_after_type: None,
                                   span: (7, 10, 1),
                                 },
-                                operator: None,
-                                span: (7, 10, 1),
+                                comments_before_type: None,
+                                comments_after_type: None,
                               }],
                               span: (7, 10, 1),
                             },
                           }),
+                          leading_comments: None,
+                          trailing_comments: None,
                           span: (4, 11, 1),
                         },
-                        true,
+                        OptionalComma {
+                          optional_comma: true,
+                          trailing_comments: None,
+                        },
                       ),
                       (
                         GroupEntry::ValueMemberKey {
@@ -3412,43 +3335,64 @@ mod tests {
                                 socket: None,
                                 span: (12, 13, 1),
                               },
+                              comments: None,
+                              comments_after_colon: None,
                               span: (12, 14, 1),
                             }),
                             entry_type: Type {
-                              type_choices: vec![Type1 {
-                                type2: Type2::Typename {
-                                  ident: Identifier {
-                                    ident: "tstr".into(),
-                                    socket: None,
+                              type_choices: vec![TypeChoice {
+                                type1: Type1 {
+                                  type2: Type2::Typename {
+                                    ident: Identifier {
+                                      ident: "tstr".into(),
+                                      socket: None,
+                                      span: (15, 19, 1),
+                                    },
+                                    generic_args: None,
                                     span: (15, 19, 1),
                                   },
-                                  generic_arg: None,
+                                  operator: None,
+                                  comments_after_type: None,
                                   span: (15, 19, 1),
                                 },
-                                operator: None,
-                                span: (15, 19, 1),
+                                comments_before_type: None,
+                                comments_after_type: None,
                               }],
                               span: (15, 19, 1),
                             },
                           }),
+                          leading_comments: None,
+                          trailing_comments: None,
                           span: (12, 19, 1),
                         },
-                        false,
+                        OptionalComma {
+                          optional_comma: false,
+                          trailing_comments: None,
+                        },
                       ),
                     ],
+                    comments_before_grpchoice: None,
                     span: (4, 19, 1),
                   }],
                   span: (4, 19, 1),
                 },
                 occur: None,
+                comments_before_group: None,
+                comments_after_group: None,
                 span: (2, 21, 1),
               },
-              false,
+              OptionalComma {
+                optional_comma: false,
+                trailing_comments: None,
+              },
             )],
+            comments_before_grpchoice: None,
             span: (2, 21, 1),
           }],
           span: (2, 21, 1),
         },
+        comments_before_group: None,
+        comments_after_group: None,
         span: (0, 23, 1),
       },
     ];
@@ -3483,40 +3427,61 @@ mod tests {
                     occur: None,
                     member_key: None,
                     entry_type: Type {
-                      type_choices: vec![Type1 {
-                        type2: Type2::Array {
-                          group: Group {
-                            group_choices: vec![GroupChoice {
-                              group_entries: vec![(
-                                GroupEntry::TypeGroupname {
-                                  ge: TypeGroupnameEntry {
-                                    occur: Some(Occur::ZeroOrMore((3, 4, 1))),
-                                    name: Identifier {
-                                      ident: "file-entry".into(),
-                                      socket: None,
-                                      span: (5, 15, 1),
+                      type_choices: vec![TypeChoice {
+                        type1: Type1 {
+                          type2: Type2::Array {
+                            group: Group {
+                              group_choices: vec![GroupChoice {
+                                group_entries: vec![(
+                                  GroupEntry::TypeGroupname {
+                                    ge: TypeGroupnameEntry {
+                                      occur: Some(Occurrence {
+                                        occur: Occur::ZeroOrMore((3, 4, 1)),
+                                        comments: None,
+                                      }),
+                                      name: Identifier {
+                                        ident: "file-entry".into(),
+                                        socket: None,
+                                        span: (5, 15, 1),
+                                      },
+                                      generic_args: None,
                                     },
-                                    generic_arg: None,
+                                    leading_comments: None,
+                                    trailing_comments: None,
+                                    span: (3, 15, 1),
                                   },
-                                  span: (3, 15, 1),
-                                },
-                                false,
-                              )],
+                                  OptionalComma {
+                                    optional_comma: false,
+                                    trailing_comments: None,
+                                  },
+                                )],
+                                comments_before_grpchoice: None,
+                                span: (3, 15, 1),
+                              }],
                               span: (3, 15, 1),
-                            }],
-                            span: (3, 15, 1),
+                            },
+                            comments_before_group: None,
+                            comments_after_group: None,
+                            span: (2, 16, 1),
                           },
+                          operator: None,
+                          comments_after_type: None,
                           span: (2, 16, 1),
                         },
-                        operator: None,
-                        span: (2, 16, 1),
+                        comments_before_type: None,
+                        comments_after_type: None,
                       }],
                       span: (2, 16, 1),
                     },
                   }),
+                  leading_comments: None,
+                  trailing_comments: None,
                   span: (2, 17, 1),
                 },
-                true,
+                OptionalComma {
+                  optional_comma: true,
+                  trailing_comments: None,
+                },
               ),
               (
                 GroupEntry::ValueMemberKey {
@@ -3524,46 +3489,70 @@ mod tests {
                     occur: None,
                     member_key: None,
                     entry_type: Type {
-                      type_choices: vec![Type1 {
-                        type2: Type2::Array {
-                          group: Group {
-                            group_choices: vec![GroupChoice {
-                              group_entries: vec![(
-                                GroupEntry::TypeGroupname {
-                                  ge: TypeGroupnameEntry {
-                                    occur: Some(Occur::ZeroOrMore((19, 20, 1))),
-                                    name: Identifier {
-                                      ident: "directory-entry".into(),
-                                      socket: None,
-                                      span: (21, 36, 1),
+                      type_choices: vec![TypeChoice {
+                        type1: Type1 {
+                          type2: Type2::Array {
+                            group: Group {
+                              group_choices: vec![GroupChoice {
+                                group_entries: vec![(
+                                  GroupEntry::TypeGroupname {
+                                    ge: TypeGroupnameEntry {
+                                      occur: Some(Occurrence {
+                                        occur: Occur::ZeroOrMore((19, 20, 1)),
+                                        comments: None,
+                                      }),
+                                      name: Identifier {
+                                        ident: "directory-entry".into(),
+                                        socket: None,
+                                        span: (21, 36, 1),
+                                      },
+                                      generic_args: None,
                                     },
-                                    generic_arg: None,
+                                    leading_comments: None,
+                                    trailing_comments: None,
+                                    span: (19, 36, 1),
                                   },
-                                  span: (19, 36, 1),
-                                },
-                                false,
-                              )],
+                                  OptionalComma {
+                                    optional_comma: false,
+                                    trailing_comments: None,
+                                  },
+                                )],
+                                comments_before_grpchoice: None,
+                                span: (19, 36, 1),
+                              }],
                               span: (19, 36, 1),
-                            }],
-                            span: (19, 36, 1),
+                            },
+                            comments_before_group: None,
+                            comments_after_group: None,
+                            span: (18, 37, 1),
                           },
+                          operator: None,
+                          comments_after_type: None,
                           span: (18, 37, 1),
                         },
-                        operator: None,
-                        span: (18, 37, 1),
+                        comments_before_type: None,
+                        comments_after_type: None,
                       }],
                       span: (18, 37, 1),
                     },
                   }),
+                  leading_comments: None,
+                  trailing_comments: None,
                   span: (18, 37, 1),
                 },
-                false,
+                OptionalComma {
+                  optional_comma: false,
+                  trailing_comments: None,
+                },
               ),
             ],
+            comments_before_grpchoice: None,
             span: (2, 37, 1),
           }],
           span: (2, 37, 1),
         },
+        comments_before_group: None,
+        comments_after_group: None,
         span: (0, 39, 1),
       },
       Type2::Map {
@@ -3580,11 +3569,16 @@ mod tests {
                         socket: None,
                         span: (2, 5, 1),
                       },
-                      generic_arg: None,
+                      generic_args: None,
                     },
+                    leading_comments: None,
+                    trailing_comments: None,
                     span: (2, 6, 1),
                   },
-                  true,
+                  OptionalComma {
+                    optional_comma: true,
+                    trailing_comments: None,
+                  },
                 ),
                 (
                   GroupEntry::TypeGroupname {
@@ -3595,13 +3589,19 @@ mod tests {
                         socket: None,
                         span: (7, 10, 1),
                       },
-                      generic_arg: None,
+                      generic_args: None,
                     },
+                    leading_comments: None,
+                    trailing_comments: None,
                     span: (7, 10, 1),
                   },
-                  false,
+                  OptionalComma {
+                    optional_comma: false,
+                    trailing_comments: None,
+                  },
                 ),
               ],
+              comments_before_grpchoice: None,
               span: (2, 10, 1),
             },
             GroupChoice {
@@ -3615,11 +3615,16 @@ mod tests {
                         socket: None,
                         span: (14, 17, 1),
                       },
-                      generic_arg: None,
+                      generic_args: None,
                     },
+                    leading_comments: None,
+                    trailing_comments: None,
                     span: (14, 18, 1),
                   },
-                  true,
+                  OptionalComma {
+                    optional_comma: true,
+                    trailing_comments: None,
+                  },
                 ),
                 (
                   GroupEntry::TypeGroupname {
@@ -3630,18 +3635,26 @@ mod tests {
                         socket: None,
                         span: (19, 23, 1),
                       },
-                      generic_arg: None,
+                      generic_args: None,
                     },
+                    leading_comments: None,
+                    trailing_comments: None,
                     span: (19, 23, 1),
                   },
-                  false,
+                  OptionalComma {
+                    optional_comma: false,
+                    trailing_comments: None,
+                  },
                 ),
               ],
+              comments_before_grpchoice: None,
               span: (14, 23, 1),
             },
           ],
           span: (2, 23, 1),
         },
+        comments_before_group: None,
+        comments_after_group: None,
         span: (0, 25, 1),
       },
       Type2::Map {
@@ -3657,11 +3670,16 @@ mod tests {
                       socket: None,
                       span: (2, 5, 1),
                     },
-                    generic_arg: None,
+                    generic_args: None,
                   },
+                  leading_comments: None,
+                  trailing_comments: None,
                   span: (2, 6, 1),
                 },
-                true,
+                OptionalComma {
+                  optional_comma: true,
+                  trailing_comments: None,
+                },
               ),
               (
                 GroupEntry::TypeGroupname {
@@ -3672,11 +3690,16 @@ mod tests {
                       socket: None,
                       span: (7, 10, 1),
                     },
-                    generic_arg: None,
+                    generic_args: None,
                   },
+                  leading_comments: None,
+                  trailing_comments: None,
                   span: (7, 11, 1),
                 },
-                true,
+                OptionalComma {
+                  optional_comma: true,
+                  trailing_comments: None,
+                },
               ),
               (
                 GroupEntry::TypeGroupname {
@@ -3687,11 +3710,16 @@ mod tests {
                       socket: None,
                       span: (12, 15, 1),
                     },
-                    generic_arg: None,
+                    generic_args: None,
                   },
+                  leading_comments: None,
+                  trailing_comments: None,
                   span: (12, 16, 1),
                 },
-                true,
+                OptionalComma {
+                  optional_comma: true,
+                  trailing_comments: None,
+                },
               ),
               (
                 GroupEntry::TypeGroupname {
@@ -3702,17 +3730,25 @@ mod tests {
                       socket: None,
                       span: (17, 21, 1),
                     },
-                    generic_arg: None,
+                    generic_args: None,
                   },
+                  leading_comments: None,
+                  trailing_comments: None,
                   span: (17, 21, 1),
                 },
-                false,
+                OptionalComma {
+                  optional_comma: false,
+                  trailing_comments: None,
+                },
               ),
             ],
+            comments_before_grpchoice: None,
             span: (2, 21, 1),
           }],
           span: (2, 21, 1),
         },
+        comments_before_group: None,
+        comments_after_group: None,
         span: (0, 23, 1),
       },
     ];
@@ -3742,7 +3778,10 @@ mod tests {
     let expected_outputs = [
       GroupEntry::ValueMemberKey {
         ge: Box::from(ValueMemberKeyEntry {
-          occur: Some(Occur::ZeroOrMore((0, 1, 1))),
+          occur: Some(Occurrence {
+            occur: Occur::ZeroOrMore((0, 1, 1)),
+            comments: None,
+          }),
           member_key: Some(MemberKey::Type1 {
             t1: Box::from(Type1 {
               type2: Type2::Typename {
@@ -3751,27 +3790,38 @@ mod tests {
                   socket: None,
                   span: (2, 7, 1),
                 },
-                generic_arg: None,
+                generic_args: None,
                 span: (2, 7, 1),
               },
               operator: None,
+              comments_after_type: None,
               span: (2, 7, 1),
             }),
             is_cut: true,
+            comments_before_cut: None,
+            comments_after_cut: None,
+            comments_after_arrowmap: None,
             span: (2, 12, 1),
           }),
           entry_type: Type {
-            type_choices: vec![Type1 {
-              type2: Type2::TextValue {
-                value: "value".into(),
+            type_choices: vec![TypeChoice {
+              type1: Type1 {
+                type2: Type2::TextValue {
+                  value: "value".into(),
+                  span: (13, 20, 1),
+                },
+                operator: None,
+                comments_after_type: None,
                 span: (13, 20, 1),
               },
-              operator: None,
-              span: (13, 20, 1),
+              comments_before_type: None,
+              comments_after_type: None,
             }],
             span: (13, 20, 1),
           },
         }),
+        leading_comments: None,
+        trailing_comments: None,
         span: (0, 20, 1),
       },
       GroupEntry::ValueMemberKey {
@@ -3783,25 +3833,34 @@ mod tests {
               socket: None,
               span: (0, 5, 1),
             },
+            comments: None,
+            comments_after_colon: None,
             span: (0, 6, 1),
           }),
           entry_type: Type {
-            type_choices: vec![Type1 {
-              type2: Type2::Typename {
-                ident: Identifier {
-                  ident: "type2".into(),
-                  socket: None,
+            type_choices: vec![TypeChoice {
+              type1: Type1 {
+                type2: Type2::Typename {
+                  ident: Identifier {
+                    ident: "type2".into(),
+                    socket: None,
+                    span: (7, 12, 1),
+                  },
+                  generic_args: None,
                   span: (7, 12, 1),
                 },
-                generic_arg: None,
+                operator: None,
+                comments_after_type: None,
                 span: (7, 12, 1),
               },
-              operator: None,
-              span: (7, 12, 1),
+              comments_before_type: None,
+              comments_after_type: None,
             }],
             span: (7, 12, 1),
           },
         }),
+        leading_comments: None,
+        trailing_comments: None,
         span: (0, 12, 1),
       },
       GroupEntry::TypeGroupname {
@@ -3812,34 +3871,48 @@ mod tests {
             socket: None,
             span: (0, 8, 1),
           },
-          generic_arg: None,
+          generic_args: None,
         },
+        leading_comments: None,
+        trailing_comments: None,
         span: (0, 8, 1),
       },
       GroupEntry::ValueMemberKey {
         ge: Box::from(ValueMemberKeyEntry {
-          occur: Some(Occur::Optional((0, 1, 1))),
+          occur: Some(Occurrence {
+            occur: Occur::Optional((0, 1, 1)),
+            comments: None,
+          }),
           member_key: Some(MemberKey::Value {
             value: token::Value::UINT(0),
+            comments: None,
+            comments_after_colon: None,
             span: (2, 4, 1),
           }),
           entry_type: Type {
-            type_choices: vec![Type1 {
-              type2: Type2::Typename {
-                ident: Identifier {
-                  ident: "addrdistr".into(),
-                  socket: None,
+            type_choices: vec![TypeChoice {
+              type1: Type1 {
+                type2: Type2::Typename {
+                  ident: Identifier {
+                    ident: "addrdistr".into(),
+                    socket: None,
+                    span: (5, 14, 1),
+                  },
+                  generic_args: None,
                   span: (5, 14, 1),
                 },
-                generic_arg: None,
+                operator: None,
+                comments_after_type: None,
                 span: (5, 14, 1),
               },
-              operator: None,
-              span: (5, 14, 1),
+              comments_before_type: None,
+              comments_after_type: None,
             }],
             span: (5, 14, 1),
           },
         }),
+        leading_comments: None,
+        trailing_comments: None,
         span: (0, 14, 1),
       },
       GroupEntry::ValueMemberKey {
@@ -3847,45 +3920,63 @@ mod tests {
           occur: None,
           member_key: Some(MemberKey::Value {
             value: token::Value::UINT(0),
+            comments: None,
+            comments_after_colon: None,
             span: (0, 2, 1),
           }),
           entry_type: Type {
-            type_choices: vec![Type1 {
-              type2: Type2::Typename {
-                ident: Identifier {
-                  ident: "finite_set".into(),
-                  socket: None,
-                  span: (3, 13, 1),
-                },
-                generic_arg: Some(GenericArg {
-                  args: vec![Type1 {
-                    type2: Type2::Typename {
-                      ident: Identifier {
-                        ident: "transaction_input".into(),
-                        socket: None,
+            type_choices: vec![TypeChoice {
+              type1: Type1 {
+                type2: Type2::Typename {
+                  ident: Identifier {
+                    ident: "finite_set".into(),
+                    socket: None,
+                    span: (3, 13, 1),
+                  },
+                  generic_args: Some(GenericArgs {
+                    args: vec![GenericArg {
+                      arg: Box::from(Type1 {
+                        type2: Type2::Typename {
+                          ident: Identifier {
+                            ident: "transaction_input".into(),
+                            socket: None,
+                            span: (14, 31, 1),
+                          },
+                          generic_args: None,
+                          span: (14, 31, 1),
+                        },
+                        operator: None,
+                        comments_after_type: None,
                         span: (14, 31, 1),
-                      },
-                      generic_arg: None,
-                      span: (14, 31, 1),
-                    },
-                    operator: None,
-                    span: (14, 31, 1),
-                  }],
-                  span: (13, 32, 1),
-                }),
+                      }),
+                      comments_before_type: None,
+                      comments_after_type: None,
+                    }],
+                    span: (13, 32, 1),
+                  }),
+
+                  span: (3, 32, 1),
+                },
+                operator: None,
+                comments_after_type: None,
                 span: (3, 32, 1),
               },
-              operator: None,
-              span: (3, 32, 1),
+              comments_before_type: None,
+              comments_after_type: None,
             }],
             span: (3, 32, 1),
           },
         }),
+        leading_comments: None,
+        trailing_comments: None,
         span: (0, 32, 1),
       },
       GroupEntry::ValueMemberKey {
         ge: Box::from(ValueMemberKeyEntry {
-          occur: Some(Occur::ZeroOrMore((0, 1, 1))),
+          occur: Some(Occurrence {
+            occur: Occur::ZeroOrMore((0, 1, 1)),
+            comments: None,
+          }),
           member_key: Some(MemberKey::Type1 {
             t1: Box::from(Type1 {
               type2: Type2::Array {
@@ -3900,41 +3991,60 @@ mod tests {
                             socket: None,
                             span: (3, 13, 1),
                           },
-                          generic_arg: None,
+                          generic_args: None,
                         },
+                        leading_comments: None,
+                        trailing_comments: None,
                         span: (3, 13, 1),
                       },
-                      false,
+                      OptionalComma {
+                        optional_comma: false,
+                        trailing_comments: None,
+                      },
                     )],
+                    comments_before_grpchoice: None,
                     span: (3, 13, 1),
                   }],
                   span: (3, 13, 1),
                 },
+                comments_before_group: None,
+                comments_after_group: None,
                 span: (2, 14, 1),
               },
               operator: None,
+              comments_after_type: None,
               span: (2, 14, 1),
             }),
             is_cut: false,
+            comments_before_cut: None,
+            comments_after_cut: None,
+            comments_after_arrowmap: None,
             span: (2, 22, 1),
           }),
           entry_type: Type {
-            type_choices: vec![Type1 {
-              type2: Type2::Typename {
-                ident: Identifier {
-                  ident: "coin".into(),
-                  socket: None,
+            type_choices: vec![TypeChoice {
+              type1: Type1 {
+                type2: Type2::Typename {
+                  ident: Identifier {
+                    ident: "coin".into(),
+                    socket: None,
+                    span: (18, 22, 1),
+                  },
+                  generic_args: None,
                   span: (18, 22, 1),
                 },
-                generic_arg: None,
+                operator: None,
+                comments_after_type: None,
                 span: (18, 22, 1),
               },
-              operator: None,
-              span: (18, 22, 1),
+              comments_before_type: None,
+              comments_after_type: None,
             }],
             span: (18, 22, 1),
           },
         }),
+        leading_comments: None,
+        trailing_comments: None,
         span: (0, 22, 1),
       },
     ];
@@ -3970,13 +4080,17 @@ mod tests {
               socket: None,
               span: (0, 5, 1),
             },
-            generic_arg: None,
+            generic_args: None,
             span: (0, 5, 1),
           },
           operator: None,
+          comments_after_type: None,
           span: (0, 5, 1),
         }),
         is_cut: false,
+        comments_before_cut: None,
+        comments_after_cut: None,
+        comments_after_arrowmap: None,
         span: (0, 8, 1),
       },
       MemberKey::Type1 {
@@ -3986,9 +4100,13 @@ mod tests {
             span: (0, 9, 1),
           },
           operator: None,
+          comments_after_type: None,
           span: (0, 9, 1),
         }),
         is_cut: true,
+        comments_before_cut: None,
+        comments_after_cut: None,
+        comments_after_arrowmap: None,
         span: (0, 14, 1),
       },
       MemberKey::Bareword {
@@ -3997,6 +4115,8 @@ mod tests {
           socket: None,
           span: (0, 10, 1),
         },
+        comments: None,
+        comments_after_colon: None,
         span: (0, 11, 1),
       },
       MemberKey::Bareword {
@@ -4005,14 +4125,20 @@ mod tests {
           socket: None,
           span: (0, 12, 1),
         },
+        comments: None,
+        comments_after_colon: None,
         span: (0, 13, 1),
       },
       MemberKey::Value {
         value: token::Value::TEXT("myvalue".into()),
+        comments: None,
+        comments_after_colon: None,
         span: (0, 10, 1),
       },
       MemberKey::Value {
         value: token::Value::UINT(0),
+        comments: None,
+        comments_after_colon: None,
         span: (0, 2, 1),
       },
     ];
@@ -4035,28 +4161,47 @@ mod tests {
     let inputs = [r#"1*3"#, r#"*"#, r#"+"#, r#"5*"#, r#"*3"#, r#"?"#];
 
     let expected_outputs = [
-      Occur::Exact {
-        lower: Some(1),
-        upper: Some(3),
-        span: (0, 3, 1),
+      Occurrence {
+        occur: Occur::Exact {
+          lower: Some(1),
+          upper: Some(3),
+          span: (0, 3, 1),
+        },
+        comments: None,
       },
-      Occur::ZeroOrMore((0, 1, 1)),
-      Occur::OneOrMore((0, 1, 1)),
-      Occur::Exact {
-        lower: Some(5),
-        upper: None,
-        span: (0, 2, 1),
+      Occurrence {
+        occur: Occur::ZeroOrMore((0, 1, 1)),
+        comments: None,
       },
-      Occur::Exact {
-        lower: None,
-        upper: Some(3),
-        span: (0, 2, 1),
+      Occurrence {
+        occur: Occur::OneOrMore((0, 1, 1)),
+        comments: None,
       },
-      Occur::Optional((0, 1, 1)),
+      Occurrence {
+        occur: Occur::Exact {
+          lower: Some(5),
+          upper: None,
+          span: (0, 2, 1),
+        },
+        comments: None,
+      },
+      Occurrence {
+        occur: Occur::Exact {
+          lower: None,
+          upper: Some(3),
+          span: (0, 2, 1),
+        },
+        comments: None,
+      },
+      Occurrence {
+        occur: Occur::Optional((0, 1, 1)),
+        comments: None,
+      },
     ];
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
-      let o = Parser::new(Lexer::new(inputs[idx]).iter(), inputs[idx])?.parse_occur(false)?;
+      let mut l = Lexer::new(inputs[idx]);
+      let o = Parser::new(l.iter(), inputs[idx])?.parse_occur(false)?;
 
       if let Some(o) = o {
         assert_eq!(&o, expected_output);

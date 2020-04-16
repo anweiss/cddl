@@ -1,3 +1,9 @@
+#[cfg(target_arch = "wasm32")]
+extern crate console_error_panic_hook;
+
+#[cfg(target_arch = "wasm32")]
+use serde;
+
 use super::token::{RangeValue, SocketPlug, Value};
 use std::fmt;
 
@@ -18,6 +24,40 @@ use alloc::{
 /// Starting index, ending index and line number
 pub type Span = (usize, usize, usize);
 
+#[derive(Default, Debug, PartialEq, Clone)]
+#[doc(hidden)]
+pub struct Comments<'a>(pub Vec<&'a str>);
+
+impl<'a> Comments<'a> {
+  fn any_non_newline(&self) -> bool {
+    self.0.iter().any(|c| *c != "\n")
+  }
+
+  fn all_newline(&self) -> bool {
+    self.0.iter().all(|c| *c == "\n")
+  }
+}
+
+impl<'a> fmt::Display for Comments<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    if self.all_newline() {
+      return write!(f, "");
+    }
+
+    let mut comment_str = String::new();
+
+    for comment in &self.0 {
+      if *comment == "\n" {
+        comment_str.push_str("\n")
+      } else {
+        comment_str.push_str(&format!(";{}\n", comment));
+      }
+    }
+
+    write!(f, "{}", comment_str)
+  }
+}
+
 /// CDDL AST
 ///
 /// ```abnf
@@ -27,15 +67,39 @@ pub type Span = (usize, usize, usize);
 #[derive(Default, Debug, PartialEq)]
 pub struct CDDL<'a> {
   /// Zero or more production rules
+  #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   pub rules: Vec<Rule<'a>>,
+
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments: Option<Comments<'a>>,
 }
 
 impl<'a> fmt::Display for CDDL<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    #[cfg(target_arch = "wasm32")]
+    console_error_panic_hook::set_once();
+
     let mut cddl_output = String::new();
 
-    for rule in self.rules.iter() {
-      cddl_output.push_str(&format!("{}\n\n", rule));
+    if let Some(comments) = &self.comments {
+      cddl_output.push_str(&comments.to_string());
+    }
+
+    let mut previous_single_line_type = false;
+
+    for (idx, rule) in self.rules.iter().enumerate() {
+      if rule.has_comments_after_rule() {
+        cddl_output.push_str(&rule.to_string());
+      } else if idx == self.rules.len() - 1 || rule.has_single_line_type() {
+        cddl_output.push_str(&format!("{}\n", rule.to_string().trim_end()));
+        previous_single_line_type = true;
+      } else if previous_single_line_type {
+        cddl_output.push_str(&format!("\n{}\n\n", rule.to_string().trim_end()));
+        previous_single_line_type = false;
+      } else {
+        cddl_output.push_str(&format!("{}\n\n", rule.to_string().trim_end()));
+      }
     }
 
     write!(f, "{}", cddl_output)
@@ -111,14 +175,29 @@ impl<'a> From<&'static str> for Identifier<'a> {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq)]
-#[allow(missing_docs)]
 pub enum Rule<'a> {
   /// Type expression
-  Type { rule: TypeRule<'a>, span: Span },
+  Type {
+    /// Type rule
+    #[cfg_attr(target_arch = "wasm32", serde(borrow))]
+    rule: TypeRule<'a>,
+    /// Span
+    span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_after_rule: Option<Comments<'a>>,
+  },
   /// Group expression
   Group {
+    /// Group rule
     rule: Box<GroupRule<'a>>,
+    /// Span
     span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_after_rule: Option<Comments<'a>>,
   },
 }
 
@@ -130,13 +209,87 @@ impl<'a> Rule<'a> {
       Rule::Group { span, .. } => *span,
     }
   }
+
+  fn has_comments_after_rule(&self) -> bool {
+    match self {
+      Rule::Type {
+        comments_after_rule: Some(comments),
+        ..
+      }
+      | Rule::Group {
+        comments_after_rule: Some(comments),
+        ..
+      } if comments.any_non_newline() => true,
+      _ => false,
+    }
+  }
+
+  fn has_single_line_type(&self) -> bool {
+    if let Rule::Type {
+      rule: TypeRule {
+        value: Type { type_choices, .. },
+        ..
+      },
+      ..
+    } = self
+    {
+      if type_choices.len() <= 2
+        && type_choices.iter().all(|tc| match tc.type1.type2 {
+          Type2::Typename { .. }
+          | Type2::FloatValue { .. }
+          | Type2::IntValue { .. }
+          | Type2::UintValue { .. }
+          | Type2::TextValue { .. }
+          | Type2::B16ByteString { .. }
+          | Type2::B64ByteString { .. } => true,
+          _ => false,
+        })
+      {
+        return true;
+      }
+    }
+
+    false
+  }
 }
 
 impl<'a> fmt::Display for Rule<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      Rule::Type { rule, .. } => write!(f, "{}", rule),
-      Rule::Group { rule, .. } => write!(f, "{}", rule),
+      Rule::Type {
+        rule,
+        comments_after_rule,
+        ..
+      } => {
+        let mut rule_str = String::new();
+
+        rule_str.push_str(&format!("{}", rule));
+
+        if let Some(comments) = comments_after_rule {
+          if comments.any_non_newline() {
+            rule_str.push_str(&format!(" {}", comments.to_string()));
+          }
+        }
+
+        write!(f, "{}", rule_str)
+      }
+      Rule::Group {
+        rule,
+        comments_after_rule,
+        ..
+      } => {
+        let mut rule_str = String::new();
+
+        rule_str.push_str(&format!("{} ", rule.to_string()));
+
+        if let Some(comments) = comments_after_rule {
+          if comments.any_non_newline() {
+            rule_str.push_str(&format!(" {}", comments.to_string()));
+          }
+        }
+
+        write!(f, "{}", rule_str)
+      }
     }
   }
 }
@@ -169,27 +322,43 @@ impl<'a> Rule<'a> {
 #[derive(Debug, PartialEq)]
 pub struct TypeRule<'a> {
   /// Type name identifier
+  #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   pub name: Identifier<'a>,
   /// Optional generic parameters
-  pub generic_param: Option<GenericParm<'a>>,
+  pub generic_params: Option<GenericParams<'a>>,
   /// Extends an existing type choice
   pub is_type_choice_alternate: bool,
   /// Type value
   pub value: Type<'a>,
+
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_assignt: Option<Comments<'a>>,
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_assignt: Option<Comments<'a>>,
 }
 
 impl<'a> fmt::Display for TypeRule<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut tr_output = self.name.to_string();
 
-    if let Some(gp) = &self.generic_param {
+    if let Some(gp) = &self.generic_params {
       tr_output.push_str(&gp.to_string());
+    }
+
+    if let Some(comments) = &self.comments_before_assignt {
+      tr_output.push_str(&comments.to_string());
     }
 
     if self.is_type_choice_alternate {
       tr_output.push_str(" /= ");
     } else {
       tr_output.push_str(" = ");
+    }
+
+    if let Some(comments) = &self.comments_after_assignt {
+      tr_output.push_str(&comments.to_string());
     }
 
     tr_output.push_str(&self.value.to_string());
@@ -207,21 +376,33 @@ impl<'a> fmt::Display for TypeRule<'a> {
 #[derive(Debug, PartialEq)]
 pub struct GroupRule<'a> {
   /// Group name identifier
+  #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   pub name: Identifier<'a>,
   /// Optional generic parameters
-  pub generic_param: Option<GenericParm<'a>>,
+  pub generic_params: Option<GenericParams<'a>>,
   /// Extends an existing group choice
   pub is_group_choice_alternate: bool,
   /// Group entry
   pub entry: GroupEntry<'a>,
+
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_assigng: Option<Comments<'a>>,
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_assigng: Option<Comments<'a>>,
 }
 
 impl<'a> fmt::Display for GroupRule<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut gr_output = self.name.to_string();
 
-    if let Some(gp) = &self.generic_param {
+    if let Some(gp) = &self.generic_params {
       gr_output.push_str(&gp.to_string());
+    }
+
+    if let Some(comments) = &self.comments_before_assigng {
+      gr_output.push_str(&comments.to_string());
     }
 
     if self.is_group_choice_alternate {
@@ -231,6 +412,10 @@ impl<'a> fmt::Display for GroupRule<'a> {
     }
 
     gr_output.push_str(&self.entry.to_string());
+
+    if let Some(comments) = &self.comments_after_assigng {
+      gr_output.push_str(&comments.to_string());
+    }
 
     write!(f, "{}", gr_output)
   }
@@ -242,15 +427,39 @@ impl<'a> fmt::Display for GroupRule<'a> {
 /// genericparm =  "<" S id S *("," S id S ) ">"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Default, PartialEq)]
-pub struct GenericParm<'a> {
+#[derive(Debug, PartialEq)]
+pub struct GenericParams<'a> {
   /// List of generic parameters
-  pub params: Vec<Identifier<'a>>,
+  pub params: Vec<GenericParam<'a>>,
   /// Span
   pub span: Span,
 }
 
-impl<'a> fmt::Display for GenericParm<'a> {
+impl<'a> Default for GenericParams<'a> {
+  fn default() -> Self {
+    GenericParams {
+      params: Vec::new(),
+      span: (0, 0, 0),
+    }
+  }
+}
+
+/// Generic parameter
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, PartialEq)]
+pub struct GenericParam<'a> {
+  /// Generic parameter
+  pub param: Identifier<'a>,
+
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_ident: Option<Comments<'a>>,
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_ident: Option<Comments<'a>>,
+}
+
+impl<'a> fmt::Display for GenericParams<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut gp = String::from("<");
     for (idx, parm) in self.params.iter().enumerate() {
@@ -258,7 +467,15 @@ impl<'a> fmt::Display for GenericParm<'a> {
         gp.push_str(", ");
       }
 
-      gp.push_str(&parm.to_string());
+      if let Some(comments) = &parm.comments_before_ident {
+        gp.push_str(&comments.to_string());
+      }
+
+      gp.push_str(&parm.param.to_string());
+
+      if let Some(comments) = &parm.comments_after_ident {
+        gp.push_str(&comments.to_string());
+      }
     }
 
     gp.push('>');
@@ -274,14 +491,39 @@ impl<'a> fmt::Display for GenericParm<'a> {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct GenericArg<'a> {
+pub struct GenericArgs<'a> {
   /// Generic arguments
-  pub args: Vec<Type1<'a>>,
+  pub args: Vec<GenericArg<'a>>,
   /// Span
   pub span: Span,
 }
 
-impl<'a> fmt::Display for GenericArg<'a> {
+impl<'a> GenericArgs<'a> {
+  /// Default `GenericArg`
+  pub fn default() -> Self {
+    GenericArgs {
+      args: Vec::new(),
+      span: (0, 0, 0),
+    }
+  }
+}
+
+/// Generic argument
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericArg<'a> {
+  /// Generic argument
+  pub arg: Box<Type1<'a>>,
+
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_type: Option<Comments<'a>>,
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_type: Option<Comments<'a>>,
+}
+
+impl<'a> fmt::Display for GenericArgs<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut ga = String::from("<");
     for (idx, arg) in self.args.iter().enumerate() {
@@ -289,22 +531,20 @@ impl<'a> fmt::Display for GenericArg<'a> {
         ga.push_str(", ");
       }
 
-      ga.push_str(&arg.to_string());
+      if let Some(comments) = &arg.comments_before_type {
+        ga.push_str(&comments.to_string());
+      }
+
+      ga.push_str(&arg.arg.to_string());
+
+      if let Some(comments) = &arg.comments_after_type {
+        ga.push_str(&comments.to_string());
+      }
     }
 
     ga.push('>');
 
     write!(f, "{}", ga)
-  }
-}
-
-impl<'a> GenericArg<'a> {
-  /// Default `GenericArg`
-  pub fn default() -> Self {
-    GenericArg {
-      args: Vec::new(),
-      span: (0, 0, 0),
-    }
   }
 }
 
@@ -317,42 +557,97 @@ impl<'a> GenericArg<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type<'a> {
   /// Type choices
-  pub type_choices: Vec<Type1<'a>>,
+  pub type_choices: Vec<TypeChoice<'a>>,
   /// Span
   pub span: Span,
 }
 
+impl<'a> Type<'a> {
+  #[doc(hidden)]
+  pub fn comments_after_type(&mut self) -> Option<Comments<'a>> {
+    if let Some(TypeChoice {
+      type1: Type1 {
+        comments_after_type,
+        ..
+      },
+      ..
+    }) = self.type_choices.last_mut()
+    {
+      if let Some(comments) = comments_after_type {
+        if comments.any_non_newline() {
+          return comments_after_type.take();
+        }
+      }
+    }
+
+    None
+  }
+}
+
+/// Type choice
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq)]
+
+pub struct TypeChoice<'a> {
+  /// Type choice
+  pub type1: Type1<'a>,
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_type: Option<Comments<'a>>,
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_type: Option<Comments<'a>>,
+}
+
 impl<'a> fmt::Display for Type<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    let mut types = String::new();
+    let mut type_str = String::new();
 
-    for (idx, t1) in self.type_choices.iter().enumerate() {
+    for (idx, tc) in self.type_choices.iter().enumerate() {
       if idx == 0 {
-        types.push_str(&t1.to_string());
+        type_str.push_str(&tc.type1.to_string());
+
+        if let Some(comments) = &tc.comments_after_type {
+          type_str.push_str(&comments.to_string().trim_end());
+        }
+
         continue;
       }
 
-      types.push_str(&format!(" / {}", t1.to_string()));
+      if let Some(comments) = &tc.comments_before_type {
+        type_str.push_str(&comments.to_string());
+      }
+
+      if self.type_choices.len() > 2 {
+        type_str.push_str(&format!("\n\t/ {}", tc.type1.to_string()));
+      } else {
+        type_str.push_str(&format!(" / {}", tc.type1.to_string()));
+      }
+
+      if let Some(comments) = &tc.comments_after_type {
+        type_str.push_str(&comments.to_string());
+      }
     }
 
-    write!(f, "{}", types)
+    write!(f, "{}", type_str)
   }
 }
 
 impl<'a> Type<'a> {
   /// Used to delineate between grpent with `Type` and group entry with group
   /// name identifier `id`
-  pub fn groupname_entry(&self) -> Option<(Identifier<'a>, Option<GenericArg<'a>>, Span)> {
+  #[allow(clippy::type_complexity)]
+  pub fn groupname_entry(&self) -> Option<(Identifier<'a>, Option<GenericArgs<'a>>, Span)> {
     if self.type_choices.len() == 1 {
-      if let Some(t1) = self.type_choices.first() {
-        if t1.operator.is_none() {
+      if let Some(tc) = self.type_choices.first() {
+        if tc.type1.operator.is_none() {
           if let Type2::Typename {
             ident,
-            generic_arg,
+            generic_args,
             span,
-          } = &t1.type2
+          } = &tc.type1.type2
           {
-            return Some((ident.clone(), generic_arg.clone(), *span));
+            return Some((ident.clone(), generic_args.clone(), *span));
           }
         }
       }
@@ -373,34 +668,67 @@ pub struct Type1<'a> {
   /// Type
   pub type2: Type2<'a>,
   /// Range or control operator over a second type
-  pub operator: Option<(RangeCtlOp, Type2<'a>)>,
+  pub operator: Option<Operator<'a>>,
   /// Span
   pub span: Span,
+
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_type: Option<Comments<'a>>,
+}
+
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq)]
+/// Range or control operator
+pub struct Operator<'a> {
+  /// Operator
+  pub operator: RangeCtlOp<'a>,
+  /// Type bound by range or control operator
+  pub type2: Type2<'a>,
+
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_operator: Option<Comments<'a>>,
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_operator: Option<Comments<'a>>,
 }
 
 impl<'a> fmt::Display for Type1<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    let mut t1 = String::new();
+    let mut t1_str = String::new();
 
-    t1.push_str(&self.type2.to_string());
+    t1_str.push_str(&self.type2.to_string());
 
     if let Type2::Typename { .. } = self.type2 {
       if self.operator.is_some() {
-        t1.push_str(" ");
+        t1_str.push_str(" ");
       }
     }
 
-    if let Some((rco, t2)) = &self.operator {
-      t1.push_str(&rco.to_string());
+    if let Some(o) = &self.operator {
+      if let Some(comments) = &o.comments_before_operator {
+        t1_str.push_str(&comments.to_string());
+      }
+
+      t1_str.push_str(&o.operator.to_string());
+
+      if let Some(comments) = &o.comments_after_operator {
+        t1_str.push_str(&comments.to_string());
+      }
 
       if let Type2::Typename { .. } = self.type2 {
-        t1.push_str(" ");
+        t1_str.push_str(" ");
       }
 
-      t1.push_str(&t2.to_string());
+      t1_str.push_str(&o.type2.to_string());
+    } else if let Some(comments) = &self.comments_after_type {
+      if comments.any_non_newline() {
+        t1_str.push_str(&format!(" {}", comments));
+      }
     }
 
-    write!(f, "{}", t1)
+    write!(f, "{}", t1_str)
   }
 }
 
@@ -412,15 +740,24 @@ impl<'a> fmt::Display for Type1<'a> {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
-#[allow(missing_docs)]
-pub enum RangeCtlOp {
+pub enum RangeCtlOp<'a> {
   /// Range operator
-  RangeOp { is_inclusive: bool, span: Span },
+  RangeOp {
+    /// Is inclusive
+    is_inclusive: bool,
+    /// Span
+    span: Span,
+  },
   /// Control operator
-  CtlOp { ctrl: &'static str, span: Span },
+  CtlOp {
+    /// Control identifier
+    ctrl: &'a str,
+    /// Span
+    span: Span,
+  },
 }
 
-impl fmt::Display for RangeCtlOp {
+impl<'a> fmt::Display for RangeCtlOp<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       RangeCtlOp::RangeOp {
@@ -452,65 +789,197 @@ impl fmt::Display for RangeCtlOp {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-#[allow(missing_docs)]
 pub enum Type2<'a> {
   /// Integer value
-  IntValue { value: isize, span: Span },
+  IntValue {
+    /// Value
+    value: isize,
+    /// Span
+    span: Span,
+  },
+
   /// Unsigned integer value
-  UintValue { value: usize, span: Span },
+  UintValue {
+    /// Value
+    value: usize,
+    /// Span
+    span: Span,
+  },
+
   /// Float value
-  FloatValue { value: f64, span: Span },
+  FloatValue {
+    /// Value
+    value: f64,
+    /// Span
+    span: Span,
+  },
+
   /// Text string value (enclosed by '"')
-  TextValue { value: &'a str, span: Span },
+  TextValue {
+    /// Value
+    value: &'a str,
+    /// Span
+    span: Span,
+  },
+
   /// UTF-8 encoded byte string (enclosed by '')
-  UTF8ByteString { value: Cow<'a, [u8]>, span: Span },
+  UTF8ByteString {
+    /// Value
+    value: Cow<'a, [u8]>,
+    /// Span
+    span: Span,
+  },
+
   /// Base 16 encoded prefixed byte string
-  B16ByteString { value: Cow<'a, [u8]>, span: Span },
+  B16ByteString {
+    /// Value
+    value: Cow<'a, [u8]>,
+    /// Span
+    span: Span,
+  },
+
   /// Base 64 encoded (URL safe) prefixed byte string
-  B64ByteString { value: Cow<'a, [u8]>, span: Span },
+  B64ByteString {
+    /// Value
+    value: Cow<'a, [u8]>,
+    /// Span
+    span: Span,
+  },
+
   /// Type name identifier with optional generic arguments
   Typename {
+    /// Identifier
     ident: Identifier<'a>,
-    generic_arg: Option<GenericArg<'a>>,
+    /// Generic arguments
+    generic_args: Option<GenericArgs<'a>>,
+    /// Span
     span: Span,
   },
+
   /// Parenthesized type expression (for operator precedence)
-  ParenthesizedType { pt: Type<'a>, span: Span },
+  ParenthesizedType {
+    /// Type
+    pt: Type<'a>,
+    /// Span
+    span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_before_type: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_after_type: Option<Comments<'a>>,
+  },
+
   /// Map expression
-  Map { group: Group<'a>, span: Span },
+  Map {
+    /// Group
+    group: Group<'a>,
+    /// Span
+    span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_before_group: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_after_group: Option<Comments<'a>>,
+  },
+
   /// Array expression
-  Array { group: Group<'a>, span: Span },
+  Array {
+    /// Span
+    group: Group<'a>,
+    /// Span
+    span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_before_group: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_after_group: Option<Comments<'a>>,
+  },
+
   /// Unwrapped group
   Unwrap {
+    /// Identifier
     ident: Identifier<'a>,
-    generic_arg: Option<GenericArg<'a>>,
+    /// Generic arguments
+    generic_args: Option<GenericArgs<'a>>,
+    /// Span
     span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments: Option<Comments<'a>>,
   },
+
   /// Enumeration expression over an inline group
-  ChoiceFromInlineGroup { group: Group<'a>, span: Span },
+  ChoiceFromInlineGroup {
+    /// Group
+    group: Group<'a>,
+    /// Span
+    span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_before_group: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_after_group: Option<Comments<'a>>,
+  },
+
   /// Enumeration expression over previously defined group
   ChoiceFromGroup {
+    /// Identifier
     ident: Identifier<'a>,
-    generic_arg: Option<GenericArg<'a>>,
+    /// Generic arguments
+    generic_args: Option<GenericArgs<'a>>,
+    /// Span
     span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments: Option<Comments<'a>>,
   },
+
   /// Tagged data item where the first element is an optional tag and the second
   /// is the type of the tagged value
   TaggedData {
+    /// Tag
     tag: Option<usize>,
+    /// Type
     t: Type<'a>,
+    /// Span
     span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_before_type: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_after_type: Option<Comments<'a>>,
   },
+
   /// Data item of a major type with optional data constraint
   TaggedDataMajorType {
+    /// Major type
     mt: u8,
+    /// Constraint
     constraint: Option<usize>,
+    /// Span
     span: Span,
   },
+
   /// Any data item
   Any(Span),
 }
 
+#[allow(clippy::cognitive_complexity)]
 impl<'a> fmt::Display for Type2<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
@@ -530,42 +999,228 @@ impl<'a> fmt::Display for Type2<'a> {
         write!(f, "{}", std::str::from_utf8(value).map_err(|_| fmt::Error)?)
       }
       Type2::Typename {
-        ident, generic_arg, ..
+        ident,
+        generic_args,
+        ..
       } => {
-        if let Some(args) = generic_arg {
+        if let Some(args) = generic_args {
           return write!(f, "{}{}", ident, args);
         }
 
         write!(f, "{}", ident)
       }
-      Type2::ParenthesizedType { pt, .. } => write!(f, "({})", pt),
-      Type2::Map { group, .. } => write!(f, "{{{}}}", group),
-      Type2::Array { group, .. } => write!(f, "[{}]", group),
+      Type2::ParenthesizedType {
+        comments_before_type,
+        pt,
+        comments_after_type,
+        ..
+      } => {
+        let mut pt_str = String::from("(");
+
+        if let Some(comments) = comments_before_type {
+          if comments.any_non_newline() {
+            pt_str.push_str(&format!(" {}\t", comments));
+            pt_str.push_str(&pt.to_string().trim_start().to_string());
+          } else {
+            pt_str.push_str(&pt.to_string());
+          }
+        } else {
+          pt_str.push_str(&pt.to_string());
+        }
+
+        if let Some(comments) = comments_after_type {
+          pt_str.push_str(&comments.to_string());
+        }
+
+        pt_str.push_str(")");
+
+        write!(f, "{}", pt_str)
+      }
+      Type2::Map {
+        comments_before_group,
+        group,
+        comments_after_group,
+        ..
+      } => {
+        let mut t2_str = String::from("{");
+
+        let mut non_newline_comments_before_group = false;
+
+        if let Some(comments) = comments_before_group {
+          if comments.any_non_newline() {
+            non_newline_comments_before_group = true;
+            t2_str.push_str(&format!(" {}\t", comments));
+            t2_str.push_str(&group.to_string().trim_start().to_string());
+          } else {
+            t2_str.push_str(&group.to_string());
+          }
+        } else {
+          t2_str.push_str(&group.to_string());
+        }
+
+        if let Some(comments) = comments_after_group {
+          t2_str.push_str(&comments.to_string());
+        }
+
+        if non_newline_comments_before_group
+          && !group
+            .group_choices
+            .iter()
+            .any(|gc| gc.has_entries_with_trailing_comments())
+        {
+          t2_str.push_str("\n");
+        }
+
+        t2_str.push_str("}");
+
+        write!(f, "{}", t2_str)
+      }
+      Type2::Array {
+        comments_before_group,
+        group,
+        comments_after_group,
+        ..
+      } => {
+        let mut t2_str = String::from("[");
+
+        let mut non_newline_comments_before_group = false;
+
+        if let Some(comments) = comments_before_group {
+          if comments.any_non_newline() {
+            non_newline_comments_before_group = true;
+            t2_str.push_str(&format!(" {}\t", comments));
+            t2_str.push_str(&group.to_string().trim_start().to_string());
+          } else {
+            t2_str.push_str(&group.to_string());
+          }
+        } else {
+          t2_str.push_str(&group.to_string());
+        }
+
+        if let Some(comments) = comments_after_group {
+          t2_str.push_str(&comments.to_string());
+        }
+
+        if non_newline_comments_before_group
+          && !group
+            .group_choices
+            .iter()
+            .any(|gc| gc.has_entries_with_trailing_comments())
+        {
+          t2_str.push_str("\n");
+        }
+
+        t2_str.push_str("]");
+
+        write!(f, "{}", t2_str)
+      }
       Type2::Unwrap {
-        ident, generic_arg, ..
+        comments,
+        ident,
+        generic_args,
+        ..
       } => {
-        if let Some(args) = generic_arg {
-          return write!(f, "{}{}", ident, args);
+        let mut t2_str = String::new();
+
+        if let Some(comments) = comments {
+          t2_str.push_str(&comments.to_string());
         }
 
-        write!(f, "{}", ident)
+        if let Some(args) = generic_args {
+          t2_str.push_str(&format!("{}{}", ident, args));
+        } else {
+          t2_str.push_str(&ident.to_string());
+        }
+
+        write!(f, "{}", t2_str)
       }
-      Type2::ChoiceFromInlineGroup { group, .. } => write!(f, "&({})", group),
+      Type2::ChoiceFromInlineGroup {
+        comments,
+        comments_before_group,
+        group,
+        comments_after_group,
+        ..
+      } => {
+        let mut t2_str = String::from("&");
+
+        if let Some(comments) = comments {
+          t2_str.push_str(&comments.to_string());
+        }
+
+        t2_str.push_str("(");
+
+        if let Some(comments) = comments_before_group {
+          t2_str.push_str(&comments.to_string());
+        }
+
+        t2_str.push_str(&group.to_string());
+
+        if let Some(comments) = comments_after_group {
+          t2_str.push_str(&comments.to_string());
+        }
+
+        if group.group_choices.len() == 1 && group.group_choices[0].group_entries.len() == 1 {
+          t2_str.push_str(" )");
+        } else {
+          t2_str.push_str(")");
+        }
+
+        write!(f, "{}", t2_str)
+      }
       Type2::ChoiceFromGroup {
-        ident, generic_arg, ..
+        comments,
+        ident,
+        generic_args,
+        ..
       } => {
-        if let Some(ga) = generic_arg {
-          return write!(f, "&{}{}", ident, ga);
+        let mut t2_str = String::from("&");
+
+        if let Some(comments) = comments {
+          t2_str.push_str(&comments.to_string());
         }
 
-        write!(f, "&{}", ident)
+        if let Some(ga) = generic_args {
+          t2_str.push_str(&format!("{}{}", ident, ga));
+        } else {
+          t2_str.push_str(&ident.to_string());
+        }
+
+        write!(f, "{}", t2_str)
       }
-      Type2::TaggedData { tag, t, .. } => {
+      Type2::TaggedData {
+        tag,
+        comments_before_type,
+        t,
+        comments_after_type,
+        ..
+      } => {
+        let mut t2_str = String::from("#6");
+
         if let Some(tag_uint) = tag {
-          return write!(f, "#6.{}({})", tag_uint, t);
+          t2_str.push_str(&format!(".{}", tag_uint));
         }
 
-        write!(f, "#6({})", t)
+        t2_str.push_str("(");
+
+        if let Some(comments) = comments_before_type {
+          t2_str.push_str(&comments.to_string());
+        }
+
+        t2_str.push_str(&t.to_string());
+
+        if let Some(comments) = comments_after_type {
+          t2_str.push_str(&comments.to_string());
+        }
+
+        if t.type_choices.len() == 1 {
+          t2_str.push_str(" )");
+        } else {
+          t2_str.push_str(")");
+        }
+
+        t2_str.push_str(")");
+
+        write!(f, "{}", t2_str)
       }
       Type2::TaggedDataMajorType { mt, constraint, .. } => {
         if let Some(c) = constraint {
@@ -590,7 +1245,7 @@ impl<'a> From<RangeValue<'a>> for Type2<'a> {
           socket: ident.1,
           span,
         },
-        generic_arg: None,
+        generic_args: None,
         span,
       },
       RangeValue::INT(value) => Type2::IntValue { value, span },
@@ -607,27 +1262,66 @@ impl<'a> From<RangeValue<'a>> for Type2<'a> {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-#[allow(missing_docs)]
 pub struct Group<'a> {
   /// Group choices
+  #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   pub group_choices: Vec<GroupChoice<'a>>,
+  /// Span
   pub span: Span,
 }
 
 impl<'a> fmt::Display for Group<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    let mut group_choices = String::new();
+    let mut group_str = String::new();
 
     for (idx, gc) in self.group_choices.iter().enumerate() {
+      let mut gc_str = gc.to_string();
+
+      if self.group_choices.len() > 2
+        && gc.group_entries.len() <= 3
+        && !gc.has_entries_with_comments_before_comma()
+      {
+        gc_str = gc_str.replace('\n', "");
+      }
+
       if idx == 0 {
-        group_choices.push_str(&gc.to_string());
+        if self.group_choices.len() > 2 && gc.group_entries.len() <= 3 {
+          group_str.push_str("\n\t");
+          if gc_str.ends_with(' ') {
+            gc_str.pop();
+          }
+
+          if self.group_choices.len() > 2 && gc.has_entries_with_comments_before_comma() {
+            gc_str = gc_str.replace('\n', "\n\t\t");
+            group_str.push_str(gc_str.trim());
+          } else {
+            group_str.push_str(gc_str.trim_start());
+          }
+        } else {
+          group_str.push_str(&gc.to_string());
+        }
+
+        if self.group_choices.len() > 2 && gc.group_entries.len() <= 3 {
+          group_str.push_str("\n");
+        }
+
         continue;
       }
 
-      group_choices.push_str(&format!(" / {}", gc));
+      gc_str = gc_str.trim().to_string();
+
+      if self.group_choices.len() > 2 && gc.has_entries_with_comments_before_comma() {
+        gc_str = gc_str.replace('\n', "\n\t\t");
+      }
+
+      if self.group_choices.len() <= 2 {
+        group_str.push_str(&format!("// {} ", gc_str));
+      } else {
+        group_str.push_str(&format!("\t// {}\n", gc_str));
+      }
     }
 
-    write!(f, "{}", group_choices)
+    write!(f, "{}", group_str)
   }
 }
 
@@ -643,28 +1337,154 @@ impl<'a> fmt::Display for Group<'a> {
 pub struct GroupChoice<'a> {
   /// Group entries where the second item in the tuple indicates where or not a
   /// trailing comma is present
-  pub group_entries: Vec<(GroupEntry<'a>, bool)>,
+  #[cfg_attr(target_arch = "wasm32", serde(borrow))]
+  pub group_entries: Vec<(GroupEntry<'a>, OptionalComma<'a>)>,
   /// Span
   pub span: Span,
+
+  // No trailing comments since these will be captured by the S ["," S] matching
+  // rule
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_grpchoice: Option<Comments<'a>>,
+}
+
+impl<'a> GroupChoice<'a> {
+  fn has_entries_with_comments_before_comma(&self) -> bool {
+    for ge in self.group_entries.iter() {
+      if let GroupEntry::ValueMemberKey { ge: vmke, .. } = &ge.0 {
+        if vmke
+          .entry_type
+          .type_choices
+          .iter()
+          .any(|tc| tc.type1.comments_after_type.is_some())
+          && ge.1.optional_comma
+        {
+          return true;
+        }
+      }
+
+      if let GroupEntry::TypeGroupname {
+        trailing_comments, ..
+      } = &ge.0
+      {
+        if trailing_comments.is_some() && ge.1.optional_comma {
+          return true;
+        }
+      }
+    }
+
+    false
+  }
+
+  fn has_entries_with_trailing_comments(&self) -> bool {
+    self
+      .group_entries
+      .iter()
+      .any(|ge| ge.0.has_trailing_comments())
+  }
 }
 
 impl<'a> fmt::Display for GroupChoice<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let mut gc_str = String::new();
+
     if self.group_entries.len() == 1 {
-      return write!(f, "{}", self.group_entries[0].0);
+      gc_str.push_str(&format!(
+        " {}{}",
+        self.group_entries[0].0, self.group_entries[0].1
+      ));
+
+      if self.group_entries[0].1.trailing_comments.is_none() {
+        gc_str.push_str(" ");
+      }
+
+      return write!(f, "{}", gc_str);
     }
 
-    let mut group_entries = String::new();
+    if let Some(comments) = &self.comments_before_grpchoice {
+      gc_str.push_str(&comments.to_string());
+    }
 
-    for ge in self.group_entries.iter() {
-      if ge.1 {
-        group_entries.push_str(&format!("\t{},\n", ge.0));
+    // Keep track of group entries with comments written before commas for
+    // proper formatting
+    let mut entries_with_comment_before_comma: Vec<(usize, bool)> = Vec::new();
+
+    for (idx, ge) in self.group_entries.iter().enumerate() {
+      if let GroupEntry::ValueMemberKey {
+        trailing_comments: Some(comments),
+        ..
+      } = &ge.0
+      {
+        if comments.any_non_newline() && ge.1.optional_comma {
+          entries_with_comment_before_comma.push((idx, true));
+
+          continue;
+        }
+      }
+
+      if let GroupEntry::TypeGroupname {
+        trailing_comments: Some(comments),
+        ..
+      } = &ge.0
+      {
+        if comments.any_non_newline() && ge.1.optional_comma {
+          entries_with_comment_before_comma.push((idx, true));
+
+          continue;
+        }
+      }
+
+      entries_with_comment_before_comma.push((idx, false));
+    }
+
+    if self.group_entries.len() > 3 {
+      gc_str.push_str("\n");
+    } else {
+      gc_str.push_str(" ");
+    }
+
+    for (idx, ge) in self.group_entries.iter().enumerate() {
+      if self.group_entries.len() > 3 {
+        gc_str.push_str("\t");
+      }
+
+      if entries_with_comment_before_comma.iter().any(|e| e.1) {
+        if idx == 0 {
+          if entries_with_comment_before_comma[idx].1 {
+            gc_str.push_str(&format!("{}", ge.0));
+          } else {
+            gc_str.push_str(&format!("{}\n", ge.0));
+          }
+        } else if entries_with_comment_before_comma[idx].1 {
+          gc_str.push_str(&format!(", {}", ge.0));
+        } else if idx != self.group_entries.len() - 1 {
+          gc_str.push_str(&format!(", {}\n", ge.0.to_string().trim_end()));
+        } else {
+          gc_str.push_str(&format!(", {}", ge.0));
+        }
       } else {
-        group_entries.push_str(&format!("\t{}\n", ge.0));
+        gc_str.push_str(&ge.0.to_string().trim_end().to_string());
+
+        if idx != self.group_entries.len() - 1 {
+          gc_str.push_str(",");
+        }
+
+        if self.group_entries.len() <= 3 {
+          gc_str.push_str(" ");
+        }
+      }
+
+      if (self.group_entries.len() > 3 && entries_with_comment_before_comma.iter().all(|e| !e.1))
+        || (self.group_entries.len() > 3
+          && idx == self.group_entries.len() - 1
+          && !ge.0.has_trailing_comments())
+      {
+        gc_str.push_str("\n");
       }
     }
 
-    write!(f, "{}", group_entries)
+    write!(f, "{}", gc_str)
   }
 }
 
@@ -677,39 +1497,224 @@ impl<'a> fmt::Display for GroupChoice<'a> {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-#[allow(missing_docs)]
 pub enum GroupEntry<'a> {
   /// Value group entry type
   ValueMemberKey {
+    /// Group entry
+    #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     ge: Box<ValueMemberKeyEntry<'a>>,
+    /// Span
     span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    leading_comments: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    trailing_comments: Option<Comments<'a>>,
   },
+
   /// Group entry from a named group or type
   TypeGroupname {
+    /// Group entry
+    #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     ge: TypeGroupnameEntry<'a>,
+    /// span
     span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    leading_comments: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    trailing_comments: Option<Comments<'a>>,
   },
+
   /// Parenthesized group with optional occurrence indicator
   InlineGroup {
-    occur: Option<Occur>,
+    /// Occurrence
+    occur: Option<Occurrence<'a>>,
+    /// Group
     group: Group<'a>,
+    /// Span
     span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_before_group: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_after_group: Option<Comments<'a>>,
   },
+}
+
+impl<'a> GroupEntry<'a> {
+  fn has_trailing_comments(&self) -> bool {
+    match self {
+      GroupEntry::ValueMemberKey {
+        trailing_comments: Some(comments),
+        ..
+      }
+      | GroupEntry::TypeGroupname {
+        trailing_comments: Some(comments),
+        ..
+      } if comments.any_non_newline() => true,
+      _ => false,
+    }
+  }
+}
+
+/// Optional comma
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct OptionalComma<'a> {
+  /// Optional comma
+  pub optional_comma: bool,
+
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub trailing_comments: Option<Comments<'a>>,
+}
+
+impl<'a> fmt::Display for OptionalComma<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let mut optcomma_str = String::new();
+
+    if self.optional_comma {
+      optcomma_str.push_str(",");
+    }
+
+    if let Some(comments) = &self.trailing_comments {
+      optcomma_str.push_str(&comments.to_string());
+    }
+
+    write!(f, "{}", optcomma_str)
+  }
 }
 
 impl<'a> fmt::Display for GroupEntry<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      GroupEntry::ValueMemberKey { ge, .. } => write!(f, "{}", ge),
-      GroupEntry::TypeGroupname { ge, .. } => write!(f, "{}", ge),
-      GroupEntry::InlineGroup { occur, group, .. } => {
-        if let Some(o) = occur {
-          return write!(f, "{} ({})", o, group);
+      GroupEntry::ValueMemberKey {
+        ge,
+        leading_comments,
+        trailing_comments,
+        ..
+      } => {
+        let mut ge_str = String::new();
+
+        if let Some(comments) = leading_comments {
+          ge_str.push_str(&comments.to_string());
         }
 
-        write!(f, "({})", group)
+        ge_str.push_str(&ge.to_string());
+
+        if let Some(comments) = trailing_comments {
+          if comments.any_non_newline() {
+            ge_str.push_str(&format!(" {}", comments));
+          }
+        }
+
+        write!(f, "{}", ge_str)
+      }
+      GroupEntry::TypeGroupname {
+        ge,
+        leading_comments,
+        trailing_comments,
+        ..
+      } => {
+        let mut ge_str = String::new();
+
+        if let Some(comments) = leading_comments {
+          ge_str.push_str(&comments.to_string());
+        }
+
+        ge_str.push_str(&ge.to_string());
+
+        if let Some(comments) = trailing_comments {
+          if comments.any_non_newline() {
+            ge_str.push_str(&format!(" {}", comments));
+          }
+        }
+
+        write!(f, "{}", ge_str)
+      }
+      GroupEntry::InlineGroup {
+        occur,
+        group,
+        comments_before_group,
+        comments_after_group,
+        ..
+      } => {
+        let mut ge_str = String::new();
+
+        if let Some(o) = occur {
+          ge_str.push_str(&format!("{} ", o.occur.to_string()));
+
+          if let Some(comments) = &o.comments {
+            ge_str.push_str(&comments.to_string());
+          }
+        }
+
+        ge_str.push_str("(");
+
+        let mut non_newline_comments_before_group = false;
+
+        if let Some(comments) = comments_before_group {
+          if comments.any_non_newline() {
+            non_newline_comments_before_group = true;
+
+            ge_str.push_str(&format!(" {}", comments));
+            ge_str.push_str(&format!("\t{}", group.to_string().trim_start()));
+          } else {
+            ge_str.push_str(&group.to_string());
+          }
+        } else {
+          ge_str.push_str(&group.to_string());
+        }
+
+        if let Some(comments) = comments_after_group {
+          ge_str.push_str(&comments.to_string());
+        }
+
+        if non_newline_comments_before_group
+          && !group
+            .group_choices
+            .iter()
+            .any(|gc| gc.has_entries_with_trailing_comments())
+        {
+          ge_str.push_str("\n");
+        }
+
+        ge_str.push_str(")");
+
+        write!(f, "{}", ge_str)
       }
     }
+  }
+}
+
+/// Occurrence indicator
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct Occurrence<'a> {
+  /// Occurrence indicator
+  pub occur: Occur,
+
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments: Option<Comments<'a>>,
+}
+
+impl<'a> fmt::Display for Occurrence<'a> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let mut occur_str = self.occur.to_string();
+
+    if let Some(comments) = &self.comments {
+      occur_str.push_str(&comments.to_string());
+    }
+
+    write!(f, "{}", occur_str)
   }
 }
 
@@ -723,28 +1728,29 @@ impl<'a> fmt::Display for GroupEntry<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueMemberKeyEntry<'a> {
   /// Optional occurrence indicator
-  pub occur: Option<Occur>,
+  pub occur: Option<Occurrence<'a>>,
   /// Optional member key
   pub member_key: Option<MemberKey<'a>>,
   /// Entry type
+  #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   pub entry_type: Type<'a>,
 }
 
 impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    if let Some(o) = &self.occur {
-      if let Some(mk) = &self.member_key {
-        return write!(f, "{} {} {}", o, mk, self.entry_type);
-      }
+    let mut vmke_str = String::new();
 
-      return write!(f, "{} {}", o, self.entry_type);
+    if let Some(o) = &self.occur {
+      vmke_str.push_str(&format!("{} ", o.to_string()));
     }
 
     if let Some(mk) = &self.member_key {
-      return write!(f, "{} {}", mk, self.entry_type);
+      vmke_str.push_str(&format!("{} ", mk.to_string()));
     }
 
-    write!(f, "{}", self.entry_type)
+    vmke_str.push_str(&self.entry_type.to_string());
+
+    write!(f, "{}", vmke_str)
   }
 }
 
@@ -753,28 +1759,29 @@ impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeGroupnameEntry<'a> {
   /// Optional occurrence indicator
-  pub occur: Option<Occur>,
+  pub occur: Option<Occurrence<'a>>,
   /// Type or group name identifier
+  #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   pub name: Identifier<'a>,
   /// Optional generic arguments
-  pub generic_arg: Option<GenericArg<'a>>,
+  pub generic_args: Option<GenericArgs<'a>>,
 }
 
 impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let mut tge_str = String::new();
+
     if let Some(o) = &self.occur {
-      if let Some(ga) = &self.generic_arg {
-        return write!(f, "{} {} {}", o, self.name, ga);
-      }
-
-      return write!(f, "{} {}", o, self.name);
+      tge_str.push_str(&format!("{} ", o.to_string()));
     }
 
-    if let Some(ga) = &self.generic_arg {
-      return write!(f, "{} {}", self.name, ga);
+    tge_str.push_str(&self.name.to_string());
+
+    if let Some(ga) = &self.generic_args {
+      tge_str.push_str(&ga.to_string());
     }
 
-    write!(f, "{}", self.name)
+    write!(f, "{}", tge_str)
   }
 }
 
@@ -786,30 +1793,71 @@ impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-#[allow(missing_docs)]
 pub enum MemberKey<'a> {
   /// Type expression
   Type1 {
+    /// Type1
+    #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     t1: Box<Type1<'a>>,
+    /// Is cut indicator present
     is_cut: bool,
+    /// Span
     span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_before_cut: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_after_cut: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_after_arrowmap: Option<Comments<'a>>,
   },
+
   /// Bareword string type
   Bareword {
+    /// Identifier
+    #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     ident: Identifier<'a>,
+    /// Span
     span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_after_colon: Option<Comments<'a>>,
   },
+
   /// Value type
   Value {
+    /// Value
+    #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     value: Value<'a>,
+    /// Span
     span: Span,
+
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments: Option<Comments<'a>>,
+    #[cfg_attr(target_arch = "wasm32", serde(skip))]
+    #[doc(hidden)]
+    comments_after_colon: Option<Comments<'a>>,
   },
-  NonMemberKey(NonMemberKey<'a>),
+
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  NonMemberKey {
+    non_member_key: NonMemberKey<'a>,
+    comments_before_type_or_group: Option<Comments<'a>>,
+    comments_after_type_or_group: Option<Comments<'a>>,
+  },
 }
 
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-#[allow(missing_docs)]
+#[doc(hidden)]
 pub enum NonMemberKey<'a> {
   Group(Group<'a>),
   Type(Type<'a>),
@@ -818,17 +1866,128 @@ pub enum NonMemberKey<'a> {
 impl<'a> fmt::Display for MemberKey<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      MemberKey::Type1 { t1, is_cut, .. } => {
-        if *is_cut {
-          return write!(f, "{} ^ =>", t1);
+      MemberKey::Type1 {
+        t1,
+        comments_before_cut,
+        is_cut,
+        comments_after_cut,
+        comments_after_arrowmap,
+        ..
+      } => {
+        let mut mk_str = format!("{} ", t1);
+
+        if let Some(comments) = comments_before_cut {
+          if comments.any_non_newline() {
+            mk_str.push_str(&comments.to_string());
+          }
         }
 
-        write!(f, "{} =>", t1)
+        if *is_cut {
+          mk_str.push_str("^ ");
+        }
+
+        if let Some(comments) = comments_after_cut {
+          if comments.any_non_newline() {
+            mk_str.push_str(&comments.to_string());
+          }
+        }
+
+        mk_str.push_str("=>");
+
+        if let Some(comments) = comments_after_arrowmap {
+          if comments.any_non_newline() {
+            mk_str.push_str(&format!(" {}", comments));
+          }
+        }
+
+        write!(f, "{}", mk_str)
       }
-      MemberKey::Bareword { ident, .. } => write!(f, "{}:", ident),
-      MemberKey::Value { value, .. } => write!(f, "{}:", value),
-      MemberKey::NonMemberKey(NonMemberKey::Group(g)) => write!(f, "{}", g),
-      MemberKey::NonMemberKey(NonMemberKey::Type(t)) => write!(f, "{}", t),
+      MemberKey::Bareword {
+        ident,
+        comments,
+        comments_after_colon,
+        ..
+      } => {
+        let mut mk_str = format!("{}", ident);
+
+        if let Some(comments) = comments {
+          if comments.any_non_newline() {
+            mk_str.push_str(&format!(" {}", comments));
+          }
+        }
+
+        mk_str.push_str(":");
+
+        if let Some(comments) = comments_after_colon {
+          if comments.any_non_newline() {
+            mk_str.push_str(&format!(" {}", comments));
+          }
+        }
+
+        write!(f, "{}", mk_str)
+      }
+      MemberKey::Value {
+        value,
+        comments,
+        comments_after_colon,
+        ..
+      } => {
+        let mut mk_str = format!("{}", value);
+
+        if let Some(comments) = comments {
+          if comments.any_non_newline() {
+            mk_str.push_str(&format!(" {}", comments));
+          }
+        }
+
+        mk_str.push_str(":");
+
+        if let Some(comments) = comments_after_colon {
+          if comments.any_non_newline() {
+            mk_str.push_str(&format!(" {}", comments));
+          }
+        }
+
+        write!(f, "{}", mk_str)
+      }
+      MemberKey::NonMemberKey {
+        non_member_key: NonMemberKey::Group(g),
+        comments_before_type_or_group,
+        comments_after_type_or_group,
+      } => {
+        let mut nmk_str = String::new();
+
+        if let Some(comments) = comments_before_type_or_group {
+          nmk_str.push_str(&comments.to_string());
+        }
+
+        nmk_str.push_str(&g.to_string());
+
+        if let Some(comments) = comments_after_type_or_group {
+          nmk_str.push_str(&comments.to_string());
+        }
+
+        write!(f, "{}", nmk_str)
+      }
+      MemberKey::NonMemberKey {
+        non_member_key: NonMemberKey::Type(t),
+        comments_before_type_or_group,
+        comments_after_type_or_group,
+      } => {
+        let mut nmk_str = String::new();
+
+        if let Some(comments) = comments_before_type_or_group {
+          nmk_str.push_str(&comments.to_string());
+        }
+
+        nmk_str.push_str(&t.to_string());
+
+        if let Some(comments) = comments_after_type_or_group {
+          nmk_str.push_str(&comments.to_string());
+        }
+
+        write!(f, "{}", nmk_str)
+      }
     }
   }
 }
@@ -841,19 +2000,24 @@ impl<'a> fmt::Display for MemberKey<'a> {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-#[allow(missing_docs)]
 pub enum Occur {
   /// Occurrence indicator in the form n*m, where n is an optional lower limit
   /// and m is an optional upper limit
   Exact {
+    /// Lower bound
     lower: Option<usize>,
+    /// Upper bound
     upper: Option<usize>,
+    /// Span
     span: Span,
   },
+
   /// Occurrence indicator in the form *, allowing zero or more occurrences
   ZeroOrMore(Span),
+
   /// Occurrence indicator in the form +, allowing one or more occurrences
   OneOrMore(Span),
+
   /// Occurrence indicator in the form ?, allowing an optional occurrence
   Optional(Span),
 }
@@ -887,6 +2051,7 @@ impl fmt::Display for Occur {
 #[allow(unused_imports)]
 mod tests {
   use super::*;
+  use pretty_assertions::assert_eq;
 
   #[test]
   fn verify_groupentry_output() {
@@ -895,8 +2060,10 @@ mod tests {
         ge: TypeGroupnameEntry {
           occur: None,
           name: Identifier::from("entry1"),
-          generic_arg: None,
+          generic_args: None,
         },
+        leading_comments: None,
+        trailing_comments: None,
         span: (0, 0, 0),
       }
       .to_string(),
@@ -916,23 +2083,35 @@ mod tests {
                   occur: None,
                   member_key: Some(MemberKey::Bareword {
                     ident: "key1".into(),
+                    comments: None,
+                    comments_after_colon: None,
                     span: (0, 0, 0),
                   }),
                   entry_type: Type {
-                    type_choices: vec![Type1 {
-                      type2: Type2::TextValue {
-                        value: "value1".into(),
+                    type_choices: vec![TypeChoice {
+                      type1: Type1 {
+                        type2: Type2::TextValue {
+                          value: "value1".into(),
+                          span: (0, 0, 0),
+                        },
+                        operator: None,
+                        comments_after_type: None,
                         span: (0, 0, 0),
                       },
-                      operator: None,
-                      span: (0, 0, 0),
+                      comments_before_type: None,
+                      comments_after_type: None,
                     }],
                     span: (0, 0, 0),
                   },
                 }),
+                leading_comments: None,
+                trailing_comments: None,
                 span: (0, 0, 0),
               },
-              true
+              OptionalComma {
+                optional_comma: true,
+                trailing_comments: None,
+              }
             ),
             (
               GroupEntry::ValueMemberKey {
@@ -940,31 +2119,44 @@ mod tests {
                   occur: None,
                   member_key: Some(MemberKey::Bareword {
                     ident: "key2".into(),
+                    comments: None,
+                    comments_after_colon: None,
                     span: (0, 0, 0),
                   }),
                   entry_type: Type {
-                    type_choices: vec![Type1 {
-                      type2: Type2::TextValue {
-                        value: "value2".into(),
+                    type_choices: vec![TypeChoice {
+                      type1: Type1 {
+                        type2: Type2::TextValue {
+                          value: "value2".into(),
+                          span: (0, 0, 0),
+                        },
+                        operator: None,
+                        comments_after_type: None,
                         span: (0, 0, 0),
                       },
-                      operator: None,
-                      span: (0, 0, 0),
+                      comments_before_type: None,
+                      comments_after_type: None,
                     }],
                     span: (0, 0, 0),
                   },
                 }),
+                leading_comments: None,
+                trailing_comments: None,
                 span: (0, 0, 0),
               },
-              true
+              OptionalComma {
+                optional_comma: true,
+                trailing_comments: None,
+              }
             ),
           ],
+          comments_before_grpchoice: None,
           span: (0, 0, 0),
         }],
         span: (0, 0, 0),
       }
       .to_string(),
-      "\tkey1: \"value1\",\n\tkey2: \"value2\",\n".to_string()
+      " key1: \"value1\", key2: \"value2\" ".to_string()
     )
   }
 }

@@ -1,0 +1,83 @@
+{
+  "name": "cddl-lsp",
+  "description": "A language server for the Concise Data Definition Language (CDDL)",
+  "author": "Andrew Weiss <andrew.weiss@outlook.com>",
+  "license": "MIT",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anweiss/cddl"
+  },
+  "publisher": "anweiss",
+  "preview": true,
+  "categories": [],
+  "keywords": [
+    "cddl"
+  ],
+  "engines": {
+    "vscode": "^1.43.0"
+  },
+  "activationEvents": [
+    "onLanguage:cddl"
+  ],
+  "main": "./client/out/extension",
+  "contributes": {
+    "languages": [
+      {
+        "id": "cddl",
+        "aliases": [
+          "CDDL"
+        ],
+        "extensions": [
+          ".cddl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cddl",
+        "scopeName": "source.cddl",
+        "path": "./syntaxes/cddl.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Example configuration",
+      "properties": {
+        "languageServerExample.maxNumberOfProblems": {
+          "scope": "resource",
+          "type": "number",
+          "default": 100,
+          "description": "Controls the maximum number of problems produced by the server."
+        },
+        "languageServerExample.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "cd client && npm run update-vscode && cd .. && npm run compile",
+    "compile": "tsc -b",
+    "watch": "tsc -b -w",
+    "postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
+    "test": "sh ./scripts/e2e.sh"
+  },
+  "devDependencies": {
+    "@types/mocha": "^5.2.7",
+    "mocha": "^6.2.2",
+    "@types/node": "^12.12.0",
+    "eslint": "^6.4.0",
+    "@typescript-eslint/parser": "^2.3.0",
+    "typescript": "^3.8.3"
+  }
+}
