@@ -1,9 +1,6 @@
 #[cfg(target_arch = "wasm32")]
 extern crate console_error_panic_hook;
 
-#[cfg(target_arch = "wasm32")]
-use serde;
-
 use super::token::{RangeValue, SocketPlug, Value};
 use std::fmt;
 
@@ -11,7 +8,7 @@ use std::fmt;
 use std::borrow::Cow;
 
 #[cfg(target_arch = "wasm32")]
-use serde::Serialize;
+use serde::{self, Serialize};
 
 #[cfg(not(feature = "std"))]
 use alloc::{

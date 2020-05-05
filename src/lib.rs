@@ -274,9 +274,6 @@ extern crate serde_cbor;
 #[cfg(feature = "nightly")]
 extern crate uriparse;
 
-#[cfg(target_arch = "wasm32")]
-extern crate web_sys;
-
 /// Abstract syntax tree representing a CDDL definition
 pub mod ast;
 /// Static error messages

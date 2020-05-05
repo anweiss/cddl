@@ -20,15 +20,11 @@ import {
 	TextEdit,
 } from 'vscode-languageserver';
 
-import {
-	TextDocument
-} from 'vscode-languageserver-textdocument';
-
-
+import { TextDocument } from 'vscode-languageserver-textdocument';
 
 import * as wasm from 'cddl';
 import { standardPrelude, controlOperators } from './keywords';
-import { WorkDoneProgress } from 'vscode-languageserver/lib/progress';
+// import { WorkDoneProgress } from 'vscode-languageserver/lib/progress';
 
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -40,7 +36,7 @@ let documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
 
 let hasConfigurationCapability: boolean = false;
 let hasWorkspaceFolderCapability: boolean = false;
-let hasDiagnosticRelatedInformationCapability: boolean = false;
+// let hasDiagnosticRelatedInformationCapability: boolean = false;
 
 let cddl: any;
 
@@ -55,11 +51,11 @@ connection.onInitialize((params: InitializeParams) => {
 	hasWorkspaceFolderCapability = !!(
 		capabilities.workspace && !!capabilities.workspace.workspaceFolders
 	);
-	hasDiagnosticRelatedInformationCapability = !!(
-		capabilities.textDocument &&
-		capabilities.textDocument.publishDiagnostics &&
-		capabilities.textDocument.publishDiagnostics.relatedInformation
-	);
+	// hasDiagnosticRelatedInformationCapability = !!(
+	// 	capabilities.textDocument &&
+	// 	capabilities.textDocument.publishDiagnostics &&
+	// 	capabilities.textDocument.publishDiagnostics.relatedInformation
+	// );
 
 	const result: InitializeResult = {
 		capabilities: {
@@ -67,18 +63,18 @@ connection.onInitialize((params: InitializeParams) => {
 			// Tell the client that the server supports code completion
 			completionProvider: {
 				resolveProvider: true,
-				triggerCharacters: ['.']
+				triggerCharacters: ['.'],
 			},
 			hoverProvider: true,
 			definitionProvider: true,
 			documentFormattingProvider: true,
-		}
+		},
 	};
 	if (hasWorkspaceFolderCapability) {
 		result.capabilities.workspace = {
 			workspaceFolders: {
-				supported: true
-			}
+				supported: true,
+			},
 		};
 	}
 	return result;
@@ -87,10 +83,13 @@ connection.onInitialize((params: InitializeParams) => {
 connection.onInitialized(() => {
 	if (hasConfigurationCapability) {
 		// Register for all configuration changes.
-		connection.client.register(DidChangeConfigurationNotification.type, undefined);
+		connection.client.register(
+			DidChangeConfigurationNotification.type,
+			undefined
+		);
 	}
 	if (hasWorkspaceFolderCapability) {
-		connection.workspace.onDidChangeWorkspaceFolders(_event => {
+		connection.workspace.onDidChangeWorkspaceFolders((_event) => {
 			connection.console.log('Workspace folder change event received.');
 		});
 	}
@@ -110,7 +109,7 @@ let globalSettings: ExampleSettings = defaultSettings;
 // Cache the settings of all open documents
 let documentSettings: Map<string, Thenable<ExampleSettings>> = new Map();
 
-connection.onDidChangeConfiguration(change => {
+connection.onDidChangeConfiguration((change) => {
 	if (hasConfigurationCapability) {
 		// Reset all cached document settings
 		documentSettings.clear();
@@ -132,7 +131,7 @@ function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
 	if (!result) {
 		result = connection.workspace.getConfiguration({
 			scopeUri: resource,
-			section: 'languageServerExample'
+			section: 'languageServerExample',
 		});
 		documentSettings.set(resource, result);
 	}
@@ -140,13 +139,13 @@ function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
 }
 
 // Only keep settings for open documents
-documents.onDidClose(e => {
+documents.onDidClose((e) => {
 	documentSettings.delete(e.document.uri);
 });
 
 // The content of a text document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
-documents.onDidChangeContent(change => {
+documents.onDidChangeContent((change) => {
 	validateTextDocument(change.document);
 });
 
@@ -171,12 +170,11 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
 				severity: DiagnosticSeverity.Error,
 				range: {
 					start: textDocument.positionAt(error.position.range[0]),
-					end: textDocument.positionAt(error.position.range[1])
+					end: textDocument.positionAt(error.position.range[1]),
 				},
 				message: error.msg.short,
-				source: 'cddl'
+				source: 'cddl',
 			};
-
 
 			// if (hasDiagnosticRelatedInformationCapability) {
 			// 	diagnostic.relatedInformation = [
@@ -206,7 +204,7 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
 	connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
 }
 
-connection.onDidChangeWatchedFiles(_change => {
+connection.onDidChangeWatchedFiles((_change) => {
 	// Monitored files have change in VSCode
 	connection.console.log('We received an file change event');
 });
@@ -222,8 +220,9 @@ connection.onCompletion(
 		let char = documents.get(textDocumentPosition.textDocument.uri)?.getText({
 			start: {
 				character: textDocumentPosition.position.character - 1,
-				line: textDocumentPosition.position.line
-			}, end: textDocumentPosition.position
+				line: textDocumentPosition.position.line,
+			},
+			end: textDocumentPosition.position,
 		});
 
 		// If character is leading '.', then only emit controls
@@ -235,10 +234,9 @@ connection.onCompletion(
 					label: controlOperators[index].label,
 					kind: CompletionItemKind.Keyword,
 					data: index,
-					documentation: controlOperators[index].documentation
+					documentation: controlOperators[index].documentation,
 				};
 			}
-
 
 			return completionItems;
 		}
@@ -248,14 +246,15 @@ connection.onCompletion(
 				label: standardPrelude[index].label,
 				kind: CompletionItemKind.Keyword,
 				data: index,
-				documentation: standardPrelude[index].documentation
+				documentation: standardPrelude[index].documentation,
 			};
 		}
+
+
 
 		return completionItems;
 	}
 );
-
 
 // This handler resolves additional information for the item selected in
 // the completion list.
@@ -281,93 +280,49 @@ connection.onCompletionResolve(
 	}
 );
 
-connection.onHover(
-	(params: HoverParams): Hover | undefined => {
-		// TODO: If identifier is a single character followed immediately by some
-		// delimiter without any space in between, this sometimes gets tripped up
-		let identifier = getIdentifierAtPosition(params);
+connection.onHover((params: HoverParams): Hover | undefined => {
+	// TODO: If identifier is a single character followed immediately by some
+	// delimiter without any space in between, this sometimes gets tripped up
+	let identifier = getIdentifierAtPosition(params);
 
-		if (identifier === undefined) {
-			return undefined;
-		}
+	if (identifier === undefined) {
+		return undefined;
+	}
 
-		for (const itemDetail of standardPrelude) {
-			if (identifier === itemDetail.label) {
-				return {
-					contents: itemDetail.detail
-				};
-			}
-		}
-
-		for (const itemDetail of controlOperators) {
-			if (identifier == itemDetail.label) {
-				return {
-					contents: itemDetail.documentation ? itemDetail.documentation as MarkupContent : itemDetail.detail
-				};
-			}
+	for (const itemDetail of standardPrelude) {
+		if (identifier === itemDetail.label) {
+			return {
+				contents: itemDetail.detail,
+			};
 		}
 	}
-);
 
-connection.onDefinition(
-	(params: DefinitionParams) => {
-		let ident = getIdentifierAtPosition(params);
-
-		let document = documents.get(params.textDocument.uri);
-
-		if (document === undefined) {
-			return undefined;
+	for (const itemDetail of controlOperators) {
+		if (identifier == itemDetail.label) {
+			return {
+				contents: itemDetail.documentation
+					? (itemDetail.documentation as MarkupContent)
+					: itemDetail.detail,
+			};
 		}
+	}
+});
 
-		if (ident) {
-			for (const rule of cddl.rules) {
-				if (rule.Type) {
-					if (rule.Type.rule.name.ident === ident) {
-						let start_position = document.positionAt(rule.Type.rule.name.span[0]);
-						let end_position = document.positionAt(rule.Type.rule.name.span[1]);
+connection.onDefinition((params: DefinitionParams) => {
+	let ident = getIdentifierAtPosition(params);
 
-						return {
-							uri: params.textDocument.uri,
-							range: {
-								start: {
-									character: start_position.character,
-									line: start_position.line,
-								},
-								end: {
-									character: end_position.character,
-									line: end_position.line
-								}
-							}
-						};
-					}
+	let document = documents.get(params.textDocument.uri);
 
-					if (rule.Type.rule.generic_param) {
-						for (const gp of rule.Type.rule.generic_param.params) {
-							if (gp.ident === ident) {
-								let start_position = document.positionAt(gp.span[0]);
-								let end_position = document.positionAt(gp.span[1]);
+	if (document === undefined) {
+		return undefined;
+	}
 
-								return {
-									uri: params.textDocument.uri,
-									range: {
-										start: {
-											character: start_position.character,
-											line: start_position.line,
-										},
-										end: {
-											character: end_position.character,
-											line: end_position.line
-										}
-									}
-								};
-							}
-						}
-					}
-				}
-
-				if (rule.Group && rule.Group.rule.name.ident === ident) {
-					let start_position = document.positionAt(rule.Group.rule.name.span[0]);
-					let end_position = document.positionAt(rule.Group.rule.name.span[1]);
+	if (ident) {
+		for (const rule of cddl.rules) {
+			if (rule.Type) {
+				if (rule.Type.rule.name.ident === ident) {
+					let start_position = document.positionAt(rule.Type.rule.name.span[0]);
+					let end_position = document.positionAt(rule.Type.rule.name.span[1]);
 
 					return {
 						uri: params.textDocument.uri,
@@ -378,47 +333,93 @@ connection.onDefinition(
 							},
 							end: {
 								character: end_position.character,
-								line: end_position.line
-							}
-						}
+								line: end_position.line,
+							},
+						},
 					};
 				}
+
+				if (rule.Type.rule.generic_param) {
+					for (const gp of rule.Type.rule.generic_param.params) {
+						if (gp.ident === ident) {
+							let start_position = document.positionAt(gp.span[0]);
+							let end_position = document.positionAt(gp.span[1]);
+
+							return {
+								uri: params.textDocument.uri,
+								range: {
+									start: {
+										character: start_position.character,
+										line: start_position.line,
+									},
+									end: {
+										character: end_position.character,
+										line: end_position.line,
+									},
+								},
+							};
+						}
+					}
+				}
+			}
+
+			if (rule.Group && rule.Group.rule.name.ident === ident) {
+				let start_position = document.positionAt(rule.Group.rule.name.span[0]);
+				let end_position = document.positionAt(rule.Group.rule.name.span[1]);
+
+				return {
+					uri: params.textDocument.uri,
+					range: {
+						start: {
+							character: start_position.character,
+							line: start_position.line,
+						},
+						end: {
+							character: end_position.character,
+							line: end_position.line,
+						},
+					},
+				};
 			}
 		}
+	}
+
+	return undefined;
+});
+
+connection.onDocumentFormatting((params: DocumentFormattingParams):
+	| TextEdit[]
+	| undefined => {
+	let document = documents.get(params.textDocument.uri);
+
+	if (document === undefined) {
+		return undefined;
+	}
+
+	let formatted_text = '';
+
+	try {
+		formatted_text = wasm.format_cddl_from_str(document.getText());
+	} catch (e) {
+		console.error(e);
 
 		return undefined;
-	});
+	}
 
-
-connection.onDocumentFormatting(
-	(params: DocumentFormattingParams): TextEdit[] | undefined => {
-		let document = documents.get(params.textDocument.uri);
-
-		if (document === undefined) {
-			return undefined;
-		}
-
-		let formatted_text = "";
-
-		try {
-			formatted_text = wasm.format_cddl_from_str(document.getText());
-		} catch (e) {
-			console.error(e);
-
-			return undefined;
-		}
-
-		return [TextEdit.replace(
+	return [
+		TextEdit.replace(
 			{
 				start: Position.create(0, 0),
-				end: document.positionAt(document.getText().length)
-			}, formatted_text
-		)];
-	}
-)
+				end: document.positionAt(document.getText().length),
+			},
+			formatted_text
+		),
+	];
+});
 
-
-function getIdentifierAtPosition(docParams: TextDocumentPositionParams): string | undefined {
+function getIdentifierAtPosition(
+	docParams: TextDocumentPositionParams
+): string | undefined {
 	let document = documents.get(docParams.textDocument.uri);
 
 	if (document === undefined) {
@@ -435,7 +436,10 @@ function getIdentifierAtPosition(docParams: TextDocumentPositionParams): string 
 	let start = offset;
 	let end = offset;
 
-	if (documentText && (documentText.length < offset || documentText[offset] === ' ')) {
+	if (
+		documentText &&
+		(documentText.length < offset || documentText[offset] === ' ')
+	) {
 		return undefined;
 	}
 
