@@ -115,7 +115,7 @@ connection.onDidChangeConfiguration((change) => {
 		documentSettings.clear();
 	} else {
 		globalSettings = <ExampleSettings>(
-			(change.settings.languageServerExample || defaultSettings)
+			(change.settings.cddllsp || defaultSettings)
 		);
 	}
 
@@ -131,7 +131,7 @@ function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
 	if (!result) {
 		result = connection.workspace.getConfiguration({
 			scopeUri: resource,
-			section: 'languageServerExample',
+			section: 'cddllsp',
 		});
 		documentSettings.set(resource, result);
 	}
@@ -162,6 +162,8 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
 	} catch (e) {
 		errors = e;
 	}
+
+	console.log(cddl);
 
 	let diagnostics: Diagnostic[] = [];
 	while (errors.length < settings.maxNumberOfProblems) {
@@ -210,23 +212,27 @@ connection.onDidChangeWatchedFiles((_change) => {
 });
 
 let triggeredOnControl = false;
+let triggeredOnPlug = false;
 
 // This handler provides the initial list of the completion items.
 connection.onCompletion(
 	(textDocumentPosition: TextDocumentPositionParams): CompletionItem[] => {
 		let completionItems: CompletionItem[] = [];
 
-		// Get character at current position
-		let char = documents.get(textDocumentPosition.textDocument.uri)?.getText({
+		// Get first two characters at current position
+		let chars = documents.get(textDocumentPosition.textDocument.uri)?.getText({
 			start: {
 				character: textDocumentPosition.position.character - 1,
 				line: textDocumentPosition.position.line,
 			},
-			end: textDocumentPosition.position,
+			end: {
+				character: textDocumentPosition.position.character + 1,
+				line: textDocumentPosition.position.line
+			}
 		});
 
 		// If character is leading '.', then only emit controls
-		if (char === '.') {
+		if (chars && chars[0] === '.') {
 			triggeredOnControl = true;
 
 			for (let index = 0; index < controlOperators.length; index++) {
@@ -250,7 +256,72 @@ connection.onCompletion(
 			};
 		}
 
+		if (cddl) {
 
+			let groupPlugs: any[] = [];
+			let typePlugs: any[] = [];
+			let nonPlugRules: any[] = [];
+
+			for (let rule of cddl.rules) {
+				if (rule.Group) {
+					if (rule.Group.rule.name.socket === "GROUP") {
+						groupPlugs.push(rule.Group.rule.name.ident);
+					} else {
+						nonPlugRules.push(rule.Group.rule.name.ident);
+					}
+				}
+
+				if (rule.Type) {
+					if (rule.Type.rule.name.socket == "TYPE") {
+						typePlugs.push(rule.Type.rule.name.ident)
+					} else {
+						nonPlugRules.push(rule.Type.rule.name.ident);
+					}
+				}
+			}
+
+			if (chars === '$$') {
+				triggeredOnPlug = true;
+
+				for (let groupPlug of groupPlugs) {
+
+
+					let label = "$$" + groupPlug;
+
+					completionItems.push({
+						label,
+						kind: CompletionItemKind.Variable
+					});
+				}
+
+				return completionItems;
+			}
+
+			if (chars === '$') {
+				triggeredOnPlug = true;
+
+				for (let typePlug of typePlugs) {
+					let label = "$" + typePlug;
+
+					completionItems.push({
+						label,
+						kind: CompletionItemKind.Variable
+					});
+				}
+
+				return completionItems;
+			}
+
+
+			for (let label of nonPlugRules) {
+				completionItems.push({
+					label,
+					kind: CompletionItemKind.Variable
+				});
+			}
+
+			return completionItems;
+		}
 
 		return completionItems;
 	}
@@ -267,6 +338,16 @@ connection.onCompletionResolve(
 					return item;
 				}
 			}
+		}
+
+		if (triggeredOnPlug) {
+			if (item.label.startsWith("$$")) {
+				item.insertText = item.label.substring(2);
+			} else if (item.label.startsWith("$")) {
+				item.insertText = item.label.substring(1);
+			}
+
+			return item;
 		}
 
 		for (let index = 0; index < standardPrelude.length; index++) {

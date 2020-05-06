@@ -5,7 +5,7 @@ use super::{
     MsgType::{self, *},
   },
   lexer::{self, Lexer, LexerError, Position},
-  token::{self, Token},
+  token::{self, SocketPlug, Token},
 };
 #[cfg(feature = "std")]
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
@@ -313,9 +313,8 @@ where
     while self.cur_token != Token::EOF {
       match self.parse_rule() {
         Ok(r) => {
-          let rule_exists = |existing_rule: &Rule| {
-            r.name() == existing_rule.name() && !existing_rule.is_choice_alternate()
-          };
+          let rule_exists =
+            |existing_rule: &Rule| r.name() == existing_rule.name() && !r.is_choice_alternate();
           if c.rules.iter().any(rule_exists) {
             self.parser_position.range = (r.span().0, r.span().1);
             self.parser_position.line = r.span().2;
@@ -421,6 +420,34 @@ where
       is_type_choice_alternate = true;
     } else if self.cur_token_is(Token::GCHOICEALT) {
       is_group_choice_alternate = true;
+    }
+
+    if let Some(socket) = &ident.socket {
+      match socket {
+        SocketPlug::TYPE if !is_type_choice_alternate => {
+          self.parser_position.range = (begin_rule_range, self.lexer_position.range.1);
+          self.parser_position.line = self.lexer_position.line;
+
+          self.errors.push(ParserError {
+            position: self.parser_position,
+            msg: MsgType::TypeSocketNamesMustBeTypeAugmentations.into(),
+          });
+
+          return Err(Error::PARSER);
+        }
+        SocketPlug::GROUP if !is_group_choice_alternate => {
+          self.parser_position.range = (begin_rule_range, self.lexer_position.range.1);
+          self.parser_position.line = self.lexer_position.line;
+
+          self.errors.push(ParserError {
+            position: self.parser_position,
+            msg: MsgType::GroupSocketNamesMustBeGroupAugmentations.into(),
+          });
+
+          return Err(Error::PARSER);
+        }
+        _ => (),
+      }
     }
 
     self.next_token()?;

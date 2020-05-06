@@ -84,18 +84,23 @@ impl<'a> fmt::Display for CDDL<'a> {
     }
 
     let mut previous_single_line_type = false;
+    let mut previous_comments_after_rule = false;
 
     for (idx, rule) in self.rules.iter().enumerate() {
       if rule.has_comments_after_rule() {
         cddl_output.push_str(&rule.to_string());
+        previous_comments_after_rule = true;
       } else if idx == self.rules.len() - 1 || rule.has_single_line_type() {
         cddl_output.push_str(&format!("{}\n", rule.to_string().trim_end()));
         previous_single_line_type = true;
-      } else if previous_single_line_type {
+        previous_comments_after_rule = false;
+      } else if previous_single_line_type && !previous_comments_after_rule {
         cddl_output.push_str(&format!("\n{}\n\n", rule.to_string().trim_end()));
         previous_single_line_type = false;
+        previous_comments_after_rule = false;
       } else {
         cddl_output.push_str(&format!("{}\n\n", rule.to_string().trim_end()));
+        previous_comments_after_rule = false;
       }
     }
 
@@ -295,8 +300,8 @@ impl<'a> Rule<'a> {
   /// Returns the name id of a rule
   pub fn name(&self) -> String {
     match self {
-      Rule::Type { rule, .. } => rule.name.ident.to_string(),
-      Rule::Group { rule, .. } => rule.name.ident.to_string(),
+      Rule::Type { rule, .. } => rule.name.to_string(),
+      Rule::Group { rule, .. } => rule.name.to_string(),
     }
   }
 
@@ -1200,19 +1205,17 @@ impl<'a> fmt::Display for Type2<'a> {
         t2_str.push_str("(");
 
         if let Some(comments) = comments_before_type {
-          t2_str.push_str(&comments.to_string());
+          if comments.any_non_newline() {
+            t2_str.push_str(&format!(" {}", comments));
+          }
         }
 
         t2_str.push_str(&t.to_string());
 
         if let Some(comments) = comments_after_type {
-          t2_str.push_str(&comments.to_string());
-        }
-
-        if t.type_choices.len() == 1 {
-          t2_str.push_str(" )");
-        } else {
-          t2_str.push_str(")");
+          if comments.any_non_newline() {
+            t2_str.push_str(&format!(" {}", comments));
+          }
         }
 
         t2_str.push_str(")");

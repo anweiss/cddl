@@ -41,6 +41,8 @@ pub enum MsgType {
   InvalidOccurrenceSyntax,
   NoRulesDefined,
   IncompleteRuleEntry,
+  TypeSocketNamesMustBeTypeAugmentations,
+  GroupSocketNamesMustBeGroupAugmentations,
 
   // Lexer
   UnableToAdvanceToken,
@@ -163,7 +165,15 @@ impl From<MsgType> for ErrorMsg {
       MsgType::IncompleteRuleEntry => ErrorMsg {
         short: "missing rule entry after assignment".into(),
         extended: None,
-      }
+      },
+      MsgType::TypeSocketNamesMustBeTypeAugmentations => ErrorMsg {
+        short: "all plugs for type socket names must be augmentations using '/='".into(),
+        extended: None,
+      },
+      MsgType::GroupSocketNamesMustBeGroupAugmentations => ErrorMsg {
+        short: "all plugs for group socket names must be augmentations using '//='".into(),
+        extended: None,
+      },
     }
   }
 }
