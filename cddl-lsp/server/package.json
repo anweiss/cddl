@@ -14,7 +14,7 @@
   "dependencies": {
     "vscode-languageserver": "^6.1.1",
     "vscode-languageserver-textdocument": "^1.0.1",
-    "cddl-languageserver": "^0.7.0"
+    "@anweiss/cddl-languageserver": "^0.7.0"
   },
   "scripts": {}
 }
