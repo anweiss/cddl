@@ -76,7 +76,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "cd client && npm run update-vscode && cd .. && npm run compile",
+    "vscode:prepublish": "npm run compile && npm run link:wasm",
     "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/cddl-ls-pkg --release --target nodejs -- --features lsp && sed -i -e 's/\"name\": \"cddl\"/\"name\": \"cddl-languageserver\"/g' cddl-lsp/server/cddl-ls-pkg/package.json",
     "link:wasm": "cd server/cddl-ls-pkg && npm link && cd .. && npm link cddl-languageserver",
     "compile": "npm run wasm && tsc -b",
