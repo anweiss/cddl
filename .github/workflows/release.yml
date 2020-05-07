@@ -51,7 +51,7 @@ jobs:
     strategy:
       matrix:
         rust_toolchain: [stable]
-    name: Compilation check for wasm target
+    name: Compilation check for wasm target and npm publishing
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
@@ -65,11 +65,30 @@ jobs:
           target: wasm32-unknown-unknown
           override: true
 
-      - name: Check compilation for wasm target
-        uses: actions-rs/cargo@v1
+      - name: Install Node.js
+        uses: actions/setup-node@v1
         with:
-          command: check
-          args: --lib --target wasm32-unknown-unknown
+          node-verison: '12'
+
+      - name: Install wasmpack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build wasm default features
+        run: |
+          wasm-pack build --target nodejs --scope anweiss --release
+
+      - name: Build wasm lsp feature
+        run: |
+          wasm-pack build --target nodejs --scope anweiss --release --out-dir cddl-languageserver -- --features lsp
+          sed -i -e 's/"name": "@anweiss\/cddl"/"name": "@anweiss\/cddl-languageserver"/g' cddl-languageserver/package.json
+
+      - name: npm publish dry run
+        run: |
+          cd pkg
+          npm publish --access=public --dry-run
+          cd ../cddl-languageserver
+          npm publish --access=public --dry-run
 
   draft-release:
     name: Draft Release
