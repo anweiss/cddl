@@ -8,11 +8,21 @@
     "type": "git",
     "url": "https://github.com/anweiss/cddl"
   },
+  "bugs": {
+    "url": "https://github.com/anweiss/cddl/issues"
+  },
+  "homepage": "https://github.com/anweiss/cddl/blob/master/cddl-lsp/README.md",
   "publisher": "anweiss",
   "preview": true,
-  "categories": [],
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Linters"
+  ],
   "keywords": [
-    "cddl"
+    "cddl",
+    "json",
+    "cbor"
   ],
   "engines": {
     "vscode": "^1.43.0"
