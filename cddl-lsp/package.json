@@ -1,5 +1,5 @@
 {
-  "name": "cddl-lsp",
+  "name": "cddl-languageserver",
   "description": "A language server for the Concise Data Definition Language (CDDL)",
   "author": "Andrew Weiss <andrew.weiss@outlook.com>",
   "license": "MIT",
@@ -67,10 +67,11 @@
   },
   "scripts": {
     "vscode:prepublish": "cd client && npm run update-vscode && cd .. && npm run compile",
-    "compile": "tsc -b",
+    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/cddl-ls-pkg --release --target nodejs -- --features lsp",
+    "compile": "npm run wasm && tsc -b",
     "watch": "tsc -b -w",
     "postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
-    "test": "sh ./scripts/e2e.sh"
+    "test": "npm run compile && sh ./scripts/e2e.sh"
   },
   "devDependencies": {
     "@types/mocha": "^5.2.7",
