@@ -142,6 +142,7 @@ jobs:
         run: |
           echo "//npm.pkg.github.com/:_authToken=$GITHUB_TOKEN" > ~/.npmrc
           cp .npmrc pkg/
+          cp .npmrc cddl-languageserver/
           cd pkg
           npm publish --access=public
           cd ../cddl-languageserver
