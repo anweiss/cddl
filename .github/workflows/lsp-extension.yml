@@ -35,8 +35,11 @@ jobs:
           node-version: '12'
 
       - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: ./cddl-lsp
         run: |
+          echo "//npm.pkg.github.com/:_authToken=$GITHUB_TOKEN" > ~/.npmrc
           npm run wasm
           npm run link:wasm
           npm install
