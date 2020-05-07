@@ -1,4 +1,5 @@
 #![cfg(feature = "std")]
+#![cfg(not(target_arch = "wasm32"))]
 
 use cddl::{self, validate_cbor_from_slice};
 use serde::{Deserialize, Serialize};

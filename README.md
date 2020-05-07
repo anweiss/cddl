@@ -2,13 +2,15 @@
 
 [![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Publish packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.6.0&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22) [![Build and Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22)
 
-> This crate is very much experimental and is being developed as a personal learning exercise for getting acquainted with Rust and about parsing in general. It does not yet completely conform to the spec. There are likely more performant and stable libraries out there for parsing CDDL. This one should not be used in production in any form or fashion.
+> This crate is experimental and is being developed as a personal learning exercise for getting acquainted with Rust and parsing in general. There are likely more performant and stable libraries out there for parsing CDDL. This crate should not be used in production in any form or fashion.
 
 A Rust implementation of the Concise data definition language (CDDL). CDDL is an IETF standard that "proposes a notational convention to express CBOR and JSON data structures." As of 2019-06-12, it is published as RFC 8610 (Proposed Standard) at https://tools.ietf.org/html/rfc8610.
 
-This crate includes a handwritten parser and lexer for CDDL and is heavily inspired by the techniques outlined in Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
+This crate includes a handwritten parser and lexer for CDDL, and its development has been heavily inspired by the techniques outlined in Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
-This crate supports validation of both CBOR and JSON data structures. An extremely basic REPL is included as well, along with a compiled WebAssembly target. The minimum version of Rust that this crate supports is 1.37.0.
+This crate supports partial validation of both CBOR and JSON data structures. An extremely basic REPL is included as well. This crate's minimum supported Rust version (MSRV) is 1.37.0.
+
+Also bundled into this repository is a basic language server implementation and extension for Visual Studio Code for editing CDDL. The implementation is backed by the compiled WebAssembly target included in this crate.
 
 ## Goals
 
@@ -18,19 +20,20 @@ This crate supports validation of both CBOR and JSON data structures. An extreme
 - Validate JSON documents
 - Basic REPL
 - Generate dummy JSON from conformant CDDL
-- Close to zero-copy as possible
+- As close to zero-copy as possible
 - Compile WebAssembly target for browser and Node.js
 - `no_std` support (lexing and parsing only)
+- Language server implementation and Visual Studio Code Extension
 
 ## Non-goals
 
-- Performance (if this crate gains enough traction, it may be prudent to explore using a parser-combinator framework like [nom](https://github.com/Geal/nom))
+- Performance (if this crate gains enough traction, it may be prudent to conduct more formal profiling and/or explore using a parser-combinator framework like [nom](https://github.com/Geal/nom))
 - Support CBOR diagnostic notation
 - I-JSON compatibility
 
 ## Why Rust?
 
-Rust is a systems programming language designed around safety and is ideally-suited for resource-constrained systems. CDDL and CBOR are designed around small code and message sizes and constrained nodes, scenarios that Rust has also been designed for.
+Rust is a systems programming language designed around safety and is ideally-suited for resource-constrained systems. CDDL and CBOR are designed around small code and message sizes and constrained nodes, scenarios for which Rust has also been designed.
 
 ## CLI
 
@@ -40,13 +43,17 @@ A CLI has been made available for various platforms and as a Docker image. It ca
 
 If using Docker:
 
-> Ensure your Docker client has been [authenticated](https://help.github.com/en/articles/configuring-docker-for-use-with-github-package-registry#authenticating-to-github-package-registry) into GitHub Package Registry. Replace `<version>` with an appropriate [release](https://github.com/anweiss/cddl/releases) tag. Requires use of the `--volume` argument for mounting `.cddl` and `.json` documents into the container when executing the command. The command below assumes these documents are in your current working directory.
+> Replace `<version>` with an appropriate [release](https://github.com/anweiss/cddl/releases) tag. Requires use of the `--volume` argument for mounting `.cddl` and `.json` documents into the container when executing the command. The command below assumes these documents are in your current working directory.
 
     $ docker run -it --rm -v $PWD:/cddl -w /cddl docker.pkg.github.com/anweiss/cddl/cddl:<version> help
 
 ## Website
 
 You can also find a simple RFC 8610 conformance tool at https://cddl.anweiss.tech. This same codebase has been compiled for use in the browser via WebAssembly.
+
+## Visual Studio Code Extension
+
+An extension for editing CDDL documents with Visual Studio Code has been published to the Marketplace [here](https://marketplace.visualstudio.com/items?itemName=anweiss.cddl-languageserver). You can find more information in the [README](cddl-lsp/README.md).
 
 ## Features supported by the parser
 
@@ -133,7 +140,7 @@ The following types and features of CDDL are supported by this crate for validat
 | null / nil           | null                          |
 | any                  | any valid JSON                |
 
-Since JSON objects only support keys whose types are JSON strings, member keys defined in CDDL structs must use either the colon syntax (`mykey: tstr`) or the double arrow syntax with double quotes (`"mykey" => tstr`). Unquoted member keys used with the double arrow syntax must resolve to one of the supported data types that can be used to validate JSON strings (`text` or `tstr`). Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed and monomorphized into their full representations before being evaluated for JSON validation.
+Since JSON objects only support keys whose types are JSON strings, when validating JSON member keys defined in CDDL structs must use either the colon syntax (`mykey: tstr`) or the double arrow syntax with double quotes (`"mykey" => tstr`). Unquoted member keys used with the double arrow syntax that resolve to types must resolve to one of the supported data types that can be used to validate JSON strings (`text` or `tstr`). Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed and monomorphized into their full representations before being evaluated for JSON validation.
 
 Below is the table of supported control operators and whether or not they've been implemented as of the current release:
 
@@ -163,13 +170,13 @@ Below is the table of supported control operators and whether or not they've bee
 
 ### Comparing with JSON schema and JSON schema language
 
-[CDDL](https://tools.ietf.org/html/rfc8610), [JSON schema](https://json-schema.org/) and [JSON schema language](https://tools.ietf.org/html/draft-json-schema-language-02) can all be used to define JSON data structures. However, the approaches taken to develop each of these are vastly different. A good place to find past discussions on the differences between thse formats is the [IETF mail archive](https://mailarchive.ietf.org/arch/), specifically in the JSON and CBOR lists. The purpose of this crate is not to argue for the use of CDDL over any one of these formats, but simply to provide an example implementation in Rust.
+[CDDL](https://tools.ietf.org/html/rfc8610), [JSON schema](https://json-schema.org/) and [JSON schema language](https://tools.ietf.org/html/draft-json-schema-language-02) can all be used to define JSON data structures. However, the approaches taken to develop each of these are vastly different. A good place to find past discussions on the differences between these formats is the [IETF mail archive](https://mailarchive.ietf.org/arch/), specifically in the JSON and CBOR lists. The purpose of this crate is not to argue for the use of CDDL over any one of these formats, but simply to provide an example implementation in Rust.
 
 ## Validating CBOR
 
 > Incomplete. Under development. Less complete than JSON validation functions.
 
-This crate also uses [Serde](https://serde.rs/) and [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data structures. Similary to the JSON validation implementation, CBOR validation is done via the loosely typed [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html) enum. Unfortunately, due to a [limitation of Serde](https://github.com/pyfisch/cbor/issues/3), CBOR tags are ignored during deserialization.
+This crate also uses [Serde](https://serde.rs/) and [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data structures. Similary to the JSON validation implementation, CBOR validation is done via the loosely typed [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html) enum.
 
 ## `no_std` support
 
@@ -180,6 +187,12 @@ Only the lexer and parser can be used in a `no_std` context provided that a heap
 cddl = { version = "<version>", default-features = false }
 ```
 
-Zero-copy parsing is implemented to the extent that is possible, with prefixed byte strings containing whitespace being one of the few exceptions where allocation is required. Allocation is also used for error handling and diagnostics.
+Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling and diagnostics.
 
-Both JSON and CBOR validation are dependent on their respective heap allocated `Value` types, but since these types aren't supported in a `no_std` context, they subsequently aren't supported in a `no_std` context in this crate.
+Both JSON and CBOR validation are dependent on their respective heap allocated `Value` types, but since these types aren't supported in a `no_std` context, they subsequently aren't supported by this crate in `no_std`.
+
+## Projects using this crate
+
+Below are some known projects that leverage this crate:
+
+- https://github.com/Emurgo/cddl-codegen

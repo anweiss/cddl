@@ -1,0 +1,97 @@
+{
+  "name": "cddl-languageserver",
+  "description": "A language server extension for the Concise Data Definition Language (CDDL)",
+  "author": "Andrew Weiss <andrew.weiss@outlook.com>",
+  "license": "MIT",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anweiss/cddl"
+  },
+  "bugs": {
+    "url": "https://github.com/anweiss/cddl/issues"
+  },
+  "homepage": "https://github.com/anweiss/cddl/blob/master/cddl-lsp/README.md",
+  "publisher": "anweiss",
+  "preview": true,
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Linters"
+  ],
+  "keywords": [
+    "cddl",
+    "json",
+    "cbor"
+  ],
+  "engines": {
+    "vscode": "^1.43.0"
+  },
+  "activationEvents": [
+    "onLanguage:cddl"
+  ],
+  "main": "./client/out/extension",
+  "contributes": {
+    "languages": [
+      {
+        "id": "cddl",
+        "aliases": [
+          "CDDL"
+        ],
+        "extensions": [
+          ".cddl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cddl",
+        "scopeName": "source.cddl",
+        "path": "./syntaxes/cddl.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "CDDL Language Server configuration",
+      "properties": {
+        "cddllsp.maxNumberOfProblems": {
+          "scope": "resource",
+          "type": "number",
+          "default": 100,
+          "description": "Controls the maximum number of problems produced by the server."
+        },
+        "cddllsp.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "cd client && npm run update-vscode && cd .. && npm run compile",
+    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/cddl-ls-pkg --release --target nodejs -- --features lsp && sed -i -e 's/\"name\": \"cddl\"/\"name\": \"cddl-languageserver\"/g' cddl-lsp/server/cddl-ls-pkg/package.json",
+    "link:wasm": "cd server/cddl-ls-pkg && npm link && cd .. && npm link cddl-languageserver",
+    "compile": "npm run wasm && tsc -b",
+    "watch": "tsc -b -w",
+    "postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
+    "test": "npm run compile && sh ./scripts/e2e.sh",
+    "deploy": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/mocha": "^5.2.7",
+    "@types/node": "^12.12.38",
+    "@typescript-eslint/parser": "^2.31.0",
+    "eslint": "^6.4.0",
+    "mocha": "^6.2.2",
+    "typescript": "^3.8.3",
+    "vsce": "^1.75.0"
+  }
+}

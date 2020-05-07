@@ -3,11 +3,13 @@ name = "cddl"
 description = "Parser for the Concise data definition language (CDDL)"
 repository = "https://github.com/anweiss/cddl"
 homepage = "https://cddl.anweiss.tech"
+categories = ["parser-implementations", "encoding", "development-tools", "wasm"]
 license = "MIT"
-version = "0.6.0"
+version = "0.7.0"
 authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
 readme = "README.md"
 edition = "2018"
+exclude = ["cddl-lsp/**/*", "www/**/*", ".github/**/*", ".devcontainer/**/*", "pkg/**/*", ".dockerignore", "Dockerfile"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -34,7 +36,7 @@ pretty_assertions = { git = "https://github.com/colin-kiegel/rust-pretty-asserti
 crossterm = { version = "0.17", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-console_error_panic_hook = { version = "0.1", optional = true }
+console_error_panic_hook = "0.1"
 wasm-bindgen = { version = "0.2", features = ["serde-serialize"], optional = true }
 wee_alloc = { version = "0.4", optional = true }
 
@@ -44,6 +46,7 @@ wasm-bindgen-test = "0.3"
 [features]
 default = ["std"]
 std = ["serde_json", "serde_cbor", "serde", "chrono", "wasm-bindgen", "clap", "crossterm"]
+lsp = ["std"]
 nightly = ["uriparse"]
 
 [[bin]]

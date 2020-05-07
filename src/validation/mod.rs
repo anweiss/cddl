@@ -98,7 +98,7 @@ pub trait Validator<T> {
     is_enumeration: bool,
     expected_memberkey: Option<String>,
     actual_memberkey: Option<String>,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &T,
   ) -> Result;
 
@@ -108,7 +108,7 @@ pub trait Validator<T> {
     tr: &TypeRule,
     expected_memberkey: Option<String>,
     actual_memberkey: Option<String>,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &T,
   ) -> Result;
 
@@ -117,7 +117,7 @@ pub trait Validator<T> {
     &self,
     gr: &GroupRule,
     is_enumeration: bool,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &T,
   ) -> Result;
 
@@ -128,7 +128,7 @@ pub trait Validator<T> {
     t: &Type,
     expected_memberkey: Option<String>,
     actual_memberkey: Option<String>,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &T,
   ) -> Result;
 
@@ -139,7 +139,7 @@ pub trait Validator<T> {
     t1: &Type1,
     expected_memberkey: Option<String>,
     actual_memberkey: Option<String>,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &T,
   ) -> Result;
 
@@ -152,7 +152,7 @@ pub trait Validator<T> {
   fn validate_control_operator(
     &self,
     target: &Type2,
-    operator: &'static str,
+    operator: &str,
     controller: &Type2,
     value: &T,
   ) -> Result;
@@ -163,18 +163,28 @@ pub trait Validator<T> {
     t2: &Type2,
     expected_memberkey: Option<String>,
     actual_memberkey: Option<String>,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &T,
   ) -> Result;
 
   /// Validate data against a given group
-  fn validate_group(&self, g: &Group, occur: Option<&Occur>, value: &T) -> Result;
+  fn validate_group(&self, g: &Group, occur: Option<&Occurrence>, value: &T) -> Result;
 
   /// Validate data against a given group-to-choice enumeration
-  fn validate_group_to_choice_enum(&self, g: &Group, occur: Option<&Occur>, value: &T) -> Result;
+  fn validate_group_to_choice_enum(
+    &self,
+    g: &Group,
+    occur: Option<&Occurrence>,
+    value: &T,
+  ) -> Result;
 
   /// Validate data against a given group choice
-  fn validate_group_choice(&self, gc: &GroupChoice, occur: Option<&Occur>, value: &T) -> Result;
+  fn validate_group_choice(
+    &self,
+    gc: &GroupChoice,
+    occur: Option<&Occurrence>,
+    value: &T,
+  ) -> Result;
 
   /// Validate data against a given group entry
   fn validate_group_entry(
@@ -182,7 +192,7 @@ pub trait Validator<T> {
     ge: &GroupEntry,
     is_enumeration: bool,
     wildcard_entry: Option<&Type>,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &T,
   ) -> Result;
 
@@ -210,9 +220,9 @@ impl<'a> CDDL<'a> {
       match rule {
         Rule::Type { rule, .. } if rule.name.ident == ident.ident => {
           for tc in rule.value.type_choices.iter() {
-            match &tc.type2 {
+            match &tc.type1.type2 {
               Type2::IntValue { .. } | Type2::UintValue { .. } | Type2::FloatValue { .. } => {
-                type_choices.push(&tc.type2);
+                type_choices.push(&tc.type1.type2);
               }
               Type2::Typename { ident, .. } => return self.numerical_value_type_from_ident(ident),
               _ => continue,
@@ -240,7 +250,7 @@ impl<'a> CDDL<'a> {
           .value
           .type_choices
           .iter()
-          .any(|tc| self.is_type_string_data_type(&tc.type2)),
+          .any(|tc| self.is_type_string_data_type(&tc.type1.type2)),
         _ => false,
       }),
       _ => false,
@@ -255,7 +265,7 @@ impl<'a> CDDL<'a> {
           .value
           .type_choices
           .iter()
-          .any(|tc| self.is_type_numeric_data_type(&tc.type2)),
+          .any(|tc| self.is_type_numeric_data_type(&tc.type1.type2)),
         _ => false,
       }),
       _ => false,
@@ -273,7 +283,7 @@ impl<'a> CDDL<'a> {
           match r {
             Rule::Type { rule, .. } if rule.name.ident == ident.ident => {
               for tc in rule.value.type_choices.iter() {
-                text_values.append(&mut self.text_values_from_type(&tc.type2)?);
+                text_values.append(&mut self.text_values_from_type(&tc.type1.type2)?);
               }
             }
             _ => continue,
@@ -329,7 +339,7 @@ impl<'a> CDDL<'a> {
           match r {
             Rule::Type{ rule, ..}  if rule.name.ident == ident.ident => {
               for tc in rule.value.type_choices.iter() {
-                numeric_values.append(&mut self.numeric_values_from_type(target, &tc.type2)?);
+                numeric_values.append(&mut self.numeric_values_from_type(target, &tc.type1.type2)?);
               }
             }
             _ => continue,
@@ -357,7 +367,7 @@ impl<'a> CDDL<'a> {
           match r {
             Rule::Type { rule, .. } if rule.name.ident == ident.ident => {
               for tc in rule.value.type_choices.iter() {
-                numeric_type_idents.append(&mut self.numerical_ident_from_type(&tc.type2)?);
+                numeric_type_idents.append(&mut self.numerical_ident_from_type(&tc.type1.type2)?);
               }
             }
             _ => continue,

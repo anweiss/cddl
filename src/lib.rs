@@ -276,6 +276,9 @@ extern crate uriparse;
 
 /// Abstract syntax tree representing a CDDL definition
 pub mod ast;
+/// Static error messages
+#[allow(missing_docs)]
+pub mod error;
 /// Lexer for CDDL
 pub mod lexer;
 /// Parser for CDDL
@@ -292,7 +295,7 @@ pub mod validation;
 #[doc(inline)]
 pub use self::{
   lexer::{lexer_from_str, LexerError},
-  parser::{cddl_from_str, compile_cddl_from_str, ParserError},
+  parser::{cddl_from_str, ParserError},
   token::Token,
 };
 

@@ -80,7 +80,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     is_enumeration: bool,
     expected_memberkey: Option<String>,
     actual_memberkey: Option<String>,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &Value,
   ) -> Result {
     for rule in self.rules.iter() {
@@ -106,7 +106,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     tr: &TypeRule,
     expected_memberkey: Option<String>,
     actual_memberkey: Option<String>,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &Value,
   ) -> Result {
     self.validate_type(
@@ -122,7 +122,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     &self,
     gr: &GroupRule,
     is_enumeration: bool,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &Value,
   ) -> Result {
     self.validate_group_entry(&gr.entry, is_enumeration, None, occur, value)
@@ -133,14 +133,14 @@ impl<'a> Validator<Value> for CDDL<'a> {
     t: &Type,
     expected_memberkey: Option<String>,
     actual_memberkey: Option<String>,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &Value,
   ) -> Result {
     let mut validation_errors: Vec<Error> = Vec::new();
 
     // Find the first type choice that validates to true
-    let find_type_choice = |t1| match self.validate_type1(
-      t1,
+    let find_type_choice = |tc: &TypeChoice| match self.validate_type1(
+      &tc.type1,
       expected_memberkey.clone(),
       actual_memberkey.clone(),
       occur,
@@ -165,7 +165,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     t1: &Type1,
     expected_memberkey: Option<String>,
     actual_memberkey: Option<String>,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &Value,
   ) -> Result {
     self.validate_type2(
@@ -190,7 +190,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
   fn validate_control_operator(
     &self,
     _target: &Type2,
-    _operator: &'static str,
+    _operator: &str,
     _controller: &Type2,
     _value: &Value,
   ) -> Result {
@@ -202,7 +202,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     t2: &Type2,
     expected_memberkey: Option<String>,
     actual_memberkey: Option<String>,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &Value,
   ) -> Result {
     match t2 {
@@ -431,7 +431,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     }
   }
 
-  fn validate_group(&self, g: &Group, occur: Option<&Occur>, value: &Value) -> Result {
+  fn validate_group(&self, g: &Group, occur: Option<&Occurrence>, value: &Value) -> Result {
     let mut validation_errors: Vec<Error> = Vec::new();
 
     // Find the first group choice that validates to true
@@ -455,7 +455,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
   fn validate_group_to_choice_enum(
     &self,
     _g: &Group,
-    _occur: Option<&Occur>,
+    _occur: Option<&Occurrence>,
     _value: &Value,
   ) -> Result {
     unimplemented!()
@@ -464,7 +464,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
   fn validate_group_choice(
     &self,
     gc: &GroupChoice,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &Value,
   ) -> Result {
     let mut errors: Vec<Error> = Vec::new();
@@ -473,7 +473,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
       match value {
         Value::Array(values) => {
           if let GroupEntry::TypeGroupname { ge: tge, .. } = &ge.0 {
-            if let Some(o) = &tge.occur {
+            if let Some(Occurrence { occur: o, .. }) = &tge.occur {
               if gc.group_entries.len() != 1 {
                 // Arrays with multiple occurrences are too hard to parse
                 // correctly.  For now, just return an error instead.
@@ -507,7 +507,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
             ..
           } = &ge.0
           {
-            if let Some(o) = geo {
+            if let Some(Occurrence { occur: o, .. }) = geo {
               self.validate_array_occurrence(&o, &g.to_string(), values)?;
             }
           }
@@ -582,7 +582,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
     ge: &GroupEntry,
     is_enumeration: bool,
     _wildcard_entry: Option<&Type>,
-    occur: Option<&Occur>,
+    occur: Option<&Occurrence>,
     value: &Value,
   ) -> Result {
     match ge {
@@ -690,7 +690,7 @@ impl<'a> Validator<Value> for CDDL<'a> {
                     // "? acts as expected: this key is optional
                     // "*" acts just like ?
                     // "+" has no effect; this key is required
-                    Some(o) => match o {
+                    Some(Occurrence { occur: o, .. }) => match o {
                       Occur::Optional(_) | Occur::ZeroOrMore(_) => Ok(()),
                       _ => Err(
                         CBORError {
@@ -732,14 +732,14 @@ impl<'a> Validator<Value> for CDDL<'a> {
           unimplemented!()
         }
       }
-      GroupEntry::TypeGroupname { ge: tge, span } => {
+      GroupEntry::TypeGroupname { ge: tge, span, .. } => {
         if is_type_prelude(&tge.name.ident) {
           // Substitute a new AST node for the groupentry validation.
           // FIXME: this seems like an awkward thing to do.
           self.validate_type2(
             &Type2::Typename {
               ident: tge.name.clone(),
-              generic_arg: tge.generic_arg.clone(),
+              generic_args: tge.generic_args.clone(),
               span: *span,
             },
             None,

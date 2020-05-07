@@ -1,0 +1,47 @@
+on:
+  push:
+    tags-ignore:
+      - '*'
+    paths:
+      - '.github/workflows/lsp-extension.yml'
+      - 'cddl-lsp/**'
+  pull_request:
+
+name: Build and Test LSP Extension
+
+jobs:
+  build-and-test:
+    name: build and test LSP extension
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          target: wasm32-unknown-unknown
+
+      - name: Install wasmpack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: '12'
+
+      - name: Install dependencies
+        working-directory: ./cddl-lsp
+        run: |
+          npm run wasm
+          npm run link:wasm
+          npm install
+
+      - name: Run unit tests and integration tests
+        working-directory: ./cddl-lsp
+        run: |
+          xvfb-run --auto-servernum npm test
