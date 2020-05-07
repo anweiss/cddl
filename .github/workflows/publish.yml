@@ -118,18 +118,23 @@ jobs:
           override: true
           target: wasm32-unknown-unknown
 
-      - name: Install node
+      - name: Install Node.js
         uses: actions/setup-node@v1
         with:
-          node-verison: '10.x'
+          node-verison: '12'
 
       - name: Install wasmpack
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build wasm
+      - name: Build wasm default features
         run: |
           wasm-pack build --target nodejs --scope anweiss --release
+
+      - name: Build wasm lsp feature
+        run: |
+          wasm-pack build --target nodejs --scope anweiss --release --out-dir cddl-languageserver -- --features lsp
+          sed -i -e 's/"name": "@anweiss\/cddl"/"name": "@anweiss\/cddl-languageserver"/g' cddl-languageserver/package.json
 
       - name: Publish to GPR
         env:
@@ -139,6 +144,27 @@ jobs:
           cp .npmrc pkg/
           cd pkg
           npm publish --access=public
+          cd ../cddl-languageserver
+          npm publish --access=public
+
+  publish-vscode-extension:
+    name: Publish vscode extension
+    needs: publish-npm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-verison: '12'
+
+      - name: Deploy to Marketplace
+        env:
+          VSCODE_MARKETPLACE_TOKEN: ${{ secrets.VSCODE_MARKETPLACE_TOKEN }}
+        run: |
+          npm run deploy
 
   publish-crate:
     name: Publish crate
@@ -168,8 +194,8 @@ jobs:
         with:
           command: publish
 
-  publish-wasm:
-    name: Publish wasm
+  publish-website:
+    name: Publish website
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source

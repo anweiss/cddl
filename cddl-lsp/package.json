@@ -1,6 +1,6 @@
 {
   "name": "cddl-languageserver",
-  "description": "A language server for the Concise Data Definition Language (CDDL)",
+  "description": "A language server extension for the Concise Data Definition Language (CDDL)",
   "author": "Andrew Weiss <andrew.weiss@outlook.com>",
   "license": "MIT",
   "version": "0.1.0",
@@ -67,11 +67,13 @@
   },
   "scripts": {
     "vscode:prepublish": "cd client && npm run update-vscode && cd .. && npm run compile",
-    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/cddl-ls-pkg --release --target nodejs -- --features lsp",
+    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/cddl-ls-pkg --release --target nodejs -- --features lsp && sed -i -e 's/\"name\": \"cddl\"/\"name\": \"cddl-languageserver\"/g' cddl-lsp/server/cddl-ls-pkg/package.json",
+    "link:wasm": "cd server/cddl-ls-pkg && npm link && cd .. && npm link cddl-languageserver",
     "compile": "npm run wasm && tsc -b",
     "watch": "tsc -b -w",
     "postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
-    "test": "npm run compile && sh ./scripts/e2e.sh"
+    "test": "npm run compile && sh ./scripts/e2e.sh",
+    "deploy": "vsce publish"
   },
   "devDependencies": {
     "@types/mocha": "^5.2.7",
@@ -79,6 +81,7 @@
     "@typescript-eslint/parser": "^2.31.0",
     "eslint": "^6.4.0",
     "mocha": "^6.2.2",
-    "typescript": "^3.8.3"
+    "typescript": "^3.8.3",
+    "vsce": "^1.75.0"
   }
 }
