@@ -163,8 +163,6 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
 		errors = e;
 	}
 
-	console.log(cddl);
-
 	let diagnostics: Diagnostic[] = [];
 	while (errors.length < settings.maxNumberOfProblems) {
 		for (const error of errors) {

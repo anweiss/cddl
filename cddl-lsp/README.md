@@ -11,3 +11,4 @@ Language server implementation and Visual Studio Code Extension for the Concise 
   - Group and type rule identifiers
 - Go-to definition
 - Basic diagnostics
+- Formatting
