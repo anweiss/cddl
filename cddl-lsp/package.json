@@ -1,5 +1,6 @@
 {
   "name": "cddl-languageserver",
+  "displayName": "CDDL",
   "description": "A language server extension for the Concise Data Definition Language (CDDL)",
   "author": "Andrew Weiss <andrew.weiss@outlook.com>",
   "license": "MIT",
