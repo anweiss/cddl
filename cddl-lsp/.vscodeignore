@@ -1,4 +1,12 @@
 **/*.ts
 server/cddl-ls-pkg/
+server/out/
+client/out/
+client/testFixture
+scripts/
 .vscode-test/
 .vscode/
+node_modules/
+
+tsconfig.json
+webpack.config.js

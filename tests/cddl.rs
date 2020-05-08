@@ -1,7 +1,7 @@
 #![cfg(feature = "std")]
 #![cfg(not(target_arch = "wasm32"))]
 
-mod data;
+mod fixtures;
 
 use cddl::{
   lexer_from_str, parser,
@@ -11,7 +11,7 @@ use std::fs;
 
 #[test]
 fn verify_cddl_compiles() -> Result<(), parser::Error> {
-  for file in fs::read_dir("tests/data/cddl/").unwrap() {
+  for file in fs::read_dir("tests/fixtures/cddl/").unwrap() {
     let file = file.unwrap();
 
     if file.path().extension().unwrap() != "cddl" {
@@ -33,8 +33,8 @@ fn verify_cddl_compiles() -> Result<(), parser::Error> {
 #[test]
 fn verify_json_validation() -> Result<(), validation::Error> {
   validate_json_from_str(
-    &fs::read_to_string("tests/data/cddl/reputon.cddl").unwrap(),
-    &fs::read_to_string("tests/data/json/reputon.json").unwrap(),
+    &fs::read_to_string("tests/fixtures/cddl/reputon.cddl").unwrap(),
+    &fs::read_to_string("tests/fixtures/json/reputon.json").unwrap(),
   )
 }
 

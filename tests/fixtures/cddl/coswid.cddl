@@ -148,7 +148,7 @@ evidence-entry = {
 	? date => time,
 	? device-id => text,
 	* $$evidence-extension
-} 
+}
 
 ; "global map member" integer indexes
 tag-id = 0
@@ -207,26 +207,26 @@ product-family = 53
 revision = 54
 summary = 55
 unspsc-code = 56
-unspsc-version = 57 
+unspsc-version = 57
 
 ; "version-scheme" integer indexes
 multipartnumeric = 1
 multipartnumeric-suffix = 2
 alphanumeric = 3
 decimal = 4
-semver = 16384 
+semver = 16384
 
 ; "role" integer indexes
 tag-creator = 1
 software-creator = 2
 aggregator = 3
 distributor = 4
-licensor = 5 
+licensor = 5
 
 ; ownership integer indexes
 shared = 1
 private = 2
-abandon = 3 
+abandon = 3
 
 ; "rel" integer indexes
 ancestor = 1
@@ -238,7 +238,7 @@ parent = 6
 patches = 7
 requires = 8
 see-also = 9
-supersedes = 10 
+supersedes = 10
 ; supplemental=11
 
 ; "use" integer indexes
