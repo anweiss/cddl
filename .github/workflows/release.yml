@@ -41,6 +41,20 @@ jobs:
           command: test
           args: --all
 
+  cargo-publish-dry-run:
+    name: Cargo publish dry run
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
       - name: cargo publish --dry-run
         uses: actions-rs/cargo@v1
         with:
@@ -48,9 +62,6 @@ jobs:
           args: --dry-run
 
   wasm-compilation-check:
-    strategy:
-      matrix:
-        rust_toolchain: [stable]
     name: Compilation check for wasm target and npm publishing
     runs-on: ubuntu-latest
     steps:
@@ -61,7 +72,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: ${{ matrix.rust_toolchain }}
+          toolchain: stable
           target: wasm32-unknown-unknown
           override: true
 
