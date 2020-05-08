@@ -77,7 +77,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run wasm && webpack --mode production",
+    "vscode:prepublish": "webpack --mode production",
     "webpack": "npm run wasm && webpack --mode development",
     "webpack-dev": "npm run wasm && webpack --mode development --watch",
     "test-compile": "tsc -p ./",
