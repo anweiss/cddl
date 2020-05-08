@@ -103,7 +103,7 @@ jobs:
 
   draft-release:
     name: Draft Release
-    needs: [compilation-check, wasm-compilation-check]
+    needs: [compilation-check, cargo-publish-dry-run, wasm-compilation-check]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
