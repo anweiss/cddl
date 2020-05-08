@@ -1,9 +1,10 @@
 {
   "name": "cddl-languageserver",
+  "displayName": "CDDL",
   "description": "A language server extension for the Concise Data Definition Language (CDDL)",
   "author": "Andrew Weiss <andrew.weiss@outlook.com>",
   "license": "MIT",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/anweiss/cddl"
@@ -30,7 +31,7 @@
   "activationEvents": [
     "onLanguage:cddl"
   ],
-  "main": "./client/out/extension",
+  "main": "./dist/extension",
   "contributes": {
     "languages": [
       {
@@ -76,13 +77,17 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile && npm run link:wasm",
-    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/cddl-ls-pkg --release --target nodejs -- --features lsp && sed -i -e 's/\"name\": \"cddl\"/\"name\": \"cddl-languageserver\"/g' cddl-lsp/server/cddl-ls-pkg/package.json",
-    "link:wasm": "cd server/cddl-ls-pkg && npm link && cd .. && npm link cddl-languageserver",
+    "vscode:prepublish": "npm run wasm && webpack --mode production",
+    "webpack": "npm run wasm && webpack --mode development",
+    "webpack-dev": "npm run wasm && webpack --mode development --watch",
+    "test-compile": "tsc -p ./",
+    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/cddl-ls-pkg --release --scope anweiss --target nodejs -- --features lsp && sed -i -e 's/\"name\": \"@anweiss\\/cddl\"/\"name\": \"@anweiss\\/cddl-languageserver\"/g' cddl-lsp/server/cddl-ls-pkg/package.json",
+    "link:wasm": "cd server/cddl-ls-pkg && npm link && cd .. && npm link @anweiss/cddl-languageserver",
     "compile": "npm run wasm && tsc -b",
     "watch": "tsc -b -w",
     "postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
     "test": "npm run compile && sh ./scripts/e2e.sh",
+    "patch": "npm version patch && cd server && npm version patch && cd ../client && npm version patch",
     "deploy": "vsce publish"
   },
   "devDependencies": {
@@ -91,7 +96,10 @@
     "@typescript-eslint/parser": "^2.31.0",
     "eslint": "^6.4.0",
     "mocha": "^6.2.2",
+    "ts-loader": "^7.0.3",
     "typescript": "^3.8.3",
-    "vsce": "^1.75.0"
+    "vsce": "^1.75.0",
+    "webpack": "^4.43.0",
+    "webpack-cli": "^3.3.11"
   }
 }

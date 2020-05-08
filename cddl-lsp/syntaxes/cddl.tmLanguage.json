@@ -10,13 +10,14 @@
         { "include": "#range-control-operator" },
         { "include": "#socketplug" },
         { "include": "#ruleidentifier" },
+        { "include": "#number" },
         { "include": "#standard-prelude" },
+        { "include": "#ruleidentifierref" },
         { "include": "#comments" },
         { "include": "#literal-text-string" },
         { "include": "#literal-byte-string" },
         { "include": "#choiceseparator" },
-        { "include": "#occurrence" },
-        { "include": "#number" }
+        { "include": "#occurrence" }
       ]
     },
     "group-expression": {
@@ -128,6 +129,11 @@
       "name": "variable.cddl",
       "match": "(\\w|@|\\$)+((-|\\.)*(\\w|@|\\$|\\d))*(?=(<\\w+(,\\s*\\w+)*>)?\\s*(=(?!>)|//=|/=))"
     },
+
+    "ruleidentifierref": {
+      "name": "ruleidentifierref.cddl",
+      "match": "(\\w|@|\\$)+((-|\\.)*(\\w|@|\\$|\\d))*"
+    },
     "choiceseparator": {
       "name": "punctuation.separator.choice.cddl",
       "match": "/|//"
@@ -137,7 +143,7 @@
       "match": "\\?|\\+|\\*"
     },
     "number": {
-      "match": "(?x)        # turn on extended mode\n    (?<!\\w)   \n   -?        # an optional minus\n  (?:\n    0       # a zero\n    |       # ...or...\n    [1-9]   # a 1-9 character\n    \\d*     # followed by zero or more digits\n  )\n  (?:\n    (?:\n      \\.    # a period\n      \\d+   # followed by one or more digits\n    )?\n    (?:\n      [eE]  # an e character\n      [+-]? # followed by an option +/-\n      \\d+   # followed by one or more digits\n    )?      # make exponent optional\n  )?        # make decimal portion optional",
+      "match": "(?<!\\w)#?-?(?:0|[1-9]\\d*)(?:(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)?",
       "name": "constant.numeric.cddl"
     }
   }

@@ -481,7 +481,7 @@ where
             span,
           })
         } else {
-          let t = self.parse_type(None)?;
+          let mut t = self.parse_type(None)?;
 
           let span = (
             begin_rule_range,
@@ -489,7 +489,11 @@ where
             begin_rule_line,
           );
 
-          let comments_after_rule = self.collect_comments()?;
+          let comments_after_rule = if let Some(comments) = t.comments_after_type() {
+            Some(comments)
+          } else {
+            self.collect_comments()?
+          };
 
           Ok(Rule::Type {
             rule: TypeRule {
