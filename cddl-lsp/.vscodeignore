@@ -1,3 +1,4 @@
 **/*.ts
 server/cddl-ls-pkg/
 .vscode-test/
+.vscode/

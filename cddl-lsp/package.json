@@ -4,7 +4,7 @@
   "description": "A language server extension for the Concise Data Definition Language (CDDL)",
   "author": "Andrew Weiss <andrew.weiss@outlook.com>",
   "license": "MIT",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/anweiss/cddl"
@@ -84,6 +84,7 @@
     "watch": "tsc -b -w",
     "postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
     "test": "npm run compile && sh ./scripts/e2e.sh",
+    "patch": "npm version patch && cd server && npm version patch && cd ../client && npm version patch",
     "deploy": "vsce publish"
   },
   "devDependencies": {
