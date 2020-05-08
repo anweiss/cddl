@@ -78,8 +78,8 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile && npm run link:wasm",
-    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/cddl-ls-pkg --release --target nodejs -- --features lsp && sed -i -e 's/\"name\": \"cddl\"/\"name\": \"cddl-languageserver\"/g' cddl-lsp/server/cddl-ls-pkg/package.json",
-    "link:wasm": "cd server/cddl-ls-pkg && npm link && cd .. && npm link cddl-languageserver",
+    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/cddl-ls-pkg --release --scope anweiss --target nodejs -- --features lsp && sed -i -e 's/\"name\": \"@anweiss\\/cddl\"/\"name\": \"@anweiss\\/cddl-languageserver\"/g' cddl-lsp/server/cddl-ls-pkg/package.json",
+    "link:wasm": "cd server/cddl-ls-pkg && npm link && cd .. && npm link @anweiss/cddl-languageserver",
     "compile": "npm run wasm && tsc -b",
     "watch": "tsc -b -w",
     "postinstall": "cd client && npm install && cd ../server && npm install && cd ..",

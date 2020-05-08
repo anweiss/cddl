@@ -269,7 +269,11 @@ impl<'a> fmt::Display for Rule<'a> {
 
         if let Some(comments) = comments_after_rule {
           if comments.any_non_newline() {
-            rule_str.push_str(&format!(" {}", comments.to_string()));
+            if let Some(&"\n") = comments.0.first() {
+              rule_str.push_str(&format!("{}", comments.to_string()));
+            } else {
+              rule_str.push_str(&format!(" {}", comments.to_string()));
+            }
           }
         }
 
@@ -286,7 +290,11 @@ impl<'a> fmt::Display for Rule<'a> {
 
         if let Some(comments) = comments_after_rule {
           if comments.any_non_newline() {
-            rule_str.push_str(&format!(" {}", comments.to_string()));
+            if let Some(&"\n") = comments.0.first() {
+              rule_str.push_str(&format!("{}", comments.to_string()));
+            } else {
+              rule_str.push_str(&format!(" {}", comments.to_string()));
+            }
           }
         }
 
