@@ -9,6 +9,6 @@ client/**
 !client/out/extension.js
 server/**
 !server/out/server.js
-!server/out/index_bg.wasm
+!server/out/cddl_bg.wasm
 
 node_modules/**
