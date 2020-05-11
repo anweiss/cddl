@@ -11,6 +11,7 @@ jobs:
         rust_toolchain: [stable]
         os: [ubuntu-latest, macOS-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    if: contains(github.ref, 'vscode-extension') != true
     steps:
       - name: Checkout source
         uses: actions/checkout@v2
@@ -83,6 +84,7 @@ jobs:
   publish-docker:
     name: Publish Docker
     runs-on: ubuntu-latest
+    if: contains(github.ref, 'vscode-extension') != true
     steps:
       - name: Checkout source
         uses: actions/checkout@v2
@@ -106,6 +108,7 @@ jobs:
   publish-npm:
     name: Publish npm
     runs-on: ubuntu-latest
+    if: contains(github.ref, 'vscode-extension') != true
     steps:
       - name: Checkout source
         uses: actions/checkout@v2
@@ -150,7 +153,6 @@ jobs:
 
   publish-vscode-extension:
     name: Publish vscode extension
-    needs: publish-npm
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
@@ -175,6 +177,7 @@ jobs:
       matrix:
         rust_toolchain: [stable]
     runs-on: ubuntu-latest
+    if: contains(github.ref, 'vscode-extension') != true
     steps:
       - name: Checkout source
         uses: actions/checkout@v2
@@ -200,6 +203,7 @@ jobs:
   publish-website:
     name: Publish website
     runs-on: ubuntu-latest
+    if: contains(github.ref, 'vscode-extension') != true
     steps:
       - name: Checkout source
         uses: actions/checkout@v2
