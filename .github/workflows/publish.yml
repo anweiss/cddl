@@ -169,7 +169,7 @@ jobs:
           VSCODE_MARKETPLACE_TOKEN: ${{ secrets.VSCODE_MARKETPLACE_TOKEN }}
         run: |
           npm install
-          npm run deploy
+          npm run deploy -p $VSCODE_MARKETPLACE_TOKEN
 
   publish-crate:
     name: Publish crate

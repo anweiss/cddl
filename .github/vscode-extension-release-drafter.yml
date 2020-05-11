@@ -1,0 +1,6 @@
+name-template: '$NEXT_PATCH_VERSION-vscode-extension'
+tag-template: '$NEXT_PATCH_VERSION-vscode-extension'
+template: |
+  ## What's Changed
+
+  $CHANGES
