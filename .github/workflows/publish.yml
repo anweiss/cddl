@@ -164,10 +164,8 @@ jobs:
       - name: Deploy to Marketplace
         working-directory: ./cddl-lsp
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VSCODE_MARKETPLACE_TOKEN: ${{ secrets.VSCODE_MARKETPLACE_TOKEN }}
         run: |
-          echo "//npm.pkg.github.com/:_authToken=$GITHUB_TOKEN" > ~/.npmrc
           npm install
           npm run deploy
 
