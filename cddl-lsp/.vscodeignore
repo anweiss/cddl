@@ -1,10 +1,14 @@
+.vscode/**
+.vscode-test/**
 **/*.ts
-server/
-client/
-scripts/
-.vscode-test/
-.vscode/
-node_modules/
+**/*.map
+.gitignore
+**/tsconfig.json
+shared.webpack.config.js
+client/**
+!client/out/extension.js
+server/**
+!server/out/server.js
+!server/out/index_bg.wasm
 
-tsconfig.json
-webpack.config.js
+node_modules/**

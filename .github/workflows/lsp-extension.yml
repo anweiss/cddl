@@ -35,16 +35,13 @@ jobs:
           node-version: '12'
 
       - name: Install dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: ./cddl-lsp
         run: |
-          echo "//npm.pkg.github.com/:_authToken=$GITHUB_TOKEN" > ~/.npmrc
-          npm run wasm
-          npm run link:wasm
           npm install
+          npm run webpack
 
       - name: Run unit tests and integration tests
-        working-directory: ./cddl-lsp
-        run: |
-          xvfb-run --auto-servernum npm test
+        uses: GabrielBB/xvfb-action@v1.2
+        with:
+          working-directory: ./cddl-lsp
+          run: npm test

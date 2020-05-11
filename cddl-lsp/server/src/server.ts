@@ -22,7 +22,7 @@ import {
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
 
-import * as wasm from '@anweiss/cddl-languageserver';
+import * as wasm from '../pkg/';
 import { standardPrelude, controlOperators } from './keywords';
 // import { WorkDoneProgress } from 'vscode-languageserver/lib/progress';
 

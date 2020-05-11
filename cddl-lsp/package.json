@@ -4,7 +4,7 @@
   "description": "A language server extension for the Concise Data Definition Language (CDDL)",
   "author": "Andrew Weiss <andrew.weiss@outlook.com>",
   "license": "MIT",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/anweiss/cddl"
@@ -31,7 +31,7 @@
   "activationEvents": [
     "onLanguage:cddl"
   ],
-  "main": "./dist/extension",
+  "main": "./client/out/extension",
   "contributes": {
     "languages": [
       {
@@ -77,15 +77,16 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "webpack --mode production",
-    "webpack": "npm run wasm && webpack --mode development",
-    "webpack-dev": "npm run wasm && webpack --mode development --watch",
-    "test-compile": "tsc -p ./",
-    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/cddl-ls-pkg --release --scope anweiss --target nodejs -- --features lsp && sed -i -e 's/\"name\": \"@anweiss\\/cddl\"/\"name\": \"@anweiss\\/cddl-languageserver\"/g' cddl-lsp/server/cddl-ls-pkg/package.json",
-    "link:wasm": "cd server/cddl-ls-pkg && npm link && cd .. && npm link @anweiss/cddl-languageserver",
+    "vscode:prepublish": "npm run webpack",
+    "webpack": "npm run clean && webpack --mode production --config ./client/webpack.config.js && webpack --mode production --config ./server/webpack.config.js",
+    "webpack-dev": "npm run clean && webpack --mode none --config ./client/webpack.config.js && webpack --mode none --config ./server/webpack.config.js",
+    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/pkg --release --target nodejs -- --features lsp",
     "compile": "npm run wasm && tsc -b",
+    "compile:client": "tsc -b ./client/tsconfig.json",
+    "compile:server": "npm run wasm && tsc -b ./server/tsconfig.json",
     "watch": "tsc -b -w",
     "postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
+    "clean": "rimraf client/out && rimraf server/out",
     "test": "npm run compile && sh ./scripts/e2e.sh",
     "patch": "npm version patch && cd server && npm version patch && cd ../client && npm version patch",
     "deploy": "vsce publish"
@@ -95,7 +96,9 @@
     "@types/node": "^12.12.38",
     "@typescript-eslint/parser": "^2.31.0",
     "eslint": "^6.4.0",
+    "merge-options": "^2.0.0",
     "mocha": "^6.2.2",
+    "rimraf": "^3.0.2",
     "ts-loader": "^7.0.3",
     "typescript": "^3.8.3",
     "vsce": "^1.75.0",
