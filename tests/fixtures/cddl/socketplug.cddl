@@ -5,13 +5,13 @@ PersonalData = {
 	* $$personaldata-extensions
 }
 
-NameComponents = ( ? firstName: tstr, ? familyName: tstr ) 
+NameComponents = ( ? firstName: tstr, ? familyName: tstr )
 
 ; The above already works as is.
 ; But then, we can add later:
 
-$$personaldata-extensions //= ( favorite-salsa: tstr,) 
+$$personaldata-extensions //= ( favorite-salsa: tstr, )
 
 ; and again, somewhere else:
 
-$$personaldata-extensions //= ( shoesize: uint,)
+$$personaldata-extensions //= ( shoesize: uint, )
