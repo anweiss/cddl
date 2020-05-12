@@ -2225,7 +2225,7 @@ mod tests {
         span: (0, 0, 0),
       }
       .to_string(),
-      " key1: \"value1\", key2: \"value2\" ".to_string()
+      " key1: \"value1\", key2: \"value2\", ".to_string()
     )
   }
 }
