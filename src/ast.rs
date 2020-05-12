@@ -265,14 +265,14 @@ impl<'a> fmt::Display for Rule<'a> {
       } => {
         let mut rule_str = String::new();
 
-        rule_str.push_str(&format!("{}", rule));
+        rule_str.push_str(&rule.to_string());
 
         if let Some(comments) = comments_after_rule {
           if comments.any_non_newline() {
             if let Some(&"\n") = comments.0.first() {
-              rule_str.push_str(&format!("{}", comments.to_string()));
+              rule_str.push_str(&comments.to_string());
             } else {
-              rule_str.push_str(&format!(" {}", comments.to_string()));
+              rule_str.push_str(&format!(" {}", comments));
             }
           }
         }
@@ -286,12 +286,12 @@ impl<'a> fmt::Display for Rule<'a> {
       } => {
         let mut rule_str = String::new();
 
-        rule_str.push_str(&format!("{}", rule.to_string()));
+        rule_str.push_str(&rule.to_string());
 
         if let Some(comments) = comments_after_rule {
           if comments.any_non_newline() {
             if let Some(&"\n") = comments.0.first() {
-              rule_str.push_str(&format!("{}", comments.to_string()));
+              rule_str.push_str(&comments.to_string());
             } else {
               rule_str.push_str(&format!(" {}", comments.to_string()));
             }
@@ -1626,12 +1626,12 @@ impl<'a> fmt::Display for OptionalComma<'a> {
           }
         }
 
-        for (idx, comment) in comments.0.iter().enumerate() {
-          if idx == 0 && *comment != "\n" {
+        for (idx, &comment) in comments.0.iter().enumerate() {
+          if idx == 0 && comment != "\n" {
             optcomma_str.push_str(&format!(";{}\n", comment));
           } else if idx == 0 {
-            optcomma_str.push_str(&format!("{}", comment));
-          } else if *comment != "\n" {
+            optcomma_str.push_str(&comment.to_string());
+          } else if comment != "\n" {
             optcomma_str.push_str(&format!("\t;{}\n", comment));
           } else {
             optcomma_str.push_str(&format!("\t{}", comment));
