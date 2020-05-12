@@ -5,7 +5,7 @@ repository = "https://github.com/anweiss/cddl"
 homepage = "https://cddl.anweiss.tech"
 categories = ["parser-implementations", "encoding", "development-tools", "wasm"]
 license = "MIT"
-version = "0.7.2"
+version = "0.7.3"
 authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
 readme = "README.md"
 edition = "2018"
@@ -50,14 +50,16 @@ lsp = ["std"]
 nightly = ["uriparse"]
 
 [[bin]]
-name = "cddl"
+name = "cli"
 required-features = ["std"]
-path = "src/bin/cddl.rs"
+path = "src/bin/cli.rs"
+test = false
 
 [[bin]]
 name = "repl"
 required-features = ["std"]
 path = "src/bin/repl.rs"
+test = false
 
 [[test]]
 name = "cddl"

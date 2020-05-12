@@ -35,7 +35,7 @@ operational_cert = (
 	sigma: $signature
 )
 
-protocol_version = ( uint, uint ) 
+protocol_version = ( uint, uint )
 
 ; Do we want to use a Map here? Is it actually cheaper?
 ; Do we want to add extension points here?

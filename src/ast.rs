@@ -265,14 +265,14 @@ impl<'a> fmt::Display for Rule<'a> {
       } => {
         let mut rule_str = String::new();
 
-        rule_str.push_str(&format!("{}", rule));
+        rule_str.push_str(&rule.to_string());
 
         if let Some(comments) = comments_after_rule {
           if comments.any_non_newline() {
             if let Some(&"\n") = comments.0.first() {
-              rule_str.push_str(&format!("{}", comments.to_string()));
+              rule_str.push_str(&comments.to_string());
             } else {
-              rule_str.push_str(&format!(" {}", comments.to_string()));
+              rule_str.push_str(&format!(" {}", comments));
             }
           }
         }
@@ -286,12 +286,12 @@ impl<'a> fmt::Display for Rule<'a> {
       } => {
         let mut rule_str = String::new();
 
-        rule_str.push_str(&format!("{} ", rule.to_string()));
+        rule_str.push_str(&rule.to_string());
 
         if let Some(comments) = comments_after_rule {
           if comments.any_non_newline() {
             if let Some(&"\n") = comments.0.first() {
-              rule_str.push_str(&format!("{}", comments.to_string()));
+              rule_str.push_str(&comments.to_string());
             } else {
               rule_str.push_str(&format!(" {}", comments.to_string()));
             }
@@ -1098,8 +1098,19 @@ impl<'a> fmt::Display for Type2<'a> {
         if let Some(comments) = comments_before_group {
           if comments.any_non_newline() {
             non_newline_comments_before_group = true;
-            t2_str.push_str(&format!(" {}\t", comments));
-            t2_str.push_str(&group.to_string().trim_start().to_string());
+            for (idx, comment) in comments.0.iter().enumerate() {
+              if *comment != "\n" {
+                if idx == 0 {
+                  t2_str.push_str(&format!(" ;{}", comment));
+                } else {
+                  t2_str.push_str(&format!("\t;{}\n", comment));
+                }
+              } else {
+                t2_str.push_str("\n");
+              }
+            }
+
+            t2_str.push_str(&format!("\t{}", group.to_string().trim_start()));
           } else {
             t2_str.push_str(&group.to_string());
           }
@@ -1389,7 +1400,7 @@ impl<'a> GroupChoice<'a> {
     self
       .group_entries
       .iter()
-      .any(|ge| ge.0.has_trailing_comments())
+      .any(|ge| ge.0.has_trailing_comments() || ge.1.has_trailing_comments())
   }
 }
 
@@ -1403,7 +1414,7 @@ impl<'a> fmt::Display for GroupChoice<'a> {
         self.group_entries[0].0, self.group_entries[0].1
       ));
 
-      if self.group_entries[0].1.trailing_comments.is_none() {
+      if !self.group_entries[0].1.has_trailing_comments() {
         gc_str.push_str(" ");
       }
 
@@ -1446,14 +1457,23 @@ impl<'a> fmt::Display for GroupChoice<'a> {
       entries_with_comment_before_comma.push((idx, false));
     }
 
-    if self.group_entries.len() > 3 {
+    let has_trailing_comments_after_comma = self
+      .group_entries
+      .iter()
+      .any(|ge| ge.1.has_trailing_comments());
+
+    if self.group_entries.len() > 3
+      || (self.group_entries.len() <= 3 && has_trailing_comments_after_comma)
+    {
       gc_str.push_str("\n");
     } else {
       gc_str.push_str(" ");
     }
 
     for (idx, ge) in self.group_entries.iter().enumerate() {
-      if self.group_entries.len() > 3 {
+      if self.group_entries.len() > 3
+        || (self.group_entries.len() <= 3 && has_trailing_comments_after_comma)
+      {
         gc_str.push_str("\t");
       }
 
@@ -1469,25 +1489,31 @@ impl<'a> fmt::Display for GroupChoice<'a> {
         } else if idx != self.group_entries.len() - 1 {
           gc_str.push_str(&format!(", {}\n", ge.0.to_string().trim_end()));
         } else {
-          gc_str.push_str(&format!(", {}", ge.0));
+          gc_str.push_str(&format!(", {}", ge.0.to_string().trim_end()));
         }
       } else {
-        gc_str.push_str(&ge.0.to_string().trim_end().to_string());
+        gc_str.push_str(&format!(
+          "{}{}",
+          ge.0.to_string().trim_end(),
+          ge.1.to_string().trim_end()
+        ));
 
-        if idx != self.group_entries.len() - 1 {
-          gc_str.push_str(",");
-        }
+        // if idx != self.group_entries.len() - 1 {
+        //   gc_str.push_str(",");
+        // }
 
-        if self.group_entries.len() <= 3 {
+        if self.group_entries.len() <= 3 && !has_trailing_comments_after_comma {
           gc_str.push_str(" ");
         }
       }
 
-      if (self.group_entries.len() > 3 && entries_with_comment_before_comma.iter().all(|e| !e.1))
-        || (self.group_entries.len() > 3
-          && idx == self.group_entries.len() - 1
-          && !ge.0.has_trailing_comments())
-      {
+      if idx == self.group_entries.len() - 1 && self.group_entries.len() > 3 {
+        gc_str.push_str("\n");
+
+        break;
+      }
+
+      if self.group_entries.len() > 3 && entries_with_comment_before_comma.iter().all(|e| !e.1) {
         gc_str.push_str("\n");
       }
     }
@@ -1593,10 +1619,38 @@ impl<'a> fmt::Display for OptionalComma<'a> {
     }
 
     if let Some(comments) = &self.trailing_comments {
-      optcomma_str.push_str(&comments.to_string());
+      if comments.any_non_newline() {
+        if let Some(comment) = comments.0.first() {
+          if *comment != "\n" && self.optional_comma {
+            optcomma_str.push_str(" ");
+          }
+        }
+
+        for (idx, &comment) in comments.0.iter().enumerate() {
+          if idx == 0 && comment != "\n" {
+            optcomma_str.push_str(&format!(";{}\n", comment));
+          } else if idx == 0 {
+            optcomma_str.push_str(&comment.to_string());
+          } else if comment != "\n" {
+            optcomma_str.push_str(&format!("\t;{}\n", comment));
+          } else {
+            optcomma_str.push_str(&format!("\t{}", comment));
+          }
+        }
+      }
     }
 
     write!(f, "{}", optcomma_str)
+  }
+}
+
+impl<'a> OptionalComma<'a> {
+  fn has_trailing_comments(&self) -> bool {
+    if let Some(comments) = &self.trailing_comments {
+      return comments.any_non_newline();
+    }
+
+    false
   }
 }
 
@@ -1673,7 +1727,14 @@ impl<'a> fmt::Display for GroupEntry<'a> {
             non_newline_comments_before_group = true;
 
             ge_str.push_str(&format!(" {}", comments));
-            ge_str.push_str(&format!("\t{}", group.to_string().trim_start()));
+
+            if !group
+              .group_choices
+              .iter()
+              .all(|gc| gc.group_entries.is_empty())
+            {
+              ge_str.push_str(&format!("\t{}", group.to_string().trim_start()));
+            }
           } else {
             ge_str.push_str(&group.to_string());
           }
@@ -2164,7 +2225,7 @@ mod tests {
         span: (0, 0, 0),
       }
       .to_string(),
-      " key1: \"value1\", key2: \"value2\" ".to_string()
+      " key1: \"value1\", key2: \"value2\", ".to_string()
     )
   }
 }
