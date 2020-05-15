@@ -7,5 +7,10 @@
 		"path": "cddl-lsp"
 	}
 ],
-  "settings": {}
+	"settings": {
+		"rust-analyzer.cargo.allFeatures": false,
+		"rust-analyzer.cargo.features": [
+			"std"
+		]
+	}
 }
