@@ -2482,7 +2482,6 @@ mod tests {
                   │
                 2 │ a = b
                   │ ^^^^^ rule with the same identifier is already defined
-                  │
 
               "#
             )
@@ -2501,7 +2500,6 @@ mod tests {
                    │
                  2 │ a = b
                    │ ^^^^^ rule with the same identifier is already defined
-                   │
 
               "#
             )
@@ -2574,7 +2572,6 @@ mod tests {
                 │
               1 │ <1, 2>
                 │  ^ generic parameters must be named identifiers
-                │
 
               "#
             )
@@ -2593,7 +2590,6 @@ mod tests {
                    │
                  1 │ <1, 2>
                    │  ^ generic parameters must be named identifiers
-                   │
 
               "#
             )
@@ -2642,7 +2638,6 @@ mod tests {
                 4 │ rulec = rulee
                 5 │ rulec = rulee2
                   │ ^^^^^^^^^^^^^^ rule with the same identifier is already defined
-                  │
 
               "#
             )
@@ -2667,7 +2662,6 @@ mod tests {
                  4 │ rulec = rulee
                  5 │ rulec = rulee2
                    │ ^^^^^^^^^^^^^^ rule with the same identifier is already defined
-                   │
 
               "#
             )

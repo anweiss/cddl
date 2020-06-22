@@ -1157,7 +1157,6 @@ mod tests {
                 │
               1 │ myrule = number .asdf 10
                 │                 ^^^^^ invalid control operator
-                │
 
             "#
           )
