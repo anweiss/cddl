@@ -25,6 +25,8 @@ module.exports = withDefaults({
       outName: 'cddl',
     }),
 
-    new CopyPlugin([{ from: 'pkg/cddl_bg.wasm', to: 'cddl_bg.wasm' }]),
+    new CopyPlugin({
+      patterns: [{ from: 'pkg/cddl_bg.wasm', to: 'cddl_bg.wasm' }],
+    }),
   ],
 });
