@@ -27,13 +27,13 @@
     "cddl": "file:../pkg"
   },
   "devDependencies": {
-    "copy-webpack-plugin": "^5.1.1",
+    "copy-webpack-plugin": "^6.0.3",
     "css-loader": "^1.0.0",
     "hello-wasm-pack": "^0.1.0",
     "minimist": "^1.2.5",
     "monaco-editor": "^0.17.1",
     "style-loader": "^0.23.1",
-    "webpack": "^4.43.0",
+    "webpack": "^4.44.1",
     "webpack-cli": "^3.3.12",
     "webpack-dev-server": "^3.11.0"
   }
