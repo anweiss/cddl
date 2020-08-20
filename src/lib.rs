@@ -292,6 +292,8 @@ pub mod token;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod validation;
 
+pub mod visitor;
+
 #[doc(inline)]
 pub use self::{
   lexer::{lexer_from_str, LexerError},
