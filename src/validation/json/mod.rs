@@ -1,4 +1,8 @@
+// Temporary
+#![allow(missing_docs, unused_variables)]
+
 mod controls;
+mod visitor;
 
 use super::{CompilationError, Error, Result, Validator};
 use crate::{
