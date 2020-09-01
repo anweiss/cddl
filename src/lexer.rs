@@ -312,7 +312,7 @@ impl<'a> Lexer<'a> {
     self
       .input
       .next()
-      .and_then(|c| {
+      .map(|c| {
         if c.1 == '\n' {
           self.position.line += 1;
           self.position.column = 1;
@@ -324,7 +324,7 @@ impl<'a> Lexer<'a> {
           self.position.index = c.0;
         }
 
-        Some(c)
+        c
       })
       .ok_or_else(|| (self.str_input, self.position, UnableToAdvanceToken).into())
   }
@@ -539,10 +539,10 @@ impl<'a> Lexer<'a> {
                   let mut buf = [0u8; 1024];
                   return base16::decode_slice(&b[..], &mut buf)
                     .map_err(|e| (self.str_input, self.position, e).into())
-                    .and_then(|_| {
+                    .map(|_| {
                       self.position.range = (token_offset, self.position.index + 1);
 
-                      Ok((self.position, Token::VALUE(Value::BYTE(ByteValue::B16(b)))))
+                      (self.position, Token::VALUE(Value::BYTE(ByteValue::B16(b))))
                     });
                 }
               }
@@ -567,10 +567,10 @@ impl<'a> Lexer<'a> {
                           let mut buf = [0u8; 1024];
                           return base64::decode_config_slice(&bs, base64::URL_SAFE, &mut buf)
                             .map_err(|e| (self.str_input, self.position, e).into())
-                            .and_then(|_| {
+                            .map(|_| {
                               self.position.range = (token_offset, self.position.index + 1);
 
-                              Ok((self.position, Token::VALUE(Value::BYTE(ByteValue::B64(bs)))))
+                              (self.position, Token::VALUE(Value::BYTE(ByteValue::B64(bs))))
                             });
                         }
                       }
