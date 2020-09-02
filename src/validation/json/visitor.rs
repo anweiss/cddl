@@ -53,7 +53,7 @@ pub struct JSONValidator<'a> {
   cddl_location: String,
   json_location: String,
   occurence: Option<Occur>,
-  array_value: Option<Value>,
+  group_entry_idx: Option<usize>,
   object_value: Option<Value>,
   is_member_key: bool,
 }
@@ -67,7 +67,7 @@ impl<'a> JSONValidator<'a> {
       cddl_location: String::new(),
       json_location: String::new(),
       occurence: None,
-      array_value: None,
+      group_entry_idx: None,
       object_value: None,
       is_member_key: false,
     }
@@ -98,7 +98,62 @@ impl<'a> JSONValidator<'a> {
   }
 }
 
+pub fn validate_array_occurrence(
+  occurence: Option<&Occur>,
+  values: &[Value],
+) -> std::result::Result<(bool, bool), String> {
+  match occurence {
+    Some(Occur::ZeroOrMore(_)) | Some(Occur::Optional(_)) => Ok((true, true)),
+    Some(Occur::OneOrMore(_)) => {
+      if values.is_empty() {
+        Err("array must have at least one item".to_string())
+      } else {
+        Ok((true, false))
+      }
+    }
+    Some(Occur::Exact { lower, upper, .. }) => {
+      if let Some(lower) = lower {
+        if let Some(upper) = upper {
+          if lower == upper && values.len() != *lower {
+            return Err(format!("array must have exactly {} items", lower));
+          }
+          if values.len() < *lower || values.len() > *upper {
+            return Err(format!(
+              "array must have between {} and {} items",
+              lower, upper
+            ));
+          }
+        } else if values.len() < *lower {
+          return Err(format!("array must have at least {} items", lower));
+        }
+      } else if let Some(upper) = upper {
+        if values.len() > *upper {
+          return Err(format!("array must have not more than {} items", upper));
+        }
+      }
+
+      Ok((true, false))
+    }
+    None => {
+      if values.is_empty() {
+        Err("array must have exactly one item".to_string())
+      } else {
+        Ok((false, false))
+      }
+    }
+  }
+}
+
 impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
+  fn visit_group_choice(&mut self, gc: &GroupChoice) -> visitor::Result<ValidationError> {
+    for (idx, ge) in gc.group_entries.iter().enumerate() {
+      self.group_entry_idx = Some(idx);
+      self.visit_group_entry(&ge.0)?;
+    }
+
+    Ok(())
+  }
+
   fn visit_type(&mut self, t: &Type) -> visitor::Result<ValidationError> {
     // Find the first type choice that validates to true
     let find_type_choice = |tc: &TypeChoice| match self.visit_type1(&tc.type1) {
@@ -152,42 +207,51 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
           return Ok(());
         }
 
-        if let Some(Occur::OneOrMore(_)) = &self.occurence {
-          if a.is_empty() {
-            self.add_error("array must have at least one item".to_string());
+        #[allow(unused_assignments)]
+        let mut iter_items = false;
+        #[allow(unused_assignments)]
+        let mut allow_errors = false;
+        match validate_array_occurrence(self.occurence.as_ref().take(), a) {
+          Ok(r) => {
+            iter_items = r.0;
+            allow_errors = r.1;
+          }
+          Err(e) => {
+            self.add_error(e);
             return Ok(());
           }
         }
 
-        if let Some(Occur::Exact { lower, upper, .. }) = self.occurence {
-          if let Some(lower) = lower {
-            if let Some(upper) = upper {
-              if a.len() < lower || a.len() > upper {
-                self.add_error(format!(
-                  "array must have between {} and {} items",
-                  lower, upper
-                ));
-                return Ok(());
-              }
-            } else if a.len() < lower {
-              self.add_error(format!("array must have at least {} items", lower));
-              return Ok(());
-            }
-          } else if let Some(upper) = upper {
-            if a.len() > upper {
-              self.add_error(format!("array must have not more than {} items", upper));
-              return Ok(());
+        if iter_items {
+          for (idx, v) in a.iter().enumerate() {
+            let mut jv = JSONValidator::new(self.cddl, v.clone());
+            jv.json_location
+              .push_str(&format!("{}/{}", self.json_location, idx));
+
+            jv.visit_identifier(ident)?;
+
+            // If an array item is invalid, but a '?' or '*' occurrence indicator
+            // is present, the ambiguity results in the error being disregarded
+            if !allow_errors {
+              self.errors.append(&mut jv.errors);
             }
           }
-        }
+        } else if let Some(idx) = self.group_entry_idx.take() {
+          if let Some(v) = a.get(idx) {
+            let mut jv = JSONValidator::new(self.cddl, v.clone());
+            jv.json_location
+              .push_str(&format!("{}/{}", self.json_location, idx));
 
-        for (idx, v) in a.iter().enumerate() {
-          let mut jv = JSONValidator::new(self.cddl, v.clone());
-          jv.json_location
-            .push_str(&format!("{}[{}]", self.json_location, idx));
+            jv.visit_identifier(ident)?;
 
-          jv.visit_identifier(ident)?;
-          self.errors.append(&mut jv.errors);
+            // If an array item is invalid, but a '?' or '*' occurrence indicator
+            // is present, the ambiguity results in the error being disregarded
+            if !allow_errors {
+              self.errors.append(&mut jv.errors);
+            }
+          } else {
+            self.add_error(format!("expecting type {} at index {}", ident, idx));
+          }
         }
 
         Ok(())
@@ -261,13 +325,68 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
         token::Value::BYTE(token::ByteValue::UTF8(b)) if s.as_bytes() == b.as_ref() => None,
         token::Value::BYTE(token::ByteValue::B16(b)) if s.as_bytes() == b.as_ref() => None,
         token::Value::BYTE(token::ByteValue::B64(b)) if s.as_bytes() == b.as_ref() => None,
-        _ => Some(format!("expected {}, got {}", s, value)),
+        _ => Some(format!("expected {}, got \"{}\"", value, s)),
       },
+      Value::Array(a) => {
+        // Member keys are annotation only in an array context
+        if self.is_member_key {
+          return Ok(());
+        }
+
+        #[allow(unused_assignments)]
+        let mut iter_items = false;
+        #[allow(unused_assignments)]
+        let mut allow_errors = false;
+        match validate_array_occurrence(self.occurence.as_ref().take(), a) {
+          Ok(r) => {
+            iter_items = r.0;
+            allow_errors = r.1;
+          }
+          Err(e) => {
+            self.add_error(e);
+            return Ok(());
+          }
+        }
+
+        if iter_items {
+          for (idx, v) in a.iter().enumerate() {
+            let mut jv = JSONValidator::new(self.cddl, v.clone());
+            jv.json_location
+              .push_str(&format!("{}/{}", self.json_location, idx));
+
+            jv.visit_value(value)?;
+
+            // If an array item is invalid, but a '?' or '*' occurrence indicator
+            // is present, the ambiguity results in the error being disregarded
+            if !allow_errors {
+              self.errors.append(&mut jv.errors);
+            }
+          }
+        } else if let Some(idx) = self.group_entry_idx.take() {
+          if let Some(v) = a.get(idx) {
+            let mut jv = JSONValidator::new(self.cddl, v.clone());
+            jv.json_location
+              .push_str(&format!("{}/{}", self.json_location, idx));
+
+            jv.visit_value(value)?;
+
+            // If an array item is invalid, but a '?' or '*' occurrence indicator
+            // is present, the ambiguity results in the error being disregarded
+            if !allow_errors {
+              self.errors.append(&mut jv.errors);
+            }
+          } else {
+            self.add_error(format!("expecting value {} at index {}", value, idx));
+          }
+        }
+
+        None
+      }
       Value::Object(o) => {
         if let token::Value::TEXT(t) = value {
           if let Some(v) = o.get(*t) {
             self.object_value = Some(v.clone());
-            self.json_location.push_str(&format!(".{}", t));
+            self.json_location.push_str(&format!("/{}", t));
 
             None
           } else if let Some(occur) = &self.occurence {
@@ -388,8 +507,8 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl_str = r#"obj = [ tstr ]"#;
-    let json = r#"[ 1 ]"#;
+    let cddl_str = r#"obj = [ "value", "value2" ]"#;
+    let json = r#"[ "value1" ]"#;
 
     let mut lexer = lexer_from_str(cddl_str);
     let cddl = cddl_from_str(&mut lexer, cddl_str, true)?;
