@@ -176,6 +176,61 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
       Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value)),
       Type2::Map { group, .. } => match &self.json {
         Value::Object(_) => self.visit_group(group),
+        Value::Array(a) => {
+          // Member keys are annotation only in an array context
+          if self.is_member_key {
+            return Ok(());
+          }
+
+          #[allow(unused_assignments)]
+          let mut iter_items = false;
+          #[allow(unused_assignments)]
+          let mut allow_errors = false;
+          match validate_array_occurrence(self.occurence.as_ref().take(), a) {
+            Ok(r) => {
+              iter_items = r.0;
+              allow_errors = r.1;
+            }
+            Err(e) => {
+              self.add_error(e);
+              return Ok(());
+            }
+          }
+
+          if iter_items {
+            for (idx, v) in a.iter().enumerate() {
+              let mut jv = JSONValidator::new(self.cddl, v.clone());
+              jv.json_location
+                .push_str(&format!("{}/{}", self.json_location, idx));
+
+              jv.visit_group(group)?;
+
+              // If an array item is invalid, but a '?' or '*' occurrence indicator
+              // is present, the ambiguity results in the error being disregarded
+              if !allow_errors {
+                self.errors.append(&mut jv.errors);
+              }
+            }
+          } else if let Some(idx) = self.group_entry_idx.take() {
+            if let Some(v) = a.get(idx) {
+              let mut jv = JSONValidator::new(self.cddl, v.clone());
+              jv.json_location
+                .push_str(&format!("{}/{}", self.json_location, idx));
+
+              jv.visit_group(group)?;
+
+              // If an array item is invalid, but a '?' or '*' occurrence indicator
+              // is present, the ambiguity results in the error being disregarded
+              if !allow_errors {
+                self.errors.append(&mut jv.errors);
+              }
+            } else {
+              self.add_error(format!("expecting map object {} at index {}", group, idx));
+            }
+          }
+
+          Ok(())
+        }
         _ => todo!(),
       },
       Type2::Array { group, .. } => match &self.json {
@@ -507,8 +562,22 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl_str = r#"obj = [ "value", "value2" ]"#;
-    let json = r#"[ "value1" ]"#;
+    let cddl_str = r#"obj = [
+      + {
+        a: {
+          b: [ + c ]
+        }
+      }
+    ]
+    
+    c = tstr"#;
+    let json = r#"[
+      {
+        "a": {
+          "b": [ "test" ]
+        }
+      }
+    ]"#;
 
     let mut lexer = lexer_from_str(cddl_str);
     let cddl = cddl_from_str(&mut lexer, cddl_str, true)?;
