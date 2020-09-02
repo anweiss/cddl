@@ -123,6 +123,10 @@ where
   E: Error,
   V: Visitor<E> + ?Sized,
 {
+  if let Some(params) = &tr.generic_params {
+    visitor.visit_genericparams(params)?;
+  }
+
   visitor.visit_type(&tr.value)
 }
 
@@ -131,7 +135,11 @@ where
   E: Error,
   V: Visitor<E> + ?Sized,
 {
-  visitor.visit_group_rule(gr)
+  if let Some(params) = &gr.generic_params {
+    visitor.visit_genericparams(params)?;
+  }
+
+  visitor.visit_group_entry(&gr.entry)
 }
 
 pub fn walk_type<E, V>(visitor: &mut V, t: &Type) -> Result<E>
