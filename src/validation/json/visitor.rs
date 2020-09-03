@@ -4,7 +4,7 @@ use crate::{
   visitor::{self, *},
 };
 use serde_json::Value;
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 pub type Result = std::result::Result<(), Error>;
 
@@ -56,6 +56,7 @@ pub struct JSONValidator<'a> {
   group_entry_idx: Option<usize>,
   object_value: Option<Value>,
   is_member_key: bool,
+  generic_rules: BTreeMap<String, Option<BTreeMap<String, Option<Type1<'a>>>>>,
 }
 
 impl<'a> JSONValidator<'a> {
@@ -70,6 +71,7 @@ impl<'a> JSONValidator<'a> {
       group_entry_idx: None,
       object_value: None,
       is_member_key: false,
+      generic_rules: BTreeMap::new(),
     }
   }
 
@@ -145,6 +147,78 @@ pub fn validate_array_occurrence(
 }
 
 impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
+  fn visit_type_rule(&mut self, tr: &TypeRule) -> visitor::Result<ValidationError> {
+    self.generic_rules.insert(
+      tr.name.to_string(),
+      tr.generic_params.as_ref().take().map(|gp| {
+        gp.params
+          .iter()
+          .map(|p| (p.param.ident.to_string(), None))
+          .collect()
+      }),
+    );
+
+    walk_type_rule(self, tr)
+  }
+
+  fn visit_group_rule(&mut self, gr: &GroupRule) -> visitor::Result<ValidationError> {
+    self.generic_rules.insert(
+      gr.name.to_string(),
+      gr.generic_params.as_ref().take().map(|gp| {
+        gp.params
+          .iter()
+          .map(|p| (p.param.ident.to_string(), None))
+          .collect()
+      }),
+    );
+
+    walk_group_rule(self, gr)
+  }
+
+  fn visit_type(&mut self, t: &Type) -> visitor::Result<ValidationError> {
+    let initial_error_count = self.errors.len();
+    for type_choice in t.type_choices.iter() {
+      let error_count = self.errors.len();
+      self.visit_type_choice(type_choice)?;
+      if self.errors.len() == error_count {
+        // Disregard invalid type choice validation errors if one of the
+        // choices validates successfully
+        let type_choice_error_count = self.errors.len() - initial_error_count;
+        if type_choice_error_count > 0 {
+          for i in 0..type_choice_error_count {
+            self.errors.pop();
+          }
+        }
+
+        return Ok(());
+      }
+    }
+
+    Ok(())
+  }
+
+  fn visit_group(&mut self, g: &Group) -> visitor::Result<ValidationError> {
+    let initial_error_count = self.errors.len();
+    for group_choice in g.group_choices.iter() {
+      let error_count = self.errors.len();
+      self.visit_group_choice(group_choice)?;
+      if self.errors.len() == error_count {
+        // Disregard invalid group choice validation errors if one of the
+        // choices validates successfully
+        let group_choice_error_count = self.errors.len() - initial_error_count;
+        if group_choice_error_count > 0 {
+          for i in 0..group_choice_error_count {
+            self.errors.pop();
+          }
+        }
+
+        return Ok(());
+      }
+    }
+
+    Ok(())
+  }
+
   fn visit_group_choice(&mut self, gc: &GroupChoice) -> visitor::Result<ValidationError> {
     for (idx, ge) in gc.group_entries.iter().enumerate() {
       self.group_entry_idx = Some(idx);
@@ -154,18 +228,255 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_type(&mut self, t: &Type) -> visitor::Result<ValidationError> {
-    // Find the first type choice that validates to true
-    let find_type_choice = |tc: &TypeChoice| match self.visit_type1(&tc.type1) {
-      Ok(()) => true,
-      Err(e) => {
-        self.errors.push(e);
-        false
+  fn visit_range(
+    &mut self,
+    lower: &Type2,
+    upper: &Type2,
+    is_inclusive: bool,
+  ) -> visitor::Result<ValidationError> {
+    if let Value::Array(a) = &self.json {
+      #[allow(unused_assignments)]
+      let mut iter_items = false;
+      #[allow(unused_assignments)]
+      let mut allow_errors = false;
+      match validate_array_occurrence(self.occurence.as_ref().take(), a) {
+        Ok(r) => {
+          iter_items = r.0;
+          allow_errors = r.1;
+        }
+        Err(e) => {
+          self.add_error(e);
+          return Ok(());
+        }
       }
-    };
 
-    if t.type_choices.iter().any(find_type_choice) {
+      if iter_items {
+        for (idx, v) in a.iter().enumerate() {
+          let mut jv = JSONValidator::new(self.cddl, v.clone());
+          jv.json_location
+            .push_str(&format!("{}/{}", self.json_location, idx));
+
+          jv.visit_range(lower, upper, is_inclusive)?;
+
+          // If an array item is invalid, but a '?' or '*' occurrence indicator
+          // is present, the ambiguity results in the error being disregarded
+          if !allow_errors {
+            self.errors.append(&mut jv.errors);
+          }
+        }
+      } else if let Some(idx) = self.group_entry_idx.take() {
+        if let Some(v) = a.get(idx) {
+          let mut jv = JSONValidator::new(self.cddl, v.clone());
+          jv.json_location
+            .push_str(&format!("{}/{}", self.json_location, idx));
+
+          jv.visit_range(lower, upper, is_inclusive)?;
+
+          // If an array item is invalid, but a '?' or '*' occurrence indicator
+          // is present, the ambiguity results in the error being disregarded
+          if !allow_errors {
+            self.errors.append(&mut jv.errors);
+          }
+        } else {
+          self.add_error(format!("expecting array item at index {}", idx));
+        }
+      }
+
       return Ok(());
+    }
+
+    match lower {
+      Type2::IntValue { value: l, .. } => match upper {
+        Type2::IntValue { value: u, .. } => {
+          let error_str = if is_inclusive {
+            format!(
+              "expected integer to be in range {} <= value <= {}, got {}",
+              l, u, self.json
+            )
+          } else {
+            format!(
+              "expected integer to be in range {} < value < {}, got {}",
+              l, u, self.json
+            )
+          };
+
+          match &self.json {
+            Value::Number(n) => {
+              if let Some(i) = n.as_i64() {
+                if is_inclusive {
+                  if i < *l as i64 || i > *u as i64 {
+                    self.add_error(error_str);
+                  } else {
+                    return Ok(());
+                  }
+                } else if i <= *l as i64 || i >= *u as i64 {
+                  self.add_error(error_str);
+                  return Ok(());
+                } else {
+                  return Ok(());
+                }
+              } else {
+                self.add_error(error_str);
+                return Ok(());
+              }
+            }
+            _ => {
+              self.add_error(error_str);
+              return Ok(());
+            }
+          }
+        }
+        Type2::UintValue { value: u, .. } => {
+          let error_str = if is_inclusive {
+            format!(
+              "expected integer to be in range {} <= value <= {}, got {}",
+              l, u, self.json
+            )
+          } else {
+            format!(
+              "expected integer to be in range {} < value < {}, got {}",
+              l, u, self.json
+            )
+          };
+
+          match &self.json {
+            Value::Number(n) => {
+              if let Some(i) = n.as_i64() {
+                if is_inclusive {
+                  if i < *l as i64 || i > *u as i64 {
+                    self.add_error(error_str);
+                  } else {
+                    return Ok(());
+                  }
+                } else if i <= *l as i64 || i >= *u as i64 {
+                  self.add_error(error_str);
+                  return Ok(());
+                } else {
+                  return Ok(());
+                }
+              } else {
+                self.add_error(error_str);
+                return Ok(());
+              }
+            }
+            _ => {
+              self.add_error(error_str);
+              return Ok(());
+            }
+          }
+        }
+        _ => {
+          self.add_error(format!(
+            "invalid cddl range. upper value must be an integer type. got {}",
+            upper
+          ));
+          return Ok(());
+        }
+      },
+      Type2::UintValue { value: l, .. } => match upper {
+        Type2::UintValue { value: u, .. } => {
+          let error_str = if is_inclusive {
+            format!(
+              "expected uint to be in range {} <= value <= {}, got {}",
+              l, u, self.json
+            )
+          } else {
+            format!(
+              "expected uint to be in range {} < value < {}, got {}",
+              l, u, self.json
+            )
+          };
+
+          match &self.json {
+            Value::Number(n) => {
+              if let Some(i) = n.as_u64() {
+                if is_inclusive {
+                  if i < *l as u64 || i > *u as u64 {
+                    self.add_error(error_str);
+                  } else {
+                    return Ok(());
+                  }
+                } else if i <= *l as u64 || i >= *u as u64 {
+                  self.add_error(error_str);
+                  return Ok(());
+                } else {
+                  return Ok(());
+                }
+              } else {
+                self.add_error(error_str);
+                return Ok(());
+              }
+            }
+            _ => {
+              self.add_error(error_str);
+              return Ok(());
+            }
+          }
+        }
+        _ => {
+          self.add_error(format!(
+            "invalid cddl range. upper value must be a uint type. got {}",
+            upper
+          ));
+          return Ok(());
+        }
+      },
+      Type2::FloatValue { value: l, .. } => match upper {
+        Type2::FloatValue { value: u, .. } => {
+          let error_str = if is_inclusive {
+            format!(
+              "expected float to be in range {} <= value <= {}, got {}",
+              l, u, self.json
+            )
+          } else {
+            format!(
+              "expected float to be in range {} < value < {}, got {}",
+              l, u, self.json
+            )
+          };
+
+          match &self.json {
+            Value::Number(n) => {
+              if let Some(f) = n.as_f64() {
+                if is_inclusive {
+                  if f < *l as f64 || f > *u as f64 {
+                    self.add_error(error_str);
+                  } else {
+                    return Ok(());
+                  }
+                } else if f <= *l as f64 || f >= *u as f64 {
+                  self.add_error(error_str);
+                  return Ok(());
+                } else {
+                  return Ok(());
+                }
+              } else {
+                self.add_error(error_str);
+                return Ok(());
+              }
+            }
+            _ => {
+              self.add_error(error_str);
+              return Ok(());
+            }
+          }
+        }
+        _ => {
+          self.add_error(format!(
+            "invalid cddl range. upper value must be a float type. got {}",
+            upper
+          ));
+          return Ok(());
+        }
+      },
+      _ => {
+        self.add_error(
+          "invalid cddl range. upper and lower values must be either integers or floats"
+            .to_string(),
+        );
+
+        return Ok(());
+      }
     }
 
     Ok(())
@@ -231,13 +542,25 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
 
           Ok(())
         }
-        _ => todo!(),
+        _ => {
+          self.add_error(format!("expecting map object {}, got {}", t2, self.json));
+          Ok(())
+        }
       },
       Type2::Array { group, .. } => match &self.json {
         Value::Array(_) => self.visit_group(group),
         _ => todo!(),
       },
-      Type2::Typename { ident, .. } => self.visit_identifier(ident),
+      Type2::Typename {
+        ident,
+        generic_args,
+        ..
+      } => {
+        if let Some(ga) = generic_args {
+          todo!()
+        }
+        self.visit_identifier(ident)
+      }
       Type2::IntValue { value, .. } => self.visit_value(&token::Value::INT(*value)),
       Type2::UintValue { value, .. } => self.visit_value(&token::Value::UINT(*value)),
       Type2::FloatValue { value, .. } => self.visit_value(&token::Value::FLOAT(*value)),
@@ -503,7 +826,7 @@ fn is_ident_null_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 }
 
 fn is_ident_bool_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if ident.ident == "bool" {
+  if let "bool" | "true" | "false" = ident.ident {
     return true;
   }
 
@@ -520,8 +843,8 @@ fn is_ident_bool_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 }
 
 fn is_ident_numeric_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let "uint" | "nint" | "int" | "number" | "float" | "float16" | "float32" | "float64"
-  | "float16-32" | "float32-64" = ident.ident
+  if let "uint" | "nint" | "integer" | "int" | "number" | "float" | "float16" | "float32"
+  | "float64" | "float16-32" | "float32-64" | "unsigned" = ident.ident
   {
     return true;
   }
@@ -562,21 +885,9 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl_str = r#"obj = [
-      + {
-        a: {
-          b: [ + c ]
-        }
-      }
-    ]
-    
-    c = tstr"#;
+    let cddl_str = r#"rule = [ + -10.0..-3.0 ]"#;
     let json = r#"[
-      {
-        "a": {
-          "b": [ "test" ]
-        }
-      }
+      -10.0
     ]"#;
 
     let mut lexer = lexer_from_str(cddl_str);

@@ -40,7 +40,7 @@ pub trait Visitor<E: Error> {
   }
 
   fn visit_range(&mut self, lower: &Type2, upper: &Type2, is_inclusive: bool) -> Result<E> {
-    walk_range(self, lower, upper, is_inclusive)
+    walk_range(self, lower, upper)
   }
 
   fn visit_control_operator(
@@ -49,7 +49,7 @@ pub trait Visitor<E: Error> {
     ctrl: &str,
     controller: &Type2,
   ) -> Result<E> {
-    walk_control_operator(self, target, ctrl, controller)
+    walk_control_operator(self, target, controller)
   }
 
   fn visit_type2(&mut self, t2: &Type2) -> Result<E> {
@@ -94,14 +94,6 @@ pub trait Visitor<E: Error> {
     walk_genericarg(self, arg)
   }
 
-  fn visit_genericparams(&mut self, params: &GenericParams) -> Result<E> {
-    walk_genericparams(self, params)
-  }
-
-  fn visit_genericparam(&mut self, param: &GenericParam) -> Result<E> {
-    walk_genericparam(self, param)
-  }
-
   fn visit_nonmemberkey(&mut self, nmk: &NonMemberKey) -> Result<E> {
     walk_nonmemberkey(self, nmk)
   }
@@ -123,10 +115,6 @@ where
   E: Error,
   V: Visitor<E> + ?Sized,
 {
-  if let Some(params) = &tr.generic_params {
-    visitor.visit_genericparams(params)?;
-  }
-
   visitor.visit_type(&tr.value)
 }
 
@@ -135,10 +123,6 @@ where
   E: Error,
   V: Visitor<E> + ?Sized,
 {
-  if let Some(params) = &gr.generic_params {
-    visitor.visit_genericparams(params)?;
-  }
-
   visitor.visit_group_entry(&gr.entry)
 }
 
@@ -155,7 +139,7 @@ where
   E: Error,
   V: Visitor<E> + ?Sized,
 {
-  todo!()
+  visitor.visit_type1(&tc.type1)
 }
 
 pub fn walk_type1<E, V>(visitor: &mut V, t1: &Type1) -> Result<E>
@@ -183,30 +167,22 @@ where
   }
 }
 
-pub fn walk_range<E, V>(
-  visitor: &mut V,
-  lower: &Type2,
-  upper: &Type2,
-  is_inclusive: bool,
-) -> Result<E>
+pub fn walk_range<E, V>(visitor: &mut V, lower: &Type2, upper: &Type2) -> Result<E>
 where
   E: Error,
   V: Visitor<E> + ?Sized,
 {
-  todo!()
+  visitor.visit_type2(lower)?;
+  visitor.visit_type2(upper)
 }
 
-pub fn walk_control_operator<E, V>(
-  visitor: &mut V,
-  target: &Type2,
-  ctrl: &str,
-  controller: &Type2,
-) -> Result<E>
+pub fn walk_control_operator<E, V>(visitor: &mut V, target: &Type2, controller: &Type2) -> Result<E>
 where
   E: Error,
   V: Visitor<E> + ?Sized,
 {
-  todo!()
+  visitor.visit_type2(target)?;
+  visitor.visit_type2(controller)
 }
 
 pub fn walk_type2<E, V>(visitor: &mut V, t2: &Type2) -> Result<E>
@@ -321,7 +297,11 @@ where
   E: Error,
   V: Visitor<E> + ?Sized,
 {
-  todo!()
+  for arg in args.args.iter() {
+    visitor.visit_genericarg(arg)?;
+  }
+
+  Ok(())
 }
 
 pub fn walk_genericarg<E, V>(visitor: &mut V, arg: &GenericArg) -> Result<E>
@@ -329,23 +309,7 @@ where
   E: Error,
   V: Visitor<E> + ?Sized,
 {
-  todo!()
-}
-
-pub fn walk_genericparams<E, V>(visitor: &mut V, params: &GenericParams) -> Result<E>
-where
-  E: Error,
-  V: Visitor<E> + ?Sized,
-{
-  todo!()
-}
-
-pub fn walk_genericparam<E, V>(visitor: &mut V, param: &GenericParam) -> Result<E>
-where
-  E: Error,
-  V: Visitor<E> + ?Sized,
-{
-  todo!()
+  visitor.visit_type1(&arg.arg)
 }
 
 pub fn walk_nonmemberkey<E, V>(visitor: &mut V, nmk: &NonMemberKey) -> Result<E>
