@@ -6,103 +6,113 @@ use std::error::Error;
 
 pub type Result<T> = std::result::Result<(), T>;
 
-pub trait Visitor<E: Error> {
-  fn visit_rule(&mut self, rule: &Rule) -> Result<E> {
+pub trait Visitor<'a, E: Error> {
+  fn visit_rule(&mut self, rule: &Rule<'a>) -> Result<E> {
     walk_rule(self, rule)
   }
 
-  fn visit_identifier(&mut self, ident: &Identifier) -> Result<E>;
+  fn visit_identifier(&mut self, ident: &Identifier<'a>) -> Result<E> {
+    Ok(())
+  }
 
-  fn visit_value(&mut self, value: &Value) -> Result<E>;
+  fn visit_value(&mut self, value: &Value<'a>) -> Result<E> {
+    Ok(())
+  }
 
-  fn visit_type_rule(&mut self, tr: &TypeRule) -> Result<E> {
+  fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> Result<E> {
     walk_type_rule(self, tr)
   }
 
-  fn visit_group_rule(&mut self, gr: &GroupRule) -> Result<E> {
+  fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> Result<E> {
     walk_group_rule(self, gr)
   }
 
-  fn visit_type(&mut self, t: &Type) -> Result<E> {
+  fn visit_type(&mut self, t: &Type<'a>) -> Result<E> {
     walk_type(self, t)
   }
 
-  fn visit_type_choice(&mut self, tc: &TypeChoice) -> Result<E> {
+  fn visit_type_choice(&mut self, tc: &TypeChoice<'a>) -> Result<E> {
     walk_type_choice(self, tc)
   }
 
-  fn visit_type1(&mut self, t1: &Type1) -> Result<E> {
+  fn visit_type1(&mut self, t1: &Type1<'a>) -> Result<E> {
     walk_type1(self, t1)
   }
 
-  fn visit_operator(&mut self, target: &Type1, o: &Operator) -> Result<E> {
+  fn visit_operator(&mut self, target: &Type1<'a>, o: &Operator<'a>) -> Result<E> {
     walk_operator(self, target, o)
   }
 
-  fn visit_range(&mut self, lower: &Type2, upper: &Type2, is_inclusive: bool) -> Result<E> {
+  fn visit_range(&mut self, lower: &Type2<'a>, upper: &Type2<'a>, is_inclusive: bool) -> Result<E> {
     walk_range(self, lower, upper)
   }
 
   fn visit_control_operator(
     &mut self,
-    target: &Type2,
+    target: &Type2<'a>,
     ctrl: &str,
-    controller: &Type2,
+    controller: &Type2<'a>,
   ) -> Result<E> {
     walk_control_operator(self, target, controller)
   }
 
-  fn visit_type2(&mut self, t2: &Type2) -> Result<E> {
+  fn visit_type2(&mut self, t2: &Type2<'a>) -> Result<E> {
     walk_type2(self, t2)
   }
 
-  fn visit_group(&mut self, g: &Group) -> Result<E> {
+  fn visit_group(&mut self, g: &Group<'a>) -> Result<E> {
     walk_group(self, g)
   }
 
-  fn visit_group_choice(&mut self, gc: &GroupChoice) -> Result<E> {
+  fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> Result<E> {
     walk_group_choice(self, gc)
   }
 
-  fn visit_group_entry(&mut self, entry: &GroupEntry) -> Result<E> {
+  fn visit_group_entry(&mut self, entry: &GroupEntry<'a>) -> Result<E> {
     walk_group_entry(self, entry)
   }
 
-  fn visit_value_member_key_entry(&mut self, entry: &ValueMemberKeyEntry) -> Result<E> {
+  fn visit_value_member_key_entry(&mut self, entry: &ValueMemberKeyEntry<'a>) -> Result<E> {
     walk_value_member_key_entry(self, entry)
   }
 
-  fn visit_type_groupname_entry(&mut self, entry: &TypeGroupnameEntry) -> Result<E> {
+  fn visit_type_groupname_entry(&mut self, entry: &TypeGroupnameEntry<'a>) -> Result<E> {
     walk_type_groupname_entry(self, entry)
   }
 
-  fn visit_inline_group_entry(&mut self, occur: Option<&Occurrence>, g: &Group) -> Result<E> {
+  fn visit_inline_group_entry(
+    &mut self,
+    occur: Option<&Occurrence<'a>>,
+    g: &Group<'a>,
+  ) -> Result<E> {
     walk_inline_group_entry(self, occur, g)
   }
 
-  fn visit_occurrence(&mut self, o: &Occurrence) -> Result<E>;
+  fn visit_occurrence(&mut self, o: &Occurrence<'a>) -> Result<E> {
+    Ok(())
+  }
 
-  fn visit_memberkey(&mut self, mk: &MemberKey) -> Result<E> {
+  fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> Result<E> {
     walk_memberkey(self, mk)
   }
 
-  fn visit_genericargs(&mut self, args: &GenericArgs) -> Result<E> {
+  fn visit_genericargs(&mut self, args: &GenericArgs<'a>) -> Result<E> {
     walk_genericargs(self, args)
   }
 
-  fn visit_genericarg(&mut self, arg: &GenericArg) -> Result<E> {
+  fn visit_genericarg(&mut self, arg: &GenericArg<'a>) -> Result<E> {
     walk_genericarg(self, arg)
   }
 
-  fn visit_nonmemberkey(&mut self, nmk: &NonMemberKey) -> Result<E> {
+  fn visit_nonmemberkey(&mut self, nmk: &NonMemberKey<'a>) -> Result<E> {
     walk_nonmemberkey(self, nmk)
   }
 }
 
-pub fn walk_rule<E, V>(visitor: &mut V, rule: &Rule) -> Result<E>
+pub fn walk_rule<'a, E, V>(visitor: &mut V, rule: &Rule<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   match rule {
     Rule::Type { rule, .. } => visitor.visit_type_rule(rule),
@@ -110,42 +120,42 @@ where
   }
 }
 
-pub fn walk_type_rule<E, V>(visitor: &mut V, tr: &TypeRule) -> Result<E>
+pub fn walk_type_rule<'a, E, V>(visitor: &mut V, tr: &TypeRule<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   visitor.visit_type(&tr.value)
 }
 
-pub fn walk_group_rule<E, V>(visitor: &mut V, gr: &GroupRule) -> Result<E>
+pub fn walk_group_rule<'a, E, V>(visitor: &mut V, gr: &GroupRule<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   visitor.visit_group_entry(&gr.entry)
 }
 
-pub fn walk_type<E, V>(visitor: &mut V, t: &Type) -> Result<E>
+pub fn walk_type<'a, E, V>(visitor: &mut V, t: &Type<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   todo!()
 }
 
-pub fn walk_type_choice<E, V>(visitor: &mut V, tc: &TypeChoice) -> Result<E>
+pub fn walk_type_choice<'a, E, V>(visitor: &mut V, tc: &TypeChoice<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   visitor.visit_type1(&tc.type1)
 }
 
-pub fn walk_type1<E, V>(visitor: &mut V, t1: &Type1) -> Result<E>
+pub fn walk_type1<'a, E, V>(visitor: &mut V, t1: &Type1<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   if let Some(o) = &t1.operator {
     return visitor.visit_operator(&t1, o);
@@ -154,10 +164,10 @@ where
   visitor.visit_type2(&t1.type2)
 }
 
-pub fn walk_operator<E, V>(visitor: &mut V, target: &Type1, o: &Operator) -> Result<E>
+pub fn walk_operator<'a, E, V>(visitor: &mut V, target: &Type1<'a>, o: &Operator<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   match &o.operator {
     RangeCtlOp::RangeOp { is_inclusive, .. } => {
@@ -167,36 +177,40 @@ where
   }
 }
 
-pub fn walk_range<E, V>(visitor: &mut V, lower: &Type2, upper: &Type2) -> Result<E>
+pub fn walk_range<'a, E, V>(visitor: &mut V, lower: &Type2<'a>, upper: &Type2<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   visitor.visit_type2(lower)?;
   visitor.visit_type2(upper)
 }
 
-pub fn walk_control_operator<E, V>(visitor: &mut V, target: &Type2, controller: &Type2) -> Result<E>
+pub fn walk_control_operator<'a, E, V>(
+  visitor: &mut V,
+  target: &Type2<'a>,
+  controller: &Type2<'a>,
+) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   visitor.visit_type2(target)?;
   visitor.visit_type2(controller)
 }
 
-pub fn walk_type2<E, V>(visitor: &mut V, t2: &Type2) -> Result<E>
+pub fn walk_type2<'a, E, V>(visitor: &mut V, t2: &Type2<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   todo!()
 }
 
-pub fn walk_group<E, V>(visitor: &mut V, g: &Group) -> Result<E>
+pub fn walk_group<'a, E, V>(visitor: &mut V, g: &Group<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   for gc in &g.group_choices {
     visitor.visit_group_choice(gc)?;
@@ -205,10 +219,10 @@ where
   Ok(())
 }
 
-pub fn walk_group_choice<E, V>(visitor: &mut V, gc: &GroupChoice) -> Result<E>
+pub fn walk_group_choice<'a, E, V>(visitor: &mut V, gc: &GroupChoice<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   for ge in &gc.group_entries {
     visitor.visit_group_entry(&ge.0)?;
@@ -217,10 +231,10 @@ where
   Ok(())
 }
 
-pub fn walk_group_entry<E, V>(visitor: &mut V, entry: &GroupEntry) -> Result<E>
+pub fn walk_group_entry<'a, E, V>(visitor: &mut V, entry: &GroupEntry<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   match entry {
     GroupEntry::ValueMemberKey { ge, .. } => visitor.visit_value_member_key_entry(ge),
@@ -231,10 +245,13 @@ where
   }
 }
 
-pub fn walk_value_member_key_entry<E, V>(visitor: &mut V, entry: &ValueMemberKeyEntry) -> Result<E>
+pub fn walk_value_member_key_entry<'a, E, V>(
+  visitor: &mut V,
+  entry: &ValueMemberKeyEntry<'a>,
+) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   if let Some(occur) = &entry.occur {
     visitor.visit_occurrence(occur)?;
@@ -247,10 +264,13 @@ where
   visitor.visit_type(&entry.entry_type)
 }
 
-pub fn walk_type_groupname_entry<E, V>(visitor: &mut V, entry: &TypeGroupnameEntry) -> Result<E>
+pub fn walk_type_groupname_entry<'a, E, V>(
+  visitor: &mut V,
+  entry: &TypeGroupnameEntry<'a>,
+) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   if let Some(o) = &entry.occur {
     visitor.visit_occurrence(o)?;
@@ -263,14 +283,14 @@ where
   visitor.visit_identifier(&entry.name)
 }
 
-pub fn walk_inline_group_entry<E, V>(
+pub fn walk_inline_group_entry<'a, E, V>(
   visitor: &mut V,
-  occur: Option<&Occurrence>,
-  g: &Group,
+  occur: Option<&Occurrence<'a>>,
+  g: &Group<'a>,
 ) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   if let Some(o) = occur {
     visitor.visit_occurrence(o)?;
@@ -279,10 +299,10 @@ where
   visitor.visit_group(g)
 }
 
-pub fn walk_memberkey<E, V>(visitor: &mut V, mk: &MemberKey) -> Result<E>
+pub fn walk_memberkey<'a, E, V>(visitor: &mut V, mk: &MemberKey<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   match mk {
     MemberKey::Type1 { t1, .. } => visitor.visit_type1(t1),
@@ -292,10 +312,10 @@ where
   }
 }
 
-pub fn walk_genericargs<E, V>(visitor: &mut V, args: &GenericArgs) -> Result<E>
+pub fn walk_genericargs<'a, E, V>(visitor: &mut V, args: &GenericArgs<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   for arg in args.args.iter() {
     visitor.visit_genericarg(arg)?;
@@ -304,18 +324,21 @@ where
   Ok(())
 }
 
-pub fn walk_genericarg<E, V>(visitor: &mut V, arg: &GenericArg) -> Result<E>
+pub fn walk_genericarg<'a, E, V>(visitor: &mut V, arg: &GenericArg<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
   visitor.visit_type1(&arg.arg)
 }
 
-pub fn walk_nonmemberkey<E, V>(visitor: &mut V, nmk: &NonMemberKey) -> Result<E>
+pub fn walk_nonmemberkey<'a, E, V>(visitor: &mut V, nmk: &NonMemberKey<'a>) -> Result<E>
 where
   E: Error,
-  V: Visitor<E> + ?Sized,
+  V: Visitor<'a, E> + ?Sized,
 {
-  todo!()
+  match nmk {
+    NonMemberKey::Group(group) => visitor.visit_group(group),
+    NonMemberKey::Type(t) => visitor.visit_type(t),
+  }
 }

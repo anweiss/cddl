@@ -61,7 +61,7 @@ impl<'a> fmt::Display for Comments<'a> {
 /// cddl = S 1*(rule S)
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Default, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Clone)]
 pub struct CDDL<'a> {
   /// Zero or more production rules
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
@@ -176,7 +176,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
 ///     / groupname [genericparm] S assigng S grpent
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Rule<'a> {
   /// Type expression
   Type {
@@ -329,7 +329,7 @@ impl<'a> Rule<'a> {
 /// typename [genericparm] S assignt S type
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct TypeRule<'a> {
   /// Type name identifier
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
@@ -383,7 +383,7 @@ impl<'a> fmt::Display for TypeRule<'a> {
 /// groupname [genericparm] S assigng S grpent
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct GroupRule<'a> {
   /// Group name identifier
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
@@ -437,7 +437,7 @@ impl<'a> fmt::Display for GroupRule<'a> {
 /// genericparm =  "<" S id S *("," S id S ) ">"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct GenericParams<'a> {
   /// List of generic parameters
   pub params: Vec<GenericParam<'a>>,
@@ -456,7 +456,7 @@ impl<'a> Default for GenericParams<'a> {
 
 /// Generic parameter
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct GenericParam<'a> {
   /// Generic parameter
   pub param: Identifier<'a>,

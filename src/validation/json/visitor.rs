@@ -4,7 +4,7 @@ use crate::{
   visitor::{self, *},
 };
 use serde_json::Value;
-use std::{collections::BTreeMap, fmt};
+use std::fmt;
 
 pub type Result = std::result::Result<(), Error>;
 
@@ -56,7 +56,15 @@ pub struct JSONValidator<'a> {
   group_entry_idx: Option<usize>,
   object_value: Option<Value>,
   is_member_key: bool,
-  generic_rules: BTreeMap<String, Option<BTreeMap<String, Option<Type1<'a>>>>>,
+  eval_generic_rule: Option<String>,
+  generic_rules: Vec<GenericRule<'a>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GenericRule<'a> {
+  name: String,
+  params: Vec<String>,
+  args: Vec<Type1<'a>>,
 }
 
 impl<'a> JSONValidator<'a> {
@@ -71,7 +79,8 @@ impl<'a> JSONValidator<'a> {
       group_entry_idx: None,
       object_value: None,
       is_member_key: false,
-      generic_rules: BTreeMap::new(),
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
     }
   }
 
@@ -79,8 +88,10 @@ impl<'a> JSONValidator<'a> {
     for r in self.cddl.rules.iter() {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {
-        self.visit_type_rule(rule).map_err(|e| Error(vec![e]))?;
-        break;
+        if rule.generic_params.is_none() {
+          self.visit_type_rule(rule).map_err(|e| Error(vec![e]))?;
+          break;
+        }
       }
     }
 
@@ -146,36 +157,64 @@ pub fn validate_array_occurrence(
   }
 }
 
-impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
-  fn visit_type_rule(&mut self, tr: &TypeRule) -> visitor::Result<ValidationError> {
-    self.generic_rules.insert(
-      tr.name.to_string(),
-      tr.generic_params.as_ref().take().map(|gp| {
-        gp.params
+impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
+  fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<ValidationError> {
+    if let Some(gp) = &tr.generic_params {
+      if let Some(gr) = self
+        .generic_rules
+        .iter_mut()
+        .find(|r| r.name == tr.name.ident)
+      {
+        gr.params = gp
+          .params
           .iter()
-          .map(|p| (p.param.ident.to_string(), None))
-          .collect()
-      }),
-    );
+          .map(|p| p.param.ident.to_string())
+          .collect();
+      } else {
+        self.generic_rules.push(GenericRule {
+          name: tr.name.to_string(),
+          params: gp
+            .params
+            .iter()
+            .map(|p| p.param.ident.to_string())
+            .collect(),
+          args: vec![],
+        });
+      }
+    }
 
     walk_type_rule(self, tr)
   }
 
-  fn visit_group_rule(&mut self, gr: &GroupRule) -> visitor::Result<ValidationError> {
-    self.generic_rules.insert(
-      gr.name.to_string(),
-      gr.generic_params.as_ref().take().map(|gp| {
-        gp.params
+  fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> visitor::Result<ValidationError> {
+    if let Some(gp) = &gr.generic_params {
+      if let Some(gr) = self
+        .generic_rules
+        .iter_mut()
+        .find(|r| r.name == gr.name.ident)
+      {
+        gr.params = gp
+          .params
           .iter()
-          .map(|p| (p.param.ident.to_string(), None))
-          .collect()
-      }),
-    );
+          .map(|p| p.param.ident.to_string())
+          .collect();
+      } else {
+        self.generic_rules.push(GenericRule {
+          name: gr.name.to_string(),
+          params: gp
+            .params
+            .iter()
+            .map(|p| p.param.ident.to_string())
+            .collect(),
+          args: vec![],
+        });
+      }
+    }
 
     walk_group_rule(self, gr)
   }
 
-  fn visit_type(&mut self, t: &Type) -> visitor::Result<ValidationError> {
+  fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<ValidationError> {
     let initial_error_count = self.errors.len();
     for type_choice in t.type_choices.iter() {
       let error_count = self.errors.len();
@@ -197,7 +236,7 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_group(&mut self, g: &Group) -> visitor::Result<ValidationError> {
+  fn visit_group(&mut self, g: &Group<'a>) -> visitor::Result<ValidationError> {
     let initial_error_count = self.errors.len();
     for group_choice in g.group_choices.iter() {
       let error_count = self.errors.len();
@@ -219,7 +258,7 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_group_choice(&mut self, gc: &GroupChoice) -> visitor::Result<ValidationError> {
+  fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<ValidationError> {
     for (idx, ge) in gc.group_entries.iter().enumerate() {
       self.group_entry_idx = Some(idx);
       self.visit_group_entry(&ge.0)?;
@@ -253,6 +292,8 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
       if iter_items {
         for (idx, v) in a.iter().enumerate() {
           let mut jv = JSONValidator::new(self.cddl, v.clone());
+          jv.generic_rules = self.generic_rules.clone();
+          jv.eval_generic_rule = self.eval_generic_rule.clone();
           jv.json_location
             .push_str(&format!("{}/{}", self.json_location, idx));
 
@@ -267,6 +308,8 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
       } else if let Some(idx) = self.group_entry_idx.take() {
         if let Some(v) = a.get(idx) {
           let mut jv = JSONValidator::new(self.cddl, v.clone());
+          jv.generic_rules = self.generic_rules.clone();
+          jv.eval_generic_rule = self.eval_generic_rule.clone();
           jv.json_location
             .push_str(&format!("{}/{}", self.json_location, idx));
 
@@ -482,7 +525,7 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_type2(&mut self, t2: &Type2) -> visitor::Result<ValidationError> {
+  fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<ValidationError> {
     match t2 {
       Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value)),
       Type2::Map { group, .. } => match &self.json {
@@ -511,6 +554,8 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
           if iter_items {
             for (idx, v) in a.iter().enumerate() {
               let mut jv = JSONValidator::new(self.cddl, v.clone());
+              jv.generic_rules = self.generic_rules.clone();
+              jv.eval_generic_rule = self.eval_generic_rule.clone();
               jv.json_location
                 .push_str(&format!("{}/{}", self.json_location, idx));
 
@@ -525,6 +570,8 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
               let mut jv = JSONValidator::new(self.cddl, v.clone());
+              jv.generic_rules = self.generic_rules.clone();
+              jv.eval_generic_rule = self.eval_generic_rule.clone();
               jv.json_location
                 .push_str(&format!("{}/{}", self.json_location, idx));
 
@@ -557,8 +604,34 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
         ..
       } => {
         if let Some(ga) = generic_args {
-          todo!()
+          if let Some(rule) = rule_from_ident(self.cddl, ident) {
+            if let Some(gr) = self
+              .generic_rules
+              .iter_mut()
+              .find(|gr| gr.name == ident.ident)
+            {
+              for arg in ga.args.iter() {
+                gr.args.push((*arg.arg).clone());
+              }
+            } else if let Some(params) = generic_params_from_rule(self.cddl, rule) {
+              self.generic_rules.push(GenericRule {
+                name: ident.ident.to_string(),
+                params,
+                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+              });
+            }
+
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+            jv.generic_rules = self.generic_rules.clone();
+            jv.eval_generic_rule = Some(ident.ident.to_string());
+            jv.visit_rule(rule)?;
+
+            self.errors.append(&mut jv.errors);
+
+            return Ok(());
+          }
         }
+
         self.visit_identifier(ident)
       }
       Type2::IntValue { value, .. } => self.visit_value(&token::Value::INT(*value)),
@@ -569,7 +642,24 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
     }
   }
 
-  fn visit_identifier(&mut self, ident: &Identifier) -> visitor::Result<ValidationError> {
+  fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<ValidationError> {
+    if let Some(name) = &self.eval_generic_rule {
+      if let Some(gr) = self
+        .generic_rules
+        .iter()
+        .cloned()
+        .find(|gr| gr.name == *name)
+      {
+        for (idx, gp) in gr.params.iter().enumerate() {
+          if *gp == ident.ident {
+            if let Some(arg) = gr.args.get(idx) {
+              return self.visit_type1(arg);
+            }
+          }
+        }
+      }
+    }
+
     if let Some(r) = rule_from_ident(self.cddl, ident) {
       return self.visit_rule(r);
     }
@@ -603,6 +693,8 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
         if iter_items {
           for (idx, v) in a.iter().enumerate() {
             let mut jv = JSONValidator::new(self.cddl, v.clone());
+            jv.generic_rules = self.generic_rules.clone();
+            jv.eval_generic_rule = self.eval_generic_rule.clone();
             jv.json_location
               .push_str(&format!("{}/{}", self.json_location, idx));
 
@@ -617,6 +709,8 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
         } else if let Some(idx) = self.group_entry_idx.take() {
           if let Some(v) = a.get(idx) {
             let mut jv = JSONValidator::new(self.cddl, v.clone());
+            jv.generic_rules = self.generic_rules.clone();
+            jv.eval_generic_rule = self.eval_generic_rule.clone();
             jv.json_location
               .push_str(&format!("{}/{}", self.json_location, idx));
 
@@ -650,7 +744,7 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
 
   fn visit_value_member_key_entry(
     &mut self,
-    entry: &ValueMemberKeyEntry,
+    entry: &ValueMemberKeyEntry<'a>,
   ) -> visitor::Result<ValidationError> {
     if let Some(occur) = &entry.occur {
       self.visit_occurrence(occur)?;
@@ -666,6 +760,8 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
 
     if let Some(v) = self.object_value.take() {
       let mut jv = JSONValidator::new(self.cddl, v);
+      jv.generic_rules = self.generic_rules.clone();
+      jv.eval_generic_rule = self.eval_generic_rule.clone();
       jv.json_location.push_str(&self.json_location);
       jv.visit_type(&entry.entry_type)?;
 
@@ -729,6 +825,8 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
         if iter_items {
           for (idx, v) in a.iter().enumerate() {
             let mut jv = JSONValidator::new(self.cddl, v.clone());
+            jv.generic_rules = self.generic_rules.clone();
+            jv.eval_generic_rule = self.eval_generic_rule.clone();
             jv.json_location
               .push_str(&format!("{}/{}", self.json_location, idx));
 
@@ -743,6 +841,8 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
         } else if let Some(idx) = self.group_entry_idx.take() {
           if let Some(v) = a.get(idx) {
             let mut jv = JSONValidator::new(self.cddl, v.clone());
+            jv.generic_rules = self.generic_rules.clone();
+            jv.eval_generic_rule = self.eval_generic_rule.clone();
             jv.json_location
               .push_str(&format!("{}/{}", self.json_location, idx));
 
@@ -800,12 +900,29 @@ impl<'a> Visitor<ValidationError> for JSONValidator<'a> {
   }
 }
 
-fn rule_from_ident<'a>(cddl: &'a CDDL, ident: &'a Identifier) -> Option<&'a Rule<'a>> {
+fn rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a Rule<'a>> {
   cddl.rules.iter().find_map(|r| match r {
     Rule::Type { rule, .. } if rule.name.ident == ident.ident => Some(r),
     Rule::Group { rule, .. } if rule.name.ident == ident.ident => Some(r),
     _ => None,
   })
+}
+
+fn generic_params_from_rule<'a>(cdd: &'a CDDL, rule: &Rule<'a>) -> Option<Vec<String>> {
+  match rule {
+    Rule::Type { rule, .. } => rule.generic_params.as_ref().map(|gp| {
+      gp.params
+        .iter()
+        .map(|gp| gp.param.ident.to_string())
+        .collect()
+    }),
+    Rule::Group { rule, .. } => rule.generic_params.as_ref().map(|gp| {
+      gp.params
+        .iter()
+        .map(|gp| gp.param.ident.to_string())
+        .collect()
+    }),
+  }
 }
 
 fn is_ident_null_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
@@ -885,10 +1002,12 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl_str = r#"rule = [ + -10.0..-3.0 ]"#;
-    let json = r#"[
-      -10.0
-    ]"#;
+    let cddl_str = r#"messages = message<"reboot", "now">
+    message<t, v> = { type: t, value: v }"#;
+    let json = r#"{
+      "type": "reboot",
+      "value": "now"
+    }"#;
 
     let mut lexer = lexer_from_str(cddl_str);
     let cddl = cddl_from_str(&mut lexer, cddl_str, true)?;
