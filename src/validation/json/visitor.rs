@@ -598,6 +598,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       },
       Type2::Array { group, .. } => match &self.json {
         Value::Array(_) => self.visit_group(group),
+        #[allow(unstable_features)]
         _ => todo!(),
       },
       Type2::Typename {
@@ -640,6 +641,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       Type2::UintValue { value, .. } => self.visit_value(&token::Value::UINT(*value)),
       Type2::FloatValue { value, .. } => self.visit_value(&token::Value::FLOAT(*value)),
       Type2::Any(_) => Ok(()),
+      #[allow(unstable_features)]
       _ => todo!(),
     }
   }
