@@ -142,7 +142,11 @@ where
   E: Error,
   V: Visitor<'a, E> + ?Sized,
 {
-  todo!()
+  for tc in t.type_choices.iter() {
+    visitor.visit_type_choice(tc)?;
+  }
+
+  Ok(())
 }
 
 pub fn walk_type_choice<'a, E, V>(visitor: &mut V, tc: &TypeChoice<'a>) -> Result<E>
@@ -205,6 +209,7 @@ where
   E: Error,
   V: Visitor<'a, E> + ?Sized,
 {
+  #[allow(unstable_features)]
   todo!()
 }
 
