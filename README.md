@@ -140,7 +140,9 @@ The following types and features of CDDL are supported by this crate for validat
 | null / nil           | null                          |
 | any                  | any valid JSON                |
 
-Since JSON objects only support keys whose types are JSON strings, when validating JSON member keys defined in CDDL structs must use either the colon syntax (`mykey: tstr`) or the double arrow syntax with double quotes (`"mykey" => tstr`). Unquoted member keys used with the double arrow syntax that resolve to types must resolve to one of the supported data types that can be used to validate JSON strings (`text` or `tstr`). Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition. CDDL groups, generics, sockets/plugs and group-to-choice enumerations are all parsed and monomorphized into their full representations before being evaluated for JSON validation.
+CDDL groups, generics, sockets/plugs and group-to-choice enumerations can all be used when validating JSON.
+
+Since JSON objects only support keys whose types are JSON strings, when validating JSON, member keys defined in CDDL structs must use either the colon syntax (`mykey: tstr`) or the double arrow syntax with double quotes (`"mykey" => tstr`). Unquoted member keys used with the double arrow syntax that resolve to types must resolve to one of the supported data types that can be used to validate JSON strings (`text` or `tstr`). Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition.
 
 Below is the table of supported control operators and whether or not they've been implemented as of the current release:
 

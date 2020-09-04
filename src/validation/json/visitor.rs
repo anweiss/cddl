@@ -1002,11 +1002,12 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl_str = r#"messages = message<"reboot", "now">
-    message<t, v> = { type: t, value: v }"#;
+    let cddl_str = r#"messages = message<test<tstr>, int>
+    message<t, v> = { type: t, value: v }
+    test<t> = t"#;
     let json = r#"{
-      "type": "reboot",
-      "value": "now"
+      "type": "test",
+      "value": 1
     }"#;
 
     let mut lexer = lexer_from_str(cddl_str);
