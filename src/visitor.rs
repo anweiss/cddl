@@ -1,5 +1,6 @@
 // Temporary
 #![allow(missing_docs, unused_variables)]
+#![cfg(feature = "std")]
 
 use crate::{ast::*, token::Value};
 use std::error::Error;

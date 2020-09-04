@@ -1,3 +1,5 @@
+#![cfg(feature = "std")]
+
 use crate::{
   ast::*,
   token,
