@@ -2,7 +2,7 @@
 
 use crate::{
   ast::*,
-  token,
+  token::{self, Token},
   visitor::{self, *},
 };
 use serde_json::Value;
@@ -58,8 +58,11 @@ pub struct JSONValidator<'a> {
   group_entry_idx: Option<usize>,
   object_value: Option<Value>,
   is_member_key: bool,
+  cut_present: bool,
+  cut_value: Option<String>,
   eval_generic_rule: Option<String>,
   generic_rules: Vec<GenericRule<'a>>,
+  ctrl: Option<token::Token<'a>>,
 }
 
 #[derive(Clone, Debug)]
@@ -81,8 +84,11 @@ impl<'a> JSONValidator<'a> {
       group_entry_idx: None,
       object_value: None,
       is_member_key: false,
+      cut_present: false,
+      cut_value: None,
       eval_generic_rule: None,
       generic_rules: Vec::new(),
+      ctrl: None,
     }
   }
 
@@ -527,11 +533,80 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
+  fn visit_control_operator(
+    &mut self,
+    target: &Type2<'a>,
+    ctrl: &str,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<ValidationError> {
+    match token::lookup_control_from_str(ctrl) {
+      Some(Token::EQ) => {
+        match target {
+          Type2::Typename { ident, .. } => {
+            if is_ident_string_data_type(self.cddl, ident)
+              || is_ident_numeric_data_type(self.cddl, ident)
+            {
+              return self.visit_type2(controller);
+            }
+          }
+          Type2::Array { .. } => {
+            if let Value::Array(a) = &self.json {
+              return self.visit_type2(controller);
+            }
+          }
+          _ => todo!(),
+        }
+        todo!()
+      }
+      t @ Some(Token::NE) => {
+        match target {
+          Type2::Typename { ident, .. } => {
+            if is_ident_string_data_type(self.cddl, ident)
+              || is_ident_numeric_data_type(self.cddl, ident)
+            {
+              self.ctrl = t;
+              self.visit_type2(controller)?;
+              self.ctrl = None;
+              return Ok(());
+            }
+          }
+          Type2::Array { .. } => {
+            if let Value::Array(a) = &self.json {
+              self.ctrl = t;
+              self.visit_type2(controller)?;
+              self.ctrl = None;
+              return Ok(());
+            }
+          }
+          _ => todo!(),
+        }
+        todo!()
+      }
+      t @ Some(Token::LT) | t @ Some(Token::GT) | t @ Some(Token::GE) | t @ Some(Token::LE) => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_numeric_data_type(self.cddl, ident) => {
+            self.ctrl = t;
+            self.visit_type2(controller)?;
+            self.ctrl = None;
+            Ok(())
+          }
+          _ => todo!(),
+        }
+      }
+      _ => todo!(),
+    }
+  }
+
   fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<ValidationError> {
     match t2 {
       Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value)),
       Type2::Map { group, .. } => match &self.json {
-        Value::Object(_) => self.visit_group(group),
+        Value::Object(_) => {
+          self.visit_group(group)?;
+          self.cut_present = false;
+          self.cut_value = None;
+          Ok(())
+        }
         Value::Array(a) => {
           // Member keys are annotation only in an array context
           if self.is_member_key {
@@ -740,7 +815,14 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         self.visit_value(&token::Value::TEXT(ident.ident))
       }
       _ => {
-        self.add_error(format!("expected type {}, got {}", ident, self.json));
+        if let Some(cut_value) = self.cut_value.take() {
+          self.add_error(format!(
+            "cut present for member key {}. expected type {}, got {}",
+            cut_value, ident, self.json
+          ));
+        } else {
+          self.add_error(format!("expected type {}, got {}", ident, self.json));
+        }
         Ok(())
       }
     }
@@ -770,6 +852,16 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       jv.visit_type(&entry.entry_type)?;
 
       self.json_location = current_location;
+      if !jv.errors.is_empty() {
+        if let Some(occur) = &self.occurence {
+          if let Occur::Optional(_) | Occur::ZeroOrMore(_) = occur {
+            if !self.cut_present {
+              return Ok(());
+            }
+          }
+        }
+      }
+
       self.errors.append(&mut jv.errors);
 
       Ok(())
@@ -778,28 +870,104 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     }
   }
 
+  fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<ValidationError> {
+    if let MemberKey::Type1 { is_cut, .. } = mk {
+      self.cut_present = *is_cut;
+    }
+
+    walk_memberkey(self, mk)
+  }
+
   fn visit_value(&mut self, value: &token::Value) -> visitor::Result<ValidationError> {
     let error: Option<String> = match &self.json {
       Value::Number(n) => match value {
         token::Value::INT(v) => match n.as_i64() {
-          Some(i) if i == *v as i64 => None,
+          Some(i) => match &self.ctrl {
+            Some(Token::NE) if i != *v as i64 => None,
+            Some(Token::LT) if i < *v as i64 => None,
+            Some(Token::LE) if i <= *v as i64 => None,
+            Some(Token::GT) if i > *v as i64 => None,
+            Some(Token::GE) if i >= *v as i64 => None,
+            None => {
+              if i == *v as i64 {
+                None
+              } else {
+                Some(format!("expected value {}, got {}", v, n))
+              }
+            }
+            _ => Some(format!(
+              "expected value {} {}, got {}",
+              self.ctrl.clone().unwrap(),
+              v,
+              n
+            )),
+          },
           None => Some(format!("{} cannot be represented as an i64", n)),
-          _ => Some(format!("expected {}, got {}", v, n)),
         },
         token::Value::UINT(v) => match n.as_u64() {
-          Some(i) if i == *v as u64 => None,
+          Some(i) => match &self.ctrl {
+            Some(Token::NE) if i != *v as u64 => None,
+            Some(Token::LT) if i < *v as u64 => None,
+            Some(Token::LE) if i <= *v as u64 => None,
+            Some(Token::GT) if i > *v as u64 => None,
+            Some(Token::GE) if i >= *v as u64 => None,
+            None => {
+              if i == *v as u64 {
+                None
+              } else {
+                Some(format!("expected value {}, got {}", v, n))
+              }
+            }
+            _ => Some(format!(
+              "expected value {} {}, got {}",
+              self.ctrl.clone().unwrap(),
+              v,
+              n
+            )),
+          },
           None => Some(format!("{} cannot be represented as a u64", n)),
-          _ => Some(format!("expected {}, got {}", v, n)),
         },
         token::Value::FLOAT(v) => match n.as_f64() {
-          Some(f) if (f - *v).abs() < std::f64::EPSILON => None,
-          None => Some(format!("{} cannot be represented as an f64", n)),
-          _ => Some(format!("expected {}, got {}", v, n)),
+          Some(f) => match &self.ctrl {
+            Some(Token::NE) if (f - *v).abs() > std::f64::EPSILON => None,
+            Some(Token::LT) if f < *v as f64 => None,
+            Some(Token::LE) if f <= *v as f64 => None,
+            Some(Token::GT) if f > *v as f64 => None,
+            Some(Token::GE) if f >= *v as f64 => None,
+            None => {
+              if (f - *v).abs() < std::f64::EPSILON {
+                None
+              } else {
+                Some(format!("expected value {}, got {}", v, n))
+              }
+            }
+            _ => Some(format!(
+              "expected value {} {}, got {}",
+              self.ctrl.clone().unwrap(),
+              v,
+              n
+            )),
+          },
+          None => Some(format!("{} cannot be represented as an i64", n)),
         },
         _ => Some(format!("expected {}, got {}", value, n)),
       },
       Value::String(s) => match value {
-        token::Value::TEXT(t) if s == t => None,
+        token::Value::TEXT(t) => match &self.ctrl {
+          Some(Token::NE) => {
+            if s != t {
+              None
+            } else {
+              Some(format!("expected \"{}\" .ne to \"{}\"", value, s))
+            }
+          }
+          _ => Some(format!(
+            "expected value {} \"{}\", got \"{}\"",
+            self.ctrl.clone().unwrap(),
+            value,
+            s
+          )),
+        },
         token::Value::BYTE(token::ByteValue::UTF8(b)) if s.as_bytes() == b.as_ref() => None,
         token::Value::BYTE(token::ByteValue::B16(b)) if s.as_bytes() == b.as_ref() => None,
         token::Value::BYTE(token::ByteValue::B64(b)) if s.as_bytes() == b.as_ref() => None,
@@ -866,6 +1034,10 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       }
       Value::Object(o) => {
         if let token::Value::TEXT(t) = value {
+          if self.cut_present {
+            self.cut_value = Some(t.to_string());
+          }
+
           if let Some(v) = o.get(*t) {
             self.object_value = Some(v.clone());
             self.json_location.push_str(&format!("/{}", t));
@@ -971,13 +1143,15 @@ fn is_ident_numeric_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   }
 
   cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_bool_data_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
+    Rule::Type { rule, .. } if rule.name.ident == ident.ident => {
+      rule.value.type_choices.iter().any(|tc| {
+        if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+          is_ident_numeric_data_type(cddl, ident)
+        } else {
+          false
+        }
+      })
+    }
     _ => false,
   })
 }
@@ -988,13 +1162,15 @@ fn is_ident_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   }
 
   cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_string_data_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
+    Rule::Type { rule, .. } if rule.name.ident == ident.ident => {
+      rule.value.type_choices.iter().any(|tc| {
+        if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+          is_ident_string_data_type(cddl, ident)
+        } else {
+          false
+        }
+      })
+    }
     _ => false,
   })
 }
@@ -1006,13 +1182,8 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl_str = r#"messages = message<test<tstr>, int>
-    message<t, v> = { type: t, value: v }
-    test<t> = t"#;
-    let json = r#"{
-      "type": "test",
-      "value": 1
-    }"#;
+    let cddl_str = r#"ctrl = int .eq 1"#;
+    let json = r#"1"#;
 
     let mut lexer = lexer_from_str(cddl_str);
     let cddl = cddl_from_str(&mut lexer, cddl_str, true)?;
