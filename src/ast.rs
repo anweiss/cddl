@@ -117,7 +117,7 @@ impl<'a> fmt::Display for CDDL<'a> {
 /// DIGIT = %x30-39
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct Identifier<'a> {
   /// Identifier
   pub ident: &'a str,
@@ -126,6 +126,14 @@ pub struct Identifier<'a> {
   /// Span
   pub span: Span,
 }
+
+impl<'a> PartialEq for Identifier<'a> {
+  fn eq(&self, other: &Self) -> bool {
+    self.to_string() == other.to_string()
+  }
+}
+
+impl<'a> Eq for Identifier<'a> {}
 
 impl<'a> fmt::Display for Identifier<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
