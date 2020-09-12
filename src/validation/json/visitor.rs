@@ -48,6 +48,16 @@ impl std::error::Error for ValidationError {
   }
 }
 
+impl ValidationError {
+  fn from_validator(jv: &JSONValidator, reason: String) -> Self {
+    ValidationError {
+      cddl_location: jv.cddl_location.clone(),
+      json_location: jv.json_location.clone(),
+      reason,
+    }
+  }
+}
+
 pub struct JSONValidator<'a> {
   cddl: &'a CDDL<'a>,
   json: Value,
@@ -589,7 +599,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             }
           }
           Type2::Array { .. } => {
-            if let Value::Array(a) = &self.json {
+            if let Value::Array(_) = &self.json {
               return self.visit_type2(controller);
             }
           }
@@ -610,7 +620,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             }
           }
           Type2::Array { .. } => {
-            if let Value::Array(a) = &self.json {
+            if let Value::Array(_) = &self.json {
               self.ctrl = t;
               self.visit_type2(controller)?;
               self.ctrl = None;
@@ -681,8 +691,23 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         self.ctrl = None;
         Ok(())
       }
+      t @ Some(Token::REGEXP) | t @ Some(Token::PCRE) => {
+        self.ctrl = t;
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match self.json {
+              Value::String(_) => self.visit_type2(controller)?,
+              _ => todo!(),
+            }
+          }
+          _ => todo!(),
+        }
+        self.ctrl = None;
+
+        Ok(())
+      }
       _ => {
-        self.add_error(format!("invalid control operator {}", ctrl));
+        self.add_error(format!("unsupported control operator {}", ctrl));
         Ok(())
       }
     }
@@ -1053,6 +1078,23 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               Some(format!("expected {} .ne to \"{}\"", value, s))
             }
           }
+          Some(Token::REGEXP) | Some(Token::PCRE) => {
+            let re = regex::Regex::new(
+              serde_json::from_str::<Value>(&format!("\"{}\"", t))
+                .map_err(|e| ValidationError::from_validator(self, e.to_string()))?
+                .as_str()
+                .ok_or_else(|| {
+                  ValidationError::from_validator(self, "malformed regex".to_string())
+                })?,
+            )
+            .map_err(|e| ValidationError::from_validator(self, e.to_string()))?;
+
+            if re.is_match(s) {
+              None
+            } else {
+              Some(format!("expected \"{}\" to match regex \"{}\"", s, t))
+            }
+          }
           _ => {
             if s == t {
               None
@@ -1304,13 +1346,11 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl_str = r#"alt = "test1" / "test2" / "test3"
-    alt /= "test4"
-    alt /= "blah""#;
-    let json = r#""test4""#;
+    let input = r#"nai = tstr .regexp "[A-Za-z0-9]+@[A-Za-z0-9]+(\\.[A-Za-z0-9]+)+""#;
+    let json = r#""N1@CH57HF.4Znqe0.dYJRN.igjf""#;
 
-    let mut lexer = lexer_from_str(cddl_str);
-    let cddl = cddl_from_str(&mut lexer, cddl_str, true)?;
+    let mut lexer = lexer_from_str(input);
+    let cddl = cddl_from_str(&mut lexer, input, true)?;
     let json = serde_json::from_str::<Value>(json)?;
 
     let mut jv = JSONValidator::new(&cddl, json);
