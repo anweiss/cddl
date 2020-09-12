@@ -603,9 +603,12 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               return self.visit_type2(controller);
             }
           }
-          _ => todo!(),
+          _ => self.add_error(format!(
+            "target for .eq operator must be a string, numerical or array data type, got {}",
+            target
+          )),
         }
-        todo!()
+        return Ok(());
       }
       t @ Some(Token::NE) => {
         match target {
@@ -627,9 +630,12 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               return Ok(());
             }
           }
-          _ => todo!(),
+          _ => self.add_error(format!(
+            "target for .eq operator must be a string, numerical or array data type, got {}",
+            target
+          )),
         }
-        todo!()
+        return Ok(());
       }
       t @ Some(Token::LT) | t @ Some(Token::GT) | t @ Some(Token::GE) | t @ Some(Token::LE) => {
         match target {
@@ -639,17 +645,32 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             self.ctrl = None;
             Ok(())
           }
-          _ => todo!(),
+          _ => {
+            self.add_error(format!(
+              "target for .lt, .gt, .ge or .le operator must be a numerical data type, got {}",
+              target
+            ));
+            Ok(())
+          }
         }
       }
       t @ Some(Token::SIZE) => match target {
-        Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+        Type2::Typename { ident, .. }
+          if is_ident_string_data_type(self.cddl, ident)
+            || is_ident_uint_data_type(self.cddl, ident) =>
+        {
           self.ctrl = t;
           self.visit_type2(controller)?;
           self.ctrl = None;
           Ok(())
         }
-        _ => todo!(),
+        _ => {
+          self.add_error(format!(
+            "target for .size must a string or uint data type, got {}",
+            target
+          ));
+          Ok(())
+        }
       },
       t @ Some(Token::AND) => {
         self.ctrl = t;
@@ -685,7 +706,10 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
           if let Some(Occur::Optional(_)) = self.occurence {
-            todo!()
+            self.add_error(format!(
+              "expecting default value {}, got {}",
+              controller, self.json
+            ));
           }
         }
         self.ctrl = None;
@@ -697,10 +721,16 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
             match self.json {
               Value::String(_) => self.visit_type2(controller)?,
-              _ => todo!(),
+              _ => self.add_error(format!(
+                ".regexp/.pcre control can only be matched against JSON string, got {}",
+                self.json
+              )),
             }
           }
-          _ => todo!(),
+          _ => self.add_error(format!(
+            ".regexp/.pcre contro9l can only be matched against string data type, got {}",
+            target
+          )),
         }
         self.ctrl = None;
 
@@ -789,8 +819,10 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       },
       Type2::Array { group, .. } => match &self.json {
         Value::Array(_) => self.visit_group(group),
-        #[allow(unstable_features)]
-        _ => todo!(),
+        _ => {
+          self.add_error(format!("expected array type, got {}", self.json));
+          Ok(())
+        }
       },
       Type2::Typename {
         ident,
@@ -833,8 +865,13 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       Type2::FloatValue { value, .. } => self.visit_value(&token::Value::FLOAT(*value)),
       Type2::ParenthesizedType { pt, .. } => self.visit_type(pt),
       Type2::Any(_) => Ok(()),
-      #[allow(unstable_features)]
-      _ => todo!(),
+      _ => {
+        self.add_error(format!(
+          "unsupported data type for validating JSON, got {}",
+          t2
+        ));
+        Ok(())
+      }
     }
   }
 
@@ -1028,6 +1065,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             Some(Token::LE) if i <= *v as u64 => None,
             Some(Token::GT) if i > *v as u64 => None,
             Some(Token::GE) if i >= *v as u64 => None,
+            Some(Token::SIZE) if i < 256u64.pow(*v as u32) => None,
             None => {
               if i == *v as u64 {
                 None
@@ -1322,6 +1360,23 @@ fn is_ident_numeric_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
+fn is_ident_uint_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  if let "uint" = ident.ident {
+    return true;
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        is_ident_uint_data_type(cddl, ident)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
 fn is_ident_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   if ident.ident == "text" || ident.ident == "tstr" {
     return true;
@@ -1346,8 +1401,8 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"nai = tstr .regexp "[A-Za-z0-9]+@[A-Za-z0-9]+(\\.[A-Za-z0-9]+)+""#;
-    let json = r#""N1@CH57HF.4Znqe0.dYJRN.igjf""#;
+    let input = r#"test = uint .size 3"#;
+    let json = r#"16777215"#;
 
     let mut lexer = lexer_from_str(input);
     let cddl = cddl_from_str(&mut lexer, input, true)?;
