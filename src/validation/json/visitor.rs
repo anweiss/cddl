@@ -1151,7 +1151,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               Some(format!("expected \"{}\" .size {}, got {}", s, u, s.len()))
             }
           }
-          _ => todo!(),
+          _ => Some(format!("expected {}, got {}", u, s)),
         },
         token::Value::BYTE(token::ByteValue::UTF8(b)) if s.as_bytes() == b.as_ref() => None,
         token::Value::BYTE(token::ByteValue::B16(b)) if s.as_bytes() == b.as_ref() => None,

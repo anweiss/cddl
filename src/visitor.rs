@@ -2,7 +2,7 @@
 #![allow(missing_docs, unused_variables)]
 #![cfg(feature = "std")]
 
-use crate::{ast::*, token::Value};
+use crate::{ast::*, token::ByteValue, token::Value};
 use std::error::Error;
 
 pub type Result<T> = std::result::Result<(), T>;
@@ -209,8 +209,50 @@ where
   E: Error,
   V: Visitor<'a, E> + ?Sized,
 {
-  #[allow(unstable_features)]
-  todo!()
+  match t2 {
+    Type2::Array { group, .. } => visitor.visit_group(group),
+    Type2::Map { group, .. } => visitor.visit_group(group),
+    Type2::ChoiceFromGroup {
+      generic_args,
+      ident,
+      ..
+    } => {
+      if let Some(ga) = generic_args {
+        visitor.visit_genericargs(ga)?;
+      }
+
+      visitor.visit_identifier(ident)
+    }
+    Type2::ChoiceFromInlineGroup { group, .. } => visitor.visit_group(group),
+    Type2::TaggedData { t, .. } => visitor.visit_type(t),
+    Type2::Typename { ident, .. } => visitor.visit_identifier(ident),
+    Type2::Unwrap {
+      generic_args,
+      ident,
+      ..
+    } => {
+      if let Some(ga) = generic_args {
+        visitor.visit_genericargs(ga)?;
+      }
+
+      visitor.visit_identifier(ident)
+    }
+    Type2::ParenthesizedType { pt, .. } => visitor.visit_type(pt),
+    Type2::B16ByteString { value, .. } => {
+      visitor.visit_value(&Value::BYTE(ByteValue::B16(value.clone())))
+    }
+    Type2::B64ByteString { value, .. } => {
+      visitor.visit_value(&Value::BYTE(ByteValue::B64(value.clone())))
+    }
+    Type2::UTF8ByteString { value, .. } => {
+      visitor.visit_value(&Value::BYTE(ByteValue::UTF8(value.clone())))
+    }
+    Type2::FloatValue { value, .. } => visitor.visit_value(&Value::FLOAT(*value)),
+    Type2::IntValue { value, .. } => visitor.visit_value(&Value::INT(*value)),
+    Type2::UintValue { value, .. } => visitor.visit_value(&Value::UINT(*value)),
+    Type2::TextValue { value, .. } => visitor.visit_value(&Value::TEXT(value)),
+    _ => Ok(()),
+  }
 }
 
 pub fn walk_group<'a, E, V>(visitor: &mut V, g: &Group<'a>) -> Result<E>
