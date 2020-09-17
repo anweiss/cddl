@@ -1377,6 +1377,19 @@ pub struct GroupChoice<'a> {
 }
 
 impl<'a> GroupChoice<'a> {
+  /// Create new group choice from group entries
+  pub fn new(group_entries: Vec<GroupEntry<'a>>) -> Self {
+    GroupChoice {
+      group_entries: group_entries
+        .iter()
+        .cloned()
+        .map(|ge| (ge, OptionalComma::default()))
+        .collect::<Vec<_>>(),
+      span: Span::default(),
+      comments_before_grpchoice: None,
+    }
+  }
+
   fn has_entries_with_comments_before_comma(&self) -> bool {
     for ge in self.group_entries.iter() {
       if let GroupEntry::ValueMemberKey { ge: vmke, .. } = &ge.0 {
@@ -1608,7 +1621,7 @@ impl<'a> GroupEntry<'a> {
 
 /// Optional comma
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct OptionalComma<'a> {
   /// Optional comma
   pub optional_comma: bool,
