@@ -54,6 +54,8 @@ pub struct ValidationError {
   pub json_location: String,
   /// Whether or not the error is associated with multiple type choices
   pub is_multi_type_choice: bool,
+  /// Whether or not the error is associated with multiple group choices
+  pub is_multi_group_choice: bool,
   /// Whether or not the error is associated with a group to choice enumeration
   pub is_group_to_choice_enum: bool,
   /// Error is associated with a type/group name group entry
@@ -63,6 +65,9 @@ pub struct ValidationError {
 impl fmt::Display for ValidationError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut error_str = String::from("error validating");
+    if self.is_multi_group_choice {
+      error_str.push_str(" group choice");
+    }
     if self.is_multi_type_choice {
       error_str.push_str(" type choice");
     }
@@ -96,6 +101,7 @@ impl ValidationError {
       is_multi_type_choice: jv.is_multi_type_choice,
       is_group_to_choice_enum: jv.is_group_to_choice_enum,
       type_group_name_entry: jv.type_group_name_entry.map(|e| e.to_string()),
+      is_multi_group_choice: jv.is_multi_group_choice,
     }
   }
 }
@@ -131,6 +137,8 @@ pub struct JSONValidator<'a> {
   is_group_to_choice_enum: bool,
   // Are 2 or more type choices detected in current state of AST evaluation
   is_multi_type_choice: bool,
+  // Are 2 or more group choices detected in current state of AST evaluation
+  is_multi_group_choice: bool,
   type_group_name_entry: Option<&'a str>,
   advance_to_next_entry: bool,
 }
@@ -162,6 +170,7 @@ impl<'a> JSONValidator<'a> {
       ctrl: None,
       is_group_to_choice_enum: false,
       is_multi_type_choice: false,
+      is_multi_group_choice: false,
       type_group_name_entry: None,
       advance_to_next_entry: false,
     }
@@ -194,6 +203,7 @@ impl<'a> JSONValidator<'a> {
       cddl_location: self.cddl_location.clone(),
       json_location: self.json_location.clone(),
       is_multi_type_choice: self.is_multi_type_choice,
+      is_multi_group_choice: self.is_multi_group_choice,
       is_group_to_choice_enum: self.is_group_to_choice_enum,
       type_group_name_entry: self.type_group_name_entry.map(|e| e.to_string()),
     });
@@ -296,6 +306,10 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
   }
 
   fn visit_group(&mut self, g: &Group<'a>) -> visitor::Result<ValidationError> {
+    if g.group_choices.len() > 1 {
+      self.is_multi_group_choice = true;
+    }
+
     let initial_error_count = self.errors.len();
     for group_choice in g.group_choices.iter() {
       let error_count = self.errors.len();
@@ -1410,14 +1424,22 @@ mod tests {
     let input = r#"address = { delivery }
 
     delivery = (
-      street: tstr, ? number: uint, city
+      street: tstr, ? number: uint, city //
+      po-box: uint, city //
+      per-pickup: true
     )
     
     city = (
       name: tstr,
+    )
+    
+    delivery //= (
+      lat: float, long: float, drone-type: tstr 
     )"#;
     let json = r#"{
-      "street": "N St NW"
+      "lat": 1.0,
+      "long": 1.0,
+      "drone-type": "test"
     }"#;
 
     let mut lexer = lexer_from_str(input);
