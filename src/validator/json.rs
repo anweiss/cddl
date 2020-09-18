@@ -27,7 +27,13 @@ pub enum Error {
 impl fmt::Display for Error {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      Error::Validation(errors) => write!(f, "errors: {:?}", errors),
+      Error::Validation(errors) => {
+        let mut error_str = String::new();
+        for e in errors.iter() {
+          error_str.push_str(&format!("{}\n", e));
+        }
+        write!(f, "{}", error_str)
+      }
       Error::JSONParsing(error) => write!(f, "error parsing JSON: {}", error),
       Error::CDDLParsing(error) => write!(f, "error parsing CDDL: {}", error),
     }
@@ -75,12 +81,12 @@ impl fmt::Display for ValidationError {
       error_str.push_str(" type choice in group to choice enumeration");
     }
     if let Some(entry) = &self.type_group_name_entry {
-      error_str.push_str(&format!(" group entry associated with rule {}", entry));
+      error_str.push_str(&format!(" group entry associated with rule \"{}\"", entry));
     }
 
     write!(
       f,
-      "{} at cddl location {} and JSON location {}: {}",
+      "{} at cddl location \"{}\" and JSON location {}: {}",
       error_str, self.cddl_location, self.json_location, self.reason
     )
   }
@@ -370,11 +376,9 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       #[allow(unused_assignments)]
       let mut iter_items = false;
       #[allow(unused_assignments)]
-      let mut allow_errors = false;
       match validate_array_occurrence(self.occurence.as_ref().take(), a) {
         Ok(r) => {
-          iter_items = r.0;
-          allow_errors = r.1;
+          iter_items = r;
         }
         Err(e) => {
           self.add_error(e);
@@ -395,9 +399,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
           // If an array item is invalid, but a '?' or '*' occurrence indicator
           // is present, the ambiguity results in the error being disregarded
-          if !allow_errors {
-            self.errors.append(&mut jv.errors);
-          }
+          // if !allow_errors {
+          //   self.errors.append(&mut jv.errors);
+          // }
+
+          self.errors.append(&mut jv.errors);
         }
       } else if let Some(idx) = self.group_entry_idx.take() {
         if let Some(v) = a.get(idx) {
@@ -412,9 +418,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
           // If an array item is invalid, but a '?' or '*' occurrence indicator
           // is present, the ambiguity results in the error being disregarded
-          if !allow_errors {
-            self.errors.append(&mut jv.errors);
-          }
+          // if !allow_errors {
+          //   self.errors.append(&mut jv.errors);
+          // }
+
+          self.errors.append(&mut jv.errors);
         } else {
           self.add_error(format!("expecting array item at index {}", idx));
         }
@@ -826,12 +834,9 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
           #[allow(unused_assignments)]
           let mut iter_items = false;
-          #[allow(unused_assignments)]
-          let mut allow_errors = false;
           match validate_array_occurrence(self.occurence.as_ref().take(), a) {
             Ok(r) => {
-              iter_items = r.0;
-              allow_errors = r.1;
+              iter_items = r;
             }
             Err(e) => {
               self.add_error(e);
@@ -852,9 +857,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
               // If an array item is invalid, but a '?' or '*' occurrence indicator
               // is present, the ambiguity results in the error being disregarded
-              if !allow_errors {
-                self.errors.append(&mut jv.errors);
-              }
+              // if !allow_errors {
+              //   self.errors.append(&mut jv.errors);
+              // }
+
+              self.errors.append(&mut jv.errors);
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
@@ -869,9 +876,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
               // If an array item is invalid, but a '?' or '*' occurrence indicator
               // is present, the ambiguity results in the error being disregarded
-              if !allow_errors {
-                self.errors.append(&mut jv.errors);
-              }
+              // if !allow_errors {
+              //   self.errors.append(&mut jv.errors);
+              // }
+
+              self.errors.append(&mut jv.errors);
             } else {
               self.add_error(format!("expecting map object {} at index {}", group, idx));
             }
@@ -1034,12 +1043,9 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
         #[allow(unused_assignments)]
         let mut iter_items = false;
-        #[allow(unused_assignments)]
-        let mut allow_errors = false;
         match validate_array_occurrence(self.occurence.as_ref().take(), a) {
           Ok(r) => {
-            iter_items = r.0;
-            allow_errors = r.1;
+            iter_items = r;
           }
           Err(e) => {
             self.add_error(e);
@@ -1060,9 +1066,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
             // If an array item is invalid, but a '?' or '*' occurrence indicator
             // is present, the ambiguity results in the error being disregarded
-            if !allow_errors {
-              self.errors.append(&mut jv.errors);
-            }
+            // if !allow_errors {
+            //   self.errors.append(&mut jv.errors);
+            // }
+
+            self.errors.append(&mut jv.errors);
           }
         } else if let Some(idx) = self.group_entry_idx.take() {
           if let Some(v) = a.get(idx) {
@@ -1077,9 +1085,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
             // If an array item is invalid, but a '?' or '*' occurrence indicator
             // is present, the ambiguity results in the error being disregarded
-            if !allow_errors {
-              self.errors.append(&mut jv.errors);
-            }
+            // if !allow_errors {
+            //   self.errors.append(&mut jv.errors);
+            // }
+
+            self.errors.append(&mut jv.errors);
           } else {
             self.add_error(format!("expecting type {} at index {}", ident, idx));
           }
@@ -1114,8 +1124,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
   ) -> visitor::Result<ValidationError> {
     if let Some(occur) = &entry.occur {
       self.visit_occurrence(occur)?;
-    } else {
-      self.occurence = None;
     }
 
     let current_location = self.json_location.clone();
@@ -1138,7 +1146,9 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       jv.generic_rules = self.generic_rules.clone();
       jv.eval_generic_rule = self.eval_generic_rule;
       jv.is_multi_type_choice = self.is_multi_type_choice;
+      jv.is_multi_group_choice = self.is_multi_group_choice;
       jv.json_location.push_str(&self.json_location);
+      jv.type_group_name_entry = self.type_group_name_entry;
       jv.visit_type(&entry.entry_type)?;
 
       self.json_location = current_location;
@@ -1154,6 +1164,9 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       // }
 
       self.errors.append(&mut jv.errors);
+      if entry.occur.is_some() {
+        self.occurence = None;
+      }
 
       Ok(())
     } else if !self.advance_to_next_entry {
@@ -1170,6 +1183,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     self.type_group_name_entry = Some(entry.name.ident);
     walk_type_groupname_entry(self, entry)?;
     self.type_group_name_entry = None;
+
     Ok(())
   }
 
@@ -1315,12 +1329,9 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
         #[allow(unused_assignments)]
         let mut iter_items = false;
-        #[allow(unused_assignments)]
-        let mut allow_errors = false;
         match validate_array_occurrence(self.occurence.as_ref().take(), a) {
           Ok(r) => {
-            iter_items = r.0;
-            allow_errors = r.1;
+            iter_items = r;
           }
           Err(e) => {
             self.add_error(e);
@@ -1341,9 +1352,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
             // If an array item is invalid, but a '?' or '*' occurrence indicator
             // is present, the ambiguity results in the error being disregarded
-            if !allow_errors {
-              self.errors.append(&mut jv.errors);
-            }
+            // if !allow_errors {
+            //   self.errors.append(&mut jv.errors);
+            // }
+
+            self.errors.append(&mut jv.errors);
           }
         } else if let Some(idx) = self.group_entry_idx.take() {
           if let Some(v) = a.get(idx) {
@@ -1358,9 +1371,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
             // If an array item is invalid, but a '?' or '*' occurrence indicator
             // is present, the ambiguity results in the error being disregarded
-            if !allow_errors {
-              self.errors.append(&mut jv.errors);
-            }
+            // if !allow_errors {
+            //   self.errors.append(&mut jv.errors);
+            // }
+
+            self.errors.append(&mut jv.errors);
           } else {
             self.add_error(format!("expecting value {} at index {}", value, idx));
           }
@@ -1430,16 +1445,17 @@ mod tests {
     )
     
     city = (
-      name: tstr,
+      name: tstr, zip-code: uint
     )
     
     delivery //= (
       lat: float, long: float, drone-type: tstr 
     )"#;
     let json = r#"{
-      "lat": 1.0,
-      "long": 1.0,
-      "drone-type": "test"
+      "street": "test",
+      "number": 1,
+      "name": "test",
+      "zip-code": 1
     }"#;
 
     let mut lexer = lexer_from_str(input);

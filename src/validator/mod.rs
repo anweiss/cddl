@@ -227,14 +227,14 @@ pub fn is_ident_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
   occurence: Option<&Occur>,
   values: &[T],
-) -> std::result::Result<(bool, bool), String> {
+) -> std::result::Result<bool, String> {
   match occurence {
-    Some(Occur::ZeroOrMore(_)) | Some(Occur::Optional(_)) => Ok((true, true)),
+    Some(Occur::ZeroOrMore(_)) | Some(Occur::Optional(_)) => Ok(true),
     Some(Occur::OneOrMore(_)) => {
       if values.is_empty() {
         Err("array must have at least one item".to_string())
       } else {
-        Ok((true, false))
+        Ok(true)
       }
     }
     Some(Occur::Exact { lower, upper, .. }) => {
@@ -258,13 +258,13 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
         }
       }
 
-      Ok((true, false))
+      Ok(true)
     }
     None => {
       if values.is_empty() {
         Err("array must have exactly one item".to_string())
       } else {
-        Ok((false, false))
+        Ok(false)
       }
     }
   }

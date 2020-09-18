@@ -63,12 +63,13 @@ fn main() -> Result<(), Box<dyn Error>> {
           Ok(()) => {
             let mut stdout = StandardStream::stdout(ColorChoice::Auto);
             stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
-            writeln!(&mut stdout, "Validation is successful")?;
+            writeln!(&mut stdout, "\nValidation is successful")?;
           }
           Err(e) => {
             let mut stderr = StandardStream::stderr(ColorChoice::Auto);
-            stderr.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
-            writeln!(&mut stderr, "Validation failed. {}", e)?;
+            stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)))?;
+            writeln!(&mut stderr, "\nValidation failed")?;
+            writeln!(&mut stderr, "\n{}", e)?;
           }
         }
 
