@@ -8,30 +8,56 @@ use crate::{
 use serde_json::Value;
 use std::fmt;
 
+use super::*;
+
+/// JSON validation Result
 pub type Result = std::result::Result<(), Error>;
 
+/// JSON validation error
 #[derive(Debug)]
-pub struct Error(pub Vec<ValidationError>);
+pub enum Error {
+  /// Zero or more validation errors
+  Validation(Vec<ValidationError>),
+  /// JSON parsing error
+  JSONParsing(serde_json::Error),
+  /// CDDL parsing error
+  CDDLParsing(String),
+}
 
 impl fmt::Display for Error {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "errors: {:?}", self.0)
+    match self {
+      Error::Validation(errors) => write!(f, "errors: {:?}", errors),
+      Error::JSONParsing(error) => write!(f, "error parsing JSON: {}", error),
+      Error::CDDLParsing(error) => write!(f, "error parsing CDDL: {}", error),
+    }
   }
 }
 
 impl std::error::Error for Error {
   fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-    None
+    match self {
+      Error::JSONParsing(error) => Some(error),
+      _ => None,
+    }
   }
 }
 
+/// JSON validation error
 #[derive(Clone, Debug)]
 pub struct ValidationError {
+  /// Error message
   pub reason: String,
+  /// Location in CDDL where error occurred
   pub cddl_location: String,
+  /// Location in JSON (in JSONPointer notation) where error occurred
   pub json_location: String,
+  /// Whether or not the error is associated with multiple type choices
   pub is_multi_type_choice: bool,
+  /// Whether or not the error is associated with a group to choice enumeration
   pub is_group_to_choice_enum: bool,
+  /// Error is associated with a type/group name group entry
+  pub type_group_name_entry: Option<String>,
 }
 
 impl fmt::Display for ValidationError {
@@ -42,6 +68,9 @@ impl fmt::Display for ValidationError {
     }
     if self.is_group_to_choice_enum {
       error_str.push_str(" type choice in group to choice enumeration");
+    }
+    if let Some(entry) = &self.type_group_name_entry {
+      error_str.push_str(&format!(" group entry associated with rule {}", entry));
     }
 
     write!(
@@ -66,10 +95,12 @@ impl ValidationError {
       reason,
       is_multi_type_choice: jv.is_multi_type_choice,
       is_group_to_choice_enum: jv.is_group_to_choice_enum,
+      type_group_name_entry: jv.type_group_name_entry.map(|e| e.to_string()),
     }
   }
 }
 
+/// JSON validator type
 pub struct JSONValidator<'a> {
   cddl: &'a CDDL<'a>,
   json: Value,
@@ -100,16 +131,19 @@ pub struct JSONValidator<'a> {
   is_group_to_choice_enum: bool,
   // Are 2 or more type choices detected in current state of AST evaluation
   is_multi_type_choice: bool,
+  type_group_name_entry: Option<&'a str>,
+  advance_to_next_entry: bool,
 }
 
 #[derive(Clone, Debug)]
-pub struct GenericRule<'a> {
+struct GenericRule<'a> {
   name: &'a str,
   params: Vec<&'a str>,
   args: Vec<Type1<'a>>,
 }
 
 impl<'a> JSONValidator<'a> {
+  /// New JSONValidation from CDDL AST and JSON value
   pub fn new(cddl: &'a CDDL<'a>, json: Value) -> Self {
     JSONValidator {
       cddl,
@@ -128,81 +162,41 @@ impl<'a> JSONValidator<'a> {
       ctrl: None,
       is_group_to_choice_enum: false,
       is_multi_type_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
     }
   }
 
+  /// Validate
   pub fn validate(&mut self) -> std::result::Result<(), Error> {
     for r in self.cddl.rules.iter() {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {
         if rule.generic_params.is_none() {
-          self.visit_type_rule(rule).map_err(|e| Error(vec![e]))?;
+          self
+            .visit_type_rule(rule)
+            .map_err(|e| Error::Validation(vec![e]))?;
           break;
         }
       }
     }
 
     if !self.errors.is_empty() {
-      return Err(Error(self.errors.clone()));
+      return Err(Error::Validation(self.errors.clone()));
     }
 
     Ok(())
   }
 
-  pub fn add_error(&mut self, reason: String) {
+  fn add_error(&mut self, reason: String) {
     self.errors.push(ValidationError {
       reason,
       cddl_location: self.cddl_location.clone(),
       json_location: self.json_location.clone(),
       is_multi_type_choice: self.is_multi_type_choice,
       is_group_to_choice_enum: self.is_group_to_choice_enum,
+      type_group_name_entry: self.type_group_name_entry.map(|e| e.to_string()),
     });
-  }
-}
-
-pub fn validate_array_occurrence(
-  occurence: Option<&Occur>,
-  values: &[Value],
-) -> std::result::Result<(bool, bool), String> {
-  match occurence {
-    Some(Occur::ZeroOrMore(_)) | Some(Occur::Optional(_)) => Ok((true, true)),
-    Some(Occur::OneOrMore(_)) => {
-      if values.is_empty() {
-        Err("array must have at least one item".to_string())
-      } else {
-        Ok((true, false))
-      }
-    }
-    Some(Occur::Exact { lower, upper, .. }) => {
-      if let Some(lower) = lower {
-        if let Some(upper) = upper {
-          if lower == upper && values.len() != *lower {
-            return Err(format!("array must have exactly {} items", lower));
-          }
-          if values.len() < *lower || values.len() > *upper {
-            return Err(format!(
-              "array must have between {} and {} items",
-              lower, upper
-            ));
-          }
-        } else if values.len() < *lower {
-          return Err(format!("array must have at least {} items", lower));
-        }
-      } else if let Some(upper) = upper {
-        if values.len() > *upper {
-          return Err(format!("array must have not more than {} items", upper));
-        }
-      }
-
-      Ok((true, false))
-    }
-    None => {
-      if values.is_empty() {
-        Err("array must have exactly one item".to_string())
-      } else {
-        Ok((false, false))
-      }
-    }
   }
 }
 
@@ -260,9 +254,9 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
     let error_count = self.errors.len();
 
-    for t in group_choice_alternates_from_ident(self.cddl, &gr.name) {
+    for ge in group_choice_alternates_from_ident(self.cddl, &gr.name) {
       let cur_errors = self.errors.len();
-      self.visit_group_entry(&gr.entry)?;
+      self.visit_group_entry(ge)?;
       if self.errors.len() == cur_errors {
         for _ in 0..self.errors.len() - error_count {
           self.errors.pop();
@@ -289,7 +283,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         // choices validates successfully
         let type_choice_error_count = self.errors.len() - initial_error_count;
         if type_choice_error_count > 0 {
-          for i in 0..type_choice_error_count {
+          for _ in 0..type_choice_error_count {
             self.errors.pop();
           }
         }
@@ -311,7 +305,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         // choices validates successfully
         let group_choice_error_count = self.errors.len() - initial_error_count;
         if group_choice_error_count > 0 {
-          for i in 0..group_choice_error_count {
+          for _ in 0..group_choice_error_count {
             self.errors.pop();
           }
         }
@@ -332,7 +326,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         if self.errors.len() == error_count {
           let type_choice_error_count = self.errors.len() - initial_error_count;
           if type_choice_error_count > 0 {
-            for i in 0..type_choice_error_count {
+            for _ in 0..type_choice_error_count {
               self.errors.pop();
             }
           }
@@ -762,7 +756,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
-          if let Some(Occur::Optional(_)) = self.occurence {
+          if let Some(Occur::Optional(_)) = self.occurence.take() {
             self.add_error(format!(
               "expecting default value {}, got {}",
               controller, self.json
@@ -898,7 +892,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               for arg in ga.args.iter() {
                 gr.args.push((*arg.arg).clone());
               }
-            } else if let Some(params) = generic_params_from_rule(self.cddl, rule) {
+            } else if let Some(params) = generic_params_from_rule(rule) {
               self.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
@@ -954,7 +948,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               for arg in ga.args.iter() {
                 gr.args.push((*arg.arg).clone());
               }
-            } else if let Some(params) = generic_params_from_rule(self.cddl, rule) {
+            } else if let Some(params) = generic_params_from_rule(rule) {
               self.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
@@ -1079,7 +1073,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
         Ok(())
       }
-      Value::Object(o) => {
+      Value::Object(_) => {
         if is_ident_string_data_type(self.cddl, ident) {
           return Ok(());
         }
@@ -1106,14 +1100,23 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
   ) -> visitor::Result<ValidationError> {
     if let Some(occur) = &entry.occur {
       self.visit_occurrence(occur)?;
+    } else {
+      self.occurence = None;
     }
 
     let current_location = self.json_location.clone();
 
     if let Some(mk) = &entry.member_key {
+      let error_count = self.errors.len();
       self.is_member_key = true;
       self.visit_memberkey(mk)?;
       self.is_member_key = false;
+
+      // Move to next entry if member key validation fails
+      if self.errors.len() != error_count {
+        self.advance_to_next_entry = true;
+        return Ok(());
+      }
     }
 
     if let Some(v) = self.object_value.take() {
@@ -1125,22 +1128,35 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       jv.visit_type(&entry.entry_type)?;
 
       self.json_location = current_location;
-      if !jv.errors.is_empty() {
-        if let Some(occur) = &self.occurence {
-          if let Occur::Optional(_) | Occur::ZeroOrMore(_) = occur {
-            if !self.is_cut_present {
-              return Ok(());
-            }
-          }
-        }
-      }
+
+      // if !jv.errors.is_empty() {
+      //   if let Some(occur) = &self.occurence {
+      //     if let Occur::Optional(_) | Occur::ZeroOrMore(_) = occur {
+      //       if !self.is_cut_present {
+      //         return Ok(());
+      //       }
+      //     }
+      //   }
+      // }
 
       self.errors.append(&mut jv.errors);
 
       Ok(())
-    } else {
+    } else if !self.advance_to_next_entry {
       self.visit_type(&entry.entry_type)
+    } else {
+      Ok(())
     }
+  }
+
+  fn visit_type_groupname_entry(
+    &mut self,
+    entry: &TypeGroupnameEntry<'a>,
+  ) -> visitor::Result<ValidationError> {
+    self.type_group_name_entry = Some(entry.name.ident);
+    walk_type_groupname_entry(self, entry)?;
+    self.type_group_name_entry = None;
+    Ok(())
   }
 
   fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<ValidationError> {
@@ -1339,24 +1355,26 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         None
       }
       Value::Object(o) => {
+        // Bareword member keys are converted to text string values
         if let token::Value::TEXT(t) = value {
           if self.is_cut_present {
             self.cut_value = Some(t);
           }
 
+          // Retrieve the value from key unless optional/zero or more, in which
+          // case advance to next group entry
           if let Some(v) = o.get(*t) {
             self.object_value = Some(v.clone());
             self.json_location.push_str(&format!("/{}", t));
 
             None
-          } else if let Some(occur) = &self.occurence {
-            if let Occur::Optional(_) | Occur::ZeroOrMore(_) = occur {
-              None
-            } else {
-              Some(format!("object missing key: {}", t))
-            }
+          } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
+            &self.occurence.take()
+          {
+            self.advance_to_next_entry = true;
+            None
           } else {
-            Some(format!("object missing key: {}", t))
+            Some(format!("object missing key: \"{}\"", t))
           }
         } else {
           Some(format!(
@@ -1382,184 +1400,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
   }
 }
 
-pub fn rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a Rule<'a>> {
-  cddl.rules.iter().find_map(|r| match r {
-    Rule::Type { rule, .. } if rule.name == *ident && !rule.is_type_choice_alternate => Some(r),
-    Rule::Group { rule, .. } if rule.name == *ident && !rule.is_group_choice_alternate => Some(r),
-    _ => None,
-  })
-}
-
-pub fn group_rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a GroupRule<'a>> {
-  cddl.rules.iter().find_map(|r| match r {
-    Rule::Group { rule, .. } if rule.name == *ident && !rule.is_group_choice_alternate => {
-      Some(rule.as_ref())
-    }
-    _ => None,
-  })
-}
-
-pub fn generic_params_from_rule<'a>(cdd: &'a CDDL, rule: &Rule<'a>) -> Option<Vec<&'a str>> {
-  match rule {
-    Rule::Type { rule, .. } => rule
-      .generic_params
-      .as_ref()
-      .map(|gp| gp.params.iter().map(|gp| gp.param.ident).collect()),
-    Rule::Group { rule, .. } => rule
-      .generic_params
-      .as_ref()
-      .map(|gp| gp.params.iter().map(|gp| gp.param.ident).collect()),
-  }
-}
-
-pub fn type_choice_alternates_from_ident<'a>(
-  cddl: &'a CDDL,
-  ident: &Identifier,
-) -> Vec<&'a Type<'a>> {
-  cddl
-    .rules
-    .iter()
-    .filter_map(|r| match r {
-      Rule::Type { rule, .. } if &rule.name == ident => Some(&rule.value),
-      _ => None,
-    })
-    .collect::<Vec<_>>()
-}
-
-pub fn group_choice_alternates_from_ident<'a>(
-  cddl: &'a CDDL,
-  ident: &Identifier,
-) -> Vec<&'a GroupEntry<'a>> {
-  cddl
-    .rules
-    .iter()
-    .filter_map(|r| match r {
-      Rule::Group { rule, .. } if &rule.name == ident => Some(&rule.entry),
-      _ => None,
-    })
-    .collect::<Vec<_>>()
-}
-
-pub fn type_choices_from_group_choice<'a>(
-  cddl: &'a CDDL,
-  grpchoice: &GroupChoice<'a>,
-) -> Vec<TypeChoice<'a>> {
-  let mut type_choices = Vec::new();
-  for ge in grpchoice.group_entries.iter() {
-    match &ge.0 {
-      GroupEntry::ValueMemberKey { ge, .. } => {
-        type_choices.append(&mut ge.entry_type.type_choices.clone());
-      }
-      GroupEntry::TypeGroupname { ge, .. } => {
-        // TODO: parse generic args
-        if let Some(r) = rule_from_ident(cddl, &ge.name) {
-          match r {
-            Rule::Type { rule, .. } => type_choices.append(&mut rule.value.type_choices.clone()),
-            Rule::Group { rule, .. } => type_choices.append(&mut type_choices_from_group_choice(
-              cddl,
-              &GroupChoice::new(vec![rule.entry.clone()]),
-            )),
-          }
-        }
-      }
-      GroupEntry::InlineGroup { group, .. } => {
-        for gc in group.group_choices.iter() {
-          type_choices.append(&mut type_choices_from_group_choice(cddl, gc));
-        }
-      }
-    }
-  }
-
-  type_choices
-}
-
-pub fn is_ident_null_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if ident.ident == "null" || ident.ident == "nil" {
-    return true;
-  }
-
-  cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_null_data_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
-    _ => false,
-  })
-}
-
-pub fn is_ident_bool_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let "bool" | "true" | "false" = ident.ident {
-    return true;
-  }
-
-  cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_bool_data_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
-    _ => false,
-  })
-}
-
-pub fn is_ident_numeric_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let "uint" | "nint" | "integer" | "int" | "number" | "float" | "float16" | "float32"
-  | "float64" | "float16-32" | "float32-64" | "unsigned" = ident.ident
-  {
-    return true;
-  }
-
-  cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_numeric_data_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
-    _ => false,
-  })
-}
-
-pub fn is_ident_uint_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let "uint" = ident.ident {
-    return true;
-  }
-
-  cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_uint_data_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
-    _ => false,
-  })
-}
-
-pub fn is_ident_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if ident.ident == "text" || ident.ident == "tstr" {
-    return true;
-  }
-
-  cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_string_data_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
-    _ => false,
-  })
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1567,9 +1407,18 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"terminal-color = &basecolors<0..10>
-    basecolors<v> = ( id: v )"#;
-    let json = r#"11"#;
+    let input = r#"address = { delivery }
+
+    delivery = (
+      street: tstr, ? number: uint, city
+    )
+    
+    city = (
+      name: tstr,
+    )"#;
+    let json = r#"{
+      "street": "N St NW"
+    }"#;
 
     let mut lexer = lexer_from_str(input);
     let cddl = cddl_from_str(&mut lexer, input, true)?;

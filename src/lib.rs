@@ -287,10 +287,10 @@ pub mod parser;
 pub mod repl;
 /// CDDL tokens for lexing
 pub mod token;
-/// Validation against various data structures (e.g. JSON, CBOR)
+/// Validators for JSON and CBOR data structures
 #[cfg(feature = "std")]
 #[cfg(not(target_arch = "wasm32"))]
-pub mod validation;
+pub mod validator;
 
 pub mod visitor;
 
@@ -304,8 +304,4 @@ pub use self::{
 #[doc(inline)]
 #[cfg(feature = "std")]
 #[cfg(not(target_arch = "wasm32"))]
-pub use self::validation::{
-  cbor::{self as cbor_validator, validate_cbor_from_slice},
-  json::{self as json_validator, validate_json_from_str},
-  Error as ValidationError, Validator,
-};
+pub use self::validator::{cbor as cbor_validator, json as json_validator, validate_json_from_str};
