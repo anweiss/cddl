@@ -145,8 +145,13 @@ pub struct JSONValidator<'a> {
   is_multi_type_choice: bool,
   // Are 2 or more group choices detected in current state of AST evaluation
   is_multi_group_choice: bool,
+  // Type/group name entry detected in current state of AST evaluation. Used
+  // only for providing more verbose error messages
   type_group_name_entry: Option<&'a str>,
+  // Whether or not to advance to the next group entry if member key validation
+  // fails as detected during the current state of AST evaluation
   advance_to_next_entry: bool,
+  is_ctrl_map_equality: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -179,6 +184,7 @@ impl<'a> JSONValidator<'a> {
       is_multi_group_choice: false,
       type_group_name_entry: None,
       advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
     }
   }
 
@@ -317,33 +323,37 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     }
 
     // Map equality/inequality validation
-    if let Some(t) = self.ctrl.take() {
-      if let Value::Object(o) = &self.json {
-        let mut entry_counts = Vec::new();
-        for gc in g.group_choices.iter() {
-          let count = entry_counts_from_group_choice(self.cddl, gc);
-          entry_counts.push(count);
-        }
-        let len = o.len();
-        if let Token::EQ = t {
-          if !entry_counts.iter().any(|c| o.len() == *c as usize) {
-            self.add_error(format!(
-              "map equality error. expected object to have one of {:?} number of key/value pairs, got {}",
-              entry_counts, len
-            ));
-            return Ok(());
+    if self.is_ctrl_map_equality {
+      if let Some(t) = &self.ctrl {
+        if let Value::Object(o) = &self.json {
+          let mut entry_counts = Vec::new();
+          for gc in g.group_choices.iter() {
+            let count = entry_counts_from_group_choice(self.cddl, gc);
+            entry_counts.push(count);
           }
-        } else if let Token::NE = t {
-          if !entry_counts.iter().any(|c| o.len() != *c as usize) {
-            self.add_error(format!(
-              "map inequality error. expected object to not have one of {:?} number of key/value pairs, got {}",
-              entry_counts, len
-            ));
-            return Ok(());
+          let len = o.len();
+          if let Token::EQ = t {
+            if !entry_counts.iter().any(|c| o.len() == *c as usize) {
+              self.add_error(format!(
+                "map equality error. expected object to have one of {:?} number of key/value pairs, got {}",
+                entry_counts, len
+              ));
+              return Ok(());
+            }
+          } else if let Token::NE = t {
+            if !entry_counts.iter().any(|c| o.len() != *c as usize) {
+              self.add_error(format!(
+                "map inequality error. expected object to not have one of {:?} number of key/value pairs, got {}",
+                entry_counts, len
+              ));
+              return Ok(());
+            }
           }
         }
       }
     }
+
+    self.is_ctrl_map_equality = false;
 
     let initial_error_count = self.errors.len();
     for group_choice in g.group_choices.iter() {
@@ -708,8 +718,10 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           Type2::Map { .. } => {
             if let Value::Object(_) = &self.json {
               self.ctrl = t;
+              self.is_ctrl_map_equality = true;
               self.visit_type2(controller)?;
               self.ctrl = None;
+              self.is_ctrl_map_equality = false;
               return Ok(());
             }
           }
@@ -743,8 +755,10 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           Type2::Map { .. } => {
             if let Value::Object(_) = &self.json {
               self.ctrl = t;
+              self.is_ctrl_map_equality = true;
               self.visit_type2(controller)?;
               self.ctrl = None;
+              self.is_ctrl_map_equality = false;
               return Ok(());
             }
           }
@@ -1447,6 +1461,8 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           {
             self.advance_to_next_entry = true;
             None
+          } else if let Some(Token::NE) = &self.ctrl {
+            None
           } else {
             Some(format!("object missing key: \"{}\"", t))
           }
@@ -1481,7 +1497,7 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"address = { delivery } .eq { po-box: uint, city }
+    let input = r#"address = { delivery } .ne { po-box: uint, city }
 
     delivery = (
       po-box: uint, city
@@ -1491,7 +1507,6 @@ mod tests {
       name: tstr, zip-code: uint
     )"#;
     let json = r#"{
-      "po-box": 1,
       "name": "test",
       "zip-code": 2
     }"#;
