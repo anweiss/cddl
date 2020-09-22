@@ -269,3 +269,32 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
     }
   }
 }
+
+/// Retrieve number of group entries from a group choice. This is currently only
+/// used for determining map equality/inequality, but may be useful in other
+/// contexts.
+pub fn entry_counts_from_group_choice(cddl: &CDDL, group_choice: &GroupChoice) -> u64 {
+  let mut count = 0;
+
+  for ge in group_choice.group_entries.iter() {
+    match &ge.0 {
+      GroupEntry::ValueMemberKey { ge, .. } => {
+        if ge.member_key.is_some() {
+          count += 1;
+        }
+      }
+      GroupEntry::InlineGroup { group, .. } => {
+        for gc in group.group_choices.iter() {
+          count += entry_counts_from_group_choice(cddl, gc);
+        }
+      }
+      GroupEntry::TypeGroupname { ge, .. } => {
+        if let Some(gr) = group_rule_from_ident(cddl, &ge.name) {
+          count += entry_counts_from_group_choice(cddl, &GroupChoice::new(vec![gr.entry.clone()]));
+        }
+      }
+    }
+  }
+
+  count
+}

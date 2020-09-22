@@ -316,6 +316,35 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       self.is_multi_group_choice = true;
     }
 
+    // Map equality/inequality validation
+    if let Some(t) = self.ctrl.take() {
+      if let Value::Object(o) = &self.json {
+        let mut entry_counts = Vec::new();
+        for gc in g.group_choices.iter() {
+          let count = entry_counts_from_group_choice(self.cddl, gc);
+          entry_counts.push(count);
+        }
+        let len = o.len();
+        if let Token::EQ = t {
+          if !entry_counts.iter().any(|c| o.len() == *c as usize) {
+            self.add_error(format!(
+              "map equality error. expected object to have one of {:?} number of key/value pairs, got {}",
+              entry_counts, len
+            ));
+            return Ok(());
+          }
+        } else if let Token::NE = t {
+          if !entry_counts.iter().any(|c| o.len() != *c as usize) {
+            self.add_error(format!(
+              "map inequality error. expected object to not have one of {:?} number of key/value pairs, got {}",
+              entry_counts, len
+            ));
+            return Ok(());
+          }
+        }
+      }
+    }
+
     let initial_error_count = self.errors.len();
     for group_choice in g.group_choices.iter() {
       let error_count = self.errors.len();
@@ -662,7 +691,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     controller: &Type2<'a>,
   ) -> visitor::Result<ValidationError> {
     match token::lookup_control_from_str(ctrl) {
-      Some(Token::EQ) => {
+      t @ Some(Token::EQ) => {
         match target {
           Type2::Typename { ident, .. } => {
             if is_ident_string_data_type(self.cddl, ident)
@@ -676,8 +705,16 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               return self.visit_type2(controller);
             }
           }
+          Type2::Map { .. } => {
+            if let Value::Object(_) = &self.json {
+              self.ctrl = t;
+              self.visit_type2(controller)?;
+              self.ctrl = None;
+              return Ok(());
+            }
+          }
           _ => self.add_error(format!(
-            "target for .eq operator must be a string, numerical or array data type, got {}",
+            "target for .eq operator must be a string, numerical, array or map data type, got {}",
             target
           )),
         }
@@ -703,8 +740,16 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               return Ok(());
             }
           }
+          Type2::Map { .. } => {
+            if let Value::Object(_) = &self.json {
+              self.ctrl = t;
+              self.visit_type2(controller)?;
+              self.ctrl = None;
+              return Ok(());
+            }
+          }
           _ => self.add_error(format!(
-            "target for .eq operator must be a string, numerical or array data type, got {}",
+            "target for .ne operator must be a string, numerical, array or map data type, got {}",
             target
           )),
         }
@@ -1436,26 +1481,19 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"address = { delivery }
+    let input = r#"address = { delivery } .eq { po-box: uint, city }
 
     delivery = (
-      street: tstr, ? number: uint, city //
-      po-box: uint, city //
-      per-pickup: true
+      po-box: uint, city
     )
     
     city = (
       name: tstr, zip-code: uint
-    )
-    
-    delivery //= (
-      lat: float, long: float, drone-type: tstr 
     )"#;
     let json = r#"{
-      "street": "test",
-      "number": 1,
+      "po-box": 1,
       "name": "test",
-      "zip-code": 1
+      "zip-code": 2
     }"#;
 
     let mut lexer = lexer_from_str(input);
