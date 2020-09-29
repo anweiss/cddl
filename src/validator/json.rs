@@ -1091,7 +1091,15 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
     match &self.json {
       Value::Null if is_ident_null_data_type(self.cddl, ident) => Ok(()),
-      Value::Bool(_) if is_ident_bool_data_type(self.cddl, ident) => Ok(()),
+      Value::Bool(b) => match token::lookup_ident(ident.ident) {
+        Token::BOOL => Ok(()),
+        Token::TRUE if *b => Ok(()),
+        Token::FALSE if !b => Ok(()),
+        _ => {
+          self.add_error(format!("expected type {}, got {}", ident, self.json));
+          Ok(())
+        }
+      },
       Value::Number(_) if is_ident_numeric_data_type(self.cddl, ident) => Ok(()),
       Value::String(_) if is_ident_string_data_type(self.cddl, ident) => Ok(()),
       Value::Array(a) => {
@@ -1497,18 +1505,15 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"address = { delivery } .ne { po-box: uint, city }
-
-    delivery = (
-      po-box: uint, city
-    )
-    
-    city = (
-      name: tstr, zip-code: uint
-    )"#;
+    let input = r#"person = {
+      age: int,
+      name: tstr,
+      employer: tstr,
+    }"#;
     let json = r#"{
+      "age": 1,
       "name": "test",
-      "zip-code": 2
+      "employer": "test"
     }"#;
 
     let mut lexer = lexer_from_str(input);
