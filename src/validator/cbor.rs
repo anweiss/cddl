@@ -414,11 +414,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     is_inclusive: bool,
   ) -> visitor::Result<ValidationError> {
     if let Value::Array(a) = &self.cbor {
-      let allow_empty_array = if let Some(Occur::Optional(_)) = self.occurence.as_ref() {
-        true
-      } else {
-        false
-      };
+      let allow_empty_array = matches!(self.occurence.as_ref(), Some(Occur::Optional(_)));
 
       #[allow(unused_assignments)]
       let mut iter_items = false;
@@ -905,11 +901,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             return Ok(());
           }
 
-          let allow_empty_array = if let Some(Occur::Optional(_)) = self.occurence.as_ref() {
-            true
-          } else {
-            false
-          };
+          let allow_empty_array = matches!(self.occurence.as_ref(), Some(Occur::Optional(_)));
 
           #[allow(unused_assignments)]
           let mut iter_items = false;
@@ -1176,11 +1168,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           return Ok(());
         }
 
-        let allow_empty_array = if let Some(Occur::Optional(_)) = self.occurence.as_ref() {
-          true
-        } else {
-          false
-        };
+        let allow_empty_array = matches!(self.occurence.as_ref(), Some(Occur::Optional(_)));
 
         #[allow(unused_assignments)]
         let mut iter_items = false;
@@ -1267,10 +1255,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             }
 
             if is_ident_string_data_type(self.cddl, ident) {
-              if !m.keys().all(|k| match k {
-                Value::Text(_) => true,
-                _ => false,
-              }) {
+              if !m.keys().all(|k| matches!(k, Value::Text(_))) {
                 self.add_error(format!("map requires entry keys of type {}", ident));
               }
 
@@ -1278,10 +1263,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             }
 
             if is_ident_integer_data_type(self.cddl, ident) {
-              if !m.keys().all(|k| match k {
-                Value::Integer(_) => true,
-                _ => false,
-              }) {
+              if !m.keys().all(|k| matches!(k, Value::Integer(_))) {
                 self.add_error(format!("map requires entry keys of type {}", ident));
               }
 
@@ -1510,11 +1492,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           return Ok(());
         }
 
-        let allow_empty_array = if let Some(Occur::Optional(_)) = self.occurence.as_ref() {
-          true
-        } else {
-          false
-        };
+        let allow_empty_array = matches!(self.occurence.as_ref(), Some(Occur::Optional(_)));
 
         #[allow(unused_assignments)]
         let mut iter_items = false;

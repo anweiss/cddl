@@ -221,17 +221,14 @@ impl<'a> Rule<'a> {
   }
 
   fn has_comments_after_rule(&self) -> bool {
-    match self {
-      Rule::Type {
-        comments_after_rule: Some(comments),
-        ..
-      }
-      | Rule::Group {
-        comments_after_rule: Some(comments),
-        ..
-      } if comments.any_non_newline() => true,
-      _ => false,
+    matches!(self, Rule::Type {
+      comments_after_rule: Some(comments),
+      ..
     }
+    | Rule::Group {
+      comments_after_rule: Some(comments),
+      ..
+    } if comments.any_non_newline())
   }
 
   fn has_single_line_type(&self) -> bool {
@@ -243,18 +240,19 @@ impl<'a> Rule<'a> {
       ..
     } = self
     {
-      if type_choices.len() <= 2
-        && type_choices.iter().all(|tc| match tc.type1.type2 {
+      let type_check = |tc: &TypeChoice| {
+        matches!(tc.type1.type2,
           Type2::Typename { .. }
           | Type2::FloatValue { .. }
           | Type2::IntValue { .. }
           | Type2::UintValue { .. }
           | Type2::TextValue { .. }
           | Type2::B16ByteString { .. }
-          | Type2::B64ByteString { .. } => true,
-          _ => false,
-        })
-      {
+          | Type2::B64ByteString { .. }
+        )
+      };
+
+      if type_choices.len() <= 2 && type_choices.iter().all(type_check) {
         return true;
       }
     }
@@ -1627,7 +1625,7 @@ pub enum GroupEntry<'a> {
 
 impl<'a> GroupEntry<'a> {
   fn has_trailing_comments(&self) -> bool {
-    match self {
+    matches!(self,
       GroupEntry::ValueMemberKey {
         trailing_comments: Some(comments),
         ..
@@ -1635,9 +1633,8 @@ impl<'a> GroupEntry<'a> {
       | GroupEntry::TypeGroupname {
         trailing_comments: Some(comments),
         ..
-      } if comments.any_non_newline() => true,
-      _ => false,
-    }
+      } if comments.any_non_newline()
+    )
   }
 }
 
