@@ -363,6 +363,19 @@ impl<'a> From<&'static str> for Value<'a> {
   }
 }
 
+impl<'a> Value<'a> {
+  /// Converts a CDDL value type to serde_cbor::Value
+  pub fn into_cbor_value(self) -> serde_cbor::Value {
+    match self {
+      Value::UINT(i) => serde_cbor::Value::Integer(i as i128),
+      Value::INT(i) => serde_cbor::Value::Integer(i as i128),
+      Value::FLOAT(f) => serde_cbor::Value::Float(f),
+      Value::TEXT(t) => serde_cbor::Value::Text(t.to_string()),
+      Value::BYTE(b) => serde_cbor::Value::Bytes(b.into_owned()),
+    }
+  }
+}
+
 /// Byte string values
 #[cfg_attr(target_arch = "wasm32", derive(Serialize, Deserialize))]
 #[derive(Debug, PartialEq, Clone)]
@@ -393,6 +406,14 @@ impl<'a> fmt::Display for ByteValue<'a> {
           .map_err(|_| fmt::Error)?
           .replace(" ", "")
       ),
+    }
+  }
+}
+
+impl<'a> ByteValue<'a> {
+  fn into_owned(self) -> Vec<u8> {
+    match self {
+      ByteValue::UTF8(b) | ByteValue::B16(b) | ByteValue::B64(b) => b.into_owned(),
     }
   }
 }

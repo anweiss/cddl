@@ -1564,6 +1564,10 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             self.cut_value = Some(t);
           }
 
+          if *t == "any" {
+            return Ok(());
+          }
+
           // Retrieve the value from key unless optional/zero or more, in which
           // case advance to next group entry
           if let Some(v) = o.get(*t) {

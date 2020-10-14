@@ -130,7 +130,7 @@ pub struct CBORValidator<'a> {
   // Is a cut detected in current state of AST evaluation
   is_cut_present: bool,
   // Str value of cut detected in current state of AST evaluation
-  cut_value: Option<&'a str>,
+  cut_value: Option<Type1<'a>>,
   // Validate the generic rule given by str ident in current state of AST
   // evaluation
   eval_generic_rule: Option<&'a str>,
@@ -152,6 +152,7 @@ pub struct CBORValidator<'a> {
   // fails as detected during the current state of AST evaluation
   advance_to_next_entry: bool,
   is_ctrl_map_equality: bool,
+  entry_counts: Option<Vec<u64>>,
 }
 
 #[derive(Clone, Debug)]
@@ -185,6 +186,7 @@ impl<'a> CBORValidator<'a> {
       type_group_name_entry: None,
       advance_to_next_entry: false,
       is_ctrl_map_equality: false,
+      entry_counts: None,
     }
   }
 
@@ -412,6 +414,12 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     is_inclusive: bool,
   ) -> visitor::Result<ValidationError> {
     if let Value::Array(a) = &self.cbor {
+      let allow_empty_array = if let Some(Occur::Optional(_)) = self.occurence.as_ref() {
+        true
+      } else {
+        false
+      };
+
       #[allow(unused_assignments)]
       let mut iter_items = false;
       #[allow(unused_assignments)]
@@ -422,6 +430,19 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         Err(e) => {
           self.add_error(e);
           return Ok(());
+        }
+      }
+
+      if !iter_items && !allow_empty_array {
+        if let Some(entry_counts) = self.entry_counts.take() {
+          let len = a.len();
+          if !entry_counts.iter().any(|c| *c as usize == len) {
+            self.add_error(format!(
+              "expecting array with one of the lengths in {:?}, got {}",
+              entry_counts, len
+            ));
+            return Ok(());
+          }
         }
       }
 
@@ -462,9 +483,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           // }
 
           self.errors.append(&mut jv.errors);
-        } else {
-          self.add_error(format!("expecting array item at index {}", idx));
+        } else if !allow_empty_array {
+          self.add_error(format!("expected array item at index {}", idx));
         }
+      } else {
+        self.add_error(format!(
+          "expected range lower {} upper {} inclusive {}, got {:?}",
+          lower, upper, is_inclusive, self.cbor
+        ));
       }
 
       return Ok(());
@@ -690,9 +716,17 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               return self.visit_type2(controller);
             }
           }
-          Type2::Array { .. } => {
+          Type2::Array { group, .. } => {
             if let Value::Array(_) = &self.cbor {
-              return self.visit_type2(controller);
+              let mut entry_counts = Vec::new();
+              for gc in group.group_choices.iter() {
+                let count = entry_counts_from_group_choice(self.cddl, gc);
+                entry_counts.push(count);
+              }
+              self.entry_counts = Some(entry_counts);
+              self.visit_type2(controller)?;
+              self.entry_counts = None;
+              return Ok(());
             }
           }
           Type2::Map { .. } => {
@@ -819,7 +853,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         if self.errors.len() != error_count {
           if let Some(Occur::Optional(_)) = self.occurence.take() {
             self.add_error(format!(
-              "expecting default value {}, got {:?}",
+              "expected default value {}, got {:?}",
               controller, self.cbor
             ));
           }
@@ -871,6 +905,12 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             return Ok(());
           }
 
+          let allow_empty_array = if let Some(Occur::Optional(_)) = self.occurence.as_ref() {
+            true
+          } else {
+            false
+          };
+
           #[allow(unused_assignments)]
           let mut iter_items = false;
           match validate_array_occurrence(self.occurence.as_ref().take(), a) {
@@ -880,6 +920,19 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             Err(e) => {
               self.add_error(e);
               return Ok(());
+            }
+          }
+
+          if !iter_items && !allow_empty_array {
+            if let Some(entry_counts) = self.entry_counts.take() {
+              let len = a.len();
+              if !entry_counts.iter().any(|c| *c as usize == len) {
+                self.add_error(format!(
+                  "expecting array with one of the lengths in {:?}, got {}",
+                  entry_counts, len
+                ));
+                return Ok(());
+              }
             }
           }
 
@@ -920,20 +973,35 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               // }
 
               self.errors.append(&mut jv.errors);
-            } else {
-              self.add_error(format!("expecting map object {} at index {}", group, idx));
+            } else if !allow_empty_array {
+              self.add_error(format!("expected map object {} at index {}", group, idx));
             }
+          } else {
+            self.add_error(format!(
+              "expected map object {}, got {:?}",
+              group, self.cbor
+            ));
           }
 
           Ok(())
         }
         _ => {
-          self.add_error(format!("expecting map object {}, got {:?}", t2, self.cbor));
+          self.add_error(format!("expected map object {}, got {:?}", t2, self.cbor));
           Ok(())
         }
       },
       Type2::Array { group, .. } => match &self.cbor {
-        Value::Array(_) => self.visit_group(group),
+        Value::Array(_) => {
+          let mut entry_counts = Vec::new();
+          for gc in group.group_choices.iter() {
+            let count = entry_counts_from_group_choice(self.cddl, gc);
+            entry_counts.push(count);
+          }
+          self.entry_counts = Some(entry_counts);
+          self.visit_group(group)?;
+          self.entry_counts = None;
+          Ok(())
+        }
         _ => {
           self.add_error(format!("expected array type, got {:?}", self.cbor));
           Ok(())
@@ -1071,6 +1139,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
     match &self.cbor {
       Value::Null if is_ident_null_data_type(self.cddl, ident) => Ok(()),
+      Value::Bytes(_) if is_ident_byte_string_data_type(self.cddl, ident) => Ok(()),
       Value::Bool(b) => match token::lookup_ident(ident.ident) {
         Token::BOOL => Ok(()),
         Token::TRUE if *b => Ok(()),
@@ -1080,13 +1149,38 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           Ok(())
         }
       },
-      Value::Integer(_) | Value::Float(_) if is_ident_numeric_data_type(self.cddl, ident) => Ok(()),
+      Value::Integer(i) => match token::lookup_ident(ident.ident) {
+        Token::INT | Token::INTEGER => Ok(()),
+        Token::UINT if *i >= 0 => Ok(()),
+        _ => {
+          self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
+          Ok(())
+        }
+      },
+      Value::Float(_) => match token::lookup_ident(ident.ident) {
+        Token::FLOAT
+        | Token::FLOAT16
+        | Token::FLOAT1632
+        | Token::FLOAT32
+        | Token::FLOAT3264
+        | Token::FLOAT64 => Ok(()),
+        _ => {
+          self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
+          Ok(())
+        }
+      },
       Value::Text(_) if is_ident_string_data_type(self.cddl, ident) => Ok(()),
       Value::Array(a) => {
         // Member keys are annotation only in an array context
         if self.is_member_key {
           return Ok(());
         }
+
+        let allow_empty_array = if let Some(Occur::Optional(_)) = self.occurence.as_ref() {
+          true
+        } else {
+          false
+        };
 
         #[allow(unused_assignments)]
         let mut iter_items = false;
@@ -1097,6 +1191,19 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           Err(e) => {
             self.add_error(e);
             return Ok(());
+          }
+        }
+
+        if !iter_items && !allow_empty_array {
+          if let Some(entry_counts) = self.entry_counts.take() {
+            let len = a.len();
+            if !entry_counts.iter().any(|c| *c as usize == len) {
+              self.add_error(format!(
+                "expecting array with one of the lengths in {:?}, got {}",
+                entry_counts, len
+              ));
+              return Ok(());
+            }
           }
         }
 
@@ -1137,16 +1244,50 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             // }
 
             self.errors.append(&mut jv.errors);
-          } else {
-            self.add_error(format!("expecting type {} at index {}", ident, idx));
+          } else if !allow_empty_array {
+            self.add_error(format!("expected type {} at index {}", ident, idx));
           }
+        } else {
+          self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
         }
 
         Ok(())
       }
-      Value::Map(_) => {
-        if is_ident_string_data_type(self.cddl, ident) {
-          return Ok(());
+      Value::Map(m) => {
+        if let Some(occur) = &self.occurence {
+          if let Occur::ZeroOrMore(_) | Occur::OneOrMore(_) = occur {
+            if let Occur::OneOrMore(_) = occur {
+              if m.is_empty() {
+                self.add_error(format!(
+                  "map cannot be empty, require one oe more entries with key type {}",
+                  ident
+                ));
+                return Ok(());
+              }
+            }
+
+            if is_ident_string_data_type(self.cddl, ident) {
+              if !m.keys().all(|k| match k {
+                Value::Text(_) => true,
+                _ => false,
+              }) {
+                self.add_error(format!("map requires entry keys of type {}", ident));
+              }
+
+              return Ok(());
+            }
+
+            if is_ident_integer_data_type(self.cddl, ident) {
+              if !m.keys().all(|k| match k {
+                Value::Integer(_) => true,
+                _ => false,
+              }) {
+                self.add_error(format!("map requires entry keys of type {}", ident));
+              }
+
+              return Ok(());
+            }
+          }
         }
 
         self.visit_value(&token::Value::TEXT(ident.ident))
@@ -1369,6 +1510,12 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           return Ok(());
         }
 
+        let allow_empty_array = if let Some(Occur::Optional(_)) = self.occurence.as_ref() {
+          true
+        } else {
+          false
+        };
+
         #[allow(unused_assignments)]
         let mut iter_items = false;
         match validate_array_occurrence(self.occurence.as_ref().take(), a) {
@@ -1378,6 +1525,19 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           Err(e) => {
             self.add_error(e);
             return Ok(());
+          }
+        }
+
+        if !iter_items && !allow_empty_array {
+          if let Some(entry_counts) = self.entry_counts.take() {
+            let len = a.len();
+            if !entry_counts.iter().any(|c| *c as usize == len) {
+              self.add_error(format!(
+                "expecting array with one of the lengths in {:?}, got {}",
+                entry_counts, len
+              ));
+              return Ok(());
+            }
           }
         }
 
@@ -1418,42 +1578,39 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             // }
 
             self.errors.append(&mut jv.errors);
-          } else {
-            self.add_error(format!("expecting value {} at index {}", value, idx));
+          } else if !allow_empty_array {
+            self.add_error(format!("expected value {} at index {}", value, idx));
           }
+        } else {
+          self.add_error(format!("expected value {}, got {:?}", value, self.cbor));
         }
 
         None
       }
       Value::Map(o) => {
-        // Bareword member keys are converted to text string values
-        if let token::Value::TEXT(t) = value {
-          if self.is_cut_present {
-            self.cut_value = Some(t);
-          }
+        if self.is_cut_present {
+          self.cut_value = Some(Type1::from(value.clone()));
+        }
 
-          // Retrieve the value from key unless optional/zero or more, in which
-          // case advance to next group entry
-          if let Some(v) = o.get(&Value::from(t.to_string())) {
-            self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{}", t));
+        if let token::Value::TEXT("any") = value {
+          return Ok(());
+        }
 
-            None
-          } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
-            &self.occurence.take()
-          {
-            self.advance_to_next_entry = true;
-            None
-          } else if let Some(Token::NE) = &self.ctrl {
-            None
-          } else {
-            Some(format!("object missing key: \"{}\"", t))
-          }
+        // Retrieve the value from key unless optional/zero or more, in which
+        // case advance to next group entry
+        if let Some(v) = o.get(&value.clone().into_cbor_value()) {
+          self.object_value = Some(v.clone());
+          self.cbor_location.push_str(&format!("/{}", value));
+
+          None
+        } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) = &self.occurence.take()
+        {
+          self.advance_to_next_entry = true;
+          None
+        } else if let Some(Token::NE) = &self.ctrl {
+          None
         } else {
-          Some(format!(
-            "CDDL member key must be string data type. got {}",
-            value
-          ))
+          Some(format!("object missing key: \"{}\"", value))
         }
       }
       _ => Some(format!("expected {}, got {:?}", value, self.cbor)),
@@ -1475,19 +1632,25 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
 #[cfg(test)]
 mod tests {
+  use std::collections::BTreeMap;
+
   use super::*;
   use crate::{cddl_from_str, lexer_from_str};
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"person = true"#;
-    let cbor = b"\xF4";
+    let input = r#"thing = { * int => any}"#;
+
+    let mut cbor = BTreeMap::new();
+    cbor.insert(1, "test");
 
     let mut lexer = lexer_from_str(input);
     let cddl = cddl_from_str(&mut lexer, input, true)?;
-    let cbor = serde_cbor::from_slice::<Value>(cbor)?;
+    let cbor = serde_cbor::to_vec(&cbor).unwrap();
 
-    let mut cv = CBORValidator::new(&cddl, cbor);
+    let cbor_value = serde_cbor::from_slice::<Value>(&cbor).unwrap();
+
+    let mut cv = CBORValidator::new(&cddl, cbor_value);
     cv.validate()?;
 
     Ok(())

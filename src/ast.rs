@@ -1,7 +1,7 @@
 #[cfg(target_arch = "wasm32")]
 extern crate console_error_panic_hook;
 
-use super::token::{RangeValue, SocketPlug, Value};
+use super::token::{ByteValue, RangeValue, SocketPlug, Value};
 use std::fmt;
 
 #[cfg(feature = "std")]
@@ -693,6 +693,28 @@ pub struct Type1<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_type: Option<Comments<'a>>,
+}
+
+impl<'a> From<Value<'a>> for Type1<'a> {
+  fn from(value: Value<'a>) -> Self {
+    let span = Span::default();
+    let type2 = match value {
+      Value::TEXT(value) => Type2::TextValue { value, span },
+      Value::INT(value) => Type2::IntValue { value, span },
+      Value::FLOAT(value) => Type2::FloatValue { value, span },
+      Value::UINT(value) => Type2::UintValue { value, span },
+      Value::BYTE(ByteValue::B16(value)) => Type2::B16ByteString { value, span },
+      Value::BYTE(ByteValue::B64(value)) => Type2::B64ByteString { value, span },
+      Value::BYTE(ByteValue::UTF8(value)) => Type2::UTF8ByteString { value, span },
+    };
+
+    Type1 {
+      type2,
+      span,
+      operator: None,
+      comments_after_type: None,
+    }
+  }
 }
 
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
