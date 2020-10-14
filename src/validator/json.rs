@@ -152,6 +152,7 @@ pub struct JSONValidator<'a> {
   // fails as detected during the current state of AST evaluation
   advance_to_next_entry: bool,
   is_ctrl_map_equality: bool,
+  entry_counts: Option<Vec<u64>>,
 }
 
 #[derive(Clone, Debug)]
@@ -185,6 +186,7 @@ impl<'a> JSONValidator<'a> {
       type_group_name_entry: None,
       advance_to_next_entry: false,
       is_ctrl_map_equality: false,
+      entry_counts: None,
     }
   }
 
@@ -412,6 +414,12 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     is_inclusive: bool,
   ) -> visitor::Result<ValidationError> {
     if let Value::Array(a) = &self.json {
+      let allow_empty_array = if let Some(Occur::Optional(_)) = self.occurence.as_ref() {
+        true
+      } else {
+        false
+      };
+
       #[allow(unused_assignments)]
       let mut iter_items = false;
       #[allow(unused_assignments)]
@@ -422,6 +430,19 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         Err(e) => {
           self.add_error(e);
           return Ok(());
+        }
+      }
+
+      if !iter_items && !allow_empty_array {
+        if let Some(entry_counts) = self.entry_counts.take() {
+          let len = a.len();
+          if !entry_counts.iter().any(|c| *c as usize == len) {
+            self.add_error(format!(
+              "expecting array with one of the lengths in {:?}, got {}",
+              entry_counts, len
+            ));
+            return Ok(());
+          }
         }
       }
 
@@ -462,9 +483,14 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           // }
 
           self.errors.append(&mut jv.errors);
-        } else {
-          self.add_error(format!("expecting array item at index {}", idx));
+        } else if !allow_empty_array {
+          self.add_error(format!("expected array item at index {}", idx));
         }
+      } else {
+        self.add_error(format!(
+          "expected range lower {} upper {} inclusive {}, got {}",
+          lower, upper, is_inclusive, self.json
+        ));
       }
 
       return Ok(());
@@ -710,9 +736,17 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               return self.visit_type2(controller);
             }
           }
-          Type2::Array { .. } => {
+          Type2::Array { group, .. } => {
             if let Value::Array(_) = &self.json {
-              return self.visit_type2(controller);
+              let mut entry_counts = Vec::new();
+              for gc in group.group_choices.iter() {
+                let count = entry_counts_from_group_choice(self.cddl, gc);
+                entry_counts.push(count);
+              }
+              self.entry_counts = Some(entry_counts);
+              self.visit_type2(controller)?;
+              self.entry_counts = None;
+              return Ok(());
             }
           }
           Type2::Map { .. } => {
@@ -839,7 +873,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         if self.errors.len() != error_count {
           if let Some(Occur::Optional(_)) = self.occurence.take() {
             self.add_error(format!(
-              "expecting default value {}, got {}",
+              "expected default value {}, got {}",
               controller, self.json
             ));
           }
@@ -891,6 +925,12 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             return Ok(());
           }
 
+          let allow_empty_array = if let Some(Occur::Optional(_)) = self.occurence.as_ref() {
+            true
+          } else {
+            false
+          };
+
           #[allow(unused_assignments)]
           let mut iter_items = false;
           match validate_array_occurrence(self.occurence.as_ref().take(), a) {
@@ -900,6 +940,19 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             Err(e) => {
               self.add_error(e);
               return Ok(());
+            }
+          }
+
+          if !iter_items && !allow_empty_array {
+            if let Some(entry_counts) = self.entry_counts.take() {
+              let len = a.len();
+              if !entry_counts.iter().any(|c| *c as usize == len) {
+                self.add_error(format!(
+                  "expecting array with one of the lengths in {:?}, got {}",
+                  entry_counts, len
+                ));
+                return Ok(());
+              }
             }
           }
 
@@ -940,20 +993,32 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               // }
 
               self.errors.append(&mut jv.errors);
-            } else {
-              self.add_error(format!("expecting map object {} at index {}", group, idx));
+            } else if !allow_empty_array {
+              self.add_error(format!("expected map object {} at index {}", group, idx));
             }
+          } else {
+            self.add_error(format!("expected map object {}, got {}", group, self.json));
           }
 
           Ok(())
         }
         _ => {
-          self.add_error(format!("expecting map object {}, got {}", t2, self.json));
+          self.add_error(format!("expected map object {}, got {}", t2, self.json));
           Ok(())
         }
       },
       Type2::Array { group, .. } => match &self.json {
-        Value::Array(_) => self.visit_group(group),
+        Value::Array(_) => {
+          let mut entry_counts = Vec::new();
+          for gc in group.group_choices.iter() {
+            let count = entry_counts_from_group_choice(self.cddl, gc);
+            entry_counts.push(count);
+          }
+          self.entry_counts = Some(entry_counts);
+          self.visit_group(group)?;
+          self.entry_counts = None;
+          Ok(())
+        }
         _ => {
           self.add_error(format!("expected array type, got {}", self.json));
           Ok(())
@@ -1108,6 +1173,12 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           return Ok(());
         }
 
+        let allow_empty_array = if let Some(Occur::Optional(_)) = self.occurence.as_ref() {
+          true
+        } else {
+          false
+        };
+
         #[allow(unused_assignments)]
         let mut iter_items = false;
         match validate_array_occurrence(self.occurence.as_ref().take(), a) {
@@ -1117,6 +1188,19 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           Err(e) => {
             self.add_error(e);
             return Ok(());
+          }
+        }
+
+        if !iter_items && !allow_empty_array {
+          if let Some(entry_counts) = self.entry_counts.take() {
+            let len = a.len();
+            if !entry_counts.iter().any(|c| *c as usize == len) {
+              self.add_error(format!(
+                "expecting array with one of the lengths in {:?}, got {}",
+                entry_counts, len
+              ));
+              return Ok(());
+            }
           }
         }
 
@@ -1157,9 +1241,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             // }
 
             self.errors.append(&mut jv.errors);
-          } else {
-            self.add_error(format!("expecting type {} at index {}", ident, idx));
+          } else if !allow_empty_array {
+            self.add_error(format!("expected type {} at index {}", ident, idx));
           }
+        } else {
+          self.add_error(format!("expected type {}, got {}", ident, self.json));
         }
 
         Ok(())
@@ -1394,6 +1480,12 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           return Ok(());
         }
 
+        let allow_empty_array = if let Some(Occur::Optional(_)) = self.occurence.as_ref() {
+          true
+        } else {
+          false
+        };
+
         #[allow(unused_assignments)]
         let mut iter_items = false;
         match validate_array_occurrence(self.occurence.as_ref().take(), a) {
@@ -1403,6 +1495,19 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           Err(e) => {
             self.add_error(e);
             return Ok(());
+          }
+        }
+
+        if !iter_items && !allow_empty_array {
+          if let Some(entry_counts) = self.entry_counts.take() {
+            let len = a.len();
+            if !entry_counts.iter().any(|c| *c as usize == len) {
+              self.add_error(format!(
+                "expecting array with one of the lengths in {:?}, got {}",
+                entry_counts, len
+              ));
+              return Ok(());
+            }
           }
         }
 
@@ -1443,9 +1548,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             // }
 
             self.errors.append(&mut jv.errors);
-          } else {
-            self.add_error(format!("expecting value {} at index {}", value, idx));
+          } else if !allow_empty_array {
+            self.add_error(format!("expected value {} at index {}", value, idx));
           }
+        } else {
+          self.add_error(format!("expected value {}, got {}", value, self.json));
         }
 
         None

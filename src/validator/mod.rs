@@ -4,30 +4,36 @@ pub mod cbor;
 /// JSON validation implementation
 pub mod json;
 
+use cbor::CBORValidator;
 use json::JSONValidator;
 use serde::de::Deserialize;
-use serde_json::Value;
 
 use crate::{
   ast::{
     GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type2, TypeChoice, CDDL,
   },
-  cddl_from_str, lexer_from_str,
+  cddl_from_str, lexer_from_str, token,
 };
 
 /// Validate JSON string from a given CDDL document string
 pub fn validate_json_from_str(cddl: &str, json: &str) -> json::Result {
   let mut lexer = lexer_from_str(cddl);
   let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing)?;
-  let json = serde_json::from_str::<Value>(json).map_err(json::Error::JSONParsing)?;
+  let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
   let mut jv = JSONValidator::new(&cddl, json);
   jv.validate()
 }
 
 /// Validate CBOR slice from a given CDDL document string
-pub fn validate_cbor_from_slice(cddl: &str, cbor: &[u8]) -> cbor::Result {
-  todo!()
+pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result {
+  let mut lexer = lexer_from_str(cddl);
+  let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(cbor::Error::CDDLParsing)?;
+  let cbor =
+    serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice).map_err(cbor::Error::CBORParsing)?;
+
+  let mut cv = CBORValidator::new(&cddl, cbor);
+  cv.validate()
 }
 
 /// Find non-choice alternate rule from a given identifier
@@ -219,17 +225,32 @@ pub fn is_ident_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
-/// Validate an array based on an occurrence indicator. The first boolean in the
-/// returned tuple indicates whether to validate the array homogenously or
-/// non-homogenously (based on the index of the entry). The second boolean in
-/// the returned tuple indicates whether or not validation errors should be
-/// ignored.
+/// Is the given identifier associated with a byte string data type
+pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  match token::lookup_ident(ident.ident) {
+    token::Token::BSTR | token::Token::BYTES => true,
+    _ => cddl.rules.iter().any(|r| match r {
+      Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
+        if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+          is_ident_byte_string_data_type(cddl, ident)
+        } else {
+          false
+        }
+      }),
+      _ => false,
+    }),
+  }
+}
+
+/// Validate an array based on an occurrence indicator. The returned boolean
+/// indicates whether to validate the array homogenously or non-homogenously
+/// (based on the index of the entry)
 pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
   occurence: Option<&Occur>,
   values: &[T],
 ) -> std::result::Result<bool, String> {
   match occurence {
-    Some(Occur::ZeroOrMore(_)) | Some(Occur::Optional(_)) => Ok(true),
+    Some(Occur::ZeroOrMore(_)) => Ok(true),
     Some(Occur::OneOrMore(_)) => {
       if values.is_empty() {
         Err("array must have at least one item".to_string())
@@ -260,6 +281,13 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 
       Ok(true)
     }
+    Some(Occur::Optional(_)) => {
+      if values.len() > 1 {
+        return Err("array must have 0 or 1 items".to_string());
+      }
+
+      Ok(false)
+    }
     None => {
       if values.is_empty() {
         Err("array must have exactly one item".to_string())
@@ -271,8 +299,8 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 }
 
 /// Retrieve number of group entries from a group choice. This is currently only
-/// used for determining map equality/inequality, but may be useful in other
-/// contexts.
+/// used for determining map equality/inequality and for validating the number
+/// of entries in non-homogenous arrays, but may be useful in other contexts.
 pub fn entry_counts_from_group_choice(cddl: &CDDL, group_choice: &GroupChoice) -> u64 {
   let mut count = 0;
 
