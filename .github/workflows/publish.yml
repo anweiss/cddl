@@ -92,18 +92,18 @@ jobs:
       - name: Build image
         run: |
           export TAG=`git describe --tags`
-          docker build -t docker.pkg.github.com/anweiss/cddl/cddl:$TAG .
+          docker build -t ghcr.io/anweiss/cddl-cli:$TAG .
 
       - name: Login to GPR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          docker login docker.pkg.github.com -u anweiss -p $GITHUB_TOKEN
+          docker login ghcr.io -u anweiss -p $GITHUB_TOKEN
 
       - name: Push image
         run: |
           export TAG=`git describe --tags`
-          docker push docker.pkg.github.com/anweiss/cddl/cddl:$TAG
+          docker push ghcr.io/anweiss/cddl-cli:$TAG
 
   publish-npm:
     name: Publish npm
