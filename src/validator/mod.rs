@@ -12,7 +12,8 @@ use crate::{
   ast::{
     GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type2, TypeChoice, CDDL,
   },
-  cddl_from_str, lexer_from_str, token,
+  cddl_from_str, lexer_from_str,
+  token::*,
 };
 
 /// Validate JSON string from a given CDDL document string
@@ -135,7 +136,7 @@ pub fn type_choices_from_group_choice<'a>(
 
 /// Is the given identifier associated with a null data type
 pub fn is_ident_null_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if ident.ident == "null" || ident.ident == "nil" {
+  if let Token::NULL | Token::NIL = lookup_ident(ident.ident) {
     return true;
   }
 
@@ -153,7 +154,7 @@ pub fn is_ident_null_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
 /// Is the given identifier associated with a boolean data type
 pub fn is_ident_bool_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let "bool" | "true" | "false" = ident.ident {
+  if let Token::BOOL | Token::TRUE | Token::FALSE = lookup_ident(ident.ident) {
     return true;
   }
 
@@ -171,8 +172,18 @@ pub fn is_ident_bool_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
 /// Is the given identifier associated with a numeric data type
 pub fn is_ident_numeric_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let "uint" | "nint" | "integer" | "int" | "number" | "float" | "float16" | "float32"
-  | "float64" | "float16-32" | "float32-64" | "unsigned" = ident.ident
+  if let Token::UINT
+  | Token::NINT
+  | Token::INTEGER
+  | Token::INT
+  | Token::NUMBER
+  | Token::FLOAT
+  | Token::FLOAT16
+  | Token::FLOAT32
+  | Token::FLOAT64
+  | Token::FLOAT1632
+  | Token::FLOAT3264
+  | Token::UNSIGNED = lookup_ident(ident.ident)
   {
     return true;
   }
@@ -191,7 +202,7 @@ pub fn is_ident_numeric_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
 /// Is the given identifier associated with a uint data type
 pub fn is_ident_uint_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let "uint" = ident.ident {
+  if let Token::UINT = lookup_ident(ident.ident) {
     return true;
   }
 
@@ -207,9 +218,29 @@ pub fn is_ident_uint_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
+/// Is the given identifier associated with an integer data type
+pub fn is_ident_integer_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  if let Token::INT | Token::INTEGER | Token::NINT | Token::UINT | Token::NUMBER | Token::UNSIGNED =
+    lookup_ident(ident.ident)
+  {
+    return true;
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        is_ident_integer_data_type(cddl, ident)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
 /// Is the given identifier associated with a string data type
 pub fn is_ident_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if ident.ident == "text" || ident.ident == "tstr" {
+  if let Token::TEXT | Token::TSTR = lookup_ident(ident.ident) {
     return true;
   }
 
@@ -227,8 +258,8 @@ pub fn is_ident_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
 /// Is the given identifier associated with a byte string data type
 pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  match token::lookup_ident(ident.ident) {
-    token::Token::BSTR | token::Token::BYTES => true,
+  match lookup_ident(ident.ident) {
+    Token::BSTR | Token::BYTES => true,
     _ => cddl.rules.iter().any(|r| match r {
       Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
         if let Type2::Typename { ident, .. } = &tc.type1.type2 {
