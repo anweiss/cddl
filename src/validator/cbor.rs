@@ -1598,7 +1598,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
         // Retrieve the value from key unless optional/zero or more, in which
         // case advance to next group entry
-        if let Some(v) = o.get(&value.clone().into_cbor_value()) {
+        if let Some(v) = o.get(&token_value_into_cbor_value(value.clone())) {
           self.object_value = Some(v.clone());
           self.cbor_location.push_str(&format!("/{}", value));
 
@@ -1627,6 +1627,21 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     self.occurence = Some(o.occur.clone());
 
     Ok(())
+  }
+}
+
+/// Converts a CDDL value type to serde_cbor::Value
+pub fn token_value_into_cbor_value(value: token::Value) -> serde_cbor::Value {
+  match value {
+    token::Value::UINT(i) => serde_cbor::Value::Integer(i as i128),
+    token::Value::INT(i) => serde_cbor::Value::Integer(i as i128),
+    token::Value::FLOAT(f) => serde_cbor::Value::Float(f),
+    token::Value::TEXT(t) => serde_cbor::Value::Text(t.to_string()),
+    token::Value::BYTE(b) => match b {
+      ByteValue::UTF8(b) | ByteValue::B16(b) | ByteValue::B64(b) => {
+        serde_cbor::Value::Bytes(b.into_owned())
+      }
+    },
   }
 }
 
