@@ -1910,8 +1910,9 @@ where
 
         let mut has_group_entries = false;
         let mut closing_parend = false;
+        let mut closing_parend_index = 0;
         while !closing_parend {
-          if self.cur_token_is(Token::ARROWMAP) || !self.cur_token_is(Token::COLON) {
+          if self.cur_token_is(Token::ARROWMAP) || self.cur_token_is(Token::COLON) {
             has_group_entries = true;
           }
 
@@ -1923,7 +1924,10 @@ where
           if self.cur_token_is(Token::RPAREN) {
             match nested_parend_count.cmp(&0) {
               Ordering::Greater => nested_parend_count -= 1,
-              Ordering::Equal | Ordering::Less => closing_parend = true,
+              Ordering::Equal | Ordering::Less => {
+                closing_parend = true;
+                closing_parend_index = self.lexer_position.range.1;
+              }
             }
           }
 
@@ -2000,7 +2004,25 @@ where
           let end_memberkey_range = self.lexer_position.range.1;
 
           let t1 = Some(MemberKey::Type1 {
-            t1: Box::from(t.type_choices[0].type1.clone()),
+            t1: Box::from(Type1 {
+              type2: Type2::ParenthesizedType {
+                pt: t,
+                comments_before_type: comments_before_type_or_group,
+                comments_after_type: comments_after_type_or_group,
+                span: (
+                  begin_memberkey_range,
+                  closing_parend_index,
+                  begin_memberkey_line,
+                ),
+              },
+              comments_after_type: comments_before_cut.clone(),
+              operator: None,
+              span: (
+                begin_memberkey_range,
+                closing_parend_index,
+                begin_memberkey_line,
+              ),
+            }),
             comments_before_cut,
             is_cut: true,
             comments_after_cut,
@@ -2023,7 +2045,25 @@ where
           let memberkey_comments = self.collect_comments()?;
 
           Some(MemberKey::Type1 {
-            t1: Box::from(t.type_choices[0].type1.clone()),
+            t1: Box::from(Type1 {
+              type2: Type2::ParenthesizedType {
+                pt: t,
+                comments_before_type: comments_before_type_or_group,
+                comments_after_type: comments_after_type_or_group,
+                span: (
+                  begin_memberkey_range,
+                  closing_parend_index,
+                  begin_memberkey_line,
+                ),
+              },
+              comments_after_type: comments_before_cut.clone(),
+              operator: None,
+              span: (
+                begin_memberkey_range,
+                closing_parend_index,
+                begin_memberkey_line,
+              ),
+            }),
             comments_before_cut,
             is_cut: false,
             comments_after_cut: None,
@@ -4089,7 +4129,7 @@ mod tests {
   fn verify_memberkey() -> Result<()> {
     let inputs = [
       r#"type1 =>"#,
-      r#""mytype1" ^ =>"#,
+      r#"( "mytype1" / int ) ^ =>"#,
       r#"mybareword:"#,
       r#"my..bareword:"#,
       r#""myvalue": "#,
@@ -4120,19 +4160,56 @@ mod tests {
       },
       MemberKey::Type1 {
         t1: Box::from(Type1 {
-          type2: Type2::TextValue {
-            value: "mytype1".into(),
-            span: (0, 9, 1),
+          type2: Type2::ParenthesizedType {
+            pt: Type {
+              type_choices: vec![
+                TypeChoice {
+                  type1: Type1 {
+                    type2: Type2::TextValue {
+                      value: "mytype1",
+                      span: (2, 11, 1),
+                    },
+                    operator: None,
+                    span: (2, 11, 1),
+                    comments_after_type: None,
+                  },
+                  comments_after_type: None,
+                  comments_before_type: None,
+                },
+                TypeChoice {
+                  type1: Type1 {
+                    type2: Type2::Typename {
+                      ident: Identifier {
+                        ident: "int",
+                        span: (14, 17, 1),
+                        socket: None,
+                      },
+                      span: (14, 17, 1),
+                      generic_args: None,
+                    },
+                    span: (14, 17, 1),
+                    comments_after_type: None,
+                    operator: None,
+                  },
+                  comments_before_type: None,
+                  comments_after_type: None,
+                },
+              ],
+              span: (2, 17, 1),
+            },
+            span: (0, 19, 1),
+            comments_before_type: None,
+            comments_after_type: None,
           },
           operator: None,
           comments_after_type: None,
-          span: (0, 9, 1),
+          span: (0, 19, 1),
         }),
         is_cut: true,
         comments_before_cut: None,
         comments_after_cut: None,
         comments_after_arrowmap: None,
-        span: (0, 14, 1),
+        span: (0, 24, 1),
       },
       MemberKey::Bareword {
         ident: Identifier {
