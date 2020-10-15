@@ -153,6 +153,8 @@ pub struct CBORValidator<'a> {
   advance_to_next_entry: bool,
   is_ctrl_map_equality: bool,
   entry_counts: Option<Vec<u64>>,
+  validated_keys: Option<Vec<Value>>,
+  values_to_validate: Option<Vec<Value>>,
 }
 
 #[derive(Clone, Debug)]
@@ -187,6 +189,8 @@ impl<'a> CBORValidator<'a> {
       advance_to_next_entry: false,
       is_ctrl_map_equality: false,
       entry_counts: None,
+      validated_keys: None,
+      values_to_validate: None,
     }
   }
 
@@ -702,7 +706,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     ctrl: &str,
     controller: &Type2<'a>,
   ) -> visitor::Result<ValidationError> {
-    match token::lookup_control_from_str(ctrl) {
+    match lookup_control_from_str(ctrl) {
       t @ Some(Token::EQ) => {
         match target {
           Type2::Typename { ident, .. } => {
@@ -1129,10 +1133,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       return self.visit_rule(r);
     }
 
+    if let Token::ANY = lookup_ident(ident.ident) {
+      return Ok(());
+    }
+
     match &self.cbor {
       Value::Null if is_ident_null_data_type(self.cddl, ident) => Ok(()),
       Value::Bytes(_) if is_ident_byte_string_data_type(self.cddl, ident) => Ok(()),
-      Value::Bool(b) => match token::lookup_ident(ident.ident) {
+      Value::Bool(b) => match lookup_ident(ident.ident) {
         Token::BOOL => Ok(()),
         Token::TRUE if *b => Ok(()),
         Token::FALSE if !b => Ok(()),
@@ -1141,7 +1149,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           Ok(())
         }
       },
-      Value::Integer(i) => match token::lookup_ident(ident.ident) {
+      Value::Integer(i) => match lookup_ident(ident.ident) {
         Token::INT | Token::INTEGER => Ok(()),
         Token::UINT if *i >= 0 => Ok(()),
         _ => {
@@ -1149,7 +1157,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           Ok(())
         }
       },
-      Value::Float(_) => match token::lookup_ident(ident.ident) {
+      Value::Float(_) => match lookup_ident(ident.ident) {
         Token::FLOAT
         | Token::FLOAT16
         | Token::FLOAT1632
@@ -1255,21 +1263,288 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             }
 
             if is_ident_string_data_type(self.cddl, ident) {
-              if !m.keys().all(|k| matches!(k, Value::Text(_))) {
-                self.add_error(format!("map requires entry keys of type {}", ident));
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(&k) {
+                      if matches!(k, Value::Text(_)) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if matches!(k, Value::Text(_)) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+              for e in errors.into_iter() {
+                self.add_error(e);
               }
 
               return Ok(());
             }
 
             if is_ident_integer_data_type(self.cddl, ident) {
-              if !m.keys().all(|k| matches!(k, Value::Integer(_))) {
-                self.add_error(format!("map requires entry keys of type {}", ident));
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(&k) {
+                      if matches!(k, Value::Integer(_)) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if matches!(k, Value::Integer(_)) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+              for e in errors.into_iter() {
+                self.add_error(e);
+              }
+
+              return Ok(());
+            }
+
+            if is_ident_bool_data_type(self.cddl, ident) {
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(&k) {
+                      if matches!(k, Value::Bool(_)) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if matches!(k, Value::Bool(_)) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+              for e in errors.into_iter() {
+                self.add_error(e);
+              }
+
+              return Ok(());
+            }
+
+            if is_ident_byte_string_data_type(self.cddl, ident) {
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(&k) {
+                      if matches!(k, Value::Bytes(_)) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if matches!(k, Value::Bytes(_)) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+              for e in errors.into_iter() {
+                self.add_error(e);
+              }
+
+              return Ok(());
+            }
+
+            if is_ident_null_data_type(self.cddl, ident) {
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(&k) {
+                      if matches!(k, Value::Null) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if matches!(k, Value::Null) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+              for e in errors.into_iter() {
+                self.add_error(e);
+              }
+
+              return Ok(());
+            }
+
+            if is_ident_float_data_type(self.cddl, ident) {
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(&k) {
+                      if matches!(k, Value::Float(_)) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if matches!(k, Value::Float(_)) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+              for e in errors.into_iter() {
+                self.add_error(e);
               }
 
               return Ok(());
             }
           }
+        }
+
+        if is_ident_string_data_type(self.cddl, ident) {
+          if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Text(_))) {
+            self
+              .validated_keys
+              .get_or_insert(vec![k.clone()])
+              .push(k.clone());
+            self.object_value = Some(v.clone());
+            self.cbor_location.push_str(&format!("/{:?}", v));
+          } else {
+            self.add_error(format!("map requires entry key of type {}", ident));
+          }
+
+          return Ok(());
+        }
+
+        if is_ident_integer_data_type(self.cddl, ident) {
+          if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Integer(_))) {
+            self
+              .validated_keys
+              .get_or_insert(vec![k.clone()])
+              .push(k.clone());
+            self.object_value = Some(v.clone());
+            self.cbor_location.push_str(&format!("/{:?}", v));
+          } else {
+            self.add_error(format!("map requires entry key of type {}", ident));
+          }
+          return Ok(());
+        }
+
+        if is_ident_bool_data_type(self.cddl, ident) {
+          if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Bool(_))) {
+            self
+              .validated_keys
+              .get_or_insert(vec![k.clone()])
+              .push(k.clone());
+            self.object_value = Some(v.clone());
+            self.cbor_location.push_str(&format!("/{:?}", v));
+          } else {
+            self.add_error(format!("map requires entry key of type {}", ident));
+          }
+          return Ok(());
+        }
+
+        if is_ident_null_data_type(self.cddl, ident) {
+          if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
+            self
+              .validated_keys
+              .get_or_insert(vec![k.clone()])
+              .push(k.clone());
+            self.object_value = Some(v.clone());
+            self.cbor_location.push_str(&format!("/{:?}", v));
+          } else {
+            self.add_error(format!("map requires entry key of type {}", ident));
+          }
+          return Ok(());
+        }
+
+        if is_ident_byte_string_data_type(self.cddl, ident) {
+          if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Bytes(_))) {
+            self
+              .validated_keys
+              .get_or_insert(vec![k.clone()])
+              .push(k.clone());
+            self.object_value = Some(v.clone());
+            self.cbor_location.push_str(&format!("/{:?}", v));
+          } else {
+            self.add_error(format!("map requires entry key of type {}", ident));
+          }
+          return Ok(());
+        }
+
+        if is_ident_float_data_type(self.cddl, ident) {
+          if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
+            self
+              .validated_keys
+              .get_or_insert(vec![k.clone()])
+              .push(k.clone());
+            self.object_value = Some(v.clone());
+            self.cbor_location.push_str(&format!("/{:?}", v));
+          } else {
+            self.add_error(format!("map requires entry key of type {}", ident));
+          }
+          return Ok(());
         }
 
         self.visit_value(&token::Value::TEXT(ident.ident))
@@ -1311,29 +1586,41 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       }
     }
 
+    if let Some(values) = self.values_to_validate.take() {
+      for v in values.into_iter() {
+        let mut cv = CBORValidator::new(self.cddl, v);
+        cv.generic_rules = self.generic_rules.clone();
+        cv.eval_generic_rule = self.eval_generic_rule;
+        cv.is_multi_type_choice = self.is_multi_type_choice;
+        cv.is_multi_group_choice = self.is_multi_group_choice;
+        cv.cbor_location.push_str(&self.cbor_location);
+        cv.type_group_name_entry = self.type_group_name_entry;
+        cv.visit_type(&entry.entry_type)?;
+
+        self.cbor_location = current_location.clone();
+
+        self.errors.append(&mut cv.errors);
+        if entry.occur.is_some() {
+          self.occurence = None;
+        }
+      }
+
+      return Ok(());
+    }
+
     if let Some(v) = self.object_value.take() {
-      let mut jv = CBORValidator::new(self.cddl, v);
-      jv.generic_rules = self.generic_rules.clone();
-      jv.eval_generic_rule = self.eval_generic_rule;
-      jv.is_multi_type_choice = self.is_multi_type_choice;
-      jv.is_multi_group_choice = self.is_multi_group_choice;
-      jv.cbor_location.push_str(&self.cbor_location);
-      jv.type_group_name_entry = self.type_group_name_entry;
-      jv.visit_type(&entry.entry_type)?;
+      let mut cv = CBORValidator::new(self.cddl, v);
+      cv.generic_rules = self.generic_rules.clone();
+      cv.eval_generic_rule = self.eval_generic_rule;
+      cv.is_multi_type_choice = self.is_multi_type_choice;
+      cv.is_multi_group_choice = self.is_multi_group_choice;
+      cv.cbor_location.push_str(&self.cbor_location);
+      cv.type_group_name_entry = self.type_group_name_entry;
+      cv.visit_type(&entry.entry_type)?;
 
       self.cbor_location = current_location;
 
-      // if !jv.errors.is_empty() {
-      //   if let Some(occur) = &self.occurence {
-      //     if let Occur::Optional(_) | Occur::ZeroOrMore(_) = occur {
-      //       if !self.is_cut_present {
-      //         return Ok(());
-      //       }
-      //     }
-      //   }
-      // }
-
-      self.errors.append(&mut jv.errors);
+      self.errors.append(&mut cv.errors);
       if entry.occur.is_some() {
         self.occurence = None;
       }
@@ -1632,10 +1919,10 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"thing = { * int => any}"#;
+    let input = r#"thing = { * tstr => int }"#;
 
     let mut cbor = BTreeMap::new();
-    cbor.insert(1, "test");
+    cbor.insert("test", 1);
 
     let mut lexer = lexer_from_str(input);
     let cddl = cddl_from_str(&mut lexer, input, true)?;

@@ -238,6 +238,30 @@ pub fn is_ident_integer_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
+/// Is the given identifier associated with a float data type
+pub fn is_ident_float_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  if let Token::FLOAT
+  | Token::FLOAT16
+  | Token::FLOAT1632
+  | Token::FLOAT32
+  | Token::FLOAT3264
+  | Token::FLOAT64 = lookup_ident(ident.ident)
+  {
+    return true;
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        is_ident_float_data_type(cddl, ident)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
 /// Is the given identifier associated with a string data type
 pub fn is_ident_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   if let Token::TEXT | Token::TSTR = lookup_ident(ident.ident) {
