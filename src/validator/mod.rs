@@ -361,10 +361,8 @@ pub fn entry_counts_from_group_choice(cddl: &CDDL, group_choice: &GroupChoice) -
 
   for ge in group_choice.group_entries.iter() {
     match &ge.0 {
-      GroupEntry::ValueMemberKey { ge, .. } => {
-        if ge.member_key.is_some() {
-          count += 1;
-        }
+      GroupEntry::ValueMemberKey { .. } => {
+        count += 1;
       }
       GroupEntry::InlineGroup { group, .. } => {
         for gc in group.group_choices.iter() {

@@ -153,6 +153,8 @@ pub struct JSONValidator<'a> {
   advance_to_next_entry: bool,
   is_ctrl_map_equality: bool,
   entry_counts: Option<Vec<u64>>,
+  validated_keys: Option<Vec<String>>,
+  values_to_validate: Option<Vec<Value>>,
 }
 
 #[derive(Clone, Debug)]
@@ -187,6 +189,8 @@ impl<'a> JSONValidator<'a> {
       advance_to_next_entry: false,
       is_ctrl_map_equality: false,
       entry_counts: None,
+      validated_keys: None,
+      values_to_validate: None,
     }
   }
 
@@ -722,7 +726,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     ctrl: &str,
     controller: &Type2<'a>,
   ) -> visitor::Result<ValidationError> {
-    match token::lookup_control_from_str(ctrl) {
+    match lookup_control_from_str(ctrl) {
       t @ Some(Token::EQ) => {
         match target {
           Type2::Typename { ident, .. } => {
@@ -909,7 +913,21 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     match t2 {
       Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value)),
       Type2::Map { group, .. } => match &self.json {
-        Value::Object(_) => {
+        Value::Object(o) => {
+          let m = o.keys().cloned().collect::<Vec<_>>();
+
+          self.visit_group(group)?;
+
+          if self.values_to_validate.is_none() {
+            for k in m.into_iter() {
+              if let Some(keys) = &self.validated_keys {
+                if !keys.contains(&k) {
+                  self.add_error(format!("unexpected key {:?}", k));
+                }
+              }
+            }
+          }
+
           self.visit_group(group)?;
           self.is_cut_present = false;
           self.cut_value = None;
@@ -1000,7 +1018,17 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         }
       },
       Type2::Array { group, .. } => match &self.json {
-        Value::Array(_) => {
+        Value::Array(a) => {
+          if group.group_choices.len() == 1
+            && group.group_choices[0].group_entries.is_empty()
+            && !a.is_empty()
+          {
+            if !matches!(self.ctrl, Some(Token::NE)) {
+              self.add_error(format!("expected empty array, got {}", self.json));
+              return Ok(());
+            }
+          }
+
           let mut entry_counts = Vec::new();
           for gc in group.group_choices.iter() {
             let count = entry_counts_from_group_choice(self.cddl, gc);
@@ -1146,9 +1174,13 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       return self.visit_rule(r);
     }
 
+    if let Token::ANY = lookup_ident(ident.ident) {
+      return Ok(());
+    }
+
     match &self.json {
       Value::Null if is_ident_null_data_type(self.cddl, ident) => Ok(()),
-      Value::Bool(b) => match token::lookup_ident(ident.ident) {
+      Value::Bool(b) => match lookup_ident(ident.ident) {
         Token::BOOL => Ok(()),
         Token::TRUE if *b => Ok(()),
         Token::FALSE if !b => Ok(()),
@@ -1238,9 +1270,45 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
         Ok(())
       }
-      Value::Object(_) => {
-        if is_ident_string_data_type(self.cddl, ident) {
-          return Ok(());
+      Value::Object(o) => {
+        if let Some(occur) = &self.occurence {
+          if let Occur::ZeroOrMore(_) | Occur::OneOrMore(_) = occur {
+            if let Occur::OneOrMore(_) = occur {
+              if o.is_empty() {
+                self.add_error(format!(
+                  "object cannot be empty, one or more entries with key type {} required",
+                  ident
+                ));
+                return Ok(());
+              }
+            }
+
+            if is_ident_string_data_type(self.cddl, ident) {
+              let mut errors = Vec::new();
+              let values_to_validate = o
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(&k) {
+                      Some(v.clone())
+                    } else {
+                      None
+                    }
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+              for e in errors.into_iter() {
+                self.add_error(e);
+              }
+
+              return Ok(());
+            }
+          }
         }
 
         self.visit_value(&token::Value::TEXT(ident.ident))
@@ -1282,6 +1350,28 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       }
     }
 
+    if let Some(values) = &self.values_to_validate {
+      for v in values.iter() {
+        let mut jv = JSONValidator::new(self.cddl, v.clone());
+        jv.generic_rules = self.generic_rules.clone();
+        jv.eval_generic_rule = self.eval_generic_rule;
+        jv.is_multi_type_choice = self.is_multi_type_choice;
+        jv.is_multi_group_choice = self.is_multi_group_choice;
+        jv.json_location.push_str(&self.json_location);
+        jv.type_group_name_entry = self.type_group_name_entry;
+        jv.visit_type(&entry.entry_type)?;
+
+        self.json_location = current_location.clone();
+
+        self.errors.append(&mut jv.errors);
+        if entry.occur.is_some() {
+          self.occurence = None;
+        }
+      }
+
+      return Ok(());
+    }
+
     if let Some(v) = self.object_value.take() {
       let mut jv = JSONValidator::new(self.cddl, v);
       jv.generic_rules = self.generic_rules.clone();
@@ -1293,16 +1383,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       jv.visit_type(&entry.entry_type)?;
 
       self.json_location = current_location;
-
-      // if !jv.errors.is_empty() {
-      //   if let Some(occur) = &self.occurence {
-      //     if let Occur::Optional(_) | Occur::ZeroOrMore(_) = occur {
-      //       if !self.is_cut_present {
-      //         return Ok(());
-      //       }
-      //     }
-      //   }
-      // }
 
       self.errors.append(&mut jv.errors);
       if entry.occur.is_some() {
@@ -1555,6 +1635,10 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           // Retrieve the value from key unless optional/zero or more, in which
           // case advance to next group entry
           if let Some(v) = o.get(*t) {
+            self
+              .validated_keys
+              .get_or_insert(vec![t.to_string()])
+              .push(t.to_string());
             self.object_value = Some(v.clone());
             self.json_location.push_str(&format!("/{}", t));
 

@@ -893,8 +893,21 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     match t2 {
       Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value)),
       Type2::Map { group, .. } => match &self.cbor {
-        Value::Map(_) => {
+        Value::Map(m) => {
+          let m = m.keys().cloned().collect::<Vec<_>>();
+
           self.visit_group(group)?;
+
+          if self.values_to_validate.is_none() {
+            for k in m.into_iter() {
+              if let Some(keys) = &self.validated_keys {
+                if !keys.contains(&k) {
+                  self.add_error(format!("unexpected key {:?}", k));
+                }
+              }
+            }
+          }
+
           self.is_cut_present = false;
           self.cut_value = None;
           Ok(())
@@ -987,12 +1000,23 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         }
       },
       Type2::Array { group, .. } => match &self.cbor {
-        Value::Array(_) => {
+        Value::Array(a) => {
+          if group.group_choices.len() == 1
+            && group.group_choices[0].group_entries.is_empty()
+            && !a.is_empty()
+          {
+            if !matches!(self.ctrl, Some(Token::NE)) {
+              self.add_error(format!("expected empty array, got {:?}", self.cbor));
+              return Ok(());
+            }
+          }
+
           let mut entry_counts = Vec::new();
           for gc in group.group_choices.iter() {
             let count = entry_counts_from_group_choice(self.cddl, gc);
             entry_counts.push(count);
           }
+
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
@@ -1255,7 +1279,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             if let Occur::OneOrMore(_) = occur {
               if m.is_empty() {
                 self.add_error(format!(
-                  "map cannot be empty, require one oe more entries with key type {}",
+                  "map cannot be empty, one or more entries with key type {} required",
                   ident
                 ));
                 return Ok(());
@@ -1586,9 +1610,9 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       }
     }
 
-    if let Some(values) = self.values_to_validate.take() {
-      for v in values.into_iter() {
-        let mut cv = CBORValidator::new(self.cddl, v);
+    if let Some(values) = &self.values_to_validate {
+      for v in values.iter() {
+        let mut cv = CBORValidator::new(self.cddl, v.clone());
         cv.generic_rules = self.generic_rules.clone();
         cv.eval_generic_rule = self.eval_generic_rule;
         cv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1863,7 +1887,9 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
         // Retrieve the value from key unless optional/zero or more, in which
         // case advance to next group entry
-        if let Some(v) = o.get(&token_value_into_cbor_value(value.clone())) {
+        let k = token_value_into_cbor_value(value.clone());
+        if let Some(v) = o.get(&k) {
+          self.validated_keys.get_or_insert(vec![k.clone()]).push(k);
           self.object_value = Some(v.clone());
           self.cbor_location.push_str(&format!("/{}", value));
 
@@ -1912,21 +1938,29 @@ pub fn token_value_into_cbor_value(value: token::Value) -> serde_cbor::Value {
 
 #[cfg(test)]
 mod tests {
-  use std::collections::BTreeMap;
+  use serde::{Deserialize, Serialize};
 
   use super::*;
   use crate::{cddl_from_str, lexer_from_str};
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"thing = { * tstr => int }"#;
+    let input = r#"thing = { name: tstr, * tstr => int }"#;
 
-    let mut cbor = BTreeMap::new();
-    cbor.insert("test", 1);
+    #[derive(Debug, Serialize, Deserialize)]
+    struct PersonStruct {
+      name: String,
+      age: i32,
+    }
+
+    let cbor_input = PersonStruct {
+      name: "Bob".to_string(),
+      age: 10,
+    };
 
     let mut lexer = lexer_from_str(input);
     let cddl = cddl_from_str(&mut lexer, input, true)?;
-    let cbor = serde_cbor::to_vec(&cbor).unwrap();
+    let cbor = serde_cbor::to_vec(&cbor_input).unwrap();
 
     let cbor_value = serde_cbor::from_slice::<Value>(&cbor).unwrap();
 
