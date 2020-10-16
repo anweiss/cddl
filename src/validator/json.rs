@@ -422,7 +422,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
       #[allow(unused_assignments)]
       let mut iter_items = false;
-      #[allow(unused_assignments)]
       match validate_array_occurrence(self.occurence.as_ref().take(), a) {
         Ok(r) => {
           iter_items = r;
@@ -457,12 +456,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
           jv.visit_range(lower, upper, is_inclusive)?;
 
-          // If an array item is invalid, but a '?' or '*' occurrence indicator
-          // is present, the ambiguity results in the error being disregarded
-          // if !allow_errors {
-          //   self.errors.append(&mut jv.errors);
-          // }
-
           self.errors.append(&mut jv.errors);
         }
       } else if let Some(idx) = self.group_entry_idx.take() {
@@ -475,12 +468,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             .push_str(&format!("{}/{}", self.json_location, idx));
 
           jv.visit_range(lower, upper, is_inclusive)?;
-
-          // If an array item is invalid, but a '?' or '*' occurrence indicator
-          // is present, the ambiguity results in the error being disregarded
-          // if !allow_errors {
-          //   self.errors.append(&mut jv.errors);
-          // }
 
           self.errors.append(&mut jv.errors);
         } else if !allow_empty_array {
@@ -914,12 +901,12 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value)),
       Type2::Map { group, .. } => match &self.json {
         Value::Object(o) => {
-          let m = o.keys().cloned().collect::<Vec<_>>();
+          let o = o.keys().cloned().collect::<Vec<_>>();
 
           self.visit_group(group)?;
 
           if self.values_to_validate.is_none() {
-            for k in m.into_iter() {
+            for k in o.into_iter() {
               if let Some(keys) = &self.validated_keys {
                 if !keys.contains(&k) {
                   self.add_error(format!("unexpected key {:?}", k));
@@ -977,12 +964,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
               jv.visit_group(group)?;
 
-              // If an array item is invalid, but a '?' or '*' occurrence indicator
-              // is present, the ambiguity results in the error being disregarded
-              // if !allow_errors {
-              //   self.errors.append(&mut jv.errors);
-              // }
-
               self.errors.append(&mut jv.errors);
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
@@ -995,12 +976,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
                 .push_str(&format!("{}/{}", self.json_location, idx));
 
               jv.visit_group(group)?;
-
-              // If an array item is invalid, but a '?' or '*' occurrence indicator
-              // is present, the ambiguity results in the error being disregarded
-              // if !allow_errors {
-              //   self.errors.append(&mut jv.errors);
-              // }
 
               self.errors.append(&mut jv.errors);
             } else if !allow_empty_array {
@@ -1022,11 +997,10 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           if group.group_choices.len() == 1
             && group.group_choices[0].group_entries.is_empty()
             && !a.is_empty()
+            && !matches!(self.ctrl, Some(Token::NE))
           {
-            if !matches!(self.ctrl, Some(Token::NE)) {
-              self.add_error(format!("expected empty array, got {}", self.json));
-              return Ok(());
-            }
+            self.add_error(format!("expected empty array, got {}", self.json));
+            return Ok(());
           }
 
           let mut entry_counts = Vec::new();
@@ -1235,12 +1209,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
             jv.visit_identifier(ident)?;
 
-            // If an array item is invalid, but a '?' or '*' occurrence indicator
-            // is present, the ambiguity results in the error being disregarded
-            // if !allow_errors {
-            //   self.errors.append(&mut jv.errors);
-            // }
-
             self.errors.append(&mut jv.errors);
           }
         } else if let Some(idx) = self.group_entry_idx.take() {
@@ -1253,12 +1221,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               .push_str(&format!("{}/{}", self.json_location, idx));
 
             jv.visit_identifier(ident)?;
-
-            // If an array item is invalid, but a '?' or '*' occurrence indicator
-            // is present, the ambiguity results in the error being disregarded
-            // if !allow_errors {
-            //   self.errors.append(&mut jv.errors);
-            // }
 
             self.errors.append(&mut jv.errors);
           } else if !allow_empty_array {
@@ -1586,12 +1548,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
             jv.visit_value(value)?;
 
-            // If an array item is invalid, but a '?' or '*' occurrence indicator
-            // is present, the ambiguity results in the error being disregarded
-            // if !allow_errors {
-            //   self.errors.append(&mut jv.errors);
-            // }
-
             self.errors.append(&mut jv.errors);
           }
         } else if let Some(idx) = self.group_entry_idx.take() {
@@ -1604,12 +1560,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               .push_str(&format!("{}/{}", self.json_location, idx));
 
             jv.visit_value(value)?;
-
-            // If an array item is invalid, but a '?' or '*' occurrence indicator
-            // is present, the ambiguity results in the error being disregarded
-            // if !allow_errors {
-            //   self.errors.append(&mut jv.errors);
-            // }
 
             self.errors.append(&mut jv.errors);
           } else if !allow_empty_array {

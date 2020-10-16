@@ -372,6 +372,8 @@ pub fn entry_counts_from_group_choice(cddl: &CDDL, group_choice: &GroupChoice) -
       GroupEntry::TypeGroupname { ge, .. } => {
         if let Some(gr) = group_rule_from_ident(cddl, &ge.name) {
           count += entry_counts_from_group_choice(cddl, &GroupChoice::new(vec![gr.entry.clone()]));
+        } else {
+          count += 1;
         }
       }
     }

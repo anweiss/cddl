@@ -422,7 +422,6 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
       #[allow(unused_assignments)]
       let mut iter_items = false;
-      #[allow(unused_assignments)]
       match validate_array_occurrence(self.occurence.as_ref().take(), a) {
         Ok(r) => {
           iter_items = r;
@@ -457,12 +456,6 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
           jv.visit_range(lower, upper, is_inclusive)?;
 
-          // If an array item is invalid, but a '?' or '*' occurrence indicator
-          // is present, the ambiguity results in the error being disregarded
-          // if !allow_errors {
-          //   self.errors.append(&mut jv.errors);
-          // }
-
           self.errors.append(&mut jv.errors);
         }
       } else if let Some(idx) = self.group_entry_idx.take() {
@@ -475,12 +468,6 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             .push_str(&format!("{}/{}", self.cbor_location, idx));
 
           jv.visit_range(lower, upper, is_inclusive)?;
-
-          // If an array item is invalid, but a '?' or '*' occurrence indicator
-          // is present, the ambiguity results in the error being disregarded
-          // if !allow_errors {
-          //   self.errors.append(&mut jv.errors);
-          // }
 
           self.errors.append(&mut jv.errors);
         } else if !allow_empty_array {
@@ -894,10 +881,40 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value)),
       Type2::Map { group, .. } => match &self.cbor {
         Value::Map(m) => {
+          if self.is_member_key {
+            let current_location = self.cbor_location.clone();
+
+            for (k, v) in m.iter() {
+              let mut cv = CBORValidator::new(self.cddl, k.clone());
+              cv.generic_rules = self.generic_rules.clone();
+              cv.eval_generic_rule = self.eval_generic_rule;
+              cv.is_multi_type_choice = self.is_multi_type_choice;
+              cv.is_multi_group_choice = self.is_multi_group_choice;
+              cv.cbor_location.push_str(&self.cbor_location);
+              cv.type_group_name_entry = self.type_group_name_entry;
+              cv.visit_type2(t2)?;
+
+              if cv.errors.is_empty() {
+                self.object_value = Some(v.clone());
+                self
+                  .validated_keys
+                  .get_or_insert(vec![k.clone()])
+                  .push(k.clone());
+                self.cbor_location = current_location;
+                return Ok(());
+              }
+
+              self.errors.append(&mut cv.errors);
+            }
+
+            return Ok(());
+          }
+
           let m = m.keys().cloned().collect::<Vec<_>>();
 
           self.visit_group(group)?;
 
+          // If extra map entries are detected, return validation error
           if self.values_to_validate.is_none() {
             for k in m.into_iter() {
               if let Some(keys) = &self.validated_keys {
@@ -956,12 +973,6 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
               jv.visit_group(group)?;
 
-              // If an array item is invalid, but a '?' or '*' occurrence indicator
-              // is present, the ambiguity results in the error being disregarded
-              // if !allow_errors {
-              //   self.errors.append(&mut jv.errors);
-              // }
-
               self.errors.append(&mut jv.errors);
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
@@ -974,12 +985,6 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                 .push_str(&format!("{}/{}", self.cbor_location, idx));
 
               jv.visit_group(group)?;
-
-              // If an array item is invalid, but a '?' or '*' occurrence indicator
-              // is present, the ambiguity results in the error being disregarded
-              // if !allow_errors {
-              //   self.errors.append(&mut jv.errors);
-              // }
 
               self.errors.append(&mut jv.errors);
             } else if !allow_empty_array {
@@ -1004,11 +1009,10 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           if group.group_choices.len() == 1
             && group.group_choices[0].group_entries.is_empty()
             && !a.is_empty()
+            && !matches!(self.ctrl, Some(Token::NE))
           {
-            if !matches!(self.ctrl, Some(Token::NE)) {
-              self.add_error(format!("expected empty array, got {:?}", self.cbor));
-              return Ok(());
-            }
+            self.add_error(format!("expected empty array, got {:?}", self.cbor));
+            return Ok(());
           }
 
           let mut entry_counts = Vec::new();
@@ -1020,6 +1024,45 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
+          Ok(())
+        }
+        Value::Map(m) if self.is_member_key => {
+          let current_location = self.cbor_location.clone();
+
+          let mut entry_counts = Vec::new();
+          for gc in group.group_choices.iter() {
+            let count = entry_counts_from_group_choice(self.cddl, gc);
+            entry_counts.push(count);
+          }
+
+          self.entry_counts = Some(entry_counts);
+
+          for (k, v) in m.iter() {
+            let mut cv = CBORValidator::new(self.cddl, k.clone());
+            cv.generic_rules = self.generic_rules.clone();
+            cv.entry_counts = self.entry_counts.clone();
+            cv.eval_generic_rule = self.eval_generic_rule;
+            cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.is_multi_group_choice = self.is_multi_group_choice;
+            cv.cbor_location.push_str(&self.cbor_location);
+            cv.type_group_name_entry = self.type_group_name_entry;
+            cv.visit_type2(t2)?;
+
+            if cv.errors.is_empty() {
+              self.object_value = Some(v.clone());
+              self
+                .validated_keys
+                .get_or_insert(vec![k.clone()])
+                .push(k.clone());
+              self.cbor_location = current_location;
+              return Ok(());
+            }
+
+            self.errors.append(&mut cv.errors);
+          }
+
+          self.entry_counts = None;
+
           Ok(())
         }
         _ => {
@@ -1238,12 +1281,6 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
             jv.visit_identifier(ident)?;
 
-            // If an array item is invalid, but a '?' or '*' occurrence indicator
-            // is present, the ambiguity results in the error being disregarded
-            // if !allow_errors {
-            //   self.errors.append(&mut jv.errors);
-            // }
-
             self.errors.append(&mut jv.errors);
           }
         } else if let Some(idx) = self.group_entry_idx.take() {
@@ -1256,12 +1293,6 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               .push_str(&format!("{}/{}", self.cbor_location, idx));
 
             jv.visit_identifier(ident)?;
-
-            // If an array item is invalid, but a '?' or '*' occurrence indicator
-            // is present, the ambiguity results in the error being disregarded
-            // if !allow_errors {
-            //   self.errors.append(&mut jv.errors);
-            // }
 
             self.errors.append(&mut jv.errors);
           } else if !allow_empty_array {
@@ -1841,12 +1872,6 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
             jv.visit_value(value)?;
 
-            // If an array item is invalid, but a '?' or '*' occurrence indicator
-            // is present, the ambiguity results in the error being disregarded
-            // if !allow_errors {
-            //   self.errors.append(&mut jv.errors);
-            // }
-
             self.errors.append(&mut jv.errors);
           }
         } else if let Some(idx) = self.group_entry_idx.take() {
@@ -1859,12 +1884,6 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               .push_str(&format!("{}/{}", self.cbor_location, idx));
 
             jv.visit_value(value)?;
-
-            // If an array item is invalid, but a '?' or '*' occurrence indicator
-            // is present, the ambiguity results in the error being disregarded
-            // if !allow_errors {
-            //   self.errors.append(&mut jv.errors);
-            // }
 
             self.errors.append(&mut jv.errors);
           } else if !allow_empty_array {
@@ -1888,6 +1907,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         // Retrieve the value from key unless optional/zero or more, in which
         // case advance to next group entry
         let k = token_value_into_cbor_value(value.clone());
+
         if let Some(v) = o.get(&k) {
           self.validated_keys.get_or_insert(vec![k.clone()]).push(k);
           self.object_value = Some(v.clone());
@@ -1938,29 +1958,21 @@ pub fn token_value_into_cbor_value(value: token::Value) -> serde_cbor::Value {
 
 #[cfg(test)]
 mod tests {
-  use serde::{Deserialize, Serialize};
+  use std::collections::BTreeMap;
 
   use super::*;
   use crate::{cddl_from_str, lexer_from_str};
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"thing = { name: tstr, * tstr => int }"#;
+    let input = r#"thing = { [ tstr ] => int }"#;
 
-    #[derive(Debug, Serialize, Deserialize)]
-    struct PersonStruct {
-      name: String,
-      age: i32,
-    }
-
-    let cbor_input = PersonStruct {
-      name: "Bob".to_string(),
-      age: 10,
-    };
+    let mut cbor_table = BTreeMap::new();
+    cbor_table.insert(vec!["test".to_string()], 1);
 
     let mut lexer = lexer_from_str(input);
     let cddl = cddl_from_str(&mut lexer, input, true)?;
-    let cbor = serde_cbor::to_vec(&cbor_input).unwrap();
+    let cbor = serde_cbor::to_vec(&cbor_table).unwrap();
 
     let cbor_value = serde_cbor::from_slice::<Value>(&cbor).unwrap();
 
