@@ -1211,25 +1211,21 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       },
       Type2::DataMajorType { mt, constraint, .. } => match &self.cbor {
         Value::Integer(i) => {
-          if let Some(constraint) = constraint {
-            if *mt == 0u8 && *i >= 0 {
-              if *i == *constraint as i128 {
-                return Ok(());
-              }
-            } else if *mt == 1u8 {
-              if *i == 0i128 - (*constraint as i128) {
-                return Ok(());
-              }
+          #[allow(clippy::if_same_then_else)]
+          if *mt == 0u8 {
+            if matches!(constraint, Some(c) if *i >= 0i128 && *i == *c as i128) {
+              return Ok(());
+            } else if *i >= 0i128 {
+              return Ok(());
             }
-
-            self.add_error(format!(
-              "expected data #{}.{}, got {:?}",
-              mt, constraint, self.cbor
-            ));
-          } else if *mt == 0u8 && *i >= 0 {
-            return Ok(());
           } else if *mt == 1u8 {
-            return Ok(());
+            if matches!(constraint, Some(c) if *i == 0i128 - *c as i128) {
+              return Ok(());
+            } else if i.is_negative() {
+              return Ok(());
+            } else {
+              self.add_error(format!("expected data #{}, got {:?}", mt, self.cbor));
+            }
           }
 
           Ok(())
