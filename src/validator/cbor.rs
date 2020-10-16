@@ -1167,6 +1167,86 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       Type2::UintValue { value, .. } => self.visit_value(&token::Value::UINT(*value)),
       Type2::FloatValue { value, .. } => self.visit_value(&token::Value::FLOAT(*value)),
       Type2::ParenthesizedType { pt, .. } => self.visit_type(pt),
+      Type2::TaggedData { tag, t, .. } => match &self.cbor {
+        Value::Tag(actual_tag, value) => {
+          if let Some(tag) = tag {
+            if *tag as u64 != *actual_tag {
+              println!("tag: {}", tag);
+              println!("acutal_tag: {}", actual_tag);
+              self.add_error(format!(
+                "expected tagged data #6.{}({}), got {:?}",
+                tag, t, self.cbor
+              ));
+              return Ok(());
+            }
+          }
+
+          let mut cv = CBORValidator::new(self.cddl, value.as_ref().clone());
+          cv.generic_rules = self.generic_rules.clone();
+          cv.eval_generic_rule = self.eval_generic_rule;
+          cv.is_multi_type_choice = self.is_multi_type_choice;
+          cv.is_multi_group_choice = self.is_multi_group_choice;
+          cv.cbor_location.push_str(&self.cbor_location);
+          cv.type_group_name_entry = self.type_group_name_entry;
+          cv.visit_type(&t)?;
+
+          self.errors.append(&mut cv.errors);
+          Ok(())
+        }
+        _ => {
+          if let Some(tag) = tag {
+            self.add_error(format!(
+              "expected tagged data #6.{}({}), got {:?}",
+              tag, t, self.cbor
+            ));
+          } else {
+            self.add_error(format!(
+              "expected tagged data #6({}), got {:?}",
+              t, self.cbor
+            ));
+          }
+
+          Ok(())
+        }
+      },
+      Type2::DataMajorType { mt, constraint, .. } => match &self.cbor {
+        Value::Integer(i) => {
+          if let Some(constraint) = constraint {
+            if *mt == 0u8 && *i >= 0 {
+              if *i == *constraint as i128 {
+                return Ok(());
+              }
+            } else if *mt == 1u8 {
+              if *i == 0i128 - (*constraint as i128) {
+                return Ok(());
+              }
+            }
+
+            self.add_error(format!(
+              "expected data #{}.{}, got {:?}",
+              mt, constraint, self.cbor
+            ));
+          } else if *mt == 0u8 && *i >= 0 {
+            return Ok(());
+          } else if *mt == 1u8 {
+            return Ok(());
+          }
+
+          Ok(())
+        }
+        _ => {
+          if let Some(constraint) = constraint {
+            self.add_error(format!(
+              "expected data #{}.{}, got {:?}",
+              mt, constraint, self.cbor
+            ));
+          } else {
+            self.add_error(format!("expected data #{}, got {:?}", mt, self.cbor));
+          }
+
+          Ok(())
+        }
+      },
       Type2::Any(_) => Ok(()),
       _ => {
         self.add_error(format!(
@@ -1958,23 +2038,17 @@ pub fn token_value_into_cbor_value(value: token::Value) -> serde_cbor::Value {
 
 #[cfg(test)]
 mod tests {
-  use std::collections::BTreeMap;
-
   use super::*;
   use crate::{cddl_from_str, lexer_from_str};
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"thing = { [ tstr ] => int }"#;
-
-    let mut cbor_table = BTreeMap::new();
-    cbor_table.insert(vec!["test".to_string()], 1);
+    let input = r#"thing = #0.2"#;
 
     let mut lexer = lexer_from_str(input);
     let cddl = cddl_from_str(&mut lexer, input, true)?;
-    let cbor = serde_cbor::to_vec(&cbor_table).unwrap();
 
-    let cbor_value = serde_cbor::from_slice::<Value>(&cbor).unwrap();
+    let cbor_value = Value::Integer(2);
 
     let mut cv = CBORValidator::new(&cddl, cbor_value);
     cv.validate()?;

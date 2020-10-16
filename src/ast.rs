@@ -1004,7 +1004,7 @@ pub enum Type2<'a> {
   },
 
   /// Data item of a major type with optional data constraint
-  TaggedDataMajorType {
+  DataMajorType {
     /// Major type
     mt: u8,
     /// Constraint
@@ -1269,7 +1269,7 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", t2_str)
       }
-      Type2::TaggedDataMajorType { mt, constraint, .. } => {
+      Type2::DataMajorType { mt, constraint, .. } => {
         if let Some(c) = constraint {
           return write!(f, "{}.{}", mt, c);
         }

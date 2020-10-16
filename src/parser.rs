@@ -1254,7 +1254,7 @@ where
             })
           }
           // Tagged data of a major type
-          (Some(mt), constraint) => Ok(Type2::TaggedDataMajorType {
+          (Some(mt), constraint) => Ok(Type2::DataMajorType {
             mt,
             constraint,
             span: (
