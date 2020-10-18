@@ -1172,9 +1172,9 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               return Ok(());
             }
           }
-        } else if is_ident_integer_data_type(self.cddl, ident) && n.is_i64() {
-          return Ok(());
-        } else if is_ident_float_data_type(self.cddl, ident) && n.is_f64() {
+        } else if (is_ident_integer_data_type(self.cddl, ident) && n.is_i64())
+          || (is_ident_float_data_type(self.cddl, ident) && n.is_f64())
+        {
           return Ok(());
         }
 
