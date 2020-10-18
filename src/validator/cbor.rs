@@ -1211,20 +1211,45 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       },
       Type2::DataMajorType { mt, constraint, .. } => match &self.cbor {
         Value::Integer(i) => {
-          #[allow(clippy::if_same_then_else)]
           if *mt == 0u8 {
-            if matches!(constraint, Some(c) if *i >= 0i128 && *i == *c as i128) {
-              return Ok(());
-            } else if *i >= 0i128 {
-              return Ok(());
+            match constraint {
+              Some(c) if *i == *c as i128 && *i >= 0i128 => return Ok(()),
+              Some(c) => {
+                self.add_error(format!(
+                  "expected uint data type with constraint {} (#{}.{}), got {:?}",
+                  c, mt, c, self.cbor
+                ));
+                return Ok(());
+              }
+              _ => {
+                if i.is_negative() {
+                  self.add_error(format!(
+                    "expected uint data type (#{}), got {:?}",
+                    mt, self.cbor
+                  ));
+                  return Ok(());
+                }
+              }
             }
           } else if *mt == 1u8 {
-            if matches!(constraint, Some(c) if *i == 0i128 - *c as i128) {
-              return Ok(());
-            } else if i.is_negative() {
-              return Ok(());
-            } else {
-              self.add_error(format!("expected data #{}, got {:?}", mt, self.cbor));
+            match constraint {
+              Some(c) if *i == 0i128 - *c as i128 => return Ok(()),
+              Some(c) => {
+                self.add_error(format!(
+                  "expected nint type with constraint {} (#{}.{}), got {:?}",
+                  c, mt, c, self.cbor
+                ));
+                return Ok(());
+              }
+              _ => {
+                if *i >= 0i128 {
+                  self.add_error(format!(
+                    "expected nint data type (#{}), got {:?}",
+                    mt, self.cbor
+                  ));
+                  return Ok(());
+                }
+              }
             }
           }
 
@@ -1237,7 +1262,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               mt, constraint, self.cbor
             ));
           } else {
-            self.add_error(format!("expected data #{}, got {:?}", mt, self.cbor));
+            self.add_error(format!("expected data type #{}, got {:?}", mt, self.cbor));
           }
 
           Ok(())
@@ -2039,12 +2064,12 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"thing = #0.2"#;
+    let input = r#"thing = #1"#;
 
     let mut lexer = lexer_from_str(input);
     let cddl = cddl_from_str(&mut lexer, input, true)?;
 
-    let cbor_value = Value::Integer(2);
+    let cbor_value = Value::Integer(-2);
 
     let mut cv = CBORValidator::new(&cddl, cbor_value);
     cv.validate()?;

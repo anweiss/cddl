@@ -1204,7 +1204,7 @@ where
       // #                    ; any
       // Token::TAG(tag) => match tag {
       //   Tag::DATA(data) => Ok(Type2::TaggedData(data.clone())),
-      //   Tag::MAJORTYPE(mt) => Ok(Type2::TaggedDataMajorType(*mt)),
+      //   Tag::MAJORTYPE(mt) => Ok(Type2::DataMajorType(*mt)),
       //   Tag::ANY => Ok(Type2::Any),
       // },
       Token::TAG(t) => {

@@ -457,21 +457,31 @@ impl<'a> Lexer<'a> {
           Some(&c) if is_digit(c.1) => {
             let (idx, _) = self.read_char()?;
             let t = self.read_number(idx)?.1;
-            let (_, c) = self.read_char()?;
-            if c == '.' {
-              let (idx, _) = self.read_char()?;
 
-              self.position.range = (token_offset, self.position.index + 1);
+            match self.peek_char() {
+              Some(&c) if c.1 == '.' => {
+                let _ = self.read_char()?;
+                let (idx, _) = self.read_char()?;
 
-              return Ok((
-                self.position,
-                Token::TAG((Some(t as u8), Some(self.read_number(idx)?.1))),
-              ));
+                self.position.range = (token_offset, self.position.index + 1);
+
+                Ok((
+                  self.position,
+                  Token::TAG((Some(t as u8), Some(self.read_number(idx)?.1))),
+                ))
+              }
+              Some(_) => {
+                let _ = self.read_char()?;
+                self.position.range = (token_offset, self.position.index + 1);
+
+                Ok((self.position, Token::TAG((Some(t as u8), None))))
+              }
+              _ => {
+                self.position.range = (token_offset, self.position.index + 1);
+
+                Ok((self.position, Token::TAG((Some(t as u8), None))))
+              }
             }
-
-            self.position.range = (token_offset, self.position.index + 1);
-
-            Ok((self.position, Token::TAG((Some(t as u8), None))))
           }
           _ => {
             self.position.range = (token_offset, self.position.index + 1);
