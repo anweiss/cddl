@@ -347,6 +347,7 @@ pub mod token;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod validator;
 
+/// CDDL AST visitor
 pub mod visitor;
 
 #[doc(inline)]
@@ -359,4 +360,4 @@ pub use self::{
 #[doc(inline)]
 #[cfg(feature = "std")]
 #[cfg(not(target_arch = "wasm32"))]
-pub use self::validator::{cbor as cbor_validator, json as json_validator, validate_json_from_str};
+pub use self::validator::{validate_cbor_from_slice, validate_json_from_str};

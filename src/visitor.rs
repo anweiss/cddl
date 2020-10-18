@@ -1,86 +1,109 @@
-// Temporary
-#![allow(missing_docs, unused_variables)]
 #![cfg(feature = "std")]
 
 use crate::{ast::*, token::ByteValue, token::Value};
 use std::error::Error;
 
+/// Visitor result
 pub type Result<T> = std::result::Result<(), T>;
 
+/// CDDL AST visitor
 pub trait Visitor<'a, E: Error> {
+  /// Visit rule
   fn visit_rule(&mut self, rule: &Rule<'a>) -> Result<E> {
     walk_rule(self, rule)
   }
 
-  fn visit_identifier(&mut self, ident: &Identifier<'a>) -> Result<E> {
+  /// Visit identifier
+  fn visit_identifier(&mut self, _ident: &Identifier<'a>) -> Result<E> {
     Ok(())
   }
 
-  fn visit_value(&mut self, value: &Value<'a>) -> Result<E> {
+  /// Visit value
+  fn visit_value(&mut self, _value: &Value<'a>) -> Result<E> {
     Ok(())
   }
 
+  /// Visit type rule
   fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> Result<E> {
     walk_type_rule(self, tr)
   }
 
+  /// Visit group rule
   fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> Result<E> {
     walk_group_rule(self, gr)
   }
 
+  /// Visit type
   fn visit_type(&mut self, t: &Type<'a>) -> Result<E> {
     walk_type(self, t)
   }
 
+  /// Visit type choice
   fn visit_type_choice(&mut self, tc: &TypeChoice<'a>) -> Result<E> {
     walk_type_choice(self, tc)
   }
 
+  /// Visit type1
   fn visit_type1(&mut self, t1: &Type1<'a>) -> Result<E> {
     walk_type1(self, t1)
   }
 
+  /// Visit operator
   fn visit_operator(&mut self, target: &Type1<'a>, o: &Operator<'a>) -> Result<E> {
     walk_operator(self, target, o)
   }
 
-  fn visit_range(&mut self, lower: &Type2<'a>, upper: &Type2<'a>, is_inclusive: bool) -> Result<E> {
+  /// Visit range
+  fn visit_range(
+    &mut self,
+    lower: &Type2<'a>,
+    upper: &Type2<'a>,
+    _is_inclusive: bool,
+  ) -> Result<E> {
     walk_range(self, lower, upper)
   }
 
+  /// Visit control operator
   fn visit_control_operator(
     &mut self,
     target: &Type2<'a>,
-    ctrl: &str,
+    _ctrl: &str,
     controller: &Type2<'a>,
   ) -> Result<E> {
     walk_control_operator(self, target, controller)
   }
 
+  /// Visit type2
   fn visit_type2(&mut self, t2: &Type2<'a>) -> Result<E> {
     walk_type2(self, t2)
   }
 
+  /// Visit group
   fn visit_group(&mut self, g: &Group<'a>) -> Result<E> {
     walk_group(self, g)
   }
 
+  /// Visit group choice
   fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> Result<E> {
     walk_group_choice(self, gc)
   }
 
+  /// Visit group entry
   fn visit_group_entry(&mut self, entry: &GroupEntry<'a>) -> Result<E> {
     walk_group_entry(self, entry)
   }
 
+  /// Visit value member key entry
   fn visit_value_member_key_entry(&mut self, entry: &ValueMemberKeyEntry<'a>) -> Result<E> {
     walk_value_member_key_entry(self, entry)
   }
 
+  /// Visit typename/groupname entry
   fn visit_type_groupname_entry(&mut self, entry: &TypeGroupnameEntry<'a>) -> Result<E> {
     walk_type_groupname_entry(self, entry)
   }
 
+  /// Visit inline group entry
   fn visit_inline_group_entry(
     &mut self,
     occur: Option<&Occurrence<'a>>,
@@ -89,27 +112,33 @@ pub trait Visitor<'a, E: Error> {
     walk_inline_group_entry(self, occur, g)
   }
 
-  fn visit_occurrence(&mut self, o: &Occurrence<'a>) -> Result<E> {
+  /// Visit occurrences
+  fn visit_occurrence(&mut self, _o: &Occurrence<'a>) -> Result<E> {
     Ok(())
   }
 
+  /// Visit memberkey
   fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> Result<E> {
     walk_memberkey(self, mk)
   }
 
+  /// Visit genericargs
   fn visit_genericargs(&mut self, args: &GenericArgs<'a>) -> Result<E> {
     walk_genericargs(self, args)
   }
 
+  /// Visit genericarg
   fn visit_genericarg(&mut self, arg: &GenericArg<'a>) -> Result<E> {
     walk_genericarg(self, arg)
   }
 
+  /// Visit nonmemberkey
   fn visit_nonmemberkey(&mut self, nmk: &NonMemberKey<'a>) -> Result<E> {
     walk_nonmemberkey(self, nmk)
   }
 }
 
+/// Walk rule
 pub fn walk_rule<'a, E, V>(visitor: &mut V, rule: &Rule<'a>) -> Result<E>
 where
   E: Error,
@@ -121,6 +150,7 @@ where
   }
 }
 
+/// Walk type rule
 pub fn walk_type_rule<'a, E, V>(visitor: &mut V, tr: &TypeRule<'a>) -> Result<E>
 where
   E: Error,
@@ -129,6 +159,7 @@ where
   visitor.visit_type(&tr.value)
 }
 
+/// Walk group rule
 pub fn walk_group_rule<'a, E, V>(visitor: &mut V, gr: &GroupRule<'a>) -> Result<E>
 where
   E: Error,
@@ -137,6 +168,7 @@ where
   visitor.visit_group_entry(&gr.entry)
 }
 
+/// Walk type
 pub fn walk_type<'a, E, V>(visitor: &mut V, t: &Type<'a>) -> Result<E>
 where
   E: Error,
@@ -149,6 +181,7 @@ where
   Ok(())
 }
 
+/// Walk type choice
 pub fn walk_type_choice<'a, E, V>(visitor: &mut V, tc: &TypeChoice<'a>) -> Result<E>
 where
   E: Error,
@@ -157,6 +190,7 @@ where
   visitor.visit_type1(&tc.type1)
 }
 
+/// Walk type1
 pub fn walk_type1<'a, E, V>(visitor: &mut V, t1: &Type1<'a>) -> Result<E>
 where
   E: Error,
@@ -169,6 +203,7 @@ where
   visitor.visit_type2(&t1.type2)
 }
 
+/// Walk operator
 pub fn walk_operator<'a, E, V>(visitor: &mut V, target: &Type1<'a>, o: &Operator<'a>) -> Result<E>
 where
   E: Error,
@@ -182,6 +217,7 @@ where
   }
 }
 
+/// Walk range
 pub fn walk_range<'a, E, V>(visitor: &mut V, lower: &Type2<'a>, upper: &Type2<'a>) -> Result<E>
 where
   E: Error,
@@ -191,6 +227,7 @@ where
   visitor.visit_type2(upper)
 }
 
+/// Walk control operator
 pub fn walk_control_operator<'a, E, V>(
   visitor: &mut V,
   target: &Type2<'a>,
@@ -204,6 +241,7 @@ where
   visitor.visit_type2(controller)
 }
 
+/// Walk type2
 pub fn walk_type2<'a, E, V>(visitor: &mut V, t2: &Type2<'a>) -> Result<E>
 where
   E: Error,
@@ -255,6 +293,7 @@ where
   }
 }
 
+/// Walk group
 pub fn walk_group<'a, E, V>(visitor: &mut V, g: &Group<'a>) -> Result<E>
 where
   E: Error,
@@ -267,6 +306,7 @@ where
   Ok(())
 }
 
+/// Walk group choice
 pub fn walk_group_choice<'a, E, V>(visitor: &mut V, gc: &GroupChoice<'a>) -> Result<E>
 where
   E: Error,
@@ -279,6 +319,7 @@ where
   Ok(())
 }
 
+/// Walk group entry
 pub fn walk_group_entry<'a, E, V>(visitor: &mut V, entry: &GroupEntry<'a>) -> Result<E>
 where
   E: Error,
@@ -293,6 +334,7 @@ where
   }
 }
 
+/// Walk value member key entry
 pub fn walk_value_member_key_entry<'a, E, V>(
   visitor: &mut V,
   entry: &ValueMemberKeyEntry<'a>,
@@ -312,6 +354,7 @@ where
   visitor.visit_type(&entry.entry_type)
 }
 
+/// Walk typename/groupname entry
 pub fn walk_type_groupname_entry<'a, E, V>(
   visitor: &mut V,
   entry: &TypeGroupnameEntry<'a>,
@@ -331,6 +374,7 @@ where
   visitor.visit_identifier(&entry.name)
 }
 
+/// Walk inline group entry
 pub fn walk_inline_group_entry<'a, E, V>(
   visitor: &mut V,
   occur: Option<&Occurrence<'a>>,
@@ -347,6 +391,7 @@ where
   visitor.visit_group(g)
 }
 
+/// Walk memberkey
 pub fn walk_memberkey<'a, E, V>(visitor: &mut V, mk: &MemberKey<'a>) -> Result<E>
 where
   E: Error,
@@ -360,6 +405,7 @@ where
   }
 }
 
+/// Walk genericargs
 pub fn walk_genericargs<'a, E, V>(visitor: &mut V, args: &GenericArgs<'a>) -> Result<E>
 where
   E: Error,
@@ -372,6 +418,7 @@ where
   Ok(())
 }
 
+/// Walk genericarg
 pub fn walk_genericarg<'a, E, V>(visitor: &mut V, arg: &GenericArg<'a>) -> Result<E>
 where
   E: Error,
@@ -380,6 +427,7 @@ where
   visitor.visit_type1(&arg.arg)
 }
 
+/// Walk nonmemberkey
 pub fn walk_nonmemberkey<'a, E, V>(visitor: &mut V, nmk: &NonMemberKey<'a>) -> Result<E>
 where
   E: Error,
