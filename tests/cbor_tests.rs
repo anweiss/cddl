@@ -1,7 +1,7 @@
 #![cfg(feature = "std")]
 #![cfg(not(target_arch = "wasm32"))]
 
-use cddl::{self, validate_cbor_from_slice};
+use cddl::{self, validator::validate_cbor_from_slice};
 use serde::{Deserialize, Serialize};
 
 #[rustfmt::skip] // allow arbitrary indents for readability
@@ -117,16 +117,11 @@ fn validate_cbor_array() {
   let cddl_input = r#"thing = []"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap();
   validate_cbor_from_slice(cddl_input, cbor::NULL).unwrap_err();
-  // FIXME: broken
-  if false {
-    validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
-  }
 
-  // FIXME: unimplemented!() in validation
-  if false {
-    let cddl_input = r#"thing = [1, 2, 3]"#;
-    validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
-  }
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
+
+  let cddl_input = r#"thing = [1, 2, 3]"#;
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap();
 }
 
 // These data structures exist so that we can serialize some more complex
@@ -255,11 +250,8 @@ fn validate_cbor_map() {
   let cddl_input = r#"thing = {name: tstr, age: tstr}"#;
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
 
-  // FIXME: broken
-  if false {
-    let cddl_input = r#"thing = {name: tstr}"#;
-    validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
-  }
+  let cddl_input = r#"thing = {name: tstr}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
 
   // "* keytype => valuetype" is the expected syntax for collecting
   // any remaining key/value pairs of the expected type.
@@ -272,13 +264,11 @@ fn validate_cbor_map() {
   let cddl_input = r#"thing = {+ tstr => any}"#;
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
 
-  // FIXME: broken
-  if false {
-    // Should fail because the CBOR input has one entry that can't be
-    // collected because the value type doesn't match.
-    let cddl_input = r#"thing = {* tstr => int}"#;
-    validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
-  }
+  // Should fail because the CBOR input has one entry that can't be
+  // collected because the value type doesn't match.
+  let cddl_input = r#"thing = {* tstr => int}"#;
+  validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
+
   // Should fail because the CBOR input has two entries that can't be
   // collected because the key type doesn't match.
   let cddl_input = r#"thing = {* int => any}"#;

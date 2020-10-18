@@ -1,7 +1,7 @@
 #[cfg(target_arch = "wasm32")]
 extern crate console_error_panic_hook;
 
-use super::token::{RangeValue, SocketPlug, Value};
+use super::token::{ByteValue, RangeValue, SocketPlug, Value};
 use std::fmt;
 
 #[cfg(feature = "std")]
@@ -61,7 +61,7 @@ impl<'a> fmt::Display for Comments<'a> {
 /// cddl = S 1*(rule S)
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Default, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Clone)]
 pub struct CDDL<'a> {
   /// Zero or more production rules
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
@@ -117,7 +117,7 @@ impl<'a> fmt::Display for CDDL<'a> {
 /// DIGIT = %x30-39
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct Identifier<'a> {
   /// Identifier
   pub ident: &'a str,
@@ -126,6 +126,14 @@ pub struct Identifier<'a> {
   /// Span
   pub span: Span,
 }
+
+impl<'a> PartialEq for Identifier<'a> {
+  fn eq(&self, other: &Self) -> bool {
+    self.to_string() == other.to_string()
+  }
+}
+
+impl<'a> Eq for Identifier<'a> {}
 
 impl<'a> fmt::Display for Identifier<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -176,7 +184,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
 ///     / groupname [genericparm] S assigng S grpent
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Rule<'a> {
   /// Type expression
   Type {
@@ -213,17 +221,14 @@ impl<'a> Rule<'a> {
   }
 
   fn has_comments_after_rule(&self) -> bool {
-    match self {
-      Rule::Type {
-        comments_after_rule: Some(comments),
-        ..
-      }
-      | Rule::Group {
-        comments_after_rule: Some(comments),
-        ..
-      } if comments.any_non_newline() => true,
-      _ => false,
+    matches!(self, Rule::Type {
+      comments_after_rule: Some(comments),
+      ..
     }
+    | Rule::Group {
+      comments_after_rule: Some(comments),
+      ..
+    } if comments.any_non_newline())
   }
 
   fn has_single_line_type(&self) -> bool {
@@ -235,18 +240,19 @@ impl<'a> Rule<'a> {
       ..
     } = self
     {
-      if type_choices.len() <= 2
-        && type_choices.iter().all(|tc| match tc.type1.type2 {
+      let type_check = |tc: &TypeChoice| {
+        matches!(tc.type1.type2,
           Type2::Typename { .. }
           | Type2::FloatValue { .. }
           | Type2::IntValue { .. }
           | Type2::UintValue { .. }
           | Type2::TextValue { .. }
           | Type2::B16ByteString { .. }
-          | Type2::B64ByteString { .. } => true,
-          _ => false,
-        })
-      {
+          | Type2::B64ByteString { .. }
+        )
+      };
+
+      if type_choices.len() <= 2 && type_choices.iter().all(type_check) {
         return true;
       }
     }
@@ -329,7 +335,7 @@ impl<'a> Rule<'a> {
 /// typename [genericparm] S assignt S type
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct TypeRule<'a> {
   /// Type name identifier
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
@@ -383,7 +389,7 @@ impl<'a> fmt::Display for TypeRule<'a> {
 /// groupname [genericparm] S assigng S grpent
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct GroupRule<'a> {
   /// Group name identifier
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
@@ -437,7 +443,7 @@ impl<'a> fmt::Display for GroupRule<'a> {
 /// genericparm =  "<" S id S *("," S id S ) ">"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct GenericParams<'a> {
   /// List of generic parameters
   pub params: Vec<GenericParam<'a>>,
@@ -456,7 +462,7 @@ impl<'a> Default for GenericParams<'a> {
 
 /// Generic parameter
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct GenericParam<'a> {
   /// Generic parameter
   pub param: Identifier<'a>,
@@ -685,6 +691,28 @@ pub struct Type1<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_type: Option<Comments<'a>>,
+}
+
+impl<'a> From<Value<'a>> for Type1<'a> {
+  fn from(value: Value<'a>) -> Self {
+    let span = Span::default();
+    let type2 = match value {
+      Value::TEXT(value) => Type2::TextValue { value, span },
+      Value::INT(value) => Type2::IntValue { value, span },
+      Value::FLOAT(value) => Type2::FloatValue { value, span },
+      Value::UINT(value) => Type2::UintValue { value, span },
+      Value::BYTE(ByteValue::B16(value)) => Type2::B16ByteString { value, span },
+      Value::BYTE(ByteValue::B64(value)) => Type2::B64ByteString { value, span },
+      Value::BYTE(ByteValue::UTF8(value)) => Type2::UTF8ByteString { value, span },
+    };
+
+    Type1 {
+      type2,
+      span,
+      operator: None,
+      comments_after_type: None,
+    }
+  }
 }
 
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
@@ -976,7 +1004,7 @@ pub enum Type2<'a> {
   },
 
   /// Data item of a major type with optional data constraint
-  TaggedDataMajorType {
+  DataMajorType {
     /// Major type
     mt: u8,
     /// Constraint
@@ -1241,7 +1269,7 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", t2_str)
       }
-      Type2::TaggedDataMajorType { mt, constraint, .. } => {
+      Type2::DataMajorType { mt, constraint, .. } => {
         if let Some(c) = constraint {
           return write!(f, "{}.{}", mt, c);
         }
@@ -1369,6 +1397,19 @@ pub struct GroupChoice<'a> {
 }
 
 impl<'a> GroupChoice<'a> {
+  /// Create new group choice from group entries
+  pub fn new(group_entries: Vec<GroupEntry<'a>>) -> Self {
+    GroupChoice {
+      group_entries: group_entries
+        .iter()
+        .cloned()
+        .map(|ge| (ge, OptionalComma::default()))
+        .collect::<Vec<_>>(),
+      span: Span::default(),
+      comments_before_grpchoice: None,
+    }
+  }
+
   fn has_entries_with_comments_before_comma(&self) -> bool {
     for ge in self.group_entries.iter() {
       if let GroupEntry::ValueMemberKey { ge: vmke, .. } = &ge.0 {
@@ -1584,7 +1625,7 @@ pub enum GroupEntry<'a> {
 
 impl<'a> GroupEntry<'a> {
   fn has_trailing_comments(&self) -> bool {
-    match self {
+    matches!(self,
       GroupEntry::ValueMemberKey {
         trailing_comments: Some(comments),
         ..
@@ -1592,15 +1633,14 @@ impl<'a> GroupEntry<'a> {
       | GroupEntry::TypeGroupname {
         trailing_comments: Some(comments),
         ..
-      } if comments.any_non_newline() => true,
-      _ => false,
-    }
+      } if comments.any_non_newline()
+    )
   }
 }
 
 /// Optional comma
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct OptionalComma<'a> {
   /// Optional comma
   pub optional_comma: bool,

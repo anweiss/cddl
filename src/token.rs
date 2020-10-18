@@ -543,7 +543,7 @@ pub fn lookup_control_from_str<'a>(ident: &str) -> Option<Token<'a>> {
   match ident {
     ".size" => Some(Token::SIZE),
     ".bits" => Some(Token::BITS),
-    ".regexp" => Some(Token::CREGEXP),
+    ".regexp" => Some(Token::REGEXP),
     ".cbor" => Some(Token::CBOR),
     ".cborseq" => Some(Token::CBORSEQ),
     ".within" => Some(Token::WITHIN),
