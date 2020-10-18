@@ -2149,24 +2149,3 @@ pub fn token_value_into_cbor_value(value: token::Value) -> serde_cbor::Value {
     },
   }
 }
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use crate::{cddl_from_str, lexer_from_str};
-
-  #[test]
-  fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"thing = #6(tstr)"#;
-
-    let mut lexer = lexer_from_str(input);
-    let cddl = cddl_from_str(&mut lexer, input, true)?;
-
-    let cbor_value = Value::Tag(0, Box::from(Value::Text("test".to_string())));
-
-    let mut cv = CBORValidator::new(&cddl, cbor_value);
-    cv.validate()?;
-
-    Ok(())
-  }
-}

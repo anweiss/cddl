@@ -218,6 +218,24 @@ pub fn is_ident_uint_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
+/// Is the given identifier associated with a nint data type
+pub fn is_ident_nint_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  if let Token::NINT = lookup_ident(ident.ident) {
+    return true;
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        is_ident_nint_data_type(cddl, ident)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
 /// Is the given identifier associated with an integer data type
 pub fn is_ident_integer_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   if let Token::INT | Token::INTEGER | Token::NINT | Token::UINT | Token::NUMBER | Token::UNSIGNED =

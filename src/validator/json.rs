@@ -1163,7 +1163,24 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           Ok(())
         }
       },
-      Value::Number(_) if is_ident_numeric_data_type(self.cddl, ident) => Ok(()),
+      Value::Number(n) => {
+        if is_ident_uint_data_type(self.cddl, ident) && n.is_u64() {
+          return Ok(());
+        } else if is_ident_nint_data_type(self.cddl, ident) {
+          if let Some(n) = n.as_i64() {
+            if n.is_negative() {
+              return Ok(());
+            }
+          }
+        } else if is_ident_integer_data_type(self.cddl, ident) && n.is_i64() {
+          return Ok(());
+        } else if is_ident_float_data_type(self.cddl, ident) && n.is_f64() {
+          return Ok(());
+        }
+
+        self.add_error(format!("expected type {}, got {}", ident, self.json));
+        Ok(())
+      }
       Value::String(_) if is_ident_string_data_type(self.cddl, ident) => Ok(()),
       Value::Array(a) => {
         // Member keys are annotation only in an array context
