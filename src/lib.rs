@@ -280,7 +280,8 @@
 //! [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html)
 //! enum. In addition to all of the same features implemented by the JSON
 //! validator, this crate also supports validating CBOR tags (e.g.
-//! `#6.32(tstr)`) and CBOR major types (e.g. `#1.2`).
+//! `#6.32(tstr)`), CBOR major types (e.g. `#1.2`) and CBOR table types (e.g.
+//! `{ [ + tstr ] => int }`).
 //!
 //! ## `no_std` support
 //!
