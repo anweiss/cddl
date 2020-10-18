@@ -72,7 +72,9 @@
 //! [validating JSON](#validating-json) section below. Instructions for using
 //! the tool can be viewed by executing the `help` subcommand:
 //!
-//!     $ cddl help
+//! ```sh
+//! cddl help
+//! ```
 //!
 //! If using Docker:
 //!
@@ -82,7 +84,9 @@
 //! > the container when executing the command. The command below assumes these
 //! > documents are in your current working directory.
 //!
-//!     $ docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
+//! ```sh
+//! docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
+//! ```
 //!
 //! ## Website
 //!
@@ -129,7 +133,9 @@
 //!
 //! You can validate JSON documents using the provided CLI:
 //!
-//!     $ cddl validate --cddl <FILE.cddl> --json <FILE.json>
+//! ```sh
+//! cddl validate --cddl <FILE.cddl> --json <FILE.json>
+//! ```
 //!
 //! This crate uses the [Serde](https://serde.rs/) framework, and more
 //! specifically, the [serde_json](https://crates.io/crates/serde_json) crate,
@@ -142,7 +148,7 @@
 //! validation. The limited prelude from the spec has been included below for
 //! brevity:
 //!
-//! ```
+//! ```cddl
 //! any = #
 //!
 //! uint = #0
@@ -171,7 +177,7 @@
 //! Furthermore, the following data types from the standard prelude can be used
 //! to validate JSON strings:
 //!
-//! ```
+//! ```cddl
 //! tdate = #6.0(tstr)
 //! uri = #6.32(tstr)
 //! ```
@@ -282,7 +288,7 @@
 //! heap allocator is available. This can be enabled by opting out of the
 //! default features in your `Cargo.toml` file as follows:
 //!
-//! ```
+//! ```toml
 //! [dependencies]
 //! cddl = { version = "<version>", default-features = false }
 //! ```
