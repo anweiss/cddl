@@ -12,3 +12,5 @@ tests/
 target/
 www/
 Dockerfile
+cddl-lsp/
+pkg/

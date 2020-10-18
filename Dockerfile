@@ -1,4 +1,4 @@
-FROM ekidd/rust-musl-builder:1.41.0 AS builder
+FROM ekidd/rust-musl-builder:1.47.0 AS builder
 COPY . ./
 RUN cargo b --release --bin cli
 
