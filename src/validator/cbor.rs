@@ -1171,14 +1171,18 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         Value::Tag(actual_tag, value) => {
           if let Some(tag) = tag {
             if *tag as u64 != *actual_tag {
-              println!("tag: {}", tag);
-              println!("acutal_tag: {}", actual_tag);
               self.add_error(format!(
                 "expected tagged data #6.{}({}), got {:?}",
                 tag, t, self.cbor
               ));
               return Ok(());
             }
+          } else if *actual_tag > 0 {
+            self.add_error(format!(
+              "expected tagged data #6({}), got {:?}",
+              t, self.cbor
+            ));
+            return Ok(());
           }
 
           let mut cv = CBORValidator::new(self.cddl, value.as_ref().clone());
@@ -1211,8 +1215,8 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       },
       Type2::DataMajorType { mt, constraint, .. } => match &self.cbor {
         Value::Integer(i) => {
-          if *mt == 0u8 {
-            match constraint {
+          match mt {
+            0u8 => match constraint {
               Some(c) if *i == *c as i128 && *i >= 0i128 => return Ok(()),
               Some(c) => {
                 self.add_error(format!(
@@ -1230,9 +1234,8 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                   return Ok(());
                 }
               }
-            }
-          } else if *mt == 1u8 {
-            match constraint {
+            },
+            1u8 => match constraint {
               Some(c) if *i == 0i128 - *c as i128 => return Ok(()),
               Some(c) => {
                 self.add_error(format!(
@@ -1250,7 +1253,97 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                   return Ok(());
                 }
               }
-            }
+            },
+            _ => self.add_error(format!(
+              "expected major type {} with constraint {:?}, got {:?}",
+              mt, constraint, self.cbor
+            )),
+          }
+
+          Ok(())
+        }
+        Value::Bytes(b) => {
+          match mt {
+            2u8 => match constraint {
+              Some(c) if *c == b.len() => return Ok(()),
+              Some(c) => self.add_error(format!(
+                "expected byte string type with constraint {} (#{}.{}), got {:?}",
+                c, mt, c, self.cbor
+              )),
+              _ => return Ok(()),
+            },
+            _ => self.add_error(format!(
+              "expected major type {} with constraint {:?}, got {:?}",
+              mt, constraint, self.cbor
+            )),
+          }
+
+          Ok(())
+        }
+        Value::Text(t) => {
+          match mt {
+            3u8 => match constraint {
+              Some(c) if *c == t.len() => return Ok(()),
+              Some(c) => self.add_error(format!(
+                "expected text string type with constraint {} (#{}.{}), got {:?}",
+                c, mt, c, self.cbor
+              )),
+              _ => return Ok(()),
+            },
+            _ => self.add_error(format!(
+              "expected major type {} with constraint {:?}, got {:?}",
+              mt, constraint, self.cbor
+            )),
+          }
+
+          Ok(())
+        }
+        Value::Array(a) => {
+          match mt {
+            4u8 => match constraint {
+              Some(c) if *c == a.len() => return Ok(()),
+              Some(c) => self.add_error(format!(
+                "expected array type with constraint {} (#{}.{}), got {:?}",
+                c, mt, c, self.cbor
+              )),
+              _ => return Ok(()),
+            },
+            _ => self.add_error(format!(
+              "expected major type {} with constraint {:?}, got {:?}",
+              mt, constraint, self.cbor
+            )),
+          }
+
+          Ok(())
+        }
+        Value::Map(m) => {
+          match mt {
+            5u8 => match constraint {
+              Some(c) if *c == m.len() => return Ok(()),
+              Some(c) => self.add_error(format!(
+                "expected map type with constraint {} (#{}.{}), got {:?}",
+                c, mt, c, self.cbor
+              )),
+              _ => return Ok(()),
+            },
+            _ => self.add_error(format!(
+              "expected major type {} with constraint {:?}, got {:?}",
+              mt, constraint, self.cbor
+            )),
+          }
+
+          Ok(())
+        }
+        Value::Float(_f) => {
+          match mt {
+            7u8 => match constraint {
+              Some(_c) => unimplemented!(),
+              _ => return Ok(()),
+            },
+            _ => self.add_error(format!(
+              "expected major type {} with constraint {:?}, got {:?}",
+              mt, constraint, self.cbor
+            )),
           }
 
           Ok(())
@@ -1258,11 +1351,11 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         _ => {
           if let Some(constraint) = constraint {
             self.add_error(format!(
-              "expected data #{}.{}, got {:?}",
+              "expected major type #{}.{}, got {:?}",
               mt, constraint, self.cbor
             ));
           } else {
-            self.add_error(format!("expected data type #{}, got {:?}", mt, self.cbor));
+            self.add_error(format!("expected major type #{}, got {:?}", mt, self.cbor));
           }
 
           Ok(())
@@ -2064,12 +2157,12 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"thing = #1"#;
+    let input = r#"thing = #6(tstr)"#;
 
     let mut lexer = lexer_from_str(input);
     let cddl = cddl_from_str(&mut lexer, input, true)?;
 
-    let cbor_value = Value::Integer(-2);
+    let cbor_value = Value::Tag(0, Box::from(Value::Text("test".to_string())));
 
     let mut cv = CBORValidator::new(&cddl, cbor_value);
     cv.validate()?;

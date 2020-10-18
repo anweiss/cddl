@@ -470,12 +470,6 @@ impl<'a> Lexer<'a> {
                   Token::TAG((Some(t as u8), Some(self.read_number(idx)?.1))),
                 ))
               }
-              Some(_) => {
-                let _ = self.read_char()?;
-                self.position.range = (token_offset, self.position.index + 1);
-
-                Ok((self.position, Token::TAG((Some(t as u8), None))))
-              }
               _ => {
                 self.position.range = (token_offset, self.position.index + 1);
 
