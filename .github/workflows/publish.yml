@@ -168,11 +168,12 @@ jobs:
         env:
           VSCODE_MARKETPLACE_TOKEN: ${{ secrets.VSCODE_MARKETPLACE_TOKEN }}
         run: |
-          npm install
+          npm install -g vsce
           export TAG=`git describe --tags`
           vsce show --json anweiss.cddl-languageserver | jq -e --arg TAG "$TAG" -e '.versions[] | select(.version == $TAG)'
           if [ "$?" -ne 0 ]
           then
+            npm install
             npm run deploy -- -p $VSCODE_MARKETPLACE_TOKEN
           fi
 
