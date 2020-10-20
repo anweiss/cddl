@@ -96,9 +96,9 @@ jobs:
 
       - name: Login to GPR
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCRPAT: ${{ secrets.GHCRPAT }}
         run: |
-          docker login ghcr.io -u anweiss -p $GITHUB_TOKEN
+          echo "$GHCRPAT" | docker login ghcr.io -u anweiss --password-stdin
 
       - name: Push image
         run: |
@@ -168,8 +168,7 @@ jobs:
         env:
           VSCODE_MARKETPLACE_TOKEN: ${{ secrets.VSCODE_MARKETPLACE_TOKEN }}
         run: |
-          npm install -g vsce
-          export TAG=`git describe --tags`
+          export TAG=`jq -r '.version' package.json`
           vsce show --json anweiss.cddl-languageserver | jq -e --arg TAG "$TAG" -e '.versions[] | select(.version == $TAG)'
           if [ "$?" -ne 0 ]
           then
