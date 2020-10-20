@@ -5,8 +5,9 @@ use crate::{
   token::{self, Token},
   visitor::{self, *},
 };
+use chrono::{TimeZone, Utc};
 use serde_json::Value;
-use std::fmt;
+use std::{convert::TryFrom, fmt};
 
 use super::*;
 
@@ -915,7 +916,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             }
           }
 
-          self.visit_group(group)?;
           self.is_cut_present = false;
           self.cut_value = None;
           Ok(())
@@ -1148,21 +1148,24 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       return self.visit_rule(r);
     }
 
-    if let Token::ANY = lookup_ident(ident.ident) {
+    if is_ident_any_type(self.cddl, ident) {
       return Ok(());
     }
 
     match &self.json {
       Value::Null if is_ident_null_data_type(self.cddl, ident) => Ok(()),
-      Value::Bool(b) => match lookup_ident(ident.ident) {
-        Token::BOOL => Ok(()),
-        Token::TRUE if *b => Ok(()),
-        Token::FALSE if !b => Ok(()),
-        _ => {
-          self.add_error(format!("expected type {}, got {}", ident, self.json));
-          Ok(())
+      Value::Bool(b) => {
+        if is_ident_bool_data_type(self.cddl, ident) {
+          return Ok(());
         }
-      },
+
+        if ident_matches_bool_value(self.cddl, ident, *b) {
+          return Ok(());
+        }
+
+        self.add_error(format!("expected type {}, got {}", ident, self.json));
+        Ok(())
+      }
       Value::Number(n) => {
         if is_ident_uint_data_type(self.cddl, ident) && n.is_u64() {
           return Ok(());
@@ -1170,6 +1173,25 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           if let Some(n) = n.as_i64() {
             if n.is_negative() {
               return Ok(());
+            }
+          }
+        } else if is_ident_time_data_type(self.cddl, ident) {
+          if let Some(n) = n.as_i64() {
+            if let chrono::LocalResult::None = Utc.timestamp_millis_opt(n * 1000) {
+              self.add_error(format!(
+                "expected time data type, invalid UNIX timestamp {}",
+                n,
+              ));
+            }
+
+            return Ok(());
+          } else if let Some(n) = n.as_f64() {
+            // truncates fractional milliseconds when validating
+            if let chrono::LocalResult::None = Utc.timestamp_millis_opt((n * 1000f64) as i64) {
+              self.add_error(format!(
+                "expected time data type, invalid UNIX timestamp {}",
+                n,
+              ));
             }
           }
         } else if (is_ident_integer_data_type(self.cddl, ident) && n.is_i64())
@@ -1181,7 +1203,30 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         self.add_error(format!("expected type {}, got {}", ident, self.json));
         Ok(())
       }
-      Value::String(_) if is_ident_string_data_type(self.cddl, ident) => Ok(()),
+      Value::String(s) => {
+        if is_ident_uri_data_type(self.cddl, ident) {
+          if let Err(e) = uriparse::URI::try_from(&**s) {
+            self.add_error(format!("expected URI data type, decoding error: {}", e));
+          }
+        } else if is_ident_b64url_data_type(self.cddl, ident) {
+          if let Err(e) = base64_url::decode(s) {
+            self.add_error(format!(
+              "expected base64 URL data type, decoding error: {}",
+              e
+            ));
+          }
+        } else if is_ident_tdate_data_type(self.cddl, ident) {
+          if let Err(e) = chrono::DateTime::parse_from_rfc3339(s) {
+            self.add_error(format!("expected tdate data type, decoding error: {}", e));
+          }
+        } else if is_ident_string_data_type(self.cddl, ident) {
+          return Ok(());
+        } else {
+          self.add_error(format!("expected type {}, got {}", ident, self.json));
+        }
+
+        Ok(())
+      }
       Value::Array(a) => {
         // Member keys are annotation only in an array context
         if self.is_member_key {
@@ -1647,24 +1692,19 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::{cddl_from_str, lexer_from_str};
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let input = r#"person = {
-      age: int,
-      name: tstr,
-      employer: tstr,
+    let cddl = r#"person = {
+      address: tstr,
     }"#;
     let json = r#"{
-      "age": 1,
-      "name": "test",
-      "employer": "test"
+      "address": "1234 Lakeshore Dr"
     }"#;
 
-    let mut lexer = lexer_from_str(input);
-    let cddl = cddl_from_str(&mut lexer, input, true)?;
-    let json = serde_json::from_str::<Value>(json)?;
+    let mut lexer = lexer_from_str(cddl);
+    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing)?;
+    let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
     let mut jv = JSONValidator::new(&cddl, json);
     jv.validate()?;

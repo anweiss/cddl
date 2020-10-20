@@ -6,6 +6,9 @@ on:
       - '.github/workflows/lsp-extension.yml'
       - 'cddl-lsp/**'
   pull_request:
+    paths:
+      - '.github/workflows/lsp-extension.yml'
+      - 'cddl-lsp/**'
 
 name: Build and Test LSP Extension
 
