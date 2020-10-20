@@ -5,8 +5,9 @@ use crate::{
   token::{self, Token},
   visitor::{self, *},
 };
+use chrono::{TimeZone, Utc};
 use serde_cbor::Value;
-use std::fmt;
+use std::{convert::TryFrom, fmt};
 
 use super::*;
 
@@ -1394,43 +1395,91 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       return self.visit_rule(r);
     }
 
-    if let Token::ANY = lookup_ident(ident.ident) {
+    if is_ident_any_type(self.cddl, ident) {
       return Ok(());
     }
 
     match &self.cbor {
       Value::Null if is_ident_null_data_type(self.cddl, ident) => Ok(()),
       Value::Bytes(_) if is_ident_byte_string_data_type(self.cddl, ident) => Ok(()),
-      Value::Bool(b) => match lookup_ident(ident.ident) {
-        Token::BOOL => Ok(()),
-        Token::TRUE if *b => Ok(()),
-        Token::FALSE if !b => Ok(()),
-        _ => {
+      Value::Bool(b) => {
+        if is_ident_bool_data_type(self.cddl, ident) {
+          return Ok(());
+        }
+
+        if ident_matches_bool_value(self.cddl, ident, *b) {
+          return Ok(());
+        }
+
+        self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
+        Ok(())
+      }
+      Value::Integer(i) => {
+        if is_ident_uint_data_type(self.cddl, ident) {
+          if i.is_negative() {
+            self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
+          }
+
+          Ok(())
+        } else if is_ident_integer_data_type(self.cddl, ident) {
+          Ok(())
+        } else if is_ident_time_data_type(self.cddl, ident) {
+          if let chrono::LocalResult::None = Utc.timestamp_millis_opt((i * 1000) as i64) {
+            let i = *i;
+            self.add_error(format!(
+              "expected time data type, invalid UNIX timestamp {}",
+              i,
+            ));
+          }
+
+          Ok(())
+        } else {
           self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
           Ok(())
         }
-      },
-      Value::Integer(i) => match lookup_ident(ident.ident) {
-        Token::INT | Token::INTEGER => Ok(()),
-        Token::UINT if *i >= 0 => Ok(()),
-        _ => {
+      }
+      Value::Float(f) => {
+        if is_ident_float_data_type(self.cddl, ident) {
+          Ok(())
+        } else if is_ident_time_data_type(self.cddl, ident) {
+          if let chrono::LocalResult::None = Utc.timestamp_millis_opt((f * 1000f64) as i64) {
+            let f = *f;
+            self.add_error(format!(
+              "expected time data type, invalid UNIX timestamp {}",
+              f,
+            ));
+          }
+
+          Ok(())
+        } else {
           self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
           Ok(())
         }
-      },
-      Value::Float(_) => match lookup_ident(ident.ident) {
-        Token::FLOAT
-        | Token::FLOAT16
-        | Token::FLOAT1632
-        | Token::FLOAT32
-        | Token::FLOAT3264
-        | Token::FLOAT64 => Ok(()),
-        _ => {
+      }
+      Value::Text(s) => {
+        if is_ident_uri_data_type(self.cddl, ident) {
+          if let Err(e) = uriparse::URI::try_from(&**s) {
+            self.add_error(format!("expected URI data type, decoding error: {}", e));
+          }
+        } else if is_ident_b64url_data_type(self.cddl, ident) {
+          if let Err(e) = base64_url::decode(s) {
+            self.add_error(format!(
+              "expected base64 URL data type, decoding error: {}",
+              e
+            ));
+          }
+        } else if is_ident_tdate_data_type(self.cddl, ident) {
+          if let Err(e) = chrono::DateTime::parse_from_rfc3339(s) {
+            self.add_error(format!("expected tdate data type, decoding error: {}", e));
+          }
+        } else if is_ident_string_data_type(self.cddl, ident) {
+          return Ok(());
+        } else {
           self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
-          Ok(())
         }
-      },
-      Value::Text(_) if is_ident_string_data_type(self.cddl, ident) => Ok(()),
+
+        Ok(())
+      }
       Value::Array(a) => {
         // Member keys are annotation only in an array context
         if self.is_member_key {

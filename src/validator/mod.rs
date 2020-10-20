@@ -154,7 +154,7 @@ pub fn is_ident_null_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
 /// Is the given identifier associated with a boolean data type
 pub fn is_ident_bool_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let Token::BOOL | Token::TRUE | Token::FALSE = lookup_ident(ident.ident) {
+  if let Token::BOOL = lookup_ident(ident.ident) {
     return true;
   }
 
@@ -162,6 +162,104 @@ pub fn is_ident_bool_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
     Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
       if let Type2::Typename { ident, .. } = &tc.type1.type2 {
         is_ident_bool_data_type(cddl, ident)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
+/// Does the given boolean identifier match the boolean value
+pub fn ident_matches_bool_value(cddl: &CDDL, ident: &Identifier, value: bool) -> bool {
+  if let Token::TRUE = lookup_ident(ident.ident) {
+    if value {
+      return true;
+    }
+  }
+
+  if let Token::FALSE = lookup_ident(ident.ident) {
+    if !value {
+      return true;
+    }
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        ident_matches_bool_value(cddl, ident, value)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
+/// Is the given identifier associated with a URI data type
+pub fn is_ident_uri_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  if let Token::URI = lookup_ident(ident.ident) {
+    return true;
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        is_ident_uri_data_type(cddl, ident)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
+/// Is the given identifier associated with a b64url data type
+pub fn is_ident_b64url_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  if let Token::B64URL = lookup_ident(ident.ident) {
+    return true;
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        is_ident_b64url_data_type(cddl, ident)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
+/// Is the given identifier associated with a tdate data type
+pub fn is_ident_tdate_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  if let Token::TDATE = lookup_ident(ident.ident) {
+    return true;
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        is_ident_tdate_data_type(cddl, ident)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
+/// Is the given identifier associated with a time data type
+pub fn is_ident_time_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  if let Token::TIME = lookup_ident(ident.ident) {
+    return true;
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        is_ident_time_data_type(cddl, ident)
       } else {
         false
       }
@@ -298,21 +396,40 @@ pub fn is_ident_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
+/// Is the given identifier associated with the any type
+pub fn is_ident_any_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  if let Token::ANY = lookup_ident(ident.ident) {
+    return true;
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        is_ident_any_type(cddl, ident)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
 /// Is the given identifier associated with a byte string data type
 pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  match lookup_ident(ident.ident) {
-    Token::BSTR | Token::BYTES => true,
-    _ => cddl.rules.iter().any(|r| match r {
-      Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-        if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-          is_ident_byte_string_data_type(cddl, ident)
-        } else {
-          false
-        }
-      }),
-      _ => false,
-    }),
+  if let Token::BSTR | Token::BYTES = lookup_ident(ident.ident) {
+    return true;
   }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        is_ident_byte_string_data_type(cddl, ident)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
 }
 
 /// Validate an array based on an occurrence indicator. The returned boolean
