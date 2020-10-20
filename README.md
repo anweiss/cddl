@@ -163,11 +163,15 @@ nil = #7.22
 null = nil
 ```
 
-Furthermore, the following data types from the standard prelude can be used to validate JSON strings:
+Furthermore, the following data types from the standard prelude can be used for validating JSON strings and numbers:
+
+| CDDL
 
 ```cddl
 tdate = #6.0(tstr)
 uri = #6.32(tstr)
+b64url = #6.33(tstr)
+time = #6.1(number)
 ```
 
 The first non-group rule defined by a CDDL data structure definition determines the root type, which is subsequently used for validating the top-level JSON data type.
@@ -176,15 +180,19 @@ The first non-group rule defined by a CDDL data structure definition determines 
 
 The following types and features of CDDL are supported by this crate for validating JSON:
 
-| CDDL                 | JSON                          |
-| -------------------- | ----------------------------- |
-| structs              | objects                       |
-| arrays               | arrays<sup>[1](#arrays)</sup> |
-| text / tstr          | string                        |
-| number / int / float | number<sup>[2](#number)</sup> |
-| bool / true / false  | boolean                       |
-| null / nil           | null                          |
-| any                  | any valid JSON                |
+| CDDL                 | JSON                                             |
+| -------------------- | ------------------------------------------------ |
+| structs              | objects                                          |
+| arrays               | arrays<sup>[1](#arrays)</sup>                    |
+| text / tstr          | string                                           |
+| uri                  | string (valid RFC3986 URI)                       |
+| tdate                | string (valid RFC3339 date/time)                 |
+| b64url               | string (base64url-encoded)                       |
+| time                 | number (valid UNIX timestamp integer in seconds) |
+| number / int / float | number<sup>[2](#number)</sup>                    |
+| bool / true / false  | boolean                                          |
+| null / nil           | null                                             |
+| any                  | any valid JSON                                   |
 
 CDDL groups, generics, sockets/plugs and group-to-choice enumerations can all be used when validating JSON.
 
