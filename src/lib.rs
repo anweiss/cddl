@@ -88,6 +88,12 @@
 //! docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
 //! ```
 //!
+//! You can validate JSON documents using the provided CLI:
+//!
+//! ```sh
+//! cddl validate --cddl <FILE.cddl> --json <FILE.json>
+//! ```
+//!
 //! ## Website
 //!
 //! You can also find a simple RFC 8610 conformance tool at
@@ -101,7 +107,7 @@
 //! [here](https://marketplace.visualstudio.com/items?itemName=anweiss.cddl-languageserver).
 //! You can find more information in the [README](cddl-lsp/README.md).
 //!
-//! ## Features supported by the parser
+//! ## Supported features
 //!
 //! - [x] maps
 //!   - [x] structs
@@ -129,12 +135,44 @@
 //! - [x] unprefixed byte strings
 //! - [x] prefixed byte strings
 //!
-//! ## Validating JSON
+//! ## Usage
 //!
-//! You can validate JSON documents using the provided CLI:
+//! Simply add the dependency to `Cargo.toml`:
 //!
-//! ```sh
-//! cddl validate --cddl <FILE.cddl> --json <FILE.json>
+//! ```toml
+//! [dependencies]
+//! cddl = "0.8"
+//! ```
+//!
+//! Both JSON and CBOR validation require `std`.
+//!
+//! ### Parsing CDDL
+//!
+//! ```rust
+//! use cddl::{lexer_from_str, parser::cddl_from_str};
+//!
+//! let input = r#"myrule = int"#;
+//! assert!(cddl_from_str(&mut lexer_from_str(input), input, true).is_ok())
+//! ```
+//!
+//! ### Validating JSON
+//!
+//! ```rust
+//! use cddl::validate_json_from_str;
+//!
+//! let cddl = r#"person = {
+//!   name: tstr,
+//!   age: uint,
+//!   address: tstr,
+//! }"#;
+//!
+//! let json = r#"{
+//!   "name": "John",
+//!   "age": 50,
+//!   "address": "1234 Lakeshore Dr"
+//! }"#;
+//!
+//! assert!(validate_json_from_str(cddl, json).is_ok())
 //! ```
 //!
 //! This crate uses the [Serde](https://serde.rs/) framework, and more
@@ -186,7 +224,7 @@
 //! determines the root type, which is subsequently used for validating the
 //! top-level JSON data type.
 //!
-//! ### Supported JSON validation features
+//! #### Supported JSON validation features
 //!
 //! The following types and features of CDDL are supported by this crate for
 //! validating JSON:
@@ -259,7 +297,7 @@
 //! Ensure that your regex string is properly JSON escaped when using this
 //! control.
 //!
-//! ### Comparing with JSON schema and JSON schema language
+//! #### Comparing with JSON schema and JSON schema language
 //!
 //! [CDDL](https://tools.ietf.org/html/rfc8610), [JSON
 //! schema](https://json-schema.org/) and [JSON schema
@@ -272,7 +310,17 @@
 //! over any one of these formats, but simply to provide an example
 //! implementation in Rust.
 //!
-//! ## Validating CBOR
+//! ### Validating CBOR
+//!
+//! ```rust
+//! use cddl::validate_cbor_from_slice;
+//!
+//! let cddl = r#"rule = false"#;
+//!
+//! let cbor = b"\xF4";
+//!
+//! assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
+//! ```
 //!
 //! This crate also uses [Serde](https://serde.rs/) and
 //! [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data
@@ -291,7 +339,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cddl = { version = "<version>", default-features = false }
+//! cddl = { version = "0.8", default-features = false }
 //! ```
 //!
 //! Zero-copy parsing is implemented to the extent that is possible. Allocation
@@ -306,7 +354,7 @@
 //!
 //! Below are some known projects that leverage this crate:
 //!
-//! - https://github.com/Emurgo/cddl-codegen
+//! - [https://github.com/Emurgo/cddl-codegen](https://github.com/Emurgo/cddl-codegen)
 //!
 
 #![allow(dead_code)]
@@ -326,8 +374,11 @@ extern crate serde_json;
 #[cfg(feature = "std")]
 extern crate serde_cbor;
 
-#[cfg(feature = "nightly")]
+#[cfg(feature = "std")]
 extern crate uriparse;
+
+#[cfg(feature = "std")]
+extern crate base64_url;
 
 /// Abstract syntax tree representing a CDDL definition
 pub mod ast;

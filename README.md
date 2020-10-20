@@ -39,13 +39,23 @@ Rust is a systems programming language designed around safety and is ideally-sui
 
 A CLI has been made available for various platforms and as a Docker image. It can downloaded from the [Releases](https://github.com/anweiss/cddl/releases) tab. The tool supports parsing of `.cddl` files for verifying conformance against RFC 8610. It also supports validation of `.cddl` documents against `.json` files. Detailed information about the JSON validation functions can be found in the [validating JSON](#validating-json) section below. Instructions for using the tool can be viewed by executing the `help` subcommand:
 
-    $ cddl help
+```sh
+cddl help
+```
 
 If using Docker:
 
 > Replace `<version>` with an appropriate [release](https://github.com/anweiss/cddl/releases) tag. Requires use of the `--volume` argument for mounting `.cddl` and `.json` documents into the container when executing the command. The command below assumes these documents are in your current working directory.
 
-    $ docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
+```sh
+docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
+```
+
+You can validate JSON documents using the provided CLI:
+
+```sh
+cddl validate --cddl <FILE.cddl> --json <FILE.json>
+```
 
 ## Website
 
@@ -55,7 +65,7 @@ You can also find a simple RFC 8610 conformance tool at https://cddl.anweiss.tec
 
 An extension for editing CDDL documents with Visual Studio Code has been published to the Marketplace [here](https://marketplace.visualstudio.com/items?itemName=anweiss.cddl-languageserver). You can find more information in the [README](cddl-lsp/README.md).
 
-## Features supported by the parser
+## Supported features
 
 - [x] maps
   - [x] structs
@@ -83,11 +93,45 @@ An extension for editing CDDL documents with Visual Studio Code has been publish
 - [x] unprefixed byte strings
 - [x] prefixed byte strings
 
-## Validating JSON
+## Usage
 
-You can validate JSON documents using the provided CLI:
+Simply add the dependency to `Cargo.toml`:
 
-    $ cddl validate --cddl <FILE.cddl> --json <FILE.json>
+```toml
+[dependencies]
+cddl = "0.8"
+```
+
+Both JSON and CBOR validation require `std`.
+
+### Parsing CDDL
+
+```rust
+use cddl::{lexer_from_str, parser::cddl_from_str};
+
+let input = r#"myrule = int"#;
+assert!(cddl_from_str(&mut lexer_from_str(input), input, true).is_ok())
+```
+
+### Validating JSON
+
+```rust
+use cddl::validate_json_from_str;
+
+let cddl = r#"person = {
+  name: tstr,
+  age: uint,
+  address: tstr,
+}"#;
+
+let json = r#"{
+  "name": "John",
+  "age": 50,
+  "address": "1234 Lakeshore Dr"
+}"#;
+
+assert!(validate_json_from_str(cddl, json).is_ok())
+```
 
 This crate uses the [Serde](https://serde.rs/) framework, and more specifically, the [serde_json](https://crates.io/crates/serde_json) crate, for parsing and validating JSON. Serde was chosen due to its maturity in the ecosystem and its support for serializing and deserializing CBOR via the [serde_cbor](https://crates.io/crates/serde_cbor) crate.
 
@@ -128,7 +172,7 @@ uri = #6.32(tstr)
 
 The first non-group rule defined by a CDDL data structure definition determines the root type, which is subsequently used for validating the top-level JSON data type.
 
-### Supported JSON validation features
+#### Supported JSON validation features
 
 The following types and features of CDDL are supported by this crate for validating JSON:
 
@@ -174,11 +218,21 @@ Below is the table of supported control operators and whether or not they've bee
 
 <a name="regex">3</a>: Due to Perl-Compatible Regular Expressions (PCREs) being more widely used than XSD regular expressions, this crate also provides support for the proposed `.pcre` control extension in place of the `.regexp` operator (see [Discussion](https://tools.ietf.org/html/rfc8610#section-3.8.3.2) and [CDDL-Freezer proposal](https://tools.ietf.org/html/draft-bormann-cbor-cddl-freezer-03#section-5.1)). Ensure that your regex string is properly JSON escaped when using this control.
 
-### Comparing with JSON schema and JSON schema language
+#### Comparing with JSON schema and JSON schema language
 
 [CDDL](https://tools.ietf.org/html/rfc8610), [JSON schema](https://json-schema.org/) and [JSON schema language](https://tools.ietf.org/html/draft-json-schema-language-02) can all be used to define JSON data structures. However, the approaches taken to develop each of these are vastly different. A good place to find past discussions on the differences between these formats is the [IETF mail archive](https://mailarchive.ietf.org/arch/), specifically in the JSON and CBOR lists. The purpose of this crate is not to argue for the use of CDDL over any one of these formats, but simply to provide an example implementation in Rust.
 
-## Validating CBOR
+### Validating CBOR
+
+```rust
+use cddl::validate_cbor_from_slice;
+
+let cddl = r#"rule = false"#;
+
+let cbor = b"\xF4";
+
+assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
+```
 
 This crate also uses [Serde](https://serde.rs/) and [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data structures. CBOR validation is done via the loosely typed [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html) enum. In addition to all of the same features implemented by the JSON validator, this crate also supports validating CBOR tags (e.g. `#6.32(tstr)`), CBOR major types (e.g. `#1.2`) and CBOR table types (e.g. `{ [ + tstr ] => int }`).
 
@@ -188,7 +242,7 @@ Only the lexer and parser can be used in a `no_std` context provided that a heap
 
 ```toml
 [dependencies]
-cddl = { version = "<version>", default-features = false }
+cddl = { version = "0.8", default-features = false }
 ```
 
 Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling and diagnostics.
@@ -199,4 +253,4 @@ Both JSON and CBOR validation are dependent on their respective heap allocated `
 
 Below are some known projects that leverage this crate:
 
-- https://github.com/Emurgo/cddl-codegen
+- [https://github.com/Emurgo/cddl-codegen](https://github.com/Emurgo/cddl-codegen)
