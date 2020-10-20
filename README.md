@@ -165,8 +165,6 @@ null = nil
 
 Furthermore, the following data types from the standard prelude can be used for validating JSON strings and numbers:
 
-| CDDL
-
 ```cddl
 tdate = #6.0(tstr)
 uri = #6.32(tstr)
