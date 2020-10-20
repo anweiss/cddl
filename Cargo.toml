@@ -52,7 +52,6 @@ wasm-bindgen-test = "0.3"
 default = ["std"]
 std = ["serde_json", "serde_cbor", "serde", "chrono", "wasm-bindgen", "clap", "crossterm", "uriparse", "base64-url"]
 lsp = ["std"]
-# nightly = ["uriparse"]
 
 [[bin]]
 name = "cli"
