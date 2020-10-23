@@ -100,15 +100,15 @@ impl std::error::Error for ValidationError {
 }
 
 impl ValidationError {
-  fn from_validator(jv: &CBORValidator, reason: String) -> Self {
+  fn from_validator(cv: &CBORValidator, reason: String) -> Self {
     ValidationError {
-      cddl_location: jv.cddl_location.clone(),
-      cbor_location: jv.cbor_location.clone(),
+      cddl_location: cv.cddl_location.clone(),
+      cbor_location: cv.cbor_location.clone(),
       reason,
-      is_multi_type_choice: jv.is_multi_type_choice,
-      is_group_to_choice_enum: jv.is_group_to_choice_enum,
-      type_group_name_entry: jv.type_group_name_entry.map(|e| e.to_string()),
-      is_multi_group_choice: jv.is_multi_group_choice,
+      is_multi_type_choice: cv.is_multi_type_choice,
+      is_group_to_choice_enum: cv.is_group_to_choice_enum,
+      type_group_name_entry: cv.type_group_name_entry.map(|e| e.to_string()),
+      is_multi_group_choice: cv.is_multi_group_choice,
     }
   }
 }
@@ -153,7 +153,7 @@ pub struct CBORValidator<'a> {
   // fails as detected during the current state of AST evaluation
   advance_to_next_entry: bool,
   is_ctrl_map_equality: bool,
-  entry_counts: Option<Vec<u64>>,
+  entry_counts: Option<Vec<(u64, bool)>>,
   validated_keys: Option<Vec<Value>>,
   values_to_validate: Option<Vec<Value>>,
 }
@@ -340,7 +340,10 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           }
           let len = m.len();
           if let Token::EQ = t {
-            if !entry_counts.iter().any(|c| m.len() == *c as usize) {
+            if !entry_counts
+              .iter()
+              .any(|(c, ai)| len == *c as usize || *ai && !m.is_empty())
+            {
               self.add_error(format!(
                 "map equality error. expected object to have one of {:?} number of key/value pairs, got {}",
                 entry_counts, len
@@ -348,7 +351,10 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               return Ok(());
             }
           } else if let Token::NE = t {
-            if !entry_counts.iter().any(|c| m.len() != *c as usize) {
+            if !entry_counts
+              .iter()
+              .any(|(c, ai)| len == *c as usize || *ai && !m.is_empty())
+            {
               self.add_error(format!(
                 "map inequality error. expected object to not have one of {:?} number of key/value pairs, got {}",
                 entry_counts, len
@@ -436,7 +442,10 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       if !iter_items && !allow_empty_array {
         if let Some(entry_counts) = self.entry_counts.take() {
           let len = a.len();
-          if !entry_counts.iter().any(|c| *c as usize == len) {
+          if !entry_counts
+            .iter()
+            .any(|(c, ai)| len == *c as usize || *ai && !a.is_empty())
+          {
             self.add_error(format!(
               "expecting array with one of the lengths in {:?}, got {}",
               entry_counts, len
@@ -448,29 +457,29 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
       if iter_items {
         for (idx, v) in a.iter().enumerate() {
-          let mut jv = CBORValidator::new(self.cddl, v.clone());
-          jv.generic_rules = self.generic_rules.clone();
-          jv.eval_generic_rule = self.eval_generic_rule;
-          jv.is_multi_type_choice = self.is_multi_type_choice;
-          jv.cbor_location
+          let mut cv = CBORValidator::new(self.cddl, v.clone());
+          cv.generic_rules = self.generic_rules.clone();
+          cv.eval_generic_rule = self.eval_generic_rule;
+          cv.is_multi_type_choice = self.is_multi_type_choice;
+          cv.cbor_location
             .push_str(&format!("{}/{}", self.cbor_location, idx));
 
-          jv.visit_range(lower, upper, is_inclusive)?;
+          cv.visit_range(lower, upper, is_inclusive)?;
 
-          self.errors.append(&mut jv.errors);
+          self.errors.append(&mut cv.errors);
         }
       } else if let Some(idx) = self.group_entry_idx.take() {
         if let Some(v) = a.get(idx) {
-          let mut jv = CBORValidator::new(self.cddl, v.clone());
-          jv.generic_rules = self.generic_rules.clone();
-          jv.eval_generic_rule = self.eval_generic_rule;
-          jv.is_multi_type_choice = self.is_multi_type_choice;
-          jv.cbor_location
+          let mut cv = CBORValidator::new(self.cddl, v.clone());
+          cv.generic_rules = self.generic_rules.clone();
+          cv.eval_generic_rule = self.eval_generic_rule;
+          cv.is_multi_type_choice = self.is_multi_type_choice;
+          cv.cbor_location
             .push_str(&format!("{}/{}", self.cbor_location, idx));
 
-          jv.visit_range(lower, upper, is_inclusive)?;
+          cv.visit_range(lower, upper, is_inclusive)?;
 
-          self.errors.append(&mut jv.errors);
+          self.errors.append(&mut cv.errors);
         } else if !allow_empty_array {
           self.add_error(format!("expected array item at index {}", idx));
         }
@@ -953,7 +962,10 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           if !iter_items && !allow_empty_array {
             if let Some(entry_counts) = self.entry_counts.take() {
               let len = a.len();
-              if !entry_counts.iter().any(|c| *c as usize == len) {
+              if !entry_counts
+                .iter()
+                .any(|(c, ai)| len == *c as usize || *ai && !a.is_empty())
+              {
                 self.add_error(format!(
                   "expecting array with one of the lengths in {:?}, got {}",
                   entry_counts, len
@@ -965,29 +977,29 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
           if iter_items {
             for (idx, v) in a.iter().enumerate() {
-              let mut jv = CBORValidator::new(self.cddl, v.clone());
-              jv.generic_rules = self.generic_rules.clone();
-              jv.eval_generic_rule = self.eval_generic_rule;
-              jv.is_multi_type_choice = self.is_multi_type_choice;
-              jv.cbor_location
+              let mut cv = CBORValidator::new(self.cddl, v.clone());
+              cv.generic_rules = self.generic_rules.clone();
+              cv.eval_generic_rule = self.eval_generic_rule;
+              cv.is_multi_type_choice = self.is_multi_type_choice;
+              cv.cbor_location
                 .push_str(&format!("{}/{}", self.cbor_location, idx));
 
-              jv.visit_group(group)?;
+              cv.visit_group(group)?;
 
-              self.errors.append(&mut jv.errors);
+              self.errors.append(&mut cv.errors);
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
-              let mut jv = CBORValidator::new(self.cddl, v.clone());
-              jv.generic_rules = self.generic_rules.clone();
-              jv.eval_generic_rule = self.eval_generic_rule;
-              jv.is_multi_type_choice = self.is_multi_type_choice;
-              jv.cbor_location
+              let mut cv = CBORValidator::new(self.cddl, v.clone());
+              cv.generic_rules = self.generic_rules.clone();
+              cv.eval_generic_rule = self.eval_generic_rule;
+              cv.is_multi_type_choice = self.is_multi_type_choice;
+              cv.cbor_location
                 .push_str(&format!("{}/{}", self.cbor_location, idx));
 
-              jv.visit_group(group)?;
+              cv.visit_group(group)?;
 
-              self.errors.append(&mut jv.errors);
+              self.errors.append(&mut cv.errors);
             } else if !allow_empty_array {
               self.add_error(format!("expected map object {} at index {}", group, idx));
             }
@@ -1094,14 +1106,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               });
             }
 
-            let mut jv = CBORValidator::new(self.cddl, self.cbor.clone());
-            jv.generic_rules = self.generic_rules.clone();
-            jv.eval_generic_rule = Some(ident.ident);
-            jv.is_group_to_choice_enum = true;
-            jv.is_multi_type_choice = self.is_multi_type_choice;
-            jv.visit_rule(rule)?;
+            let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
+            cv.generic_rules = self.generic_rules.clone();
+            cv.eval_generic_rule = Some(ident.ident);
+            cv.is_group_to_choice_enum = true;
+            cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.visit_rule(rule)?;
 
-            self.errors.append(&mut jv.errors);
+            self.errors.append(&mut cv.errors);
 
             return Ok(());
           }
@@ -1150,13 +1162,13 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               });
             }
 
-            let mut jv = CBORValidator::new(self.cddl, self.cbor.clone());
-            jv.generic_rules = self.generic_rules.clone();
-            jv.eval_generic_rule = Some(ident.ident);
-            jv.is_multi_type_choice = self.is_multi_type_choice;
-            jv.visit_rule(rule)?;
+            let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
+            cv.generic_rules = self.generic_rules.clone();
+            cv.eval_generic_rule = Some(ident.ident);
+            cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.visit_rule(rule)?;
 
-            self.errors.append(&mut jv.errors);
+            self.errors.append(&mut cv.errors);
 
             return Ok(());
           }
@@ -1168,6 +1180,56 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       Type2::UintValue { value, .. } => self.visit_value(&token::Value::UINT(*value)),
       Type2::FloatValue { value, .. } => self.visit_value(&token::Value::FLOAT(*value)),
       Type2::ParenthesizedType { pt, .. } => self.visit_type(pt),
+      Type2::Unwrap {
+        ident,
+        generic_args,
+        ..
+      } => {
+        if let Some(tag) = tag_from_token(&lookup_ident(ident.ident)) {
+          return self.visit_type2(&tag);
+        }
+
+        if let Some(ga) = generic_args {
+          if let Some(rule) = unwrap_rule_from_ident(self.cddl, ident) {
+            if let Some(gr) = self
+              .generic_rules
+              .iter_mut()
+              .find(|gr| gr.name == ident.ident)
+            {
+              for arg in ga.args.iter() {
+                gr.args.push((*arg.arg).clone());
+              }
+            } else if let Some(params) = generic_params_from_rule(rule) {
+              self.generic_rules.push(GenericRule {
+                name: ident.ident,
+                params,
+                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+              });
+            }
+
+            let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
+            cv.generic_rules = self.generic_rules.clone();
+            cv.eval_generic_rule = Some(ident.ident);
+            cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.visit_rule(rule)?;
+
+            self.errors.append(&mut cv.errors);
+
+            return Ok(());
+          }
+        }
+
+        if let Some(rule) = unwrap_rule_from_ident(self.cddl, ident) {
+          return self.visit_rule(rule);
+        }
+
+        self.add_error(format!(
+          "cannot unwrap identifier {}, rule not found",
+          ident
+        ));
+
+        Ok(())
+      }
       Type2::TaggedData { tag, t, .. } => match &self.cbor {
         Value::Tag(actual_tag, value) => {
           if let Some(tag) = tag {
@@ -1503,7 +1565,10 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         if !iter_items && !allow_empty_array {
           if let Some(entry_counts) = self.entry_counts.take() {
             let len = a.len();
-            if !entry_counts.iter().any(|c| *c as usize == len) {
+            if !entry_counts
+              .iter()
+              .any(|(c, ai)| len == *c as usize || *ai && !a.is_empty())
+            {
               self.add_error(format!(
                 "expecting array with one of the lengths in {:?}, got {}",
                 entry_counts, len
@@ -1515,29 +1580,29 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
         if iter_items {
           for (idx, v) in a.iter().enumerate() {
-            let mut jv = CBORValidator::new(self.cddl, v.clone());
-            jv.generic_rules = self.generic_rules.clone();
-            jv.eval_generic_rule = self.eval_generic_rule;
-            jv.is_multi_type_choice = self.is_multi_type_choice;
-            jv.cbor_location
+            let mut cv = CBORValidator::new(self.cddl, v.clone());
+            cv.generic_rules = self.generic_rules.clone();
+            cv.eval_generic_rule = self.eval_generic_rule;
+            cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.cbor_location
               .push_str(&format!("{}/{}", self.cbor_location, idx));
 
-            jv.visit_identifier(ident)?;
+            cv.visit_identifier(ident)?;
 
-            self.errors.append(&mut jv.errors);
+            self.errors.append(&mut cv.errors);
           }
         } else if let Some(idx) = self.group_entry_idx.take() {
           if let Some(v) = a.get(idx) {
-            let mut jv = CBORValidator::new(self.cddl, v.clone());
-            jv.generic_rules = self.generic_rules.clone();
-            jv.eval_generic_rule = self.eval_generic_rule;
-            jv.is_multi_type_choice = self.is_multi_type_choice;
-            jv.cbor_location
+            let mut cv = CBORValidator::new(self.cddl, v.clone());
+            cv.generic_rules = self.generic_rules.clone();
+            cv.eval_generic_rule = self.eval_generic_rule;
+            cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.cbor_location
               .push_str(&format!("{}/{}", self.cbor_location, idx));
 
-            jv.visit_identifier(ident)?;
+            cv.visit_identifier(ident)?;
 
-            self.errors.append(&mut jv.errors);
+            self.errors.append(&mut cv.errors);
           } else if !allow_empty_array {
             self.add_error(format!("expected type {} at index {}", ident, idx));
           }
@@ -2094,7 +2159,10 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         if !iter_items && !allow_empty_array {
           if let Some(entry_counts) = self.entry_counts.take() {
             let len = a.len();
-            if !entry_counts.iter().any(|c| *c as usize == len) {
+            if !entry_counts
+              .iter()
+              .any(|(c, ai)| len == *c as usize || *ai && !a.is_empty())
+            {
               self.add_error(format!(
                 "expecting array with one of the lengths in {:?}, got {}",
                 entry_counts, len
@@ -2106,29 +2174,29 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
         if iter_items {
           for (idx, v) in a.iter().enumerate() {
-            let mut jv = CBORValidator::new(self.cddl, v.clone());
-            jv.generic_rules = self.generic_rules.clone();
-            jv.eval_generic_rule = self.eval_generic_rule;
-            jv.is_multi_type_choice = self.is_multi_type_choice;
-            jv.cbor_location
+            let mut cv = CBORValidator::new(self.cddl, v.clone());
+            cv.generic_rules = self.generic_rules.clone();
+            cv.eval_generic_rule = self.eval_generic_rule;
+            cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.cbor_location
               .push_str(&format!("{}/{}", self.cbor_location, idx));
 
-            jv.visit_value(value)?;
+            cv.visit_value(value)?;
 
-            self.errors.append(&mut jv.errors);
+            self.errors.append(&mut cv.errors);
           }
         } else if let Some(idx) = self.group_entry_idx.take() {
           if let Some(v) = a.get(idx) {
-            let mut jv = CBORValidator::new(self.cddl, v.clone());
-            jv.generic_rules = self.generic_rules.clone();
-            jv.eval_generic_rule = self.eval_generic_rule;
-            jv.is_multi_type_choice = self.is_multi_type_choice;
-            jv.cbor_location
+            let mut cv = CBORValidator::new(self.cddl, v.clone());
+            cv.generic_rules = self.generic_rules.clone();
+            cv.eval_generic_rule = self.eval_generic_rule;
+            cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.cbor_location
               .push_str(&format!("{}/{}", self.cbor_location, idx));
 
-            jv.visit_value(value)?;
+            cv.visit_value(value)?;
 
-            self.errors.append(&mut jv.errors);
+            self.errors.append(&mut cv.errors);
           } else if !allow_empty_array {
             self.add_error(format!("expected value {} at index {}", value, idx));
           }

@@ -1,7 +1,7 @@
 #[cfg(target_arch = "wasm32")]
 extern crate console_error_panic_hook;
 
-use super::token::{ByteValue, RangeValue, SocketPlug, Value};
+use super::token::{ByteValue, RangeValue, SocketPlug, Token, Value};
 use std::fmt;
 
 #[cfg(feature = "std")]
@@ -174,6 +174,18 @@ impl<'a> From<&'static str> for Identifier<'a> {
       socket: None,
       span: (0, 0, 0),
     }
+  }
+}
+
+impl<'a> From<Token<'a>> for Identifier<'a> {
+  fn from(token: Token) -> Self {
+    let token = if let Some(token) = token.in_standard_prelude() {
+      token
+    } else {
+      ""
+    };
+
+    Identifier::from(token)
   }
 }
 
@@ -1299,6 +1311,134 @@ impl<'a> From<RangeValue<'a>> for Type2<'a> {
       RangeValue::UINT(value) => Type2::UintValue { value, span },
       RangeValue::FLOAT(value) => Type2::FloatValue { value, span },
     }
+  }
+}
+
+/// Retrieve `Type2` from token if it is a tag type in the standard prelude
+pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
+  match token {
+    Token::TDATE => Some(Type2::TaggedData {
+      tag: Some(0),
+      t: type_from_token(Token::TSTR),
+      comments_after_type: None,
+      comments_before_type: None,
+      span: Span::default(),
+    }),
+    Token::TIME => Some(Type2::TaggedData {
+      tag: Some(1),
+      t: type_from_token(Token::NUMBER),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    Token::BIGUINT => Some(Type2::TaggedData {
+      tag: Some(2),
+      t: type_from_token(Token::BSTR),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    Token::BIGNINT => Some(Type2::TaggedData {
+      tag: Some(3),
+      t: type_from_token(Token::BSTR),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    Token::DECFRAC => unimplemented!(),
+    Token::BIGFLOAT => unimplemented!(),
+    Token::EB64URL => Some(Type2::TaggedData {
+      tag: Some(21),
+      t: type_from_token(Token::ANY),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    Token::EB64LEGACY => Some(Type2::TaggedData {
+      tag: Some(22),
+      t: type_from_token(Token::ANY),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    Token::EB16 => Some(Type2::TaggedData {
+      tag: Some(23),
+      t: type_from_token(Token::ANY),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    Token::ENCODEDCBOR => Some(Type2::TaggedData {
+      tag: Some(24),
+      t: type_from_token(Token::BSTR),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    Token::URI => Some(Type2::TaggedData {
+      tag: Some(32),
+      t: type_from_token(Token::TSTR),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    Token::B64URL => Some(Type2::TaggedData {
+      tag: Some(33),
+      t: type_from_token(Token::TSTR),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    Token::B64LEGACY => Some(Type2::TaggedData {
+      tag: Some(34),
+      t: type_from_token(Token::TSTR),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    Token::REGEXP => Some(Type2::TaggedData {
+      tag: Some(35),
+      t: type_from_token(Token::TSTR),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    Token::MIMEMESSAGE => Some(Type2::TaggedData {
+      tag: Some(36),
+      t: type_from_token(Token::TSTR),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    Token::CBORANY => Some(Type2::TaggedData {
+      tag: Some(55799),
+      t: type_from_token(Token::ANY),
+      comments_before_type: None,
+      comments_after_type: None,
+      span: Span::default(),
+    }),
+    _ => None,
+  }
+}
+
+/// New `Type` from a given `token::Token`
+pub fn type_from_token(token: Token) -> Type {
+  Type {
+    type_choices: vec![TypeChoice {
+      type1: Type1 {
+        comments_after_type: None,
+        operator: None,
+        span: Span::default(),
+        type2: Type2::Typename {
+          ident: Identifier::from(token),
+          generic_args: None,
+          span: Span::default(),
+        },
+      },
+      comments_after_type: None,
+      comments_before_type: None,
+    }],
+    span: Span::default(),
   }
 }
 

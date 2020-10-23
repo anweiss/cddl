@@ -10,7 +10,8 @@ use serde::de::Deserialize;
 
 use crate::{
   ast::{
-    GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type2, TypeChoice, CDDL,
+    GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Occurrence, Rule, Type, Type2,
+    TypeChoice, TypeRule, CDDL,
   },
   cddl_from_str, lexer_from_str,
   token::*,
@@ -46,12 +47,59 @@ pub fn rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a Rul
   })
 }
 
+/// Unwrap array, map or tag type rule from ident
+pub fn unwrap_rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a Rule<'a>> {
+  cddl.rules.iter().find_map(|r| match r {
+    Rule::Type {
+      rule:
+        TypeRule {
+          name,
+          is_type_choice_alternate,
+          value: Type { type_choices, .. },
+          ..
+        },
+      ..
+    } if name == ident && !is_type_choice_alternate => {
+      if type_choices
+        .iter()
+        .any(|tc| matches!(tc.type1.type2, Type2::Map { .. } | Type2::Array { .. } | Type2::TaggedData { .. }))
+      {
+        Some(r)
+      } else if let Some(ident) = type_choices.iter().find_map(|tc| {
+        if let Type2::Typename {
+          ident,
+          generic_args: None,
+          ..
+        } = &tc.type1.type2
+        {
+          Some(ident)
+        } else {
+          None
+        }
+      }) {
+        unwrap_rule_from_ident(cddl, ident)
+      }   else {
+        None
+      }
+    }
+    _ => None,
+  })
+}
+
 /// Find non-group choice alternate rule from a given identifier
 pub fn group_rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a GroupRule<'a>> {
   cddl.rules.iter().find_map(|r| match r {
     Rule::Group { rule, .. } if rule.name == *ident && !rule.is_group_choice_alternate => {
       Some(rule.as_ref())
     }
+    _ => None,
+  })
+}
+
+/// Find non-group choice alternate rule from a given identifier
+pub fn type_rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a TypeRule<'a>> {
+  cddl.rules.iter().find_map(|r| match r {
+    Rule::Type { rule, .. } if rule.name == *ident && !rule.is_type_choice_alternate => Some(rule),
     _ => None,
   })
 }
@@ -491,22 +539,60 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 /// Retrieve number of group entries from a group choice. This is currently only
 /// used for determining map equality/inequality and for validating the number
 /// of entries in non-homogenous arrays, but may be useful in other contexts.
-pub fn entry_counts_from_group_choice(cddl: &CDDL, group_choice: &GroupChoice) -> u64 {
+/// The bool value in the returned tuple indicates whether or not a count
+/// greater than what is indicated is allowed. This is useful for validating
+/// arrays such as `[ "https://www.example.com/ns/v1", 1* ~uri ]` where the
+/// occurrence indicator in the second entry validates an array with more than
+/// two items
+pub fn entry_counts_from_group_choice(cddl: &CDDL, group_choice: &GroupChoice) -> (u64, bool) {
   let mut count = 0;
+  let mut additional_items = false;
 
-  for ge in group_choice.group_entries.iter() {
+  for (idx, ge) in group_choice.group_entries.iter().enumerate() {
     match &ge.0 {
-      GroupEntry::ValueMemberKey { .. } => {
+      GroupEntry::ValueMemberKey { ge, .. } => {
+        if idx == 1 {
+          additional_items = matches!(ge.occur, Some(Occurrence {
+            occur: Occur::OneOrMore(_),
+            ..
+          })
+          | Some(Occurrence {
+            occur: Occur::Exact { lower: Some(1), .. },
+            ..
+          }));
+        }
+
         count += 1;
       }
-      GroupEntry::InlineGroup { group, .. } => {
+      GroupEntry::InlineGroup { group, occur, .. } => {
+        if idx == 1 {
+          additional_items = matches!(occur, Some(Occurrence {
+            occur: Occur::OneOrMore(_),
+            ..
+          })
+          | Some(Occurrence {
+            occur: Occur::Exact { lower: Some(1), .. },
+            ..
+          }));
+        }
         for gc in group.group_choices.iter() {
-          count += entry_counts_from_group_choice(cddl, gc);
+          count += entry_counts_from_group_choice(cddl, gc).0;
         }
       }
       GroupEntry::TypeGroupname { ge, .. } => {
+        if idx == 1 {
+          additional_items = matches!(ge.occur, Some(Occurrence {
+            occur: Occur::OneOrMore(_),
+            ..
+          })
+          | Some(Occurrence {
+            occur: Occur::Exact { lower: Some(1), .. },
+            ..
+          }));
+        }
         if let Some(gr) = group_rule_from_ident(cddl, &ge.name) {
-          count += entry_counts_from_group_choice(cddl, &GroupChoice::new(vec![gr.entry.clone()]));
+          count +=
+            entry_counts_from_group_choice(cddl, &GroupChoice::new(vec![gr.entry.clone()])).0;
         } else {
           count += 1;
         }
@@ -514,5 +600,5 @@ pub fn entry_counts_from_group_choice(cddl: &CDDL, group_choice: &GroupChoice) -
     }
   }
 
-  count
+  (count, additional_items)
 }
