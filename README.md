@@ -178,19 +178,21 @@ The first non-group rule defined by a CDDL data structure definition determines 
 
 The following types and features of CDDL are supported by this crate for validating JSON:
 
-| CDDL                 | JSON                                             |
-| -------------------- | ------------------------------------------------ |
-| structs              | objects                                          |
-| arrays               | arrays<sup>[1](#arrays)</sup>                    |
-| text / tstr          | string                                           |
-| uri                  | string (valid RFC3986 URI)                       |
-| tdate                | string (valid RFC3339 date/time)                 |
-| b64url               | string (base64url-encoded)                       |
-| time                 | number (valid UNIX timestamp integer in seconds) |
-| number / int / float | number<sup>[2](#number)</sup>                    |
-| bool / true / false  | boolean                                          |
-| null / nil           | null                                             |
-| any                  | any valid JSON                                   |
+| CDDL                   | JSON                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
+| structs                | objects                                                                                                    |
+| arrays                 | arrays<sup>[1](#arrays)</sup>                                                                              |
+| `text / tstr`          | string                                                                                                     |
+| `uri`                  | string (valid RFC3986 URI)                                                                                 |
+| `tdate`                | string (valid RFC3339 date/time)                                                                           |
+| `b64url`               | string (base64url-encoded)                                                                                 |
+| `time`                 | number (valid UNIX timestamp integer in seconds)                                                           |
+| `number / int / float` | number<sup>[2](#number)</sup>                                                                              |
+| `bool / true / false`  | boolean                                                                                                    |
+| `null / nil`           | null                                                                                                       |
+| `any`                  | any valid JSON                                                                                             |
+| byte strings           | not yet implemented                                                                                        |
+| unwrap (`~`)           | any JSON that matches unwrapped type from map, array or supported tag (`uri`, `tdate`, `b64url` or `time`) |
 
 CDDL groups, generics, sockets/plugs and group-to-choice enumerations can all be used when validating JSON.
 
@@ -240,7 +242,7 @@ let cbor = b"\xF4";
 assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
 ```
 
-This crate also uses [Serde](https://serde.rs/) and [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data structures. CBOR validation is done via the loosely typed [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html) enum. In addition to all of the same features implemented by the JSON validator, this crate also supports validating CBOR tags (e.g. `#6.32(tstr)`), CBOR major types (e.g. `#1.2`) and CBOR table types (e.g. `{ [ + tstr ] => int }`).
+This crate also uses [Serde](https://serde.rs/) and [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data structures. CBOR validation is done via the loosely typed [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html) enum. In addition to all of the same features implemented by the JSON validator, this crate also supports validating CBOR tags (e.g. `#6.32(tstr)`), CBOR major types (e.g. `#1.2`) and CBOR table types (e.g. `{ [ + tstr ] => int }`). Byte string validation is not yet implemented.
 
 ## `no_std` support
 
