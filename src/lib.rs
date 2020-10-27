@@ -338,6 +338,27 @@
 //! `#6.32(tstr)`), CBOR major types (e.g. `#1.2`) and CBOR table types (e.g.
 //! `{ [ + tstr ] => int }`). Byte string validation is not yet implemented.
 //!
+//! The following tags are supported when validating CBOR:
+//!
+//! | Tag                                      | Supported                                                                                                                                         |
+//! | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+//! | `tdate = #6.0(tstr)`                     | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `time = #6.1(number)`                    | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `biguint = #6.2(bstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `bignint = #6.3(bstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `decfrac = #6.4([e10: int, m: integer])` | not yet implemented                                                                                                                               |
+//! | `bigfloat = #6.5([e2: int, m: integer])` | not yet implemented                                                                                                                               |
+//! | `eb64url = #6.21(any)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `eb64legacy = #6.22(any)`                | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `eb16 = #6.23(any)`                      | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `encoded-cbor = #6.24(bstr)`             | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `uri = #6.32(tstr)`                      | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `b64url = #6.33(tstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `b64legacy = #6.34(tstr)`                | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `regexp = #6.35(tstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `mime-message = #6.36(tstr)`             | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `cbor-any = #6.55799(any)`               | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//!
 //! ## `no_std` support
 //!
 //! Only the lexer and parser can be used in a `no_std` context provided that a
