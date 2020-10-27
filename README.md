@@ -200,9 +200,9 @@ Since JSON objects only support keys whose types are JSON strings, when validati
 
 Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition.
 
-Below is the table of supported control operators and whether or not they've been implemented as of the current release:
+Below is the table of supported control operators:
 
-| Control operator | Implementation status                                                                                                                                                                       |
+| Control operator | Supported                                                                                                                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `.pcre`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup>                     |
 | `.regex`         | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup> (alias for `.pcre`) |

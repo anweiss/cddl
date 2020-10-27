@@ -231,19 +231,21 @@
 //! The following types and features of CDDL are supported by this crate for
 //! validating JSON:
 //!
-//! | CDDL                 | JSON                                             |
-//! | -------------------- | ------------------------------------------------ |
-//! | structs              | objects                                          |
-//! | arrays               | arrays<sup>[1](#arrays)</sup>                    |
-//! | text / tstr          | string                                           |
-//! | uri                  | string (valid RFC3986 URI)                       |
-//! | tdate                | string (valid RFC3339 date/time)                 |
-//! | b64url               | string (base64url-encoded)                       |
-//! | time                 | number (valid UNIX timestamp integer in seconds) |
-//! | number / int / float | number<sup>[2](#number)</sup>                    |
-//! | bool / true / false  | boolean                                          |
-//! | null / nil           | null                                             |
-//! | any                  | any valid JSON                                   |
+//! | CDDL                   | JSON                                                                                                       |
+//! | ---------------------- | ---------------------------------------------------------------------------------------------------------- |
+//! | structs                | objects                                                                                                    |
+//! | arrays                 | arrays<sup>[1](#arrays)</sup>                                                                              |
+//! | `text / tstr`          | string                                                                                                     |
+//! | `uri`                  | string (valid RFC3986 URI)                                                                                 |
+//! | `tdate`                | string (valid RFC3339 date/time)                                                                           |
+//! | `b64url`               | string (base64url-encoded)                                                                                 |
+//! | `time`                 | number (valid UNIX timestamp integer in seconds)                                                           |
+//! | `number / int / float` | number<sup>[2](#number)</sup>                                                                              |
+//! | `bool / true / false`  | boolean                                                                                                    |
+//! | `null / nil`           | null                                                                                                       |
+//! | `any`                  | any valid JSON                                                                                             |
+//! | byte strings           | not yet implemented                                                                                        |
+//! | unwrap (`~`)           | any JSON that matches unwrapped type from map, array or supported tag (`uri`, `tdate`, `b64url` or `time`) |
 //!
 //! CDDL groups, generics, sockets/plugs and group-to-choice enumerations can
 //! all be used when validating JSON.
@@ -259,10 +261,9 @@
 //! object and the number of elements in a JSON array; depending on how the
 //! indicators are defined in a CDDL data definition.
 //!
-//! Below is the table of supported control operators and whether or not they've
-//! been implemented as of the current release:
+//! Below is the table of supported control operators:
 //!
-//! | Control operator | Implementation status                                                                                                                                                                       |
+//! | Control operator | Supported                                                                                                                                                                                   |
 //! | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 //! | `.pcre`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup>                     |
 //! | `.regex`         | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup> (alias for `.pcre`) |
@@ -335,7 +336,7 @@
 //! enum. In addition to all of the same features implemented by the JSON
 //! validator, this crate also supports validating CBOR tags (e.g.
 //! `#6.32(tstr)`), CBOR major types (e.g. `#1.2`) and CBOR table types (e.g.
-//! `{ [ + tstr ] => int }`).
+//! `{ [ + tstr ] => int }`). Byte string validation is not yet implemented.
 //!
 //! ## `no_std` support
 //!
