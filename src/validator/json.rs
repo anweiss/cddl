@@ -121,7 +121,7 @@ pub struct JSONValidator<'a> {
   cddl_location: String,
   json_location: String,
   // Occurrence indicator detected in current state of AST evaluation
-  occurence: Option<Occur>,
+  occurrence: Option<Occur>,
   // Current group entry index detected in current state of AST evaluation
   group_entry_idx: Option<usize>,
   // JSON object value hoisted from previous state of AST evaluation
@@ -153,7 +153,7 @@ pub struct JSONValidator<'a> {
   // fails as detected during the current state of AST evaluation
   advance_to_next_entry: bool,
   is_ctrl_map_equality: bool,
-  entry_counts: Option<Vec<(u64, bool)>>,
+  entry_counts: Option<Vec<EntryCount>>,
   validated_keys: Option<Vec<String>>,
   values_to_validate: Option<Vec<Value>>,
 }
@@ -174,7 +174,7 @@ impl<'a> JSONValidator<'a> {
       errors: Vec::default(),
       cddl_location: String::new(),
       json_location: String::new(),
-      occurence: None,
+      occurrence: None,
       group_entry_idx: None,
       object_value: None,
       is_member_key: false,
@@ -340,25 +340,37 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           }
           let len = o.len();
           if let Token::EQ = t {
-            if !entry_counts
-              .iter()
-              .any(|(c, a)| len == *c as usize || *a && !o.is_empty())
-            {
-              self.add_error(format!(
-                "map equality error. expected object to have one of {:?} number of key/value pairs, got {}",
-                entry_counts, len
-              ));
+            if !validate_entry_count(&entry_counts, len) {
+              for ec in entry_counts.iter() {
+                if let Some(occur) = &ec.entry_occurrence {
+                  self.add_error(format!(
+                    "map equality error. expected object with number of entries per occurrence {}",
+                    occur,
+                  ));
+                } else {
+                  self.add_error(format!(
+                    "map equality error, expected object with length {}, got {}",
+                    ec.count, len
+                  ));
+                }
+              }
               return Ok(());
             }
           } else if let Token::NE = t {
-            if !entry_counts
-              .iter()
-              .any(|(c, a)| len == *c as usize || *a && !o.is_empty())
-            {
-              self.add_error(format!(
-                "map inequality error. expected object to not have one of {:?} number of key/value pairs, got {}",
-                entry_counts, len
-              ));
+            if !validate_entry_count(&entry_counts, len) {
+              for ec in entry_counts.iter() {
+                if let Some(occur) = &ec.entry_occurrence {
+                  self.add_error(format!(
+                    "map inequality error. expected object with number of entries not per occurrence {}",
+                    occur,
+                  ));
+                } else {
+                  self.add_error(format!(
+                    "map inequality error, expected object not with length {}, got {}",
+                    ec.count, len
+                  ));
+                }
+              }
               return Ok(());
             }
           }
@@ -425,11 +437,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     is_inclusive: bool,
   ) -> visitor::Result<ValidationError> {
     if let Value::Array(a) = &self.json {
-      let allow_empty_array = matches!(self.occurence.as_ref(), Some(Occur::Optional(_)));
+      let allow_empty_array = matches!(self.occurrence.as_ref(), Some(Occur::Optional(_)));
 
       #[allow(unused_assignments)]
       let mut iter_items = false;
-      match validate_array_occurrence(self.occurence.as_ref().take(), a) {
+      match validate_array_occurrence(self.occurrence.as_ref().take(), a) {
         Ok(r) => {
           iter_items = r;
         }
@@ -442,14 +454,20 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       if !iter_items && !allow_empty_array {
         if let Some(entry_counts) = self.entry_counts.take() {
           let len = a.len();
-          if !entry_counts
-            .iter()
-            .any(|(c, ai)| len == *c as usize || *ai && !a.is_empty())
-          {
-            self.add_error(format!(
-              "expecting array with one of the lengths in {:?}, got {}",
-              entry_counts, len
-            ));
+          if !validate_entry_count(&entry_counts, len) {
+            for ec in entry_counts.iter() {
+              if let Some(occur) = &ec.entry_occurrence {
+                self.add_error(format!(
+                  "expecting array with length per occurrence {}",
+                  occur,
+                ));
+              } else {
+                self.add_error(format!(
+                  "expecting array with length {}, got {}",
+                  ec.count, len
+                ));
+              }
+            }
             return Ok(());
           }
         }
@@ -868,7 +886,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
-          if let Some(Occur::Optional(_)) = self.occurence.take() {
+          if let Some(Occur::Optional(_)) = self.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {}",
               controller, self.json
@@ -935,11 +953,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             return Ok(());
           }
 
-          let allow_empty_array = matches!(self.occurence.as_ref(), Some(Occur::Optional(_)));
+          let allow_empty_array = matches!(self.occurrence.as_ref(), Some(Occur::Optional(_)));
 
           #[allow(unused_assignments)]
           let mut iter_items = false;
-          match validate_array_occurrence(self.occurence.as_ref().take(), a) {
+          match validate_array_occurrence(self.occurrence.as_ref().take(), a) {
             Ok(r) => {
               iter_items = r;
             }
@@ -952,14 +970,20 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           if !iter_items && !allow_empty_array {
             if let Some(entry_counts) = self.entry_counts.take() {
               let len = a.len();
-              if !entry_counts
-                .iter()
-                .any(|(c, ai)| *c as usize == len || *ai && !a.is_empty())
-              {
-                self.add_error(format!(
-                  "expecting array with one of the lengths in {:?}, got {}",
-                  entry_counts, len
-                ));
+              if !validate_entry_count(&entry_counts, len) {
+                for ec in entry_counts.iter() {
+                  if let Some(occur) = &ec.entry_occurrence {
+                    self.add_error(format!(
+                      "expecting array with length per occurrence {}",
+                      occur,
+                    ));
+                  } else {
+                    self.add_error(format!(
+                      "expecting array with length {}, got {}",
+                      ec.count, len
+                    ));
+                  }
+                }
                 return Ok(());
               }
             }
@@ -1296,11 +1320,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           return Ok(());
         }
 
-        let allow_empty_array = matches!(self.occurence.as_ref(), Some(Occur::Optional(_)));
+        let allow_empty_array = matches!(self.occurrence.as_ref(), Some(Occur::Optional(_)));
 
         #[allow(unused_assignments)]
         let mut iter_items = false;
-        match validate_array_occurrence(self.occurence.as_ref().take(), a) {
+        match validate_array_occurrence(self.occurrence.as_ref().take(), a) {
           Ok(r) => {
             iter_items = r;
           }
@@ -1313,14 +1337,21 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         if !iter_items && !allow_empty_array {
           if let Some(entry_counts) = self.entry_counts.take() {
             let len = a.len();
-            if !entry_counts
-              .iter()
-              .any(|(c, ai)| *c as usize == len || *ai && !a.is_empty())
-            {
-              self.add_error(format!(
-                "expecting array with one of the lengths in {:?}, got {}",
-                entry_counts, len
-              ));
+            if !validate_entry_count(&entry_counts, len) {
+              for ec in entry_counts.iter() {
+                if let Some(occur) = &ec.entry_occurrence {
+                  self.add_error(format!(
+                    "expecting array with length per occurrence {}",
+                    occur,
+                  ));
+                } else {
+                  self.add_error(format!(
+                    "expecting array with length {}, got {}",
+                    ec.count, len
+                  ));
+                }
+              }
+
               return Ok(());
             }
           }
@@ -1361,7 +1392,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         Ok(())
       }
       Value::Object(o) => {
-        if let Some(occur) = &self.occurence {
+        if let Some(occur) = &self.occurrence {
           if let Occur::ZeroOrMore(_) | Occur::OneOrMore(_) = occur {
             if let Occur::OneOrMore(_) = occur {
               if o.is_empty() {
@@ -1455,7 +1486,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
         self.errors.append(&mut jv.errors);
         if entry.occur.is_some() {
-          self.occurence = None;
+          self.occurrence = None;
         }
       }
 
@@ -1476,7 +1507,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
       self.errors.append(&mut jv.errors);
       if entry.occur.is_some() {
-        self.occurence = None;
+        self.occurrence = None;
       }
 
       Ok(())
@@ -1638,11 +1669,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           return Ok(());
         }
 
-        let allow_empty_array = matches!(self.occurence.as_ref(), Some(Occur::Optional(_)));
+        let allow_empty_array = matches!(self.occurrence.as_ref(), Some(Occur::Optional(_)));
 
         #[allow(unused_assignments)]
         let mut iter_items = false;
-        match validate_array_occurrence(self.occurence.as_ref().take(), a) {
+        match validate_array_occurrence(self.occurrence.as_ref().take(), a) {
           Ok(r) => {
             iter_items = r;
           }
@@ -1655,14 +1686,20 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         if !iter_items && !allow_empty_array {
           if let Some(entry_counts) = self.entry_counts.take() {
             let len = a.len();
-            if !entry_counts
-              .iter()
-              .any(|(c, ai)| *c as usize == len || *ai && !a.is_empty())
-            {
-              self.add_error(format!(
-                "expecting array with one of the lengths in {:?}, got {}",
-                entry_counts, len
-              ));
+            if !validate_entry_count(&entry_counts, len) {
+              for ec in entry_counts.iter() {
+                if let Some(occur) = &ec.entry_occurrence {
+                  self.add_error(format!(
+                    "expecting array with length per occurrence {}",
+                    occur,
+                  ));
+                } else {
+                  self.add_error(format!(
+                    "expecting array with length {}, got {}",
+                    ec.count, len
+                  ));
+                }
+              }
               return Ok(());
             }
           }
@@ -1725,7 +1762,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
             None
           } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
-            &self.occurence.take()
+            &self.occurrence.take()
           {
             self.advance_to_next_entry = true;
             None
@@ -1752,7 +1789,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
   }
 
   fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<ValidationError> {
-    self.occurence = Some(o.occur.clone());
+    self.occurrence = Some(o.occur.clone());
 
     Ok(())
   }

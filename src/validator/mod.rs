@@ -10,8 +10,8 @@ use serde::de::Deserialize;
 
 use crate::{
   ast::{
-    GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Occurrence, Rule, Type, Type2,
-    TypeChoice, TypeRule, CDDL,
+    GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type2, TypeChoice, TypeRule,
+    CDDL,
   },
   cddl_from_str, lexer_from_str,
   token::*,
@@ -480,9 +480,9 @@ pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
-/// Validate an array based on an occurrence indicator. The returned boolean
-/// indicates whether to validate the array homogenously or non-homogenously
-/// (based on the index of the entry)
+/// Validate an array based on a homogenous CDDL array with an occurrence
+/// indicator. The returned boolean indicates whether to validate the array
+/// homogenously or non-homogenously (based on the index of the entry)
 pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
   occurence: Option<&Occur>,
   values: &[T],
@@ -538,61 +538,43 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 
 /// Retrieve number of group entries from a group choice. This is currently only
 /// used for determining map equality/inequality and for validating the number
-/// of entries in non-homogenous arrays, but may be useful in other contexts.
-/// The bool value in the returned tuple indicates whether or not a count
-/// greater than what is indicated is allowed. This is useful for validating
-/// arrays such as `[ "https://www.example.com/ns/v1", 1* ~uri ]` where the
-/// occurrence indicator in the second entry validates an array with more than
-/// two items
-pub fn entry_counts_from_group_choice(cddl: &CDDL, group_choice: &GroupChoice) -> (u64, bool) {
+/// of entries in arrays, but may be useful in other contexts. The occurrence is
+/// only captured for the second element of the CDDL array to avoid ambiguity in
+/// non-homogenous array definitions
+pub fn entry_counts_from_group_choice(cddl: &CDDL, group_choice: &GroupChoice) -> EntryCount {
   let mut count = 0;
-  let mut additional_items = false;
+  let mut entry_occurrence = None;
 
   for (idx, ge) in group_choice.group_entries.iter().enumerate() {
     match &ge.0 {
       GroupEntry::ValueMemberKey { ge, .. } => {
         if idx == 1 {
-          additional_items = matches!(ge.occur, Some(Occurrence {
-            occur: Occur::OneOrMore(_),
-            ..
-          })
-          | Some(Occurrence {
-            occur: Occur::Exact { lower: Some(1), .. },
-            ..
-          }));
+          if let Some(occur) = &ge.occur {
+            entry_occurrence = Some(occur.occur.clone())
+          }
         }
 
         count += 1;
       }
       GroupEntry::InlineGroup { group, occur, .. } => {
         if idx == 1 {
-          additional_items = matches!(occur, Some(Occurrence {
-            occur: Occur::OneOrMore(_),
-            ..
-          })
-          | Some(Occurrence {
-            occur: Occur::Exact { lower: Some(1), .. },
-            ..
-          }));
+          if let Some(occur) = occur {
+            entry_occurrence = Some(occur.occur.clone())
+          }
         }
         for gc in group.group_choices.iter() {
-          count += entry_counts_from_group_choice(cddl, gc).0;
+          count += entry_counts_from_group_choice(cddl, gc).count;
         }
       }
       GroupEntry::TypeGroupname { ge, .. } => {
         if idx == 1 {
-          additional_items = matches!(ge.occur, Some(Occurrence {
-            occur: Occur::OneOrMore(_),
-            ..
-          })
-          | Some(Occurrence {
-            occur: Occur::Exact { lower: Some(1), .. },
-            ..
-          }));
+          if let Some(occur) = &ge.occur {
+            entry_occurrence = Some(occur.occur.clone())
+          }
         }
         if let Some(gr) = group_rule_from_ident(cddl, &ge.name) {
           count +=
-            entry_counts_from_group_choice(cddl, &GroupChoice::new(vec![gr.entry.clone()])).0;
+            entry_counts_from_group_choice(cddl, &GroupChoice::new(vec![gr.entry.clone()])).count;
         } else {
           count += 1;
         }
@@ -600,5 +582,42 @@ pub fn entry_counts_from_group_choice(cddl: &CDDL, group_choice: &GroupChoice) -
     }
   }
 
-  (count, additional_items)
+  EntryCount {
+    count,
+    entry_occurrence,
+  }
+}
+
+/// Validate the number of entries given an array of possible valid entry counts
+pub fn validate_entry_count(valid_entry_counts: &[EntryCount], num_entries: usize) -> bool {
+  valid_entry_counts.iter().any(|ec| {
+    num_entries == ec.count as usize
+      || match ec.entry_occurrence {
+        Some(Occur::ZeroOrMore(_)) | Some(Occur::Optional(_)) => true,
+        Some(Occur::OneOrMore(_)) if num_entries > 0 => true,
+        Some(Occur::Exact { lower, upper, .. }) => {
+          if let Some(lower) = lower {
+            if let Some(upper) = upper {
+              num_entries >= lower && num_entries <= upper
+            } else {
+              num_entries >= lower
+            }
+          } else if let Some(upper) = upper {
+            num_entries <= upper
+          } else {
+            false
+          }
+        }
+        _ => false,
+      }
+  })
+}
+
+/// Entry count
+#[derive(Clone)]
+pub struct EntryCount {
+  /// Count
+  pub count: u64,
+  /// Optional occurrence
+  pub entry_occurrence: Option<Occur>,
 }
