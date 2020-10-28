@@ -1095,9 +1095,15 @@ where
 
         let comments = self.collect_comments()?;
 
-        if let Token::IDENT(ident) = &self.cur_token {
-          let ident = self.identifier_from_ident_token(*ident);
+        let ident = if let Some(ident) = self.cur_token.in_standard_prelude() {
+          Some(self.identifier_from_ident_token((ident, None)))
+        } else if let Token::IDENT(ident) = &self.cur_token {
+          Some(self.identifier_from_ident_token(*ident))
+        } else {
+          None
+        };
 
+        if let Some(ident) = ident {
           if self.peek_token_is(&Token::LANGLEBRACKET) {
             self.next_token()?;
 

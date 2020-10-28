@@ -178,19 +178,21 @@ The first non-group rule defined by a CDDL data structure definition determines 
 
 The following types and features of CDDL are supported by this crate for validating JSON:
 
-| CDDL                 | JSON                                             |
-| -------------------- | ------------------------------------------------ |
-| structs              | objects                                          |
-| arrays               | arrays<sup>[1](#arrays)</sup>                    |
-| text / tstr          | string                                           |
-| uri                  | string (valid RFC3986 URI)                       |
-| tdate                | string (valid RFC3339 date/time)                 |
-| b64url               | string (base64url-encoded)                       |
-| time                 | number (valid UNIX timestamp integer in seconds) |
-| number / int / float | number<sup>[2](#number)</sup>                    |
-| bool / true / false  | boolean                                          |
-| null / nil           | null                                             |
-| any                  | any valid JSON                                   |
+| CDDL                   | JSON                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
+| structs                | objects                                                                                                    |
+| arrays                 | arrays<sup>[1](#arrays)</sup>                                                                              |
+| `text / tstr`          | string                                                                                                     |
+| `uri`                  | string (valid RFC3986 URI)                                                                                 |
+| `tdate`                | string (valid RFC3339 date/time)                                                                           |
+| `b64url`               | string (base64url-encoded)                                                                                 |
+| `time`                 | number (valid UNIX timestamp integer in seconds)                                                           |
+| `number / int / float` | number<sup>[2](#number)</sup>                                                                              |
+| `bool / true / false`  | boolean                                                                                                    |
+| `null / nil`           | null                                                                                                       |
+| `any`                  | any valid JSON                                                                                             |
+| byte strings           | not yet implemented                                                                                        |
+| unwrap (`~`)           | any JSON that matches unwrapped type from map, array or supported tag (`uri`, `tdate`, `b64url` or `time`) |
 
 CDDL groups, generics, sockets/plugs and group-to-choice enumerations can all be used when validating JSON.
 
@@ -198,9 +200,9 @@ Since JSON objects only support keys whose types are JSON strings, when validati
 
 Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition.
 
-Below is the table of supported control operators and whether or not they've been implemented as of the current release:
+Below is the table of supported control operators:
 
-| Control operator | Implementation status                                                                                                                                                                       |
+| Control operator | Supported                                                                                                                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `.pcre`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup>                     |
 | `.regex`         | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup> (alias for `.pcre`) |
@@ -240,7 +242,28 @@ let cbor = b"\xF4";
 assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
 ```
 
-This crate also uses [Serde](https://serde.rs/) and [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data structures. CBOR validation is done via the loosely typed [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html) enum. In addition to all of the same features implemented by the JSON validator, this crate also supports validating CBOR tags (e.g. `#6.32(tstr)`), CBOR major types (e.g. `#1.2`) and CBOR table types (e.g. `{ [ + tstr ] => int }`).
+This crate also uses [Serde](https://serde.rs/) and [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data structures. CBOR validation is done via the loosely typed [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html) enum. In addition to all of the same features implemented by the JSON validator, this crate also supports validating CBOR tags (e.g. `#6.32(tstr)`), CBOR major types (e.g. `#1.2`) and CBOR table types (e.g. `{ [ + tstr ] => int }`). Byte string validation is not yet implemented.
+
+The following tags are supported when validating CBOR:
+
+| Tag                                      | Supported                                                                                                                                         |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tdate = #6.0(tstr)`                     | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `time = #6.1(number)`                    | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `biguint = #6.2(bstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `bignint = #6.3(bstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `decfrac = #6.4([e10: int, m: integer])` | not yet implemented                                                                                                                               |
+| `bigfloat = #6.5([e2: int, m: integer])` | not yet implemented                                                                                                                               |
+| `eb64url = #6.21(any)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `eb64legacy = #6.22(any)`                | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `eb16 = #6.23(any)`                      | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `encoded-cbor = #6.24(bstr)`             | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `uri = #6.32(tstr)`                      | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `b64url = #6.33(tstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `b64legacy = #6.34(tstr)`                | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `regexp = #6.35(tstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `mime-message = #6.36(tstr)`             | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `cbor-any = #6.55799(any)`               | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 
 ## `no_std` support
 
