@@ -1,11 +1,8 @@
 #![cfg(feature = "std")]
 #![cfg(not(target_arch = "wasm32"))]
 
-mod fixtures;
-
-use cddl::{lexer_from_str, parser, validator};
+use cddl::{lexer_from_str, parser, validate_json_from_str, validator::json};
 use std::fs;
-use validator::{json, validate_json_from_str};
 
 #[test]
 fn verify_cddl_compiles() -> Result<(), parser::Error> {

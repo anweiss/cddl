@@ -2126,12 +2126,17 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           }
           Some(Token::REGEXP) | Some(Token::PCRE) => {
             let re = regex::Regex::new(
-              serde_json::from_str::<serde_json::Value>(&format!("\"{}\"", t))
-                .map_err(|e| ValidationError::from_validator(self, e.to_string()))?
-                .as_str()
-                .ok_or_else(|| {
-                  ValidationError::from_validator(self, "malformed regex".to_string())
-                })?,
+              &format_regex(
+                serde_json::from_str::<serde_json::Value>(&format!("\"{}\"", t))
+                  .map_err(|e| ValidationError::from_validator(self, e.to_string()))?
+                  .as_str()
+                  .ok_or_else(|| {
+                    ValidationError::from_validator(self, "malformed regex".to_string())
+                  })?,
+              )
+              .ok_or_else(|| {
+                ValidationError::from_validator(self, "malformed regex".to_string())
+              })?,
             )
             .map_err(|e| ValidationError::from_validator(self, e.to_string()))?;
 
