@@ -452,22 +452,28 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       }
 
       if !iter_items && !allow_empty_array {
-        if let Some(entry_counts) = self.entry_counts.take() {
+        if let Some(entry_counts) = &self.entry_counts {
+          let mut errors = Vec::new();
           let len = a.len();
           if !validate_entry_count(&entry_counts, len) {
             for ec in entry_counts.iter() {
               if let Some(occur) = &ec.entry_occurrence {
-                self.add_error(format!(
+                errors.push(format!(
                   "expecting array with length per occurrence {}",
                   occur,
                 ));
               } else {
-                self.add_error(format!(
+                errors.push(format!(
                   "expecting array with length {}, got {}",
                   ec.count, len
                 ));
               }
             }
+
+            for error in errors.into_iter() {
+              self.add_error(error);
+            }
+
             return Ok(());
           }
         }
@@ -991,22 +997,28 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           }
 
           if !iter_items && !allow_empty_array {
-            if let Some(entry_counts) = self.entry_counts.take() {
+            if let Some(entry_counts) = &self.entry_counts {
+              let mut errors = Vec::new();
               let len = a.len();
               if !validate_entry_count(&entry_counts, len) {
                 for ec in entry_counts.iter() {
                   if let Some(occur) = &ec.entry_occurrence {
-                    self.add_error(format!(
+                    errors.push(format!(
                       "expecting array with length per occurrence {}",
                       occur,
                     ));
                   } else {
-                    self.add_error(format!(
+                    errors.push(format!(
                       "expecting array with length {}, got {}",
                       ec.count, len
                     ));
                   }
                 }
+
+                for error in errors.into_iter() {
+                  self.add_error(error);
+                }
+
                 return Ok(());
               }
             }
@@ -1613,22 +1625,28 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         }
 
         if !iter_items && !allow_empty_array {
-          if let Some(entry_counts) = self.entry_counts.take() {
+          if let Some(entry_counts) = &self.entry_counts {
+            let mut errors = Vec::new();
             let len = a.len();
             if !validate_entry_count(&entry_counts, len) {
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
-                  self.add_error(format!(
+                  errors.push(format!(
                     "expecting array with length per occurrence {}",
                     occur,
                   ));
                 } else {
-                  self.add_error(format!(
+                  errors.push(format!(
                     "expecting array with length {}, got {}",
                     ec.count, len
                   ));
                 }
               }
+
+              for error in errors.into_iter() {
+                self.add_error(error);
+              }
+
               return Ok(());
             }
           }
@@ -2231,22 +2249,28 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         }
 
         if !iter_items && !allow_empty_array {
-          if let Some(entry_counts) = self.entry_counts.take() {
+          if let Some(entry_counts) = &self.entry_counts {
+            let mut errors = Vec::new();
             let len = a.len();
             if !validate_entry_count(&entry_counts, len) {
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
-                  self.add_error(format!(
+                  errors.push(format!(
                     "expecting array with length per occurrence {}",
                     occur,
                   ));
                 } else {
-                  self.add_error(format!(
+                  errors.push(format!(
                     "expecting array with length {}, got {}",
                     ec.count, len
                   ));
                 }
               }
+
+              for error in errors.into_iter() {
+                self.add_error(error);
+              }
+
               return Ok(());
             }
           }

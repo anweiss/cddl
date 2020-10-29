@@ -614,7 +614,7 @@ pub fn validate_entry_count(valid_entry_counts: &[EntryCount], num_entries: usiz
 }
 
 /// Entry count
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EntryCount {
   /// Count
   pub count: u64,

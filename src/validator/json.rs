@@ -452,22 +452,28 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       }
 
       if !iter_items && !allow_empty_array {
-        if let Some(entry_counts) = self.entry_counts.take() {
+        if let Some(entry_counts) = &self.entry_counts {
+          let mut errors = Vec::new();
           let len = a.len();
           if !validate_entry_count(&entry_counts, len) {
             for ec in entry_counts.iter() {
               if let Some(occur) = &ec.entry_occurrence {
-                self.add_error(format!(
+                errors.push(format!(
                   "expecting array with length per occurrence {}",
                   occur,
                 ));
               } else {
-                self.add_error(format!(
+                errors.push(format!(
                   "expecting array with length {}, got {}",
                   ec.count, len
                 ));
               }
             }
+
+            for error in errors.into_iter() {
+              self.add_error(error);
+            }
+
             return Ok(());
           }
         }
@@ -981,22 +987,28 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           }
 
           if !iter_items && !allow_empty_array {
-            if let Some(entry_counts) = self.entry_counts.take() {
+            if let Some(entry_counts) = &self.entry_counts {
+              let mut errors = Vec::new();
               let len = a.len();
               if !validate_entry_count(&entry_counts, len) {
                 for ec in entry_counts.iter() {
                   if let Some(occur) = &ec.entry_occurrence {
-                    self.add_error(format!(
+                    errors.push(format!(
                       "expecting array with length per occurrence {}",
                       occur,
                     ));
                   } else {
-                    self.add_error(format!(
+                    errors.push(format!(
                       "expecting array with length {}, got {}",
                       ec.count, len
                     ));
                   }
                 }
+
+                for error in errors.into_iter() {
+                  self.add_error(error);
+                }
+
                 return Ok(());
               }
             }
@@ -1070,6 +1082,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             let count = entry_counts_from_group_choice(self.cddl, gc);
             entry_counts.push(count);
           }
+
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
@@ -1361,21 +1374,26 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         }
 
         if !iter_items && !allow_empty_array {
-          if let Some(entry_counts) = self.entry_counts.take() {
+          if let Some(entry_counts) = &self.entry_counts {
+            let mut errors = Vec::new();
             let len = a.len();
             if !validate_entry_count(&entry_counts, len) {
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
-                  self.add_error(format!(
+                  errors.push(format!(
                     "expecting array with length per occurrence {}",
                     occur,
                   ));
                 } else {
-                  self.add_error(format!(
+                  errors.push(format!(
                     "expecting array with length {}, got {}",
                     ec.count, len
                   ));
                 }
+              }
+
+              for error in errors.into_iter() {
+                self.add_error(error);
               }
 
               return Ok(());
@@ -1728,22 +1746,28 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         }
 
         if !iter_items && !allow_empty_array {
-          if let Some(entry_counts) = self.entry_counts.take() {
+          if let Some(entry_counts) = &self.entry_counts {
+            let mut errors = Vec::new();
             let len = a.len();
             if !validate_entry_count(&entry_counts, len) {
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
-                  self.add_error(format!(
+                  errors.push(format!(
                     "expecting array with length per occurrence {}",
                     occur,
                   ));
                 } else {
-                  self.add_error(format!(
+                  errors.push(format!(
                     "expecting array with length {}, got {}",
                     ec.count, len
                   ));
                 }
               }
+
+              for error in errors.into_iter() {
+                self.add_error(error);
+              }
+
               return Ok(());
             }
           }
@@ -1862,7 +1886,7 @@ mod tests {
       1* "https://www.example.com/ns/v1" / integer
     ]"#;
     let json = r#"[
-      1
+      1, 2
     ]"#;
 
     let mut lexer = lexer_from_str(cddl);

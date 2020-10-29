@@ -32,14 +32,3 @@ fn verify_json_validation() -> json::Result {
     &fs::read_to_string("tests/fixtures/json/reputon.json").unwrap(),
   )
 }
-
-// #[test]
-// fn verify_ast_correctness() -> Result<(), Box<dyn std::error::Error>> {
-//   let c = parser::cddl_from_str(std::str::from_utf8(include_bytes!(
-//     "data/cddl/reputon.cddl"
-//   ))?)?;
-
-//   assert_eq!(c, data::reputon());
-
-//   Ok(())
-// }
