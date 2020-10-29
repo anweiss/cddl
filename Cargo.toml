@@ -9,7 +9,7 @@ version = "0.8.2"
 authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
 readme = "README.md"
 edition = "2018"
-exclude = ["cddl-lsp/**/*", "www/**/*", ".github/**/*", ".devcontainer/**/*", "pkg/**/*", ".dockerignore", "Dockerfile"]
+exclude = ["cddl-lsp/**/*", "www/**/*", ".github/**/*", ".devcontainer/**/*", "pkg/**/*", ".dockerignore", "Dockerfile", "tests/**/*"]
 
 # Temporary workaround for https://github.com/rustwasm/wasm-pack/issues/886
 [package.metadata.wasm-pack.profile.release]

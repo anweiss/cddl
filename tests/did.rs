@@ -1,3 +1,6 @@
+#![cfg(feature = "std")]
+#![cfg(not(target_arch = "wasm32"))]
+
 use cddl::{validate_cbor_from_slice, validate_json_from_str};
 use std::{
   error::Error,
