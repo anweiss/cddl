@@ -28,7 +28,16 @@ fn validate_did_json_examples() -> Result<(), Box<dyn Error>> {
       for file in fs::read_dir(entry.path())? {
         let file = file?;
         if file.path().extension().and_then(OsStr::to_str).unwrap() == "json" {
-          if let Err(e) = validate_json_from_str(&cddl, &fs::read_to_string(file.path())?) {
+          let r = validate_json_from_str(&cddl, &fs::read_to_string(file.path())?);
+          // Files with known validation errors
+          if ["assertionMethod_example7.json"].contains(&file.file_name().to_str().unwrap()) {
+            assert!(r.is_err());
+          } else {
+            assert!(r.is_ok());
+          }
+
+          if let Err(e) = r {
+            println!("error validating {:?}\n", file.path());
             println!("{}", e);
           }
         }
@@ -64,7 +73,10 @@ fn validate_did_cbor_examples() -> Result<(), Box<dyn Error>> {
           let mut f = File::open(file.path())?;
           let mut data = Vec::new();
           f.read_to_end(&mut data)?;
-          if let Err(e) = validate_cbor_from_slice(&cddl, &data) {
+          let r = validate_cbor_from_slice(&cddl, &data);
+
+          if let Err(e) = r {
+            println!("error validating {:?}\n", file.path());
             println!("{}", e);
           }
         }
