@@ -626,18 +626,18 @@ pub struct EntryCount {
 /// https://github.com/anweiss/cddl/issues/67
 pub fn format_regex(input: &str) -> Option<String> {
   let mut formatted_regex = String::from(input);
-  let mut replace = Vec::new();
+  let mut unescape = Vec::new();
   for (idx, c) in formatted_regex.char_indices() {
     if c == '\\' {
       if let Some(c) = formatted_regex.chars().nth(idx + 1) {
         if !regex_syntax::is_meta_character(c) {
-          replace.push(format!("\\{}", c));
+          unescape.push(format!("\\{}", c));
         }
       }
     }
   }
 
-  for replace in replace.iter() {
+  for replace in unescape.iter() {
     formatted_regex =
       formatted_regex.replace(replace, &replace.chars().nth(1).unwrap().to_string());
   }
@@ -648,7 +648,7 @@ pub fn format_regex(input: &str) -> Option<String> {
     }
   }
 
-  formatted_regex = formatted_regex.replace("?<", "P?<");
+  formatted_regex = formatted_regex.replace("?<", "?P<");
 
   Some(formatted_regex)
 }

@@ -6,6 +6,8 @@ use std::{
   io::Read,
 };
 
+static KNOWN_BAD: &'static [&'static str] = &[];
+
 #[test]
 fn validate_did_json_examples() -> Result<(), Box<dyn Error>> {
   for entry in fs::read_dir("tests/fixtures/did/")? {
@@ -29,16 +31,16 @@ fn validate_did_json_examples() -> Result<(), Box<dyn Error>> {
         let file = file?;
         if file.path().extension().and_then(OsStr::to_str).unwrap() == "json" {
           let r = validate_json_from_str(&cddl, &fs::read_to_string(file.path())?);
+          if let Err(e) = &r {
+            println!("error validating {:?}\n", file.path());
+            println!("{}", e);
+          }
+
           // Files with known validation errors
-          if ["assertionMethod_example7.json"].contains(&file.file_name().to_str().unwrap()) {
+          if KNOWN_BAD.contains(&file.file_name().to_str().unwrap()) {
             assert!(r.is_err());
           } else {
             assert!(r.is_ok());
-          }
-
-          if let Err(e) = r {
-            println!("error validating {:?}\n", file.path());
-            println!("{}", e);
           }
         }
       }
@@ -74,10 +76,16 @@ fn validate_did_cbor_examples() -> Result<(), Box<dyn Error>> {
           let mut data = Vec::new();
           f.read_to_end(&mut data)?;
           let r = validate_cbor_from_slice(&cddl, &data);
-
-          if let Err(e) = r {
+          if let Err(e) = &r {
             println!("error validating {:?}\n", file.path());
             println!("{}", e);
+          }
+
+          // Files with known validation errors
+          if KNOWN_BAD.contains(&file.file_name().to_str().unwrap()) {
+            assert!(r.is_err());
+          } else {
+            assert!(r.is_ok());
           }
         }
       }

@@ -474,17 +474,29 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       }
 
       if iter_items {
+        let mut errors = Vec::new();
+        let mut type_choice_success = false;
         for (idx, v) in a.iter().enumerate() {
           let mut cv = CBORValidator::new(self.cddl, v.clone());
           cv.generic_rules = self.generic_rules.clone();
           cv.eval_generic_rule = self.eval_generic_rule;
+          cv.ctrl = self.ctrl.clone();
           cv.is_multi_type_choice = self.is_multi_type_choice;
           cv.cbor_location
             .push_str(&format!("{}/{}", self.cbor_location, idx));
 
           cv.visit_range(lower, upper, is_inclusive)?;
 
-          self.errors.append(&mut cv.errors);
+          if self.is_multi_type_choice && cv.errors.is_empty() {
+            type_choice_success = true;
+            break;
+          }
+
+          errors.append(&mut cv.errors);
+        }
+
+        if !type_choice_success {
+          self.errors.append(&mut errors);
         }
       } else if let Some(idx) = self.group_entry_idx.take() {
         if let Some(v) = a.get(idx) {
@@ -492,6 +504,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           cv.generic_rules = self.generic_rules.clone();
           cv.eval_generic_rule = self.eval_generic_rule;
           cv.is_multi_type_choice = self.is_multi_type_choice;
+          cv.ctrl = self.ctrl.clone();
           cv.cbor_location
             .push_str(&format!("{}/{}", self.cbor_location, idx));
 
@@ -881,7 +894,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
             match self.cbor {
-              Value::Text(_) => self.visit_type2(controller)?,
+              Value::Text(_) | Value::Array(_) => self.visit_type2(controller)?,
               _ => self.add_error(format!(
                 ".regexp/.pcre control can only be matched against cbor string, got {:?}",
                 self.cbor
@@ -1000,23 +1013,36 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           }
 
           if iter_items {
+            let mut errors = Vec::new();
+            let mut type_choice_success = false;
             for (idx, v) in a.iter().enumerate() {
               let mut cv = CBORValidator::new(self.cddl, v.clone());
               cv.generic_rules = self.generic_rules.clone();
               cv.eval_generic_rule = self.eval_generic_rule;
+              cv.ctrl = self.ctrl.clone();
               cv.is_multi_type_choice = self.is_multi_type_choice;
               cv.cbor_location
                 .push_str(&format!("{}/{}", self.cbor_location, idx));
 
               cv.visit_group(group)?;
 
+              if self.is_multi_type_choice && cv.errors.is_empty() {
+                type_choice_success = true;
+                break;
+              }
+
               self.errors.append(&mut cv.errors);
+            }
+
+            if !type_choice_success {
+              self.errors.append(&mut errors);
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
               let mut cv = CBORValidator::new(self.cddl, v.clone());
               cv.generic_rules = self.generic_rules.clone();
               cv.eval_generic_rule = self.eval_generic_rule;
+              cv.ctrl = self.ctrl.clone();
               cv.is_multi_type_choice = self.is_multi_type_choice;
               cv.cbor_location
                 .push_str(&format!("{}/{}", self.cbor_location, idx));
@@ -1609,9 +1635,12 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         }
 
         if iter_items {
+          let mut errors = Vec::new();
+          let mut type_choice_success = false;
           for (idx, v) in a.iter().enumerate() {
             let mut cv = CBORValidator::new(self.cddl, v.clone());
             cv.generic_rules = self.generic_rules.clone();
+            cv.ctrl = self.ctrl.clone();
             cv.eval_generic_rule = self.eval_generic_rule;
             cv.is_multi_type_choice = self.is_multi_type_choice;
             cv.cbor_location
@@ -1619,7 +1648,16 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
             cv.visit_identifier(ident)?;
 
+            if self.is_multi_type_choice && cv.errors.is_empty() {
+              type_choice_success = true;
+              break;
+            }
+
             self.errors.append(&mut cv.errors);
+          }
+
+          if !type_choice_success {
+            self.errors.append(&mut errors);
           }
         } else if let Some(idx) = self.group_entry_idx.take() {
           if let Some(v) = a.get(idx) {
@@ -1627,6 +1665,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             cv.generic_rules = self.generic_rules.clone();
             cv.eval_generic_rule = self.eval_generic_rule;
             cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.ctrl = self.ctrl.clone();
             cv.cbor_location
               .push_str(&format!("{}/{}", self.cbor_location, idx));
 
@@ -2214,23 +2253,36 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         }
 
         if iter_items {
+          let mut errors = Vec::new();
+          let mut type_choice_success = false;
           for (idx, v) in a.iter().enumerate() {
             let mut cv = CBORValidator::new(self.cddl, v.clone());
             cv.generic_rules = self.generic_rules.clone();
             cv.eval_generic_rule = self.eval_generic_rule;
             cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.ctrl = self.ctrl.clone();
             cv.cbor_location
               .push_str(&format!("{}/{}", self.cbor_location, idx));
 
             cv.visit_value(value)?;
 
+            if self.is_multi_type_choice && cv.errors.is_empty() {
+              type_choice_success = true;
+              break;
+            }
+
             self.errors.append(&mut cv.errors);
+          }
+
+          if !type_choice_success {
+            self.errors.append(&mut errors);
           }
         } else if let Some(idx) = self.group_entry_idx.take() {
           if let Some(v) = a.get(idx) {
             let mut cv = CBORValidator::new(self.cddl, v.clone());
             cv.generic_rules = self.generic_rules.clone();
             cv.eval_generic_rule = self.eval_generic_rule;
+            cv.ctrl = self.ctrl.clone();
             cv.is_multi_type_choice = self.is_multi_type_choice;
             cv.cbor_location
               .push_str(&format!("{}/{}", self.cbor_location, idx));
