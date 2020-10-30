@@ -282,7 +282,9 @@
 //! | `.default`       | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
 //!
 //! <a name="arrays">1</a>: When groups with multiple group entries are used to
-//! validate arrays, those entries with occurrence indicators are ignored due to
+//! validate arrays, occurrence indicators are "greedy" in that only the first
+//! occurrence indicator that is come across is used in the validation.
+//! Subsequent entries with occurrence indicators are ignored due to
 //! complexities involved with processing these ambiguities. For proper JSON
 //! validation, avoid writing CDDL that looks like the following: `[ * a: int,
 //! b: tstr, ? c: int ]`.

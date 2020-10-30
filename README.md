@@ -220,7 +220,7 @@ Below is the table of supported control operators:
 | `.ne`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
 | `.default`       | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
 
-<a name="arrays">1</a>: When groups with multiple group entries are used to validate arrays, those entries with occurrence indicators are ignored due to complexities involved with processing these ambiguities. For proper JSON validation, avoid writing CDDL that looks like the following: `[ * a: int, b: tstr, ? c: int ]`.
+<a name="arrays">1</a>: When groups with multiple group entries are used to validate arrays, occurrence indicators are "greedy" in that only the first occurrence indicator that is come across is used in the validation. Subsequent entries with occurrence indicators are ignored due to complexities involved with processing these ambiguities. For proper JSON validation, avoid writing CDDL that looks like the following: `[ * a: int, b: tstr, ? c: int ]`.
 
 <a name="number">2</a>: While JSON itself does not distinguish between integers and floating-point numbers, this crate does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON. Refer to [Appendix E.](https://tools.ietf.org/html/rfc8610#appendix-E) of the standard for more details on the implications of using CDDL with JSON numbers.
 
