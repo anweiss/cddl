@@ -9,7 +9,20 @@ use std::{
   io::Read,
 };
 
-static KNOWN_BAD: &'static [&'static str] = &[];
+static KNOWN_BAD: &'static [&'static str] = &[
+  "bad_context.json",
+  "example1.json",
+  "example1.cbor",
+  "example2.json",
+  "example2.cbor",
+  "example3.cbor",
+  "example12.cbor",
+  "example1a.cbor",
+  // Awaiting reply to
+  // https://github.com/w3c/did-spec-registries/pull/138#issuecomment-719710486
+  // to clarify validation semantics when unwrapping tags
+  "good_context.cbor",
+];
 
 #[test]
 fn validate_did_json_examples() -> Result<(), Box<dyn Error>> {

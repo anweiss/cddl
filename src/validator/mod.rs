@@ -630,7 +630,7 @@ pub fn format_regex(input: &str) -> Option<String> {
   for (idx, c) in formatted_regex.char_indices() {
     if c == '\\' {
       if let Some(c) = formatted_regex.chars().nth(idx + 1) {
-        if !regex_syntax::is_meta_character(c) {
+        if !regex_syntax::is_meta_character(c) && c != 'd' {
           unescape.push(format!("\\{}", c));
         }
       }
