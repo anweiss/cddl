@@ -265,6 +265,8 @@ The following tags are supported when validating CBOR:
 | `mime-message = #6.36(tstr)`             | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 | `cbor-any = #6.55799(any)`               | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 
+The `.bits`, `.cbor` and `.cborseq` control operators are not yet implemented.
+
 ## `no_std` support
 
 Only the lexer and parser can be used in a `no_std` context provided that a heap allocator is available. This can be enabled by opting out of the default features in your `Cargo.toml` file as follows:
