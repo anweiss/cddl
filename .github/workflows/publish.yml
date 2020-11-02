@@ -92,7 +92,7 @@ jobs:
       - name: Build image
         run: |
           export TAG=`git describe --tags`
-          docker build -t ghcr.io/anweiss/cddl-cli:$TAG -t latest .
+          docker build -t ghcr.io/anweiss/cddl-cli:$TAG -t ghcr.io/anweiss/cddl-cli:latest .
 
       - name: Login to GPR
         env:
