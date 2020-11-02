@@ -231,21 +231,21 @@
 //! The following types and features of CDDL are supported by this crate for
 //! validating JSON:
 //!
-//! | CDDL                   | JSON                                                                                                       |
-//! | ---------------------- | ---------------------------------------------------------------------------------------------------------- |
-//! | structs                | objects                                                                                                    |
-//! | arrays                 | arrays<sup>[1](#arrays)</sup>                                                                              |
-//! | `text / tstr`          | string                                                                                                     |
-//! | `uri`                  | string (valid RFC3986 URI)                                                                                 |
-//! | `tdate`                | string (valid RFC3339 date/time)                                                                           |
-//! | `b64url`               | string (base64url-encoded)                                                                                 |
-//! | `time`                 | number (valid UNIX timestamp integer in seconds)                                                           |
-//! | `number / int / float` | number<sup>[2](#number)</sup>                                                                              |
-//! | `bool / true / false`  | boolean                                                                                                    |
-//! | `null / nil`           | null                                                                                                       |
-//! | `any`                  | any valid JSON                                                                                             |
-//! | byte strings           | not yet implemented                                                                                        |
-//! | unwrap (`~`)           | any JSON that matches unwrapped type from map, array or supported tag (`uri`, `tdate`, `b64url` or `time`) |
+//! | CDDL                   | JSON                                                        |
+//! | ---------------------- | ----------------------------------------------------------- |
+//! | structs                | objects                                                     |
+//! | arrays                 | arrays<sup>[1](#arrays)</sup>                               |
+//! | `text / tstr`          | string                                                      |
+//! | `uri`                  | string (valid RFC3986 URI)                                  |
+//! | `tdate`                | string (valid RFC3339 date/time)                            |
+//! | `b64url`               | string (base64url-encoded)                                  |
+//! | `time`                 | number (valid UNIX timestamp integer in seconds)            |
+//! | `number / int / float` | number<sup>[2](#number)</sup>                               |
+//! | `bool / true / false`  | boolean                                                     |
+//! | `null / nil`           | null                                                        |
+//! | `any`                  | any valid JSON                                              |
+//! | byte strings           | not yet implemented                                         |
+//! | unwrap (`~`)           | any JSON that matches unwrapped type from map, array or tag |
 //!
 //! CDDL groups, generics, sockets/plugs and group-to-choice enumerations can
 //! all be used when validating JSON.
@@ -282,7 +282,9 @@
 //! | `.default`       | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
 //!
 //! <a name="arrays">1</a>: When groups with multiple group entries are used to
-//! validate arrays, those entries with occurrence indicators are ignored due to
+//! validate arrays, occurrence indicators are "greedy" in that only the first
+//! occurrence indicator that is come across is used in the validation.
+//! Subsequent entries with occurrence indicators are ignored due to
 //! complexities involved with processing these ambiguities. For proper JSON
 //! validation, avoid writing CDDL that looks like the following: `[ * a: int,
 //! b: tstr, ? c: int ]`.
@@ -358,6 +360,9 @@
 //! | `regexp = #6.35(tstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 //! | `mime-message = #6.36(tstr)`             | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 //! | `cbor-any = #6.55799(any)`               | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//!
+//! The `.bits`, `.cbor` and `.cborseq` control operators are not yet
+//! implemented.
 //!
 //! ## `no_std` support
 //!

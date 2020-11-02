@@ -614,10 +614,41 @@ pub fn validate_entry_count(valid_entry_counts: &[EntryCount], num_entries: usiz
 }
 
 /// Entry count
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EntryCount {
   /// Count
   pub count: u64,
   /// Optional occurrence
   pub entry_occurrence: Option<Occur>,
+}
+
+/// Regex needs to be formatted in a certain way so it can be parsed. See
+/// https://github.com/anweiss/cddl/issues/67
+pub fn format_regex(input: &str) -> Option<String> {
+  let mut formatted_regex = String::from(input);
+  let mut unescape = Vec::new();
+  for (idx, c) in formatted_regex.char_indices() {
+    if c == '\\' {
+      if let Some(c) = formatted_regex.chars().nth(idx + 1) {
+        if !regex_syntax::is_meta_character(c) && c != 'd' {
+          unescape.push(format!("\\{}", c));
+        }
+      }
+    }
+  }
+
+  for replace in unescape.iter() {
+    formatted_regex =
+      formatted_regex.replace(replace, &replace.chars().nth(1).unwrap().to_string());
+  }
+
+  for find in ["?=", "?!", "?<=", "?<!"].iter() {
+    if formatted_regex.find(find).is_some() {
+      return None;
+    }
+  }
+
+  formatted_regex = formatted_regex.replace("?<", "?P<");
+
+  Some(formatted_regex)
 }

@@ -1,0 +1,5 @@
+{
+  "id": "did:example:123456789abcdefghi#vcs",
+  "type": "VerifiableCredentialService",
+  "serviceEndpoint": "https://example.com/vc/"
+}

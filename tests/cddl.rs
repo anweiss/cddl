@@ -1,11 +1,8 @@
 #![cfg(feature = "std")]
 #![cfg(not(target_arch = "wasm32"))]
 
-mod fixtures;
-
-use cddl::{lexer_from_str, parser, validator};
+use cddl::{lexer_from_str, parser, validate_json_from_str, validator::json};
 use std::fs;
-use validator::{json, validate_json_from_str};
 
 #[test]
 fn verify_cddl_compiles() -> Result<(), parser::Error> {
@@ -35,14 +32,3 @@ fn verify_json_validation() -> json::Result {
     &fs::read_to_string("tests/fixtures/json/reputon.json").unwrap(),
   )
 }
-
-// #[test]
-// fn verify_ast_correctness() -> Result<(), Box<dyn std::error::Error>> {
-//   let c = parser::cddl_from_str(std::str::from_utf8(include_bytes!(
-//     "data/cddl/reputon.cddl"
-//   ))?)?;
-
-//   assert_eq!(c, data::reputon());
-
-//   Ok(())
-// }

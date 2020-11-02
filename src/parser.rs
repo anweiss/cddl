@@ -589,7 +589,13 @@ where
         })
       }
       _ => {
+        // If type rule is an unwrap type, advance token after parsing type
+        let advance_token = matches!(self.cur_token, Token::UNWRAP);
         let mut t = self.parse_type(None)?;
+
+        if advance_token {
+          self.next_token()?;
+        }
 
         let comments_after_rule = if let Some(comments) = t.comments_after_type() {
           Some(comments)
@@ -1419,8 +1425,8 @@ where
         return Ok(grpchoice);
       }
 
-      // Don't advance the token if it is a member key, comma or an opening or
-      // closing map/group delimiter. Otherwise, advance
+      // Don't advance the token if it is part of a member key, comma or an
+      // opening or closing map/group delimiter. Otherwise, advance
       if !self.cur_token_is(Token::RPAREN)
         && !self.cur_token_is(Token::RBRACE)
         && !self.cur_token_is(Token::RBRACKET)
@@ -1428,6 +1434,9 @@ where
         && !self.cur_token_is(Token::LBRACE)
         && !self.cur_token_is(Token::LBRACKET)
         && !self.cur_token_is(Token::COMMA)
+        && !self.cur_token_is(Token::OPTIONAL)
+        && !self.cur_token_is(Token::ONEORMORE)
+        && !self.cur_token_is(Token::ASTERISK)
         && !self.peek_token_is(&Token::COLON)
         && !self.peek_token_is(&Token::ARROWMAP)
         && !self.cur_token_is(Token::EOF)

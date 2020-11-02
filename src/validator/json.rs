@@ -452,45 +452,64 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       }
 
       if !iter_items && !allow_empty_array {
-        if let Some(entry_counts) = self.entry_counts.take() {
+        if let Some(entry_counts) = &self.entry_counts {
+          let mut errors = Vec::new();
           let len = a.len();
           if !validate_entry_count(&entry_counts, len) {
             for ec in entry_counts.iter() {
               if let Some(occur) = &ec.entry_occurrence {
-                self.add_error(format!(
+                errors.push(format!(
                   "expecting array with length per occurrence {}",
                   occur,
                 ));
               } else {
-                self.add_error(format!(
+                errors.push(format!(
                   "expecting array with length {}, got {}",
                   ec.count, len
                 ));
               }
             }
+
+            for error in errors.into_iter() {
+              self.add_error(error);
+            }
+
             return Ok(());
           }
         }
       }
 
       if iter_items {
+        let mut errors = Vec::new();
+        let mut type_choice_success = false;
         for (idx, v) in a.iter().enumerate() {
           let mut jv = JSONValidator::new(self.cddl, v.clone());
           jv.generic_rules = self.generic_rules.clone();
           jv.eval_generic_rule = self.eval_generic_rule;
+          jv.ctrl = self.ctrl.clone();
           jv.is_multi_type_choice = self.is_multi_type_choice;
           jv.json_location
             .push_str(&format!("{}/{}", self.json_location, idx));
 
           jv.visit_range(lower, upper, is_inclusive)?;
 
-          self.errors.append(&mut jv.errors);
+          if self.is_multi_type_choice && jv.errors.is_empty() {
+            type_choice_success = true;
+            break;
+          }
+
+          errors.append(&mut jv.errors);
+        }
+
+        if !type_choice_success {
+          self.errors.append(&mut errors);
         }
       } else if let Some(idx) = self.group_entry_idx.take() {
         if let Some(v) = a.get(idx) {
           let mut jv = JSONValidator::new(self.cddl, v.clone());
           jv.generic_rules = self.generic_rules.clone();
           jv.eval_generic_rule = self.eval_generic_rule;
+          jv.ctrl = self.ctrl.clone();
           jv.is_multi_type_choice = self.is_multi_type_choice;
           jv.json_location
             .push_str(&format!("{}/{}", self.json_location, idx));
@@ -901,7 +920,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
             match self.json {
-              Value::String(_) => self.visit_type2(controller)?,
+              Value::String(_) | Value::Array(_) => self.visit_type2(controller)?,
               _ => self.add_error(format!(
                 ".regexp/.pcre control can only be matched against JSON string, got {}",
                 self.json
@@ -968,45 +987,64 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           }
 
           if !iter_items && !allow_empty_array {
-            if let Some(entry_counts) = self.entry_counts.take() {
+            if let Some(entry_counts) = &self.entry_counts {
+              let mut errors = Vec::new();
               let len = a.len();
               if !validate_entry_count(&entry_counts, len) {
                 for ec in entry_counts.iter() {
                   if let Some(occur) = &ec.entry_occurrence {
-                    self.add_error(format!(
+                    errors.push(format!(
                       "expecting array with length per occurrence {}",
                       occur,
                     ));
                   } else {
-                    self.add_error(format!(
+                    errors.push(format!(
                       "expecting array with length {}, got {}",
                       ec.count, len
                     ));
                   }
                 }
+
+                for error in errors.into_iter() {
+                  self.add_error(error);
+                }
+
                 return Ok(());
               }
             }
           }
 
           if iter_items {
+            let mut errors = Vec::new();
+            let mut type_choice_success = false;
             for (idx, v) in a.iter().enumerate() {
               let mut jv = JSONValidator::new(self.cddl, v.clone());
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
+              jv.ctrl = self.ctrl.clone();
               jv.is_multi_type_choice = self.is_multi_type_choice;
               jv.json_location
                 .push_str(&format!("{}/{}", self.json_location, idx));
 
               jv.visit_group(group)?;
 
-              self.errors.append(&mut jv.errors);
+              if self.is_multi_type_choice && jv.errors.is_empty() {
+                type_choice_success = true;
+                break;
+              }
+
+              errors.append(&mut jv.errors);
+            }
+
+            if !type_choice_success {
+              self.errors.append(&mut errors);
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
               let mut jv = JSONValidator::new(self.cddl, v.clone());
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
+              jv.ctrl = self.ctrl.clone();
               jv.is_multi_type_choice = self.is_multi_type_choice;
               jv.json_location
                 .push_str(&format!("{}/{}", self.json_location, idx));
@@ -1044,6 +1082,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             let count = entry_counts_from_group_choice(self.cddl, gc);
             entry_counts.push(count);
           }
+
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
@@ -1156,9 +1195,13 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         generic_args,
         ..
       } => {
-        // Disregard the tag when validating JSON
-        if tag_from_token(&lookup_ident(ident.ident)).is_some() {
-          return self.visit_identifier(ident);
+        if let Some(tag) = tag_from_token(&lookup_ident(ident.ident)) {
+          // Per
+          // https://github.com/w3c/did-spec-registries/pull/138#issuecomment-719739215,
+          // strip tag and validate underlying type
+          if let Type2::TaggedData { t, .. } = tag {
+            return self.visit_type(&t);
+          }
         }
 
         if let Some(ga) = generic_args {
@@ -1335,21 +1378,26 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         }
 
         if !iter_items && !allow_empty_array {
-          if let Some(entry_counts) = self.entry_counts.take() {
+          if let Some(entry_counts) = &self.entry_counts {
+            let mut errors = Vec::new();
             let len = a.len();
             if !validate_entry_count(&entry_counts, len) {
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
-                  self.add_error(format!(
+                  errors.push(format!(
                     "expecting array with length per occurrence {}",
                     occur,
                   ));
                 } else {
-                  self.add_error(format!(
+                  errors.push(format!(
                     "expecting array with length {}, got {}",
                     ec.count, len
                   ));
                 }
+              }
+
+              for error in errors.into_iter() {
+                self.add_error(error);
               }
 
               return Ok(());
@@ -1358,23 +1406,36 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         }
 
         if iter_items {
+          let mut errors = Vec::new();
+          let mut type_choice_success = false;
           for (idx, v) in a.iter().enumerate() {
             let mut jv = JSONValidator::new(self.cddl, v.clone());
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = self.eval_generic_rule;
             jv.is_multi_type_choice = self.is_multi_type_choice;
+            jv.ctrl = self.ctrl.clone();
             jv.json_location
               .push_str(&format!("{}/{}", self.json_location, idx));
 
             jv.visit_identifier(ident)?;
 
-            self.errors.append(&mut jv.errors);
+            if self.is_multi_type_choice && jv.errors.is_empty() {
+              type_choice_success = true;
+              break;
+            }
+
+            errors.append(&mut jv.errors);
+          }
+
+          if !type_choice_success {
+            self.errors.append(&mut errors);
           }
         } else if let Some(idx) = self.group_entry_idx.take() {
           if let Some(v) = a.get(idx) {
             let mut jv = JSONValidator::new(self.cddl, v.clone());
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = self.eval_generic_rule;
+            jv.ctrl = self.ctrl.clone();
             jv.is_multi_type_choice = self.is_multi_type_choice;
             jv.json_location
               .push_str(&format!("{}/{}", self.json_location, idx));
@@ -1623,12 +1684,17 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           }
           Some(Token::REGEXP) | Some(Token::PCRE) => {
             let re = regex::Regex::new(
-              serde_json::from_str::<Value>(&format!("\"{}\"", t))
-                .map_err(|e| ValidationError::from_validator(self, e.to_string()))?
-                .as_str()
-                .ok_or_else(|| {
-                  ValidationError::from_validator(self, "malformed regex".to_string())
-                })?,
+              &format_regex(
+                serde_json::from_str::<Value>(&format!("\"{}\"", t))
+                  .map_err(|e| ValidationError::from_validator(self, e.to_string()))?
+                  .as_str()
+                  .ok_or_else(|| {
+                    ValidationError::from_validator(self, "malformed regex".to_string())
+                  })?,
+              )
+              .ok_or_else(|| {
+                ValidationError::from_validator(self, "malformed regex".to_string())
+              })?,
             )
             .map_err(|e| ValidationError::from_validator(self, e.to_string()))?;
 
@@ -1684,39 +1750,57 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         }
 
         if !iter_items && !allow_empty_array {
-          if let Some(entry_counts) = self.entry_counts.take() {
+          if let Some(entry_counts) = &self.entry_counts {
+            let mut errors = Vec::new();
             let len = a.len();
             if !validate_entry_count(&entry_counts, len) {
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
-                  self.add_error(format!(
+                  errors.push(format!(
                     "expecting array with length per occurrence {}",
                     occur,
                   ));
                 } else {
-                  self.add_error(format!(
+                  errors.push(format!(
                     "expecting array with length {}, got {}",
                     ec.count, len
                   ));
                 }
               }
+
+              for error in errors.into_iter() {
+                self.add_error(error);
+              }
+
               return Ok(());
             }
           }
         }
 
         if iter_items {
+          let mut errors = Vec::new();
+          let mut type_choice_success = false;
           for (idx, v) in a.iter().enumerate() {
             let mut jv = JSONValidator::new(self.cddl, v.clone());
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = self.eval_generic_rule;
             jv.is_multi_type_choice = self.is_multi_type_choice;
+            jv.ctrl = self.ctrl.clone();
             jv.json_location
               .push_str(&format!("{}/{}", self.json_location, idx));
 
             jv.visit_value(value)?;
 
-            self.errors.append(&mut jv.errors);
+            if self.is_multi_type_choice && jv.errors.is_empty() {
+              type_choice_success = true;
+              break;
+            }
+
+            errors.append(&mut jv.errors);
+          }
+
+          if !type_choice_success {
+            self.errors.append(&mut errors);
           }
         } else if let Some(idx) = self.group_entry_idx.take() {
           if let Some(v) = a.get(idx) {
@@ -1724,6 +1808,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = self.eval_generic_rule;
             jv.is_multi_type_choice = self.is_multi_type_choice;
+            jv.ctrl = self.ctrl.clone();
             jv.json_location
               .push_str(&format!("{}/{}", self.json_location, idx));
 
@@ -1801,12 +1886,9 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl = r#"document = {
-      @context: "https://www.example.com/ns/v1" / [ "https://www.example.com/ns/v1", 1* ~uri ],
-    }"#;
-    let json = r#"{
-      "@context": [ "https://www.example.com/ns/v1", "telnet://192.0.2.16:80/", "http://test.com" ]
-    }"#;
+    let cddl = r#"serivceEndpoint = ~uri
+    "#;
+    let json = r#""test""#;
 
     let mut lexer = lexer_from_str(cddl);
     let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing)?;
