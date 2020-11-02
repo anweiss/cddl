@@ -37,7 +37,7 @@ Rust is a systems programming language designed around safety and is ideally-sui
 
 ## CLI
 
-A CLI has been made available for various platforms and as a Docker image. It can downloaded from the [Releases](https://github.com/anweiss/cddl/releases) tab. The tool supports parsing of `.cddl` files for verifying conformance against RFC 8610. It also supports validation of `.cddl` documents against `.json` files. Detailed information about the JSON validation functions can be found in the [validating JSON](#validating-json) section below. Instructions for using the tool can be viewed by executing the `help` subcommand:
+A CLI has been made available for various platforms and as a Docker image. The binary can be downloaded from GitHub [Releases](https://github.com/anweiss/cddl/releases). The tool supports parsing of `.cddl` files for verifying conformance against RFC 8610. It can also be used to validate `.json` documents and `.cbor` binary files against `.cddl` documents. Detailed information about the JSON and CBOR validation implementation can be found in the sections below. Instructions for using the tool can be viewed by executing the `help` subcommand:
 
 ```sh
 cddl help
@@ -45,7 +45,7 @@ cddl help
 
 If using Docker:
 
-> Replace `<version>` with an appropriate [release](https://github.com/anweiss/cddl/releases) tag. Requires use of the `--volume` argument for mounting `.cddl` and `.json` documents into the container when executing the command. The command below assumes these documents are in your current working directory.
+> Replace `<version>` with an appropriate [release](https://github.com/anweiss/cddl/releases) tag. Requires use of the `--volume` argument for mounting `.cddl` documents into the container when executing the command. `.json` or `.cbor` files can either be included in the volume mount or passed into the command via STDIN.
 
 ```sh
 docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
@@ -54,7 +54,26 @@ docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> he
 You can validate JSON documents using the provided CLI:
 
 ```sh
-cddl validate --cddl <FILE.cddl> --json <FILE.json>
+cddl validate --cddl <FILE.cddl> [FILE.json]...
+```
+
+You can validate CBOR files as follows:
+
+```sh
+cddl validate --cddl <FILE.cddl> [FILE.cbor]...
+```
+
+It also supports validating files from STDIN (if it detects the input as valid UTF-8, it will attempt to validate the input as JSON, otherwise it will treat it as CBOR):
+
+```sh
+cat reputon.json | cddl validate --cddl reputon.cddl --stdin
+cat reputon.cbor | cddl validate --cddl reputon.cddl --stdin
+```
+
+or using Docker:
+
+```sh
+docker run -i --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:latest validate --cddl reputon.cddl --stdin < reputon.json
 ```
 
 ## Website
