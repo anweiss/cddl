@@ -178,21 +178,21 @@ The first non-group rule defined by a CDDL data structure definition determines 
 
 The following types and features of CDDL are supported by this crate for validating JSON:
 
-| CDDL                   | JSON                                                                                                       |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
-| structs                | objects                                                                                                    |
-| arrays                 | arrays<sup>[1](#arrays)</sup>                                                                              |
-| `text / tstr`          | string                                                                                                     |
-| `uri`                  | string (valid RFC3986 URI)                                                                                 |
-| `tdate`                | string (valid RFC3339 date/time)                                                                           |
-| `b64url`               | string (base64url-encoded)                                                                                 |
-| `time`                 | number (valid UNIX timestamp integer in seconds)                                                           |
-| `number / int / float` | number<sup>[2](#number)</sup>                                                                              |
-| `bool / true / false`  | boolean                                                                                                    |
-| `null / nil`           | null                                                                                                       |
-| `any`                  | any valid JSON                                                                                             |
-| byte strings           | not yet implemented                                                                                        |
-| unwrap (`~`)           | any JSON that matches unwrapped type from map, array or supported tag (`uri`, `tdate`, `b64url` or `time`) |
+| CDDL                   | JSON                                                        |
+| ---------------------- | ----------------------------------------------------------- |
+| structs                | objects                                                     |
+| arrays                 | arrays<sup>[1](#arrays)</sup>                               |
+| `text / tstr`          | string                                                      |
+| `uri`                  | string (valid RFC3986 URI)                                  |
+| `tdate`                | string (valid RFC3339 date/time)                            |
+| `b64url`               | string (base64url-encoded)                                  |
+| `time`                 | number (valid UNIX timestamp integer in seconds)            |
+| `number / int / float` | number<sup>[2](#number)</sup>                               |
+| `bool / true / false`  | boolean                                                     |
+| `null / nil`           | null                                                        |
+| `any`                  | any valid JSON                                              |
+| byte strings           | not yet implemented                                         |
+| unwrap (`~`)           | any JSON that matches unwrapped type from map, array or tag |
 
 CDDL groups, generics, sockets/plugs and group-to-choice enumerations can all be used when validating JSON.
 

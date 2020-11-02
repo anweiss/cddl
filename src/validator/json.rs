@@ -1195,9 +1195,13 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         generic_args,
         ..
       } => {
-        // Disregard the tag when validating JSON
-        if tag_from_token(&lookup_ident(ident.ident)).is_some() {
-          return self.visit_identifier(ident);
+        if let Some(tag) = tag_from_token(&lookup_ident(ident.ident)) {
+          // Per
+          // https://github.com/w3c/did-spec-registries/pull/138#issuecomment-719739215,
+          // strip tag and validate underlying type
+          if let Type2::TaggedData { t, .. } = tag {
+            return self.visit_type(&t);
+          }
         }
 
         if let Some(ga) = generic_args {

@@ -18,10 +18,6 @@ static KNOWN_BAD: &'static [&'static str] = &[
   "example3.cbor",
   "example12.cbor",
   "example1a.cbor",
-  // Awaiting reply to
-  // https://github.com/w3c/did-spec-registries/pull/138#issuecomment-719710486
-  // to clarify validation semantics when unwrapping tags
-  "good_context.cbor",
 ];
 
 #[test]
@@ -54,8 +50,10 @@ fn validate_did_json_examples() -> Result<(), Box<dyn Error>> {
 
           // Files with known validation errors
           if KNOWN_BAD.contains(&file.file_name().to_str().unwrap()) {
+            println!("assert error {:?}", file.path());
             assert!(r.is_err());
           } else {
+            println!("assert ok {:?}", file.path());
             assert!(r.is_ok());
           }
         }
@@ -99,8 +97,10 @@ fn validate_did_cbor_examples() -> Result<(), Box<dyn Error>> {
 
           // Files with known validation errors
           if KNOWN_BAD.contains(&file.file_name().to_str().unwrap()) {
+            println!("assert error {:?}", file.path());
             assert!(r.is_err());
           } else {
+            println!("assert ok {:?}", file.path());
             assert!(r.is_ok());
           }
         }

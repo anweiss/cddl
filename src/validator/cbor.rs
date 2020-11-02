@@ -1248,7 +1248,12 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         ..
       } => {
         if let Some(tag) = tag_from_token(&lookup_ident(ident.ident)) {
-          return self.visit_type2(&tag);
+          // Per
+          // https://github.com/w3c/did-spec-registries/pull/138#issuecomment-719739215,
+          // strip tag and validate underlying type
+          if let Type2::TaggedData { t, .. } = tag {
+            return self.visit_type(&t);
+          }
         }
 
         if let Some(ga) = generic_args {
