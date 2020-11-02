@@ -16,6 +16,7 @@ static KNOWN_BAD: &'static [&'static str] = &[
   "example3.cbor",
   "example12.cbor",
   "example1a.cbor",
+  "service_example1.json",
 ];
 
 #[test]

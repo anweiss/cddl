@@ -1886,12 +1886,9 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl = r#"document = [
-      1* "https://www.example.com/ns/v1" / integer
-    ]"#;
-    let json = r#"[
-      1, 2
-    ]"#;
+    let cddl = r#"serivceEndpoint = ~uri
+    "#;
+    let json = r#""test""#;
 
     let mut lexer = lexer_from_str(cddl);
     let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing)?;

@@ -1,1 +1,6 @@
-{ "@context" : ["https://www.w3.org/ns/did/v1" , "http://example.com" ] }
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "http://example.com"
+  ]
+}

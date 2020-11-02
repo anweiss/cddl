@@ -1,1 +1,3 @@
-{ "id" : "did:ipid:abc123" }
+{
+  "id": "did:ipid:abc123"
+}

@@ -589,7 +589,13 @@ where
         })
       }
       _ => {
+        // If type rule is an unwrap type, advance token after parsing type
+        let advance_token = matches!(self.cur_token, Token::UNWRAP);
         let mut t = self.parse_type(None)?;
+
+        if advance_token {
+          self.next_token()?;
+        }
 
         let comments_after_rule = if let Some(comments) = t.comments_after_type() {
           Some(comments)
