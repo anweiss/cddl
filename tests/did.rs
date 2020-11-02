@@ -11,8 +11,6 @@ use std::{
 
 static KNOWN_BAD: &'static [&'static str] = &[
   "bad_context.json",
-  "example1.json",
-  "example1.cbor",
   "example2.json",
   "example2.cbor",
   "example3.cbor",
@@ -43,6 +41,7 @@ fn validate_did_json_examples() -> Result<(), Box<dyn Error>> {
         let file = file?;
         if file.path().extension().and_then(OsStr::to_str).unwrap() == "json" {
           let r = validate_json_from_str(&cddl, &fs::read_to_string(file.path())?);
+          println!("assert ok {:?}", file.path());
           if let Err(e) = &r {
             println!("error validating {:?}\n", file.path());
             println!("{}", e);
@@ -53,7 +52,6 @@ fn validate_did_json_examples() -> Result<(), Box<dyn Error>> {
             println!("assert error {:?}", file.path());
             assert!(r.is_err());
           } else {
-            println!("assert ok {:?}", file.path());
             assert!(r.is_ok());
           }
         }
@@ -90,6 +88,7 @@ fn validate_did_cbor_examples() -> Result<(), Box<dyn Error>> {
           let mut data = Vec::new();
           f.read_to_end(&mut data)?;
           let r = validate_cbor_from_slice(&cddl, &data);
+          println!("assert ok {:?}", file.path());
           if let Err(e) = &r {
             println!("error validating {:?}\n", file.path());
             println!("{}", e);
@@ -100,7 +99,6 @@ fn validate_did_cbor_examples() -> Result<(), Box<dyn Error>> {
             println!("assert error {:?}", file.path());
             assert!(r.is_err());
           } else {
-            println!("assert ok {:?}", file.path());
             assert!(r.is_ok());
           }
         }
