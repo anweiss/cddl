@@ -53,6 +53,8 @@ pub enum MsgType {
   EmptyTextStringLiteral,
   InvalidByteStringLiteralCharacter,
   EmptyByteStringLiteral,
+  InvalidHexFloat,
+  InvalidExponent,
 }
 
 impl From<MsgType> for ErrorMsg {
@@ -174,6 +176,14 @@ impl From<MsgType> for ErrorMsg {
         short: "all plugs for group socket names must be augmentations using '//='".into(),
         extended: None,
       },
+      MsgType::InvalidHexFloat => ErrorMsg {
+        short: "invalid hexfloat".into(),
+        extended: None,
+      },
+      MsgType::InvalidExponent => ErrorMsg {
+        short: "invalid exponent".into(),
+        extended: None,
+      }
     }
   }
 }

@@ -82,6 +82,8 @@ pub enum LexerErrorType {
   PARSEINT(num::ParseIntError),
   /// Error parsing float
   PARSEFLOAT(lexical::Error),
+  /// Error parsing hexfloat
+  PARSEHEXF(hexf_parse::ParseHexfError),
 }
 
 #[cfg(feature = "std")]
@@ -182,6 +184,19 @@ impl fmt::Display for LexerError {
 
         write!(f, "{}", String::from_utf8(buffer).map_err(|_| fmt::Error)?)
       }
+      LexerErrorType::PARSEHEXF(phf) => {
+        let diagnostic = Diagnostic::error()
+          .with_message("lexer error")
+          .with_labels(vec![Label::primary(
+            file_id,
+            self.position.range.0..self.position.range.1,
+          )
+          .with_message(format!("{:#?}", phf))]);
+
+        term::emit(&mut writer, &config, &files, &diagnostic).map_err(|_| fmt::Error)?;
+
+        write!(f, "{}", String::from_utf8(buffer).map_err(|_| fmt::Error)?)
+      }
     }
   }
 }
@@ -240,6 +255,16 @@ impl From<(&str, Position, lexical::Error)> for LexerError {
   fn from(e: (&str, Position, lexical::Error)) -> Self {
     LexerError {
       error_type: LexerErrorType::PARSEFLOAT(e.2),
+      input: e.0.to_string(),
+      position: e.1,
+    }
+  }
+}
+
+impl From<(&str, Position, hexf_parse::ParseHexfError)> for LexerError {
+  fn from(e: (&str, Position, hexf_parse::ParseHexfError)) -> Self {
+    LexerError {
+      error_type: LexerErrorType::PARSEHEXF(e.2),
       input: e.0.to_string(),
       position: e.1,
     }
@@ -800,24 +825,70 @@ impl<'a> Lexer<'a> {
       idx = self.read_char()?.0;
     }
 
-    let (end_idx, i) = self.read_number(idx)?;
+    let (mut end_idx, i) = self.read_number(idx)?;
 
     if let Some(&c) = self.multipeek.peek() {
-      if c.1 == '.' {
+      let mut hexfloat = false;
+
+      if i == 0 && c.0 - idx == 1 && c.1 == 'x' {
+        let _ = self.read_char()?;
+        if self.multipeek.peek().is_none() {
+          return Err((self.str_input, self.position, InvalidHexFloat).into());
+        }
+
+        let (idx, _) = self.read_char()?;
+        let _ = self.read_hexdigit(idx)?;
+        hexfloat = true;
+      }
+
+      if c.1 == '.' || c.1 == 'x' {
+        if c.1 == 'x' {
+          let _ = self.read_char()?;
+        }
+
         if let Some(&c) = self.multipeek.peek() {
-          if is_digit(c.1) {
+          if hexfloat && is_hexdigit(c.1) {
             let _ = self.read_char()?;
-            let (fraction_idx, _) = self.read_number(c.0)?;
+            let _ = self.read_hexdigit(c.0)?;
+            if self.read_char()?.1 != 'p' {
+              return Err((self.str_input, self.position, InvalidHexFloat).into());
+            }
+
+            let (exponent_idx, _) = self.read_char()?;
+            end_idx = self.read_exponent(exponent_idx)?.0;
 
             if is_signed {
               return Ok(Token::VALUE(Value::FLOAT(
-                lexical::parse::<f64>(&self.str_input[signed_idx..=fraction_idx].as_bytes())
+                hexf_parse::parse_hexf64(&self.str_input[signed_idx..=end_idx], false)
                   .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
               )));
             }
 
             return Ok(Token::VALUE(Value::FLOAT(
-              lexical::parse::<f64>(&self.str_input[idx..=fraction_idx].as_bytes())
+              hexf_parse::parse_hexf64(&self.str_input[idx..=end_idx], false)
+                .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
+            )));
+          }
+
+          if is_digit(c.1) {
+            let _ = self.read_char()?;
+            end_idx = self.read_number(c.0)?.0;
+
+            if let Some(&(_, 'e')) = self.peek_char() {
+              let _ = self.read_char()?;
+              let (exponent_idx, _) = self.read_char()?;
+              end_idx = self.read_exponent(exponent_idx)?.0;
+            }
+
+            if is_signed {
+              return Ok(Token::VALUE(Value::FLOAT(
+                lexical::parse::<f64>(&self.str_input[signed_idx..=end_idx].as_bytes())
+                  .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
+              )));
+            }
+
+            return Ok(Token::VALUE(Value::FLOAT(
+              lexical::parse::<f64>(&self.str_input[idx..=end_idx].as_bytes())
                 .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
             )));
           }
@@ -825,11 +896,34 @@ impl<'a> Lexer<'a> {
       }
     }
 
+    let mut is_exponent = false;
+    if let Some(&(_, 'e')) = self.peek_char() {
+      let _ = self.read_char()?;
+      let (exponent_idx, _) = self.read_char()?;
+
+      end_idx = self.read_exponent(exponent_idx)?.0;
+      is_exponent = true;
+    }
+
     if is_signed {
-      return Ok(Token::VALUE(Value::INT(
-        self.str_input[signed_idx..=end_idx]
-          .parse()
-          .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
+      if is_exponent {
+        return Ok(Token::VALUE(Value::INT(
+          lexical::parse::<f64>(&self.str_input[signed_idx..=end_idx].as_bytes())
+            .map_err(|e| LexerError::from((self.str_input, self.position, e)))? as isize,
+        )));
+      } else {
+        return Ok(Token::VALUE(Value::INT(
+          self.str_input[signed_idx..=end_idx]
+            .parse()
+            .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
+        )));
+      }
+    }
+
+    if is_exponent {
+      return Ok(Token::VALUE(Value::UINT(
+        lexical::parse::<f64>(&self.str_input[idx..=end_idx].as_bytes())
+          .map_err(|e| LexerError::from((self.str_input, self.position, e)))? as usize,
       )));
     }
 
@@ -857,6 +951,44 @@ impl<'a> Lexer<'a> {
     ))
   }
 
+  fn read_exponent(&mut self, idx: usize) -> Result<(usize, &str)> {
+    let mut end_index = idx;
+
+    if let Some(&c) = self.peek_char() {
+      if c.1 != '-' && c.1 != '+' && !is_digit(c.1) {
+        return Err((self.str_input, self.position, InvalidExponent).into());
+      }
+    }
+
+    while let Some(&c) = self.peek_char() {
+      if is_digit(c.1) {
+        let (ei, _) = self.read_char()?;
+
+        end_index = ei;
+      } else {
+        break;
+      }
+    }
+
+    Ok((end_index, &self.str_input[idx..=end_index]))
+  }
+
+  fn read_hexdigit(&mut self, idx: usize) -> Result<(usize, &str)> {
+    let mut end_index = idx;
+
+    while let Some(&c) = self.peek_char() {
+      if is_hexdigit(c.1) {
+        let (ei, _) = self.read_char()?;
+
+        end_index = ei;
+      } else {
+        break;
+      }
+    }
+
+    Ok((end_index, &self.str_input[idx..=end_index]))
+  }
+
   fn peek_char(&mut self) -> Option<&(usize, char)> {
     self.input.peek()
   }
@@ -868,6 +1000,10 @@ fn is_ealpha(ch: char) -> bool {
 
 fn is_digit(ch: char) -> bool {
   ch.is_digit(10)
+}
+
+fn is_hexdigit(ch: char) -> bool {
+  ch.is_digit(16)
 }
 
 #[cfg(test)]
@@ -1118,20 +1254,48 @@ mod tests {
 
   #[test]
   fn verify_range() -> Result<()> {
-    let input = r#"100.5..150.5"#;
+    let input = r#"-10.5..10.5"#;
 
     let mut l = Lexer::new(input);
 
     let expected_tokens = [
-      (VALUE(Value::FLOAT(100.5)), "100.5"),
+      (VALUE(Value::FLOAT(-10.5)), "-10.5"),
       (RANGEOP(true), ".."),
-      (VALUE(Value::FLOAT(150.5)), "150.5"),
+      (VALUE(Value::FLOAT(10.5)), "10.5"),
     ];
 
     for (expected_tok, literal) in expected_tokens.iter() {
       let tok = l.next_token()?;
       assert_eq!((expected_tok, *literal), (&tok.1, &*tok.1.to_string()))
     }
+
+    Ok(())
+  }
+
+  #[test]
+  fn verify_hexfloat() -> Result<()> {
+    let input = r#"0x1.999999999999ap-4"#;
+
+    let mut l = Lexer::new(input);
+    let tok = l.next_token()?;
+    assert_eq!(
+      (&VALUE(Value::FLOAT(0.1)), "0.1"),
+      (&tok.1, &*tok.1.to_string())
+    );
+
+    Ok(())
+  }
+
+  #[test]
+  fn verify_exponent() -> Result<()> {
+    let input = r#"-100.7e-1"#;
+
+    let mut l = Lexer::new(input);
+    let tok = l.next_token()?;
+    assert_eq!(
+      (&VALUE(Value::FLOAT(-10.07)), "-10.07"),
+      (&tok.1, &*tok.1.to_string())
+    );
 
     Ok(())
   }
