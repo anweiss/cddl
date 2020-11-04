@@ -151,8 +151,8 @@
 //! - [x] operator precedence
 //! - [x] comments
 //! - [x] numerical int/uint values
-//! - [ ] numerical hexfloat values
-//! - [ ] numerical values with exponents
+//! - [x] numerical hexfloat values
+//! - [x] numerical values with exponents
 //! - [x] unprefixed byte strings
 //! - [x] prefixed byte strings
 //!

@@ -24,6 +24,7 @@ base64 = { version = "0.13", default-features = false }
 chrono = { version = "0.4", optional = true }
 clap = { version = "2.33", optional = true }
 codespan-reporting = "0.9"
+hexf-parse = "0.1"
 itertools = "0.9"
 lexical-core = "0.7"
 regex = { version = "1.4", default-features = false, features = ["std"] }
