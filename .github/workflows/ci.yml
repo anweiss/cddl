@@ -2,7 +2,23 @@ on:
   push:
     tags-ignore:
       - '*'
+    paths:
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/anchore-analysis.yml'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'Cargo.toml'
+      - 'src/**'
+      - 'tests/**'
   pull_request:
+    paths:
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/anchore-analysis.yml'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'Cargo.toml'
+      - 'src/**'
+      - 'tests/**'
 
 name: Build and Test
 
