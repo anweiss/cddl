@@ -480,9 +480,11 @@ pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
-/// Validate an array based on a homogenous CDDL array with an occurrence
-/// indicator. The returned boolean indicates whether to validate the array
-/// homogenously or non-homogenously (based on the index of the entry)
+/// Validate array length and [non]homogeneity based on a given optional
+/// occurrence indicator. The first bool in the returned tuple indicates whether
+/// or not a subsequent validation of the array's elements shouch be homogenous.
+/// The second bool in the returned tuple indicates whether or not an empty
+/// array is allowed during a subsequent validation of the array's elements.
 pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
   occurrence: Option<&Occur>,
   entry_counts: Option<&[EntryCount]>,
