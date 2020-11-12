@@ -7,7 +7,7 @@ use crate::{
 };
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
-use std::{convert::TryFrom, fmt};
+use std::{collections::HashMap, convert::TryFrom, fmt};
 
 use super::*;
 
@@ -154,8 +154,15 @@ pub struct JSONValidator<'a> {
   advance_to_next_entry: bool,
   is_ctrl_map_equality: bool,
   entry_counts: Option<Vec<EntryCount>>,
+  // Collect map entry keys that have already been validated
   validated_keys: Option<Vec<String>>,
+  // Collect map entry values that have yet to be validated
   values_to_validate: Option<Vec<Value>>,
+  // Collect valid array indices when entries are type choices
+  valid_array_items: Option<Vec<usize>>,
+  // Collect invalid array item errors where the key is the index of the invalid
+  // array item
+  array_errors: Option<HashMap<usize, Vec<ValidationError>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -192,6 +199,8 @@ impl<'a> JSONValidator<'a> {
       entry_counts: None,
       validated_keys: None,
       values_to_validate: None,
+      valid_array_items: None,
+      array_errors: None,
     }
   }
 
@@ -305,8 +314,28 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
     let initial_error_count = self.errors.len();
     for type_choice in t.type_choices.iter() {
+      // If validating an array whose elements are type choices (i.e. [ 1* tstr
+      // / integer ]), collect all errors and filter after the fact
+      if matches!(self.json, Value::Array(_)) {
+        let error_count = self.errors.len();
+        self.visit_type_choice(type_choice)?;
+        if self.errors.len() == error_count {
+          // Disregard invalid type choice validation errors if one of the
+          // choices validates successfully
+          let type_choice_error_count = self.errors.len() - initial_error_count;
+          if type_choice_error_count > 0 {
+            for _ in 0..type_choice_error_count {
+              self.errors.pop();
+            }
+          }
+        }
+
+        continue;
+      }
+
       let error_count = self.errors.len();
       self.visit_type_choice(type_choice)?;
+
       if self.errors.len() == error_count {
         // Disregard invalid type choice validation errors if one of the
         // choices validates successfully
@@ -437,94 +466,79 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     is_inclusive: bool,
   ) -> visitor::Result<ValidationError> {
     if let Value::Array(a) = &self.json {
-      let allow_empty_array = matches!(self.occurrence.as_ref(), Some(Occur::Optional(_)));
+      match validate_array_occurrence(
+        self.occurrence.as_ref().take(),
+        self.entry_counts.as_ref().map(|ec| &ec[..]),
+        a,
+      ) {
+        Ok((iter_items, allow_empty_array)) => {
+          if iter_items {
+            for (idx, v) in a.iter().enumerate() {
+              if let Some(indices) = &self.valid_array_items {
+                if self.is_multi_type_choice && indices.contains(&idx) {
+                  continue;
+                }
+              }
 
-      #[allow(unused_assignments)]
-      let mut iter_items = false;
-      match validate_array_occurrence(self.occurrence.as_ref().take(), a) {
-        Ok(r) => {
-          iter_items = r;
-        }
-        Err(e) => {
-          self.add_error(e);
-          return Ok(());
-        }
-      }
+              let mut jv = JSONValidator::new(self.cddl, v.clone());
+              jv.generic_rules = self.generic_rules.clone();
+              jv.eval_generic_rule = self.eval_generic_rule;
+              jv.ctrl = self.ctrl.clone();
+              jv.is_multi_type_choice = self.is_multi_type_choice;
+              jv.json_location
+                .push_str(&format!("{}/{}", self.json_location, idx));
 
-      if !iter_items && !allow_empty_array {
-        if let Some(entry_counts) = &self.entry_counts {
-          let mut errors = Vec::new();
-          let len = a.len();
-          if !validate_entry_count(&entry_counts, len) {
-            for ec in entry_counts.iter() {
-              if let Some(occur) = &ec.entry_occurrence {
-                errors.push(format!(
-                  "expecting array with length per occurrence {}",
-                  occur,
-                ));
+              jv.visit_range(lower, upper, is_inclusive)?;
+
+              if self.is_multi_type_choice && jv.errors.is_empty() {
+                if let Some(indices) = &mut self.valid_array_items {
+                  indices.push(idx);
+                } else {
+                  self.valid_array_items = Some(vec![idx]);
+                }
+                continue;
+              }
+
+              if let Some(errors) = &mut self.array_errors {
+                if let Some(error) = errors.get_mut(&idx) {
+                  error.append(&mut jv.errors);
+                } else {
+                  errors.insert(idx, jv.errors);
+                }
               } else {
-                errors.push(format!(
-                  "expecting array with length {}, got {}",
-                  ec.count, len
-                ));
+                let mut errors = HashMap::new();
+                errors.insert(idx, jv.errors);
+                self.array_errors = Some(errors)
               }
             }
+          } else if let Some(idx) = self.group_entry_idx.take() {
+            if let Some(v) = a.get(idx) {
+              let mut jv = JSONValidator::new(self.cddl, v.clone());
+              jv.generic_rules = self.generic_rules.clone();
+              jv.eval_generic_rule = self.eval_generic_rule;
+              jv.ctrl = self.ctrl.clone();
+              jv.is_multi_type_choice = self.is_multi_type_choice;
+              jv.json_location
+                .push_str(&format!("{}/{}", self.json_location, idx));
 
-            for error in errors.into_iter() {
-              self.add_error(error);
+              jv.visit_range(lower, upper, is_inclusive)?;
+
+              self.errors.append(&mut jv.errors);
+            } else if !allow_empty_array {
+              self.add_error(format!("expected array item at index {}", idx));
             }
-
-            return Ok(());
+          } else {
+            self.add_error(format!(
+              "expected range lower {} upper {} inclusive {}, got {}",
+              lower, upper, is_inclusive, self.json
+            ));
           }
         }
-      }
-
-      if iter_items {
-        let mut errors = Vec::new();
-        let mut type_choice_success = false;
-        for (idx, v) in a.iter().enumerate() {
-          let mut jv = JSONValidator::new(self.cddl, v.clone());
-          jv.generic_rules = self.generic_rules.clone();
-          jv.eval_generic_rule = self.eval_generic_rule;
-          jv.ctrl = self.ctrl.clone();
-          jv.is_multi_type_choice = self.is_multi_type_choice;
-          jv.json_location
-            .push_str(&format!("{}/{}", self.json_location, idx));
-
-          jv.visit_range(lower, upper, is_inclusive)?;
-
-          if self.is_multi_type_choice && jv.errors.is_empty() {
-            type_choice_success = true;
-            break;
+        Err(errors) => {
+          for e in errors.into_iter() {
+            self.add_error(e);
           }
-
-          errors.append(&mut jv.errors);
         }
-
-        if !type_choice_success {
-          self.errors.append(&mut errors);
-        }
-      } else if let Some(idx) = self.group_entry_idx.take() {
-        if let Some(v) = a.get(idx) {
-          let mut jv = JSONValidator::new(self.cddl, v.clone());
-          jv.generic_rules = self.generic_rules.clone();
-          jv.eval_generic_rule = self.eval_generic_rule;
-          jv.ctrl = self.ctrl.clone();
-          jv.is_multi_type_choice = self.is_multi_type_choice;
-          jv.json_location
-            .push_str(&format!("{}/{}", self.json_location, idx));
-
-          jv.visit_range(lower, upper, is_inclusive)?;
-
-          self.errors.append(&mut jv.errors);
-        } else if !allow_empty_array {
-          self.add_error(format!("expected array item at index {}", idx));
-        }
-      } else {
-        self.add_error(format!(
-          "expected range lower {} upper {} inclusive {}, got {}",
-          lower, upper, is_inclusive, self.json
-        ));
       }
 
       return Ok(());
@@ -928,7 +942,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             }
           }
           _ => self.add_error(format!(
-            ".regexp/.pcre contro9l can only be matched against string data type, got {}",
+            ".regexp/.pcre control can only be matched against string data type, got {}",
             target
           )),
         }
@@ -972,91 +986,76 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             return Ok(());
           }
 
-          let allow_empty_array = matches!(self.occurrence.as_ref(), Some(Occur::Optional(_)));
+          match validate_array_occurrence(
+            self.occurrence.as_ref().take(),
+            self.entry_counts.as_ref().map(|ec| &ec[..]),
+            a,
+          ) {
+            Ok((iter_items, allow_empty_array)) => {
+              if iter_items {
+                for (idx, v) in a.iter().enumerate() {
+                  if let Some(indices) = &self.valid_array_items {
+                    if self.is_multi_type_choice && indices.contains(&idx) {
+                      continue;
+                    }
+                  }
 
-          #[allow(unused_assignments)]
-          let mut iter_items = false;
-          match validate_array_occurrence(self.occurrence.as_ref().take(), a) {
-            Ok(r) => {
-              iter_items = r;
-            }
-            Err(e) => {
-              self.add_error(e);
-              return Ok(());
-            }
-          }
+                  let mut jv = JSONValidator::new(self.cddl, v.clone());
+                  jv.generic_rules = self.generic_rules.clone();
+                  jv.eval_generic_rule = self.eval_generic_rule;
+                  jv.ctrl = self.ctrl.clone();
+                  jv.is_multi_type_choice = self.is_multi_type_choice;
+                  jv.json_location
+                    .push_str(&format!("{}/{}", self.json_location, idx));
 
-          if !iter_items && !allow_empty_array {
-            if let Some(entry_counts) = &self.entry_counts {
-              let mut errors = Vec::new();
-              let len = a.len();
-              if !validate_entry_count(&entry_counts, len) {
-                for ec in entry_counts.iter() {
-                  if let Some(occur) = &ec.entry_occurrence {
-                    errors.push(format!(
-                      "expecting array with length per occurrence {}",
-                      occur,
-                    ));
+                  jv.visit_group(group)?;
+
+                  if self.is_multi_type_choice && jv.errors.is_empty() {
+                    if let Some(indices) = &mut self.valid_array_items {
+                      indices.push(idx);
+                    } else {
+                      self.valid_array_items = Some(vec![idx]);
+                    }
+                    continue;
+                  }
+
+                  if let Some(errors) = &mut self.array_errors {
+                    if let Some(error) = errors.get_mut(&idx) {
+                      error.append(&mut jv.errors);
+                    } else {
+                      errors.insert(idx, jv.errors);
+                    }
                   } else {
-                    errors.push(format!(
-                      "expecting array with length {}, got {}",
-                      ec.count, len
-                    ));
+                    let mut errors = HashMap::new();
+                    errors.insert(idx, jv.errors);
+                    self.array_errors = Some(errors)
                   }
                 }
+              } else if let Some(idx) = self.group_entry_idx.take() {
+                if let Some(v) = a.get(idx) {
+                  let mut jv = JSONValidator::new(self.cddl, v.clone());
+                  jv.generic_rules = self.generic_rules.clone();
+                  jv.eval_generic_rule = self.eval_generic_rule;
+                  jv.ctrl = self.ctrl.clone();
+                  jv.is_multi_type_choice = self.is_multi_type_choice;
+                  jv.json_location
+                    .push_str(&format!("{}/{}", self.json_location, idx));
 
-                for error in errors.into_iter() {
-                  self.add_error(error);
+                  jv.visit_group(group)?;
+
+                  self.errors.append(&mut jv.errors);
+                } else if !allow_empty_array {
+                  self.add_error(format!("expected map object {} at index {}", group, idx));
                 }
-
-                return Ok(());
+              } else {
+                self.add_error(format!("expected map object {}, got {}", group, self.json));
               }
             }
-          }
-
-          if iter_items {
-            let mut errors = Vec::new();
-            let mut type_choice_success = false;
-            for (idx, v) in a.iter().enumerate() {
-              let mut jv = JSONValidator::new(self.cddl, v.clone());
-              jv.generic_rules = self.generic_rules.clone();
-              jv.eval_generic_rule = self.eval_generic_rule;
-              jv.ctrl = self.ctrl.clone();
-              jv.is_multi_type_choice = self.is_multi_type_choice;
-              jv.json_location
-                .push_str(&format!("{}/{}", self.json_location, idx));
-
-              jv.visit_group(group)?;
-
-              if self.is_multi_type_choice && jv.errors.is_empty() {
-                type_choice_success = true;
-                break;
+            Err(errors) => {
+              for e in errors.into_iter() {
+                self.add_error(e);
               }
-
-              errors.append(&mut jv.errors);
             }
-
-            if !type_choice_success {
-              self.errors.append(&mut errors);
-            }
-          } else if let Some(idx) = self.group_entry_idx.take() {
-            if let Some(v) = a.get(idx) {
-              let mut jv = JSONValidator::new(self.cddl, v.clone());
-              jv.generic_rules = self.generic_rules.clone();
-              jv.eval_generic_rule = self.eval_generic_rule;
-              jv.ctrl = self.ctrl.clone();
-              jv.is_multi_type_choice = self.is_multi_type_choice;
-              jv.json_location
-                .push_str(&format!("{}/{}", self.json_location, idx));
-
-              jv.visit_group(group)?;
-
-              self.errors.append(&mut jv.errors);
-            } else if !allow_empty_array {
-              self.add_error(format!("expected map object {} at index {}", group, idx));
-            }
-          } else {
-            self.add_error(format!("expected map object {}, got {}", group, self.json));
           }
 
           Ok(())
@@ -1086,6 +1085,22 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
+
+          if let Some(errors) = &mut self.array_errors {
+            if let Some(indices) = &self.valid_array_items {
+              for idx in indices.iter() {
+                errors.remove(idx);
+              }
+            }
+
+            for mut error in errors.values_mut() {
+              self.errors.append(&mut error);
+            }
+          }
+
+          self.valid_array_items = None;
+          self.array_errors = None;
+
           Ok(())
         }
         _ => {
@@ -1363,91 +1378,76 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           return Ok(());
         }
 
-        let allow_empty_array = matches!(self.occurrence.as_ref(), Some(Occur::Optional(_)));
+        match validate_array_occurrence(
+          self.occurrence.as_ref().take(),
+          self.entry_counts.as_ref().map(|ec| &ec[..]),
+          a,
+        ) {
+          Ok((iter_items, allow_empty_array)) => {
+            if iter_items {
+              for (idx, v) in a.iter().enumerate() {
+                if let Some(indices) = &self.valid_array_items {
+                  if self.is_multi_type_choice && indices.contains(&idx) {
+                    continue;
+                  }
+                }
 
-        #[allow(unused_assignments)]
-        let mut iter_items = false;
-        match validate_array_occurrence(self.occurrence.as_ref().take(), a) {
-          Ok(r) => {
-            iter_items = r;
-          }
-          Err(e) => {
-            self.add_error(e);
-            return Ok(());
-          }
-        }
+                let mut jv = JSONValidator::new(self.cddl, v.clone());
+                jv.generic_rules = self.generic_rules.clone();
+                jv.eval_generic_rule = self.eval_generic_rule;
+                jv.is_multi_type_choice = self.is_multi_type_choice;
+                jv.ctrl = self.ctrl.clone();
+                jv.json_location
+                  .push_str(&format!("{}/{}", self.json_location, idx));
 
-        if !iter_items && !allow_empty_array {
-          if let Some(entry_counts) = &self.entry_counts {
-            let mut errors = Vec::new();
-            let len = a.len();
-            if !validate_entry_count(&entry_counts, len) {
-              for ec in entry_counts.iter() {
-                if let Some(occur) = &ec.entry_occurrence {
-                  errors.push(format!(
-                    "expecting array with length per occurrence {}",
-                    occur,
-                  ));
+                jv.visit_identifier(ident)?;
+
+                if self.is_multi_type_choice && jv.errors.is_empty() {
+                  if let Some(indices) = &mut self.valid_array_items {
+                    indices.push(idx);
+                  } else {
+                    self.valid_array_items = Some(vec![idx]);
+                  }
+                  continue;
+                }
+
+                if let Some(errors) = &mut self.array_errors {
+                  if let Some(error) = errors.get_mut(&idx) {
+                    error.append(&mut jv.errors);
+                  } else {
+                    errors.insert(idx, jv.errors);
+                  }
                 } else {
-                  errors.push(format!(
-                    "expecting array with length {}, got {}",
-                    ec.count, len
-                  ));
+                  let mut errors = HashMap::new();
+                  errors.insert(idx, jv.errors);
+                  self.array_errors = Some(errors)
                 }
               }
+            } else if let Some(idx) = self.group_entry_idx.take() {
+              if let Some(v) = a.get(idx) {
+                let mut jv = JSONValidator::new(self.cddl, v.clone());
+                jv.generic_rules = self.generic_rules.clone();
+                jv.eval_generic_rule = self.eval_generic_rule;
+                jv.ctrl = self.ctrl.clone();
+                jv.is_multi_type_choice = self.is_multi_type_choice;
+                jv.json_location
+                  .push_str(&format!("{}/{}", self.json_location, idx));
 
-              for error in errors.into_iter() {
-                self.add_error(error);
+                jv.visit_identifier(ident)?;
+
+                self.errors.append(&mut jv.errors);
+              } else if !allow_empty_array {
+                self.add_error(format!("expected type {} at index {}", ident, idx));
               }
-
-              return Ok(());
+            } else {
+              self.add_error(format!("expected type {}, got {}", ident, self.json));
             }
           }
-        }
-
-        if iter_items {
-          let mut errors = Vec::new();
-          let mut type_choice_success = false;
-          for (idx, v) in a.iter().enumerate() {
-            let mut jv = JSONValidator::new(self.cddl, v.clone());
-            jv.generic_rules = self.generic_rules.clone();
-            jv.eval_generic_rule = self.eval_generic_rule;
-            jv.is_multi_type_choice = self.is_multi_type_choice;
-            jv.ctrl = self.ctrl.clone();
-            jv.json_location
-              .push_str(&format!("{}/{}", self.json_location, idx));
-
-            jv.visit_identifier(ident)?;
-
-            if self.is_multi_type_choice && jv.errors.is_empty() {
-              type_choice_success = true;
-              break;
+          Err(errors) => {
+            for e in errors.into_iter() {
+              self.add_error(e);
             }
-
-            errors.append(&mut jv.errors);
           }
-
-          if !type_choice_success {
-            self.errors.append(&mut errors);
-          }
-        } else if let Some(idx) = self.group_entry_idx.take() {
-          if let Some(v) = a.get(idx) {
-            let mut jv = JSONValidator::new(self.cddl, v.clone());
-            jv.generic_rules = self.generic_rules.clone();
-            jv.eval_generic_rule = self.eval_generic_rule;
-            jv.ctrl = self.ctrl.clone();
-            jv.is_multi_type_choice = self.is_multi_type_choice;
-            jv.json_location
-              .push_str(&format!("{}/{}", self.json_location, idx));
-
-            jv.visit_identifier(ident)?;
-
-            self.errors.append(&mut jv.errors);
-          } else if !allow_empty_array {
-            self.add_error(format!("expected type {} at index {}", ident, idx));
-          }
-        } else {
-          self.add_error(format!("expected type {}, got {}", ident, self.json));
         }
 
         Ok(())
@@ -1735,91 +1735,76 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           return Ok(());
         }
 
-        let allow_empty_array = matches!(self.occurrence.as_ref(), Some(Occur::Optional(_)));
+        match validate_array_occurrence(
+          self.occurrence.as_ref().take(),
+          self.entry_counts.as_ref().map(|ec| &ec[..]),
+          a,
+        ) {
+          Ok((iter_items, allow_empty_array)) => {
+            if iter_items {
+              for (idx, v) in a.iter().enumerate() {
+                if let Some(indices) = &self.valid_array_items {
+                  if self.is_multi_type_choice && indices.contains(&idx) {
+                    continue;
+                  }
+                }
 
-        #[allow(unused_assignments)]
-        let mut iter_items = false;
-        match validate_array_occurrence(self.occurrence.as_ref().take(), a) {
-          Ok(r) => {
-            iter_items = r;
-          }
-          Err(e) => {
-            self.add_error(e);
-            return Ok(());
-          }
-        }
+                let mut jv = JSONValidator::new(self.cddl, v.clone());
+                jv.generic_rules = self.generic_rules.clone();
+                jv.eval_generic_rule = self.eval_generic_rule;
+                jv.is_multi_type_choice = self.is_multi_type_choice;
+                jv.ctrl = self.ctrl.clone();
+                jv.json_location
+                  .push_str(&format!("{}/{}", self.json_location, idx));
 
-        if !iter_items && !allow_empty_array {
-          if let Some(entry_counts) = &self.entry_counts {
-            let mut errors = Vec::new();
-            let len = a.len();
-            if !validate_entry_count(&entry_counts, len) {
-              for ec in entry_counts.iter() {
-                if let Some(occur) = &ec.entry_occurrence {
-                  errors.push(format!(
-                    "expecting array with length per occurrence {}",
-                    occur,
-                  ));
+                jv.visit_value(value)?;
+
+                if self.is_multi_type_choice && jv.errors.is_empty() {
+                  if let Some(indices) = &mut self.valid_array_items {
+                    indices.push(idx);
+                  } else {
+                    self.valid_array_items = Some(vec![idx]);
+                  }
+                  continue;
+                }
+
+                if let Some(errors) = &mut self.array_errors {
+                  if let Some(error) = errors.get_mut(&idx) {
+                    error.append(&mut jv.errors);
+                  } else {
+                    errors.insert(idx, jv.errors);
+                  }
                 } else {
-                  errors.push(format!(
-                    "expecting array with length {}, got {}",
-                    ec.count, len
-                  ));
+                  let mut errors = HashMap::new();
+                  errors.insert(idx, jv.errors);
+                  self.array_errors = Some(errors)
                 }
               }
+            } else if let Some(idx) = self.group_entry_idx.take() {
+              if let Some(v) = a.get(idx) {
+                let mut jv = JSONValidator::new(self.cddl, v.clone());
+                jv.generic_rules = self.generic_rules.clone();
+                jv.eval_generic_rule = self.eval_generic_rule;
+                jv.is_multi_type_choice = self.is_multi_type_choice;
+                jv.ctrl = self.ctrl.clone();
+                jv.json_location
+                  .push_str(&format!("{}/{}", self.json_location, idx));
 
-              for error in errors.into_iter() {
-                self.add_error(error);
+                jv.visit_value(value)?;
+
+                self.errors.append(&mut jv.errors);
+              } else if !allow_empty_array {
+                self.add_error(format!("expected value {} at index {}", value, idx));
               }
-
-              return Ok(());
+            } else {
+              self.add_error(format!("expected value {}, got {}", value, self.json));
             }
           }
-        }
-
-        if iter_items {
-          let mut errors = Vec::new();
-          let mut type_choice_success = false;
-          for (idx, v) in a.iter().enumerate() {
-            let mut jv = JSONValidator::new(self.cddl, v.clone());
-            jv.generic_rules = self.generic_rules.clone();
-            jv.eval_generic_rule = self.eval_generic_rule;
-            jv.is_multi_type_choice = self.is_multi_type_choice;
-            jv.ctrl = self.ctrl.clone();
-            jv.json_location
-              .push_str(&format!("{}/{}", self.json_location, idx));
-
-            jv.visit_value(value)?;
-
-            if self.is_multi_type_choice && jv.errors.is_empty() {
-              type_choice_success = true;
-              break;
+          Err(errors) => {
+            for e in errors.into_iter() {
+              self.add_error(e);
             }
-
-            errors.append(&mut jv.errors);
           }
-
-          if !type_choice_success {
-            self.errors.append(&mut errors);
-          }
-        } else if let Some(idx) = self.group_entry_idx.take() {
-          if let Some(v) = a.get(idx) {
-            let mut jv = JSONValidator::new(self.cddl, v.clone());
-            jv.generic_rules = self.generic_rules.clone();
-            jv.eval_generic_rule = self.eval_generic_rule;
-            jv.is_multi_type_choice = self.is_multi_type_choice;
-            jv.ctrl = self.ctrl.clone();
-            jv.json_location
-              .push_str(&format!("{}/{}", self.json_location, idx));
-
-            jv.visit_value(value)?;
-
-            self.errors.append(&mut jv.errors);
-          } else if !allow_empty_array {
-            self.add_error(format!("expected value {} at index {}", value, idx));
-          }
-        } else {
-          self.add_error(format!("expected value {}, got {}", value, self.json));
         }
 
         None
