@@ -1,6 +1,6 @@
 # cddl-rs
 
-[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Publish packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.8.3&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22) [![Build and Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22)
+[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Publish packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.8.4&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22) [![Build and Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22)
 
 > This crate was originally developed as a personal learning exercise for getting acquainted with Rust and parsing in general. There are likely more performant and stable libraries out there for parsing CDDL. While there are some examples of this crate being used in production, careful consideration should be made prior to using this crate as such.
 
@@ -284,7 +284,7 @@ The following tags are supported when validating CBOR:
 | `mime-message = #6.36(tstr)`             | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 | `cbor-any = #6.55799(any)`               | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 
-The `.bits`, `.cbor` and `.cborseq` control operators are not yet implemented.
+The `.bits` control operator is not yet implemented.
 
 ## `no_std` support
 
