@@ -17,5 +17,6 @@ jobs:
         uses: release-drafter/release-drafter@v5
         with:
           config-name: vscode-extension-release-drafter.yml
+          publish: ${{ startsWith(github.ref, 'refs/tags') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
