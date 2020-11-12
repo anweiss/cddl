@@ -484,56 +484,89 @@ pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 /// indicator. The returned boolean indicates whether to validate the array
 /// homogenously or non-homogenously (based on the index of the entry)
 pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
-  occurence: Option<&Occur>,
+  occurrence: Option<&Occur>,
+  entry_counts: Option<&[EntryCount]>,
   values: &[T],
-) -> std::result::Result<bool, String> {
-  match occurence {
-    Some(Occur::ZeroOrMore(_)) => Ok(true),
+) -> std::result::Result<(bool, bool), Vec<String>> {
+  let mut iter_items = false;
+  let allow_empty_array = matches!(occurrence, Some(Occur::Optional(_)));
+
+  let mut errors = Vec::new();
+
+  match occurrence {
+    Some(Occur::ZeroOrMore(_)) => iter_items = true,
     Some(Occur::OneOrMore(_)) => {
       if values.is_empty() {
-        Err("array must have at least one item".to_string())
+        errors.push("array must have at least one item".to_string());
       } else {
-        Ok(true)
+        iter_items = true;
       }
     }
     Some(Occur::Exact { lower, upper, .. }) => {
       if let Some(lower) = lower {
         if let Some(upper) = upper {
           if lower == upper && values.len() != *lower {
-            return Err(format!("array must have exactly {} items", lower));
+            errors.push(format!("array must have exactly {} items", lower));
           }
           if values.len() < *lower || values.len() > *upper {
-            return Err(format!(
+            errors.push(format!(
               "array must have between {} and {} items",
               lower, upper
             ));
           }
         } else if values.len() < *lower {
-          return Err(format!("array must have at least {} items", lower));
+          errors.push(format!("array must have at least {} items", lower));
         }
       } else if let Some(upper) = upper {
         if values.len() > *upper {
-          return Err(format!("array must have not more than {} items", upper));
+          errors.push(format!("array must have not more than {} items", upper));
         }
       }
 
-      Ok(true)
+      iter_items = true;
     }
     Some(Occur::Optional(_)) => {
       if values.len() > 1 {
-        return Err("array must have 0 or 1 items".to_string());
+        errors.push("array must have 0 or 1 items".to_string());
       }
 
-      Ok(false)
+      iter_items = false;
     }
     None => {
       if values.is_empty() {
-        Err("array must have exactly one item".to_string())
+        errors.push("array must have exactly one item".to_string());
       } else {
-        Ok(false)
+        iter_items = false;
       }
     }
   }
+
+  if !iter_items && !allow_empty_array {
+    if let Some(entry_counts) = entry_counts {
+      let len = values.len();
+      if !validate_entry_count(&entry_counts, len) {
+        for ec in entry_counts.iter() {
+          if let Some(occur) = &ec.entry_occurrence {
+            errors.push(format!(
+              "expecting array with length per occurrence {}",
+              occur,
+            ));
+          } else {
+            errors.push(format!(
+              "expecting array with length {}, got {}",
+              ec.count, len
+            ));
+          }
+        }
+      }
+    }
+  }
+
+  if !errors.is_empty() {
+    return Err(errors);
+  }
+
+  Ok((iter_items, allow_empty_array))
 }
 
 /// Retrieve number of group entries from a group choice. This is currently only
