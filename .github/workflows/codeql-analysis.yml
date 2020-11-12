@@ -7,14 +7,14 @@ name: 'CodeQL'
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - '.github/workflows/codeql-analysis.yml'
       - 'www/**'
       - 'cddl-lsp/**'
   pull_request:
     # The branches below must be a subset of the branches above
-    branches: [master]
+    branches: [main]
     paths:
       - '.github/workflows/codeql-analysis.yml'
       - 'www/**'

@@ -8,30 +8,30 @@ name: Anchore Container Scan
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
     # The branches below must be a subset of the branches above
-    branches: [master]
+    branches: [main]
   schedule:
     - cron: '0 2 * * 4'
-      
+
 jobs:
   anchore-build-scan:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v2
-      
-    - name: Build the Docker image
-      run: docker build -t ghcr.io/anweiss/cddl-cli:latest .
-      
-    - name: Run the Anchore scan action itself with GitHub Advanced Security code scanning integration enabled
-      uses: anchore/scan-action@main
-      with:
-        image: "ghcr.io/anweiss/cddl-cli:latest"
-        acs-report-enable: true
+      - name: Checkout repository
+        uses: actions/checkout@v2
 
-    - name: Upload Anchore Scan Report
-      uses: github/codeql-action/upload-sarif@v1
-      with:
-        sarif_file: results.sarif
+      - name: Build the Docker image
+        run: docker build -t ghcr.io/anweiss/cddl-cli:latest .
+
+      - name: Run the Anchore scan action itself with GitHub Advanced Security code scanning integration enabled
+        uses: anchore/scan-action@main
+        with:
+          image: 'ghcr.io/anweiss/cddl-cli:latest'
+          acs-report-enable: true
+
+      - name: Upload Anchore Scan Report
+        uses: github/codeql-action/upload-sarif@v1
+        with:
+          sarif_file: results.sarif

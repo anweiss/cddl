@@ -12,7 +12,7 @@
   "bugs": {
     "url": "https://github.com/anweiss/cddl/issues"
   },
-  "homepage": "https://github.com/anweiss/cddl/blob/master/cddl-lsp/README.md",
+  "homepage": "https://github.com/anweiss/cddl/blob/main/cddl-lsp/README.md",
   "publisher": "anweiss",
   "preview": true,
   "categories": [

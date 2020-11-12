@@ -2,7 +2,7 @@ name: Draft release
 on:
   push:
     branches:
-      - master
+      - main
     paths-ignore:
       - '.github/workflows/release-vscode-extension.yml'
       - 'cddl-lsp/**'

@@ -2,7 +2,7 @@ name: Draft release for VSCode Extension
 on:
   push:
     branches:
-      - master
+      - main
     paths:
       - '.github/workflows/release-vscode-extension.yml'
       - 'cddl-lsp/**'
