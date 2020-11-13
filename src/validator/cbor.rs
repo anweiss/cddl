@@ -851,7 +851,8 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       t @ Some(Token::SIZE) => match target {
         Type2::Typename { ident, .. }
           if is_ident_string_data_type(self.cddl, ident)
-            || is_ident_uint_data_type(self.cddl, ident) =>
+            || is_ident_uint_data_type(self.cddl, ident)
+            || is_ident_byte_string_data_type(self.cddl, ident) =>
         {
           self.ctrl = t;
           self.visit_type2(controller)?;
@@ -944,6 +945,31 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           }
           _ => self.add_error(format!(
             ".cbor control can only be matched against a byte string data type, got {}",
+            target
+          )),
+        }
+        self.ctrl = None;
+
+        Ok(())
+      }
+      t @ Some(Token::BITS) => {
+        self.ctrl = t;
+        match target {
+          Type2::Typename { ident, .. }
+            if is_ident_byte_string_data_type(self.cddl, ident)
+              || is_ident_uint_data_type(self.cddl, ident) =>
+          {
+            match &self.cbor {
+              Value::Bytes(_) | Value::Array(_) => self.visit_type2(controller)?,
+              Value::Integer(i) if *i >= 0 => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                "{} control can only be matched against a CBOR byte string or uint, got {:?}",
+                ctrl, self.cbor,
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".bits control can only be matched against a byte string data type, got {}",
             target
           )),
         }
@@ -2224,6 +2250,17 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           Some(Token::GT) if *i > *v as i128 => None,
           Some(Token::GE) if *i >= *v as i128 => None,
           Some(Token::SIZE) if *i < 256i128.pow(*v as u32) => None,
+          Some(Token::BITS) => {
+            if let Some(sv) = 1u32.checked_shl(*v as u32) {
+              if (i & sv as i128) != 0 {
+                None
+              } else {
+                Some(format!("expected uint .bits {}, got {}", v, i))
+              }
+            } else {
+              Some(format!("expected uint .bits {}, got {}", v, i))
+            }
+          }
           None => {
             if *i == *v as i128 {
               None
@@ -2319,6 +2356,64 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         token::Value::BYTE(token::ByteValue::B16(b)) if s.as_bytes() == b.as_ref() => None,
         token::Value::BYTE(token::ByteValue::B64(b)) if s.as_bytes() == b.as_ref() => None,
         _ => Some(format!("expected {}, got \"{}\"", value, s)),
+      },
+      Value::Bytes(b) => match value {
+        token::Value::UINT(v) => match &self.ctrl {
+          Some(Token::SIZE) => {
+            if b.len() == *v {
+              None
+            } else {
+              Some(format!("expected \"{:?}\" .size {}, got {}", b, v, b.len()))
+            }
+          }
+          Some(Token::BITS) => {
+            if let Some(rsv) = v.checked_shr(3) {
+              if let Some(s) = b.get(rsv) {
+                if let Some(lsv) = 1u32.checked_shl(*v as u32 & 7) {
+                  if (*s as u32 & lsv) != 0 {
+                    println!("b: {:?}", b);
+                    None
+                  } else {
+                    Some(format!(
+                      "expected value {} {}, got {:?}",
+                      self.ctrl.clone().unwrap(),
+                      v,
+                      b
+                    ))
+                  }
+                } else {
+                  Some(format!(
+                    "expected value {} {}, got {:?}",
+                    self.ctrl.clone().unwrap(),
+                    v,
+                    b
+                  ))
+                }
+              } else {
+                Some(format!(
+                  "expected value {} {}, got {:?}",
+                  self.ctrl.clone().unwrap(),
+                  v,
+                  b
+                ))
+              }
+            } else {
+              Some(format!(
+                "expected value {} {}, got {:?}",
+                self.ctrl.clone().unwrap(),
+                v,
+                b
+              ))
+            }
+          }
+          _ => Some(format!(
+            "expected value {} {}, got {:?}",
+            self.ctrl.clone().unwrap(),
+            v,
+            b
+          )),
+        },
+        _ => Some(format!("expected {}, got {:?}", value, b)),
       },
       Value::Array(a) => {
         // Member keys are annotation only in an array context
@@ -2468,14 +2563,20 @@ mod tests {
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl = r#"my-embedded-cbor-seq = bytes .cborseq my-array
-    my-array = [* my-element]
-    my-element = "test" / 1"#;
+    let cddl = r#"tcpflagbytes = bstr .bits flags
+    flags = &(
+      fin: 8,
+      syn: 9,
+      rst: 10,
+      psh: 11,
+      ack: 12,
+      urg: 13,
+      ece: 14,
+      cwr: 15,
+      ns: 0,
+    ) / (4..7) ; data offset bits"#;
 
-    let cbor = serde_cbor::Value::Bytes(serde_cbor::to_vec(&serde_cbor::Value::Array(vec![
-      serde_cbor::Value::Text("test".to_string()),
-      serde_cbor::Value::Integer(1),
-    ]))?);
+    let cbor = serde_cbor::Value::Bytes(vec![0x90, 0x6d]);
 
     let mut lexer = lexer_from_str(cddl);
     let cddl = cddl_from_str(&mut lexer, cddl, true)?;
