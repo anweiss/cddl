@@ -56,7 +56,7 @@ std = ["serde_json", "serde_cbor", "serde", "chrono", "wasm-bindgen", "clap", "c
 lsp = ["std"]
 
 [[bin]]
-name = "cli"
+name = "cddl"
 required-features = ["std"]
 path = "src/bin/cli.rs"
 test = false

@@ -37,7 +37,29 @@ Rust is a systems programming language designed around safety and is ideally-sui
 
 ## CLI
 
-A CLI has been made available for various platforms and as a Docker image. The binary can be downloaded from GitHub [Releases](https://github.com/anweiss/cddl/releases). The tool supports parsing of `.cddl` files for verifying conformance against RFC 8610. It can also be used to validate `.json` documents and `.cbor` binary files against `.cddl` documents. Detailed information about the JSON and CBOR validation implementation can be found in the sections below. Instructions for using the tool can be viewed by executing the `help` subcommand:
+A CLI is available for various platforms. The tool supports parsing of `.cddl` files for verifying conformance against RFC 8610. It can also be used to validate `.json` documents and `.cbor` binary files against `.cddl` documents. Detailed information about the JSON and CBOR validation implementation can be found in the sections below.
+
+### Installation
+
+#### GitHub Releases
+
+Binaries for Linux, macOS and Windows can be downloaded from GitHub [Releases](https://github.com/anweiss/cddl/releases).
+
+#### Cargo
+
+```sh
+cargo install cddl
+```
+
+#### Docker
+
+```sh
+docker pull ghcr.io/anweiss/cddl-cli:latest
+```
+
+### Usage
+
+Instructions for using the tool can be viewed by executing the `help` subcommand:
 
 ```sh
 cddl help
@@ -51,13 +73,13 @@ If using Docker:
 docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
 ```
 
-You can validate JSON documents using the provided CLI:
+You can validate JSON documents:
 
 ```sh
 cddl validate --cddl <FILE.cddl> [FILE.json]...
 ```
 
-You can validate CBOR files as follows:
+You can validate CBOR files:
 
 ```sh
 cddl validate --cddl <FILE.cddl> [FILE.cbor]...
