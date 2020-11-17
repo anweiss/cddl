@@ -335,7 +335,7 @@ where
             self.advance_to_next_rule()?;
           }
         }
-        _ => continue,
+        Err(e) => return Err(e),
       }
     }
 
