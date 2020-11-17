@@ -26,8 +26,8 @@ jobs:
       - name: Build CLI
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cargo b --release --bin cli
-          cp target/release/cli cddl-linux-amd64
+          cargo b --release --bin cddl
+          cp target/release/cddl cddl-linux-amd64
           chmod +x cddl-linux-amd64
           tar -czvf cddl-linux-amd64.tar.gz cddl-linux-amd64
 
@@ -35,8 +35,8 @@ jobs:
         if: matrix.os == 'macOS-latest'
         run: |
           source $HOME/.cargo/env
-          cargo b --release --bin cli
-          cp target/release/cli cddl-darwin-amd64
+          cargo b --release --bin cddl
+          cp target/release/cddl cddl-darwin-amd64
           chmod +x cddl-darwin-amd64
           zip cddl-darwin-amd64.zip cddl-darwin-amd64
 
@@ -44,8 +44,8 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: powershell
         run: |
-          cargo b --release --bin cli
-          cp target\release\cli.exe cddl-windows-amd64.exe
+          cargo b --release --bin cddl
+          cp target\release\cddl.exe cddl-windows-amd64.exe
           Compress-Archive -Path .\cddl-windows-amd64.exe -DestinationPath cddl-windows-amd64.zip
 
       - name: Upload binary asset
