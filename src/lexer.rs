@@ -704,17 +704,33 @@ impl<'a> Lexer<'a> {
         '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\u{10FFFD}' => {
           let _ = self.read_char();
         }
+        // SESC
+        '\\' => {
+          let _ = self.read_char();
+          if let Some(&(_, ch)) = self.peek_char() {
+            match ch {
+              '\x20'..='\x7e' | '\u{0128}'..='\u{10FFFD}' => {
+                let _ = self.read_char()?;
+              }
+              _ => return Err((self.str_input, self.position, InvalidEscapeCharacter).into()),
+            }
+          }
+        }
         // Closing '
         '\x27' => return Ok(&self.str_input[idx..self.read_char()?.0]),
         _ => {
-          return Err(
-            (
-              self.str_input,
-              self.position,
-              InvalidByteStringLiteralCharacter,
-            )
-              .into(),
-          )
+          if ch.is_ascii_whitespace() {
+            let _ = self.read_char()?;
+          } else {
+            return Err(
+              (
+                self.str_input,
+                self.position,
+                InvalidByteStringLiteralCharacter,
+              )
+                .into(),
+            );
+          }
         }
       }
     }
@@ -1268,6 +1284,27 @@ mod tests {
       let tok = l.next_token()?;
       assert_eq!((expected_tok, *literal), (&tok.1, &*tok.1.to_string()))
     }
+
+    Ok(())
+  }
+
+  #[test]
+  fn verify_multiline_byte_string() -> Result<()> {
+    let input = r#"'test
+      test'"#;
+
+    let mut l = Lexer::new(input);
+    let tok = l.next_token()?;
+
+    assert_eq!(
+      (
+        &VALUE(Value::BYTE(ByteValue::UTF8(Cow::Borrowed(
+          b"test\n      test"
+        )))),
+        "'test\n      test'"
+      ),
+      (&tok.1, &*tok.1.to_string())
+    );
 
     Ok(())
   }
