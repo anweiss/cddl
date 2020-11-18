@@ -6,7 +6,10 @@
   "settings": {
     "terminal.integrated.shell.linux": "/bin/bash",
     "lldb.executable": "/usr/bin/lldb",
-    "rust-analyzer.updates.askBeforeDownload": false
+    "rust-analyzer.updates.askBeforeDownload": false,
+    "files.watcherExclude": {
+			"**/target/**": true
+		}
   },
   // Add the IDs of extensions you want installed when the container is created.
   "extensions": [
