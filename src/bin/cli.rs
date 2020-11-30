@@ -4,13 +4,12 @@ extern crate clap;
 use cddl::{cddl_from_str, lexer_from_str, validate_cbor_from_slice, validate_json_from_str};
 use clap::{App, AppSettings, Arg, SubCommand};
 use codespan_reporting::term::termcolor::{
-  Color, ColorChoice, ColorSpec, StandardStream, WriteColor,
+  BufferWriter, Color, ColorChoice, ColorSpec, WriteColor,
 };
 use std::{
   error::Error,
   fs::{self, File},
-  io,
-  io::{Read, Write},
+  io::{self, BufReader, Read, Write},
   path::Path,
 };
 
@@ -34,16 +33,32 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   let matches = app.get_matches();
 
-  let mut stdout = StandardStream::stdout(ColorChoice::Auto);
+  let stdoutbuffwrtr = BufferWriter::stdout(ColorChoice::Auto);
+  let mut stdout = stdoutbuffwrtr.buffer();
   stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
-  let mut stderr = StandardStream::stderr(ColorChoice::Auto);
+
+  let stderrbuffwrtr = BufferWriter::stdout(ColorChoice::Auto);
+  let mut stderr = stderrbuffwrtr.buffer();
   stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)))?;
 
   if let Some(matches) = matches.subcommand_matches("compile-cddl") {
     if let Some(c) = matches.value_of("cddl") {
-      if let Some(e) = std::path::Path::new(c).extension() {
+      let p = Path::new(c);
+      if !p.exists() {
+        writeln!(&mut stderr, "CDDL document at path {:?} does not exist", p)?;
+        stderrbuffwrtr.print(&stderr)?;
+
+        return Ok(());
+      }
+
+      if let Some(e) = p.extension() {
         if e.to_string_lossy() != "cddl" {
-          println!("File \"{}\" must have the \".cddl\" extension", c);
+          writeln!(
+            &mut stderr,
+            "File \"{}\" must have the \".cddl\" extension",
+            c
+          )?;
+          stderrbuffwrtr.print(&stderr)?;
 
           return Ok(());
         }
@@ -53,13 +68,39 @@ fn main() -> Result<(), Box<dyn Error>> {
       cddl_from_str(&mut lexer_from_str(&file_content), &file_content, true).map(|_| ())?;
 
       writeln!(&mut stdout, "{} is conformant", c)?;
+      stdoutbuffwrtr.print(&stdout)?;
     }
   }
 
   if let Some(matches) = matches.subcommand_matches("compile-json") {
-    if let Some(c) = matches.value_of("json") {
-      let file = std::fs::File::open(c)?;
-      let reader = std::io::BufReader::new(file);
+    if let Some(j) = matches.value_of("json") {
+      let p = Path::new(j);
+      if !p.exists() {
+        writeln!(
+          &mut stderr,
+          "\nCDDL document at path {:?} does not exist",
+          p
+        )?;
+        stderrbuffwrtr.print(&stderr)?;
+
+        return Ok(());
+      }
+
+      if let Some(e) = p.extension() {
+        if e.to_string_lossy() != "json" {
+          writeln!(
+            &mut stderr,
+            "File \"{}\" must have the \".json\" extension",
+            j
+          )?;
+          stderrbuffwrtr.print(&stderr)?;
+
+          return Ok(());
+        }
+      }
+
+      let file = File::open(j)?;
+      let reader = BufReader::new(file);
       let _: serde_json::Value = serde_json::from_reader(reader)?;
 
       return Ok(());
@@ -75,7 +116,22 @@ fn main() -> Result<(), Box<dyn Error>> {
           "\nCDDL document at path {:?} does not exist",
           p
         )?;
+        stderrbuffwrtr.print(&stderr)?;
+
         return Ok(());
+      }
+
+      if let Some(e) = p.extension() {
+        if e.to_string_lossy() != "cddl" {
+          writeln!(
+            &mut stderr,
+            "File \"{}\" must have the \".cddl\" extension",
+            cddl
+          )?;
+          stderrbuffwrtr.print(&stderr)?;
+
+          return Ok(());
+        }
       }
 
       let cddl_str = fs::read_to_string(cddl)?;
@@ -95,6 +151,8 @@ fn main() -> Result<(), Box<dyn Error>> {
           let p = Path::new(file);
           if !p.exists() {
             writeln!(&mut stderr, "\nFile at path {:?} does not exist", p)?;
+            stderrbuffwrtr.print(&stderr)?;
+
             return Ok(());
           }
 
@@ -103,10 +161,12 @@ fn main() -> Result<(), Box<dyn Error>> {
               Some("json") => match validate_json_from_str(&cddl_str, &fs::read_to_string(file)?) {
                 Ok(()) => {
                   writeln!(&mut stdout, "Validation of {:?} is successful", p)?;
+                  stdoutbuffwrtr.print(&stdout)?;
                 }
                 Err(e) => {
                   writeln!(&mut stderr, "Validation of {:?} failed", p)?;
                   writeln!(&mut stderr, "\n{}", e)?;
+                  stderrbuffwrtr.print(&stderr)?;
                 }
               },
               Some("cbor") => {
@@ -117,14 +177,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                 match validate_cbor_from_slice(&cddl_str, &data) {
                   Ok(()) => {
                     writeln!(&mut stdout, "Validation of {:?} is successful", p)?;
+                    stdoutbuffwrtr.print(&stdout)?;
                   }
                   Err(e) => {
                     writeln!(&mut stderr, "Validation of {:?} failed", p)?;
                     writeln!(&mut stderr, "\n{}", e)?;
+                    stderrbuffwrtr.print(&stderr)?;
                   }
                 }
               }
-              _ => writeln!(&mut stderr, "Unsupported file type {:?}", p)?,
+              _ => {
+                writeln!(
+                  &mut stderr,
+                  "\nFile {:?} is an unsupported file type. Must be either .json or .cbor",
+                  p
+                )?;
+                stderrbuffwrtr.print(&stderr)?;
+              }
             }
           }
         }
@@ -142,26 +211,33 @@ fn main() -> Result<(), Box<dyn Error>> {
           match validate_json_from_str(&cddl_str, &json) {
             Ok(()) => {
               writeln!(&mut stdout, "Validation from stdin is successful")?;
+              stdoutbuffwrtr.print(&stdout)?;
             }
             Err(e) => {
               writeln!(&mut stderr, "Validation from stdin failed")?;
               writeln!(&mut stderr, "\n{}", e)?;
+              stderrbuffwrtr.print(&stderr)?;
             }
           }
         } else {
           match validate_cbor_from_slice(&cddl_str, &data) {
             Ok(()) => {
               writeln!(&mut stdout, "Validation from stdin is successful")?;
+              stdoutbuffwrtr.print(&stdout)?;
             }
             Err(e) => {
               writeln!(&mut stderr, "Validation from stdin failed")?;
               writeln!(&mut stderr, "\n{}", e)?;
+              stderrbuffwrtr.print(&stderr)?;
             }
           }
         }
 
         return Ok(());
       }
+
+      writeln!(&mut stderr, "\nMissing files to validate")?;
+      stderrbuffwrtr.print(&stderr)?;
     }
   }
 
