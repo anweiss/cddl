@@ -484,6 +484,26 @@ pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
+///
+pub fn string_literals_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec<&'a str> {
+  let mut literals = Vec::new();
+  for r in cddl.rules.iter() {
+    if let Rule::Type { rule, .. } = r {
+      if rule.name == *ident {
+        for tc in rule.value.type_choices.iter() {
+          if let Type2::TextValue { value, .. } = tc.type1.type2 {
+            literals.push(value);
+          } else if let Type2::UTF8ByteString { value, .. } = &tc.type1.type2 {
+            literals.push(std::str::from_utf8(&value).unwrap());
+          }
+        }
+      }
+    }
+  }
+
+  literals
+}
+
 /// Validate array length and [non]homogeneity based on a given optional
 /// occurrence indicator. The first bool in the returned tuple indicates whether
 /// or not a subsequent validation of the array's elements shouch be homogenous.

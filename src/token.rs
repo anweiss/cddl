@@ -115,6 +115,10 @@ pub enum Token<'a> {
   /// Proposed control extension to support Perl-Compatible Regular Expressions
   /// (PCREs). See https://tools.ietf.org/html/rfc8610#section-3.8.3.2s
   PCRE,
+  /// .cat control operator Proposed control extension for string concatenation.
+  /// See
+  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-01#section-2.1.
+  CAT,
 
   /// group to choice enumeration '&'
   GTOCHOICE,
@@ -357,8 +361,8 @@ impl<'a> fmt::Display for Value<'a> {
   }
 }
 
-impl<'a> From<&'static str> for Value<'a> {
-  fn from(value: &'static str) -> Self {
+impl<'a> From<&'a str> for Value<'a> {
+  fn from(value: &'a str) -> Self {
     Value::TEXT(value)
   }
 }
@@ -478,6 +482,7 @@ impl<'a> fmt::Display for Token<'a> {
       Token::CBOR => write!(f, ".cbor"),
       Token::CBORSEQ => write!(f, ".cborseq"),
       Token::WITHIN => write!(f, ".within"),
+      Token::CAT => write!(f, ".cat"),
       Token::AND => write!(f, ".and"),
       Token::LT => write!(f, ".lt"),
       Token::LE => write!(f, ".le"),
@@ -556,6 +561,7 @@ pub fn lookup_control_from_str<'a>(ident: &str) -> Option<Token<'a>> {
     ".ne" => Some(Token::NE),
     ".default" => Some(Token::DEFAULT),
     ".pcre" => Some(Token::PCRE),
+    ".cat" => Some(Token::CAT),
     _ => None,
   }
 }
@@ -591,6 +597,7 @@ pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
     Token::NE => Some(".ne"),
     Token::DEFAULT => Some(".default"),
     Token::PCRE => Some(".pcre"),
+    Token::CAT => Some(".cat"),
     _ => None,
   }
 }

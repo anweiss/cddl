@@ -85,6 +85,14 @@ impl fmt::Display for ValidationError {
       error_str.push_str(&format!(" group entry associated with rule \"{}\"", entry));
     }
 
+    if self.json_location.is_empty() {
+      return write!(
+        f,
+        "{} at cddl location \"{}\" and at the root of the JSON document: {}",
+        error_str, self.cddl_location, self.reason
+      );
+    }
+
     write!(
       f,
       "{} at cddl location \"{}\" and JSON location {}: {}",
@@ -115,6 +123,7 @@ impl ValidationError {
 
 #[derive(Clone)]
 /// JSON validator type
+#[derive(Clone)]
 pub struct JSONValidator<'a> {
   cddl: &'a CDDL<'a>,
   json: Value,
@@ -777,96 +786,88 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     controller: &Type2<'a>,
   ) -> visitor::Result<ValidationError> {
     match lookup_control_from_str(ctrl) {
-      t @ Some(Token::EQ) => {
-        match target {
-          Type2::Typename { ident, .. } => {
-            if is_ident_string_data_type(self.cddl, ident)
-              || is_ident_numeric_data_type(self.cddl, ident)
-            {
-              return self.visit_type2(controller);
-            }
+      t @ Some(Token::EQ) => match target {
+        Type2::Typename { ident, .. } => {
+          if is_ident_string_data_type(self.cddl, ident)
+            || is_ident_numeric_data_type(self.cddl, ident)
+          {
+            return self.visit_type2(controller);
           }
-          Type2::Array { group, .. } => {
-            if let Value::Array(_) = &self.json {
-              let mut entry_counts = Vec::new();
-              for gc in group.group_choices.iter() {
-                let count = entry_counts_from_group_choice(self.cddl, gc);
-                entry_counts.push(count);
-              }
-              self.entry_counts = Some(entry_counts);
-              self.visit_type2(controller)?;
-              self.entry_counts = None;
-              return Ok(());
-            }
-          }
-          Type2::Map { .. } => {
-            if let Value::Object(_) = &self.json {
-              self.ctrl = t;
-              self.is_ctrl_map_equality = true;
-              self.visit_type2(controller)?;
-              self.ctrl = None;
-              self.is_ctrl_map_equality = false;
-              return Ok(());
-            }
-          }
-          _ => self.add_error(format!(
-            "target for .eq operator must be a string, numerical, array or map data type, got {}",
-            target
-          )),
         }
-        Ok(())
-      }
-      t @ Some(Token::NE) => {
-        match target {
-          Type2::Typename { ident, .. } => {
-            if is_ident_string_data_type(self.cddl, ident)
-              || is_ident_numeric_data_type(self.cddl, ident)
-            {
-              self.ctrl = t;
-              self.visit_type2(controller)?;
-              self.ctrl = None;
-              return Ok(());
+        Type2::Array { group, .. } => {
+          if let Value::Array(_) = &self.json {
+            let mut entry_counts = Vec::new();
+            for gc in group.group_choices.iter() {
+              let count = entry_counts_from_group_choice(self.cddl, gc);
+              entry_counts.push(count);
             }
+            self.entry_counts = Some(entry_counts);
+            self.visit_type2(controller)?;
+            self.entry_counts = None;
+            return Ok(());
           }
-          Type2::Array { .. } => {
-            if let Value::Array(_) = &self.json {
-              self.ctrl = t;
-              self.visit_type2(controller)?;
-              self.ctrl = None;
-              return Ok(());
-            }
-          }
-          Type2::Map { .. } => {
-            if let Value::Object(_) = &self.json {
-              self.ctrl = t;
-              self.is_ctrl_map_equality = true;
-              self.visit_type2(controller)?;
-              self.ctrl = None;
-              self.is_ctrl_map_equality = false;
-              return Ok(());
-            }
-          }
-          _ => self.add_error(format!(
-            "target for .ne operator must be a string, numerical, array or map data type, got {}",
-            target
-          )),
         }
-        Ok(())
-      }
+        Type2::Map { .. } => {
+          if let Value::Object(_) = &self.json {
+            self.ctrl = t;
+            self.is_ctrl_map_equality = true;
+            self.visit_type2(controller)?;
+            self.ctrl = None;
+            self.is_ctrl_map_equality = false;
+            return Ok(());
+          }
+        }
+        _ => self.add_error(format!(
+          "target for .eq operator must be a string, numerical, array or map data type, got {}",
+          target
+        )),
+      },
+      t @ Some(Token::NE) => match target {
+        Type2::Typename { ident, .. } => {
+          if is_ident_string_data_type(self.cddl, ident)
+            || is_ident_numeric_data_type(self.cddl, ident)
+          {
+            self.ctrl = t;
+            self.visit_type2(controller)?;
+            self.ctrl = None;
+            return Ok(());
+          }
+        }
+        Type2::Array { .. } => {
+          if let Value::Array(_) = &self.json {
+            self.ctrl = t;
+            self.visit_type2(controller)?;
+            self.ctrl = None;
+            return Ok(());
+          }
+        }
+        Type2::Map { .. } => {
+          if let Value::Object(_) = &self.json {
+            self.ctrl = t;
+            self.is_ctrl_map_equality = true;
+            self.visit_type2(controller)?;
+            self.ctrl = None;
+            self.is_ctrl_map_equality = false;
+            return Ok(());
+          }
+        }
+        _ => self.add_error(format!(
+          "target for .ne operator must be a string, numerical, array or map data type, got {}",
+          target
+        )),
+      },
       t @ Some(Token::LT) | t @ Some(Token::GT) | t @ Some(Token::GE) | t @ Some(Token::LE) => {
         match target {
           Type2::Typename { ident, .. } if is_ident_numeric_data_type(self.cddl, ident) => {
             self.ctrl = t;
             self.visit_type2(controller)?;
             self.ctrl = None;
-            Ok(())
           }
           _ => {
             self.add_error(format!(
               "target for .lt, .gt, .ge or .le operator must be a numerical data type, got {}",
               target
             ));
-            Ok(())
           }
         }
       }
@@ -878,14 +879,12 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           self.ctrl = t;
           self.visit_type2(controller)?;
           self.ctrl = None;
-          Ok(())
         }
         _ => {
           self.add_error(format!(
             "target for .size must a string or uint data type, got {}",
             target
           ));
-          Ok(())
         }
       },
       t @ Some(Token::AND) => {
@@ -893,7 +892,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         self.visit_type2(target)?;
         self.visit_type2(controller)?;
         self.ctrl = None;
-        Ok(())
       }
       t @ Some(Token::WITHIN) => {
         self.ctrl = t;
@@ -913,8 +911,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         }
 
         self.ctrl = None;
-
-        Ok(())
       }
       t @ Some(Token::DEFAULT) => {
         self.ctrl = t;
@@ -929,7 +925,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           }
         }
         self.ctrl = None;
-        Ok(())
       }
       t @ Some(Token::REGEXP) | t @ Some(Token::PCRE) => {
         self.ctrl = t;
@@ -949,14 +944,120 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           )),
         }
         self.ctrl = None;
+      }
+      t @ Some(Token::CAT) => {
+        self.ctrl = t;
+        match target {
+          Type2::TextValue { value: target, .. } => match controller {
+            Type2::TextValue {
+              value: controller, ..
+            } => {
+              let s = format!("{}{}", target, controller);
+              let mut jv = self.clone();
+              jv.visit_value(&(&*s).into())?;
+              self.errors.append(&mut jv.errors)
+            }
+            Type2::Typename { ident, .. } => {
+              for controller in string_literals_from_ident(self.cddl, ident).iter() {
+                let s = format!("{}{}", target, controller);
+                let mut jv = self.clone();
+                jv.visit_value(&(&*s).into())?;
+                self.errors.append(&mut jv.errors)
+              }
+            }
+            Type2::UTF8ByteString {
+              value: controller, ..
+            } => match std::str::from_utf8(controller) {
+              Ok(controller) => {
+                let s = format!("{}{}", target, controller);
+                let mut jv = self.clone();
+                jv.visit_value(&(&*s).into())?;
+                self.errors.append(&mut jv.errors)
+              }
 
-        Ok(())
+              Err(e) => self.add_error(format!("error parsing byte string: {}", e)),
+            },
+            _ => unimplemented!(),
+          },
+          Type2::Typename { ident, .. } => {
+            // Only grap the first type choice literal from the target per
+            // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
+            if let Some(target) = string_literals_from_ident(self.cddl, ident).first() {
+              match controller {
+                Type2::TextValue {
+                  value: controller, ..
+                } => {
+                  let s = format!("{}{}", target, controller);
+                  let mut jv = self.clone();
+                  jv.visit_value(&(&*s).into())?;
+                  self.errors.append(&mut jv.errors)
+                }
+                Type2::Typename { ident, .. } => {
+                  for controller in string_literals_from_ident(self.cddl, ident).iter() {
+                    let s = format!("{}{}", target, controller);
+                    let mut jv = self.clone();
+                    jv.visit_value(&(&*s).into())?;
+                    self.errors.append(&mut jv.errors)
+                  }
+                }
+                Type2::UTF8ByteString {
+                  value: controller, ..
+                } => match std::str::from_utf8(controller) {
+                  Ok(controller) => {
+                    let s = format!("{}{}", target, controller);
+                    let mut jv = self.clone();
+                    jv.visit_value(&(&*s).into())?;
+                    self.errors.append(&mut jv.errors)
+                  }
+                  Err(e) => self.add_error(format!("error parsing byte string: {}", e)),
+                },
+                _ => unimplemented!(),
+              }
+            }
+          }
+          Type2::UTF8ByteString { value: target, .. } => match std::str::from_utf8(target) {
+            Ok(target) => match controller {
+              Type2::TextValue {
+                value: controller, ..
+              } => {
+                let s = format!("{}{}", target, controller);
+                let mut jv = self.clone();
+                jv.visit_value(&(&*s).into())?;
+                self.errors.append(&mut jv.errors)
+              }
+              Type2::Typename { ident, .. } => {
+                for controller in string_literals_from_ident(self.cddl, ident).iter() {
+                  let s = format!("{}{}", target, controller);
+                  let mut jv = self.clone();
+                  jv.visit_value(&(&*s).into())?;
+                  self.errors.append(&mut jv.errors)
+                }
+              }
+              Type2::UTF8ByteString {
+                value: controller, ..
+              } => match std::str::from_utf8(controller) {
+                Ok(controller) => {
+                  let s = format!("{}{}", target, controller);
+                  let mut jv = self.clone();
+                  jv.visit_value(&(&*s).into())?;
+                  self.errors.append(&mut jv.errors)
+                }
+                Err(e) => self.add_error(format!("error parsing byte string: {}", e)),
+              },
+              _ => unimplemented!(),
+            },
+            Err(e) => self.add_error(format!("error parsing byte string: {}", e)),
+          },
+          _ => unimplemented!(),
+        }
+        self.ctrl = None;
       }
       _ => {
         self.add_error(format!("unsupported control operator {}", ctrl));
-        Ok(())
       }
     }
+
+    Ok(())
   }
 
   fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<ValidationError> {
@@ -1882,17 +1983,28 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use indoc::indoc;
 
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl = r#"serivceEndpoint = ~uri
-    "#;
-    let json = r#""test""#;
+    let cddl = indoc!(
+      r#"
+      a = "foo" .cat '
+        bar
+        baz
+      '"#
+    );
+    let json = r#""foo\n  bar\n  baz\n""#;
 
     let mut lexer = lexer_from_str(cddl);
-    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing)?;
+    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
     let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
+    let cddl = cddl.unwrap();
     let mut jv = JSONValidator::new(&cddl, json);
     jv.validate()?;
 
