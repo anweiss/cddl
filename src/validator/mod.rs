@@ -484,7 +484,8 @@ pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
-///
+/// Retrieve all text strings and byte string literals from a given rule
+/// identifier. Used for proposed .cat control operator.
 pub fn string_literals_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec<&'a str> {
   let mut literals = Vec::new();
   for r in cddl.rules.iter() {

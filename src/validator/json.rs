@@ -980,7 +980,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             _ => unimplemented!(),
           },
           Type2::Typename { ident, .. } => {
-            // Only grap the first type choice literal from the target per
+            // Only grab the first type choice literal from the target per
             // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
             if let Some(target) = string_literals_from_ident(self.cddl, ident).first() {
               match controller {
