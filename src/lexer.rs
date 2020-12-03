@@ -744,7 +744,7 @@ impl<'a> Lexer<'a> {
     while let Some(&(_, ch)) = self.peek_char() {
       match ch {
         // BCHAR
-        '\x20'..='\x26' | '\x28'..='\x5b' | '\u{0080}'..='\u{10FFFD}' => {
+        '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
           let _ = self.read_char();
         }
         // SESC
