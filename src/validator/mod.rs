@@ -4,6 +4,8 @@ pub mod cbor;
 /// JSON validation implementation
 pub mod json;
 
+use std::error::Error;
+
 use cbor::CBORValidator;
 use json::JSONValidator;
 use serde::de::Deserialize;
@@ -15,7 +17,18 @@ use crate::{
   },
   cddl_from_str, lexer_from_str,
   token::*,
+  visitor::Visitor,
 };
+
+trait Validator<'a, E: Error>: Visitor<'a, E> {
+  fn validate(&mut self) -> std::result::Result<(), E>;
+  fn add_error(&mut self, reason: String);
+}
+
+trait Validatable {}
+
+impl Validatable for serde_cbor::Value {}
+impl Validatable for serde_json::Value {}
 
 /// Validate JSON string from a given CDDL document string
 pub fn validate_json_from_str(cddl: &str, json: &str) -> json::Result {
@@ -711,4 +724,150 @@ pub fn format_regex(input: &str) -> Option<String> {
   formatted_regex = formatted_regex.replace("?<", "?P<");
 
   Some(formatted_regex)
+}
+
+/// Concatenate target and controller
+pub fn cat_operation(
+  cddl: &CDDL,
+  target: &Type2,
+  controller: &Type2,
+  literals: &mut Vec<String>,
+) -> Result<(), String> {
+  match target {
+    Type2::TextValue { value, .. } => match controller {
+      Type2::TextValue {
+        value: controller, ..
+      } => literals.push(format!("{}{}", value, controller)),
+      Type2::Typename { ident, .. } => {
+        for controller in string_literals_from_ident(cddl, ident).iter() {
+          literals.push(format!("{}{}", value, controller));
+        }
+      }
+      Type2::UTF8ByteString {
+        value: controller, ..
+      } => match std::str::from_utf8(controller) {
+        Ok(controller) => literals.push(format!("{}{}", value, controller)),
+        Err(e) => return Err(format!("error parsing byte string: {}", e)),
+      },
+      Type2::B16ByteString {
+        value: controller, ..
+      } => {
+        let mut buf = [0u8; 1024];
+        match base16::decode_slice(&controller[..], &mut buf) {
+          Ok(_) => match std::str::from_utf8(&buf) {
+            Ok(controller) => literals.push(format!("{}{}", value, controller)),
+            Err(e) => return Err(format!("error parsing byte string: {}", e)),
+          },
+          Err(e) => {
+            return Err(format!(
+              "error decoding base16 encoded byte string literal: {}",
+              e
+            ))
+          }
+        }
+      }
+      Type2::B64ByteString {
+        value: controller, ..
+      } => {
+        let mut buf = [0u8; 1024];
+        match base64::decode_config_slice(&controller[..], base64::URL_SAFE, &mut buf) {
+          Ok(_) => match std::str::from_utf8(&buf) {
+            Ok(controller) => literals.push(format!("{}{}", value, controller)),
+            Err(e) => return Err(format!("error parsing byte string: {}", e)),
+          },
+          Err(e) => {
+            return Err(format!(
+              "error decoding base64 encoded byte string literal: {}",
+              e
+            ))
+          }
+        }
+      }
+      Type2::ParenthesizedType { pt: controller, .. } => {
+        for controller in controller.type_choices.iter() {
+          if controller.type1.operator.is_none() {
+            cat_operation(cddl, target, &controller.type1.type2, literals)?;
+          }
+        }
+      }
+      _ => unimplemented!(),
+    },
+    Type2::Typename { ident, .. } => {
+      // Only grab the first type choice literal from the target per
+      // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
+      if let Some(value) = string_literals_from_ident(cddl, ident).first() {
+        match controller {
+          Type2::TextValue {
+            value: controller, ..
+          } => literals.push(format!("{}{}", value, controller)),
+          Type2::Typename { ident, .. } => {
+            let mut literals = Vec::new();
+            for controller in string_literals_from_ident(cddl, ident).iter() {
+              literals.push(format!("{}{}", value, controller));
+            }
+          }
+          Type2::UTF8ByteString {
+            value: controller, ..
+          } => match std::str::from_utf8(controller) {
+            Ok(controller) => {
+              literals.push(format!("{}{}", value, controller));
+            }
+            Err(e) => return Err(format!("error parsing byte string: {}", e)),
+          },
+          Type2::ParenthesizedType { pt: controller, .. } => {
+            for controller in controller.type_choices.iter() {
+              if controller.type1.operator.is_none() {
+                cat_operation(cddl, target, &controller.type1.type2, literals)?;
+              }
+            }
+          }
+          _ => unimplemented!(),
+        }
+      } else {
+        unimplemented!()
+      }
+    }
+    Type2::ParenthesizedType { pt: target, .. } => {
+      // Only grab the first type choice literal from the target per
+      // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
+      if let Some(tc) = target.type_choices.first() {
+        // Ignore nested operator
+        if tc.type1.operator.is_none() {
+          return cat_operation(cddl, &tc.type1.type2, controller, literals);
+        }
+      }
+
+      return Err("invalid target type in .cat control operator".to_string());
+    }
+    Type2::UTF8ByteString { value, .. } => match std::str::from_utf8(value) {
+      Ok(value) => match controller {
+        Type2::TextValue {
+          value: controller, ..
+        } => literals.push(format!("{}{}", value, controller)),
+        Type2::Typename { ident, .. } => {
+          for controller in string_literals_from_ident(cddl, ident).iter() {
+            literals.push(format!("{}{}", value, controller));
+          }
+        }
+        Type2::UTF8ByteString {
+          value: controller, ..
+        } => match std::str::from_utf8(controller) {
+          Ok(controller) => literals.push(format!("{}{}", value, controller)),
+          Err(e) => return Err(format!("error parsing byte string: {}", e)),
+        },
+        Type2::ParenthesizedType { pt: controller, .. } => {
+          for controller in controller.type_choices.iter() {
+            if controller.type1.operator.is_none() {
+              cat_operation(cddl, target, &controller.type1.type2, literals)?;
+            }
+          }
+        }
+        _ => unimplemented!(),
+      },
+      Err(e) => return Err(format!("error parsing byte string: {}", e)),
+    },
+    _ => unimplemented!(),
+  }
+
+  Ok(())
 }

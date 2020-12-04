@@ -50,6 +50,20 @@ impl std::error::Error for Error {
   }
 }
 
+impl Error {
+  fn from_validator(jv: &JSONValidator, reason: String) -> Self {
+    Error::Validation(vec![ValidationError {
+      cddl_location: jv.cddl_location.clone(),
+      json_location: jv.json_location.clone(),
+      reason,
+      is_multi_type_choice: jv.is_multi_type_choice,
+      is_group_to_choice_enum: jv.is_group_to_choice_enum,
+      type_group_name_entry: jv.type_group_name_entry.map(|e| e.to_string()),
+      is_multi_group_choice: jv.is_multi_group_choice,
+    }])
+  }
+}
+
 /// JSON validation error
 #[derive(Clone, Debug)]
 pub struct ValidationError {
@@ -121,7 +135,6 @@ impl ValidationError {
   }
 }
 
-#[derive(Clone)]
 /// JSON validator type
 #[derive(Clone)]
 pub struct JSONValidator<'a> {
@@ -215,16 +228,16 @@ impl<'a> JSONValidator<'a> {
       is_colon_shortcut_present: false,
     }
   }
+}
 
+impl<'a> Validator<'a, Error> for JSONValidator<'a> {
   /// Validate
-  pub fn validate(&mut self) -> std::result::Result<(), Error> {
+  fn validate(&mut self) -> std::result::Result<(), Error> {
     for r in self.cddl.rules.iter() {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {
         if rule.generic_params.is_none() {
-          self
-            .visit_type_rule(rule)
-            .map_err(|e| Error::Validation(vec![e]))?;
+          self.visit_type_rule(rule)?;
           break;
         }
       }
@@ -250,8 +263,8 @@ impl<'a> JSONValidator<'a> {
   }
 }
 
-impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
-  fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<ValidationError> {
+impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
+  fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<Error> {
     if let Some(gp) = &tr.generic_params {
       if let Some(gr) = self
         .generic_rules
@@ -285,7 +298,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> visitor::Result<ValidationError> {
+  fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> visitor::Result<Error> {
     if let Some(gp) = &gr.generic_params {
       if let Some(gr) = self
         .generic_rules
@@ -319,7 +332,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<ValidationError> {
+  fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<Error> {
     if t.type_choices.len() > 1 {
       self.is_multi_type_choice = true;
     }
@@ -365,7 +378,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_group(&mut self, g: &Group<'a>) -> visitor::Result<ValidationError> {
+  fn visit_group(&mut self, g: &Group<'a>) -> visitor::Result<Error> {
     if g.group_choices.len() > 1 {
       self.is_multi_group_choice = true;
     }
@@ -442,7 +455,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<ValidationError> {
+  fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<Error> {
     if self.is_group_to_choice_enum {
       let initial_error_count = self.errors.len();
       for tc in type_choices_from_group_choice(self.cddl, gc).iter() {
@@ -476,7 +489,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     lower: &Type2,
     upper: &Type2,
     is_inclusive: bool,
-  ) -> visitor::Result<ValidationError> {
+  ) -> visitor::Result<Error> {
     if let Value::Array(a) = &self.json {
       match validate_array_occurrence(
         self.occurrence.as_ref().take(),
@@ -784,7 +797,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     target: &Type2<'a>,
     ctrl: &str,
     controller: &Type2<'a>,
-  ) -> visitor::Result<ValidationError> {
+  ) -> visitor::Result<Error> {
     match lookup_control_from_str(ctrl) {
       t @ Some(Token::EQ) => match target {
         Type2::Typename { ident, .. } => {
@@ -947,109 +960,29 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       }
       t @ Some(Token::CAT) => {
         self.ctrl = t;
-        match target {
-          Type2::TextValue { value: target, .. } => match controller {
-            Type2::TextValue {
-              value: controller, ..
-            } => {
-              let s = format!("{}{}", target, controller);
-              let mut jv = self.clone();
-              jv.visit_value(&(&*s).into())?;
-              self.errors.append(&mut jv.errors)
-            }
-            Type2::Typename { ident, .. } => {
-              for controller in string_literals_from_ident(self.cddl, ident).iter() {
-                let s = format!("{}{}", target, controller);
-                let mut jv = self.clone();
-                jv.visit_value(&(&*s).into())?;
-                self.errors.append(&mut jv.errors)
-              }
-            }
-            Type2::UTF8ByteString {
-              value: controller, ..
-            } => match std::str::from_utf8(controller) {
-              Ok(controller) => {
-                let s = format!("{}{}", target, controller);
-                let mut jv = self.clone();
-                jv.visit_value(&(&*s).into())?;
-                self.errors.append(&mut jv.errors)
-              }
 
-              Err(e) => self.add_error(format!("error parsing byte string: {}", e)),
-            },
-            _ => unimplemented!(),
-          },
-          Type2::Typename { ident, .. } => {
-            // Only grab the first type choice literal from the target per
-            // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
-            if let Some(target) = string_literals_from_ident(self.cddl, ident).first() {
-              match controller {
-                Type2::TextValue {
-                  value: controller, ..
-                } => {
-                  let s = format!("{}{}", target, controller);
-                  let mut jv = self.clone();
-                  jv.visit_value(&(&*s).into())?;
-                  self.errors.append(&mut jv.errors)
-                }
-                Type2::Typename { ident, .. } => {
-                  for controller in string_literals_from_ident(self.cddl, ident).iter() {
-                    let s = format!("{}{}", target, controller);
-                    let mut jv = self.clone();
-                    jv.visit_value(&(&*s).into())?;
-                    self.errors.append(&mut jv.errors)
-                  }
-                }
-                Type2::UTF8ByteString {
-                  value: controller, ..
-                } => match std::str::from_utf8(controller) {
-                  Ok(controller) => {
-                    let s = format!("{}{}", target, controller);
-                    let mut jv = self.clone();
-                    jv.visit_value(&(&*s).into())?;
-                    self.errors.append(&mut jv.errors)
-                  }
-                  Err(e) => self.add_error(format!("error parsing byte string: {}", e)),
-                },
-                _ => unimplemented!(),
-              }
-            }
-          }
-          Type2::UTF8ByteString { value: target, .. } => match std::str::from_utf8(target) {
-            Ok(target) => match controller {
-              Type2::TextValue {
-                value: controller, ..
-              } => {
-                let s = format!("{}{}", target, controller);
-                let mut jv = self.clone();
-                jv.visit_value(&(&*s).into())?;
-                self.errors.append(&mut jv.errors)
-              }
-              Type2::Typename { ident, .. } => {
-                for controller in string_literals_from_ident(self.cddl, ident).iter() {
-                  let s = format!("{}{}", target, controller);
-                  let mut jv = self.clone();
-                  jv.visit_value(&(&*s).into())?;
-                  self.errors.append(&mut jv.errors)
-                }
-              }
-              Type2::UTF8ByteString {
-                value: controller, ..
-              } => match std::str::from_utf8(controller) {
-                Ok(controller) => {
-                  let s = format!("{}{}", target, controller);
-                  let mut jv = self.clone();
-                  jv.visit_value(&(&*s).into())?;
-                  self.errors.append(&mut jv.errors)
-                }
-                Err(e) => self.add_error(format!("error parsing byte string: {}", e)),
-              },
-              _ => unimplemented!(),
-            },
-            Err(e) => self.add_error(format!("error parsing byte string: {}", e)),
-          },
-          _ => unimplemented!(),
+        let mut values = Vec::new();
+        if let Err(e) = cat_operation(self.cddl, target, controller, &mut values) {
+          self.add_error(e);
         }
+
+        let mut success = false;
+        let mut errors = Vec::new();
+        for v in values.iter() {
+          let mut jv = self.clone();
+          jv.visit_value(&(&**v).into())?;
+          if jv.errors.is_empty() {
+            success = true;
+            break;
+          }
+
+          errors.append(&mut jv.errors)
+        }
+
+        if !success {
+          self.errors.append(&mut errors)
+        }
+
         self.ctrl = None;
       }
       _ => {
@@ -1060,7 +993,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<ValidationError> {
+  fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error> {
     match t2 {
       Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value)),
       Type2::Map { group, .. } => match &self.json {
@@ -1372,7 +1305,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     }
   }
 
-  fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<ValidationError> {
+  fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error> {
     if let Some(name) = self.eval_generic_rule {
       if let Some(gr) = self
         .generic_rules
@@ -1617,7 +1550,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
   fn visit_value_member_key_entry(
     &mut self,
     entry: &ValueMemberKeyEntry<'a>,
-  ) -> visitor::Result<ValidationError> {
+  ) -> visitor::Result<Error> {
     if let Some(occur) = &entry.occur {
       self.visit_occurrence(occur)?;
     }
@@ -1687,7 +1620,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
   fn visit_type_groupname_entry(
     &mut self,
     entry: &TypeGroupnameEntry<'a>,
-  ) -> visitor::Result<ValidationError> {
+  ) -> visitor::Result<Error> {
     self.type_group_name_entry = Some(entry.name.ident);
     walk_type_groupname_entry(self, entry)?;
     self.type_group_name_entry = None;
@@ -1695,7 +1628,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<ValidationError> {
+  fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<Error> {
     match mk {
       MemberKey::Type1 { is_cut, .. } => {
         self.is_cut_present = *is_cut;
@@ -1713,7 +1646,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<ValidationError> {
+  fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error> {
     let error: Option<String> = match &self.json {
       Value::Number(n) => match value {
         token::Value::INT(v) => match n.as_i64() {
@@ -1801,17 +1734,13 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             let re = regex::Regex::new(
               &format_regex(
                 serde_json::from_str::<Value>(&format!("\"{}\"", t))
-                  .map_err(|e| ValidationError::from_validator(self, e.to_string()))?
+                  .map_err(Error::JSONParsing)?
                   .as_str()
-                  .ok_or_else(|| {
-                    ValidationError::from_validator(self, "malformed regex".to_string())
-                  })?,
+                  .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
               )
-              .ok_or_else(|| {
-                ValidationError::from_validator(self, "malformed regex".to_string())
-              })?,
+              .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
             )
-            .map_err(|e| ValidationError::from_validator(self, e.to_string()))?;
+            .map_err(|e| Error::from_validator(self, e.to_string()))?;
 
             if re.is_match(s) {
               None
@@ -1822,6 +1751,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           _ => {
             if s == t {
               None
+            } else if let Some(Token::CAT) = &self.ctrl {
+              Some(format!(
+                "expected value to match concatenated string {}, got \"{}\"",
+                value, s
+              ))
             } else if let Some(ctrl) = &self.ctrl {
               Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
             } else {
@@ -1973,7 +1907,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<ValidationError> {
+  fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<Error> {
     self.occurrence = Some(o.occur.clone());
 
     Ok(())
@@ -1989,12 +1923,10 @@ mod tests {
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cddl = indoc!(
       r#"
-      a = "foo" .cat '
-        bar
-        baz
-      '"#
+      a = "foo" .cat b
+      b = "bar" / "baz" / "test""#
     );
-    let json = r#""foo\n  bar\n  baz\n""#;
+    let json = r#""foobar""#;
 
     let mut lexer = lexer_from_str(cddl);
     let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
