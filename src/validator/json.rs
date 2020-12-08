@@ -968,15 +968,28 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         let mut success = false;
         let mut errors = Vec::new();
-        for v in values.iter() {
+        for v in values.into_iter() {
           let mut jv = self.clone();
-          jv.visit_value(&(&**v).into())?;
-          if jv.errors.is_empty() {
-            success = true;
-            break;
-          }
+          match v {
+            CATOperationResult::String(v) => {
+              jv.visit_value(&(&*v).into())?;
+              if jv.errors.is_empty() {
+                success = true;
+                break;
+              }
 
-          errors.append(&mut jv.errors)
+              errors.append(&mut jv.errors)
+            }
+            CATOperationResult::Bytes(v) => {
+              jv.visit_value(&token::Value::BYTE(v))?;
+              if jv.errors.is_empty() {
+                success = true;
+                break;
+              }
+
+              errors.append(&mut jv.errors)
+            }
+          }
         }
 
         if !success {
