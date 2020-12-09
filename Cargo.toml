@@ -52,7 +52,7 @@ wasm-bindgen-test = "0.3.25"
 
 [features]
 default = ["std"]
-std = ["base16/alloc", "serde_json", "serde_cbor", "serde", "chrono", "wasm-bindgen", "clap", "crossterm", "uriparse", "base64-url", "regex-syntax"]
+std = ["base16/alloc", "base64/alloc", "serde_json", "serde_cbor", "serde", "chrono", "wasm-bindgen", "clap", "crossterm", "uriparse", "base64-url", "regex-syntax"]
 lsp = ["std"]
 
 [[bin]]

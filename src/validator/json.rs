@@ -961,39 +961,39 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       t @ Some(Token::CAT) => {
         self.ctrl = t;
 
-        let mut values = Vec::new();
-        if let Err(e) = cat_operation(self.cddl, target, controller, &mut values) {
-          self.add_error(e);
-        }
+        match cat_operation(self.cddl, target, controller) {
+          Ok(values) => {
+            let mut success = false;
+            let mut errors = Vec::new();
+            for v in values.into_iter() {
+              let mut jv = self.clone();
+              match v {
+                CATOperationResult::String(v) => {
+                  jv.visit_value(&(&*v).into())?;
+                  if jv.errors.is_empty() {
+                    success = true;
+                    break;
+                  }
 
-        let mut success = false;
-        let mut errors = Vec::new();
-        for v in values.into_iter() {
-          let mut jv = self.clone();
-          match v {
-            CATOperationResult::String(v) => {
-              jv.visit_value(&(&*v).into())?;
-              if jv.errors.is_empty() {
-                success = true;
-                break;
+                  errors.append(&mut jv.errors)
+                }
+                CATOperationResult::Bytes(v) => {
+                  jv.visit_value(&token::Value::BYTE(v))?;
+                  if jv.errors.is_empty() {
+                    success = true;
+                    break;
+                  }
+
+                  errors.append(&mut jv.errors)
+                }
               }
-
-              errors.append(&mut jv.errors)
             }
-            CATOperationResult::Bytes(v) => {
-              jv.visit_value(&token::Value::BYTE(v))?;
-              if jv.errors.is_empty() {
-                success = true;
-                break;
-              }
 
-              errors.append(&mut jv.errors)
+            if !success {
+              self.errors.append(&mut errors)
             }
           }
-        }
-
-        if !success {
-          self.errors.append(&mut errors)
+          Err(e) => self.add_error(e),
         }
 
         self.ctrl = None;
@@ -1936,10 +1936,9 @@ mod tests {
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cddl = indoc!(
       r#"
-      a = "foo" .cat b
-      b = "bar" / "baz" / "test""#
+      a = b64'dGVzdGluZw==' .cat b64'MTIz'"#
     );
-    let json = r#""foobar""#;
+    let json = r#""dGVzdGluZzEyMw==""#;
 
     let mut lexer = lexer_from_str(cddl);
     let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
