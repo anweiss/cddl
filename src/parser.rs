@@ -1636,6 +1636,14 @@ where
         }
 
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
+          if generic_args.is_some() && self.peek_token_is(&Token::LANGLEBRACKET) {
+            while !self.peek_token_is(&Token::RANGLEBRACKET) {
+              self.next_token()?;
+            }
+
+            self.next_token()?;
+          }
+
           return Ok(GroupEntry::TypeGroupname {
             ge: TypeGroupnameEntry {
               occur,
