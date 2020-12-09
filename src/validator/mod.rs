@@ -737,87 +737,86 @@ pub fn format_regex(input: &str) -> Option<String> {
 }
 
 /// Concatenate target and controller
-pub fn cat_operation(
+pub fn cat_operation<'a>(
   cddl: &CDDL,
   target: &Type2,
   controller: &Type2,
-  literals: &mut Vec<CATOperationResult>,
-) -> Result<(), String> {
+  // literals: &mut Vec<CATOperationResult>,
+) -> Result<Vec<CATOperationResult<'a>>, String> {
+  let mut literals = Vec::new();
   match target {
     Type2::TextValue { value, .. } => match controller {
+      // "testing" .cat "123"
       Type2::TextValue {
         value: controller, ..
       } => literals.push(format!("{}{}", value, controller).into()),
+      // "testing" .cat a
       Type2::Typename { ident, .. } => {
         for controller in string_literals_from_ident(cddl, ident).iter() {
-          cat_operation(cddl, target, controller, literals)?
+          literals.append(&mut cat_operation(cddl, target, controller)?)
         }
       }
+      // "testing" .cat '123'
       Type2::UTF8ByteString {
         value: controller, ..
       } => match std::str::from_utf8(controller) {
         Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
         Err(e) => return Err(format!("error parsing byte string: {}", e)),
       },
+      // "testing" .cat h'313233'
       Type2::B16ByteString {
         value: controller, ..
-      } => {
-        let mut buf = [0u8; 1024];
-        match base16::decode_slice(&controller[..], &mut buf) {
-          Ok(_) => match std::str::from_utf8(&buf) {
-            Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
-            Err(e) => return Err(format!("error parsing byte string: {}", e)),
-          },
-          Err(e) => {
-            return Err(format!(
-              "error decoding base16 encoded byte string literal: {}",
-              e
-            ))
-          }
-        }
-      }
+      } => match base16::decode(controller) {
+        Ok(controller) => match String::from_utf8(controller) {
+          Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
+          Err(e) => return Err(format!("error decoding utf-8: {}", e)),
+        },
+        Err(e) => return Err(format!("error decoding base16 byte string literal: {}", e)),
+      },
+      // "testing" .cat b64'MTIz'
       Type2::B64ByteString {
         value: controller, ..
-      } => {
-        let mut buf = [0u8; 1024];
-        match base64::decode_config_slice(&controller[..], base64::URL_SAFE, &mut buf) {
-          Ok(_) => match std::str::from_utf8(&buf) {
-            Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
-            Err(e) => return Err(format!("error parsing byte string: {}", e)),
-          },
-          Err(e) => {
-            return Err(format!(
-              "error decoding base64 encoded byte string literal: {}",
-              e
-            ))
-          }
+      } => match base64::decode_config(controller, base64::URL_SAFE) {
+        Ok(controller) => match String::from_utf8(controller) {
+          Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
+          Err(e) => return Err(format!("error decoding utf-8: {}", e)),
+        },
+        Err(e) => {
+          return Err(format!(
+            "error decoding base64 encoded byte string literal: {}",
+            e
+          ))
         }
-      }
+      },
+      // "testing" .cat ( "123" / "1234" )
       Type2::ParenthesizedType { pt: controller, .. } => {
         for controller in controller.type_choices.iter() {
           if controller.type1.operator.is_none() {
-            cat_operation(cddl, target, &controller.type1.type2, literals)?;
+            literals.append(&mut cat_operation(cddl, target, &controller.type1.type2)?);
           }
         }
       }
       _ => unimplemented!(),
     },
+    // a .cat "123"
     Type2::Typename { ident, .. } => {
       // Only grab the first type choice literal from the target per
       // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
+
       if let Some(value) = string_literals_from_ident(cddl, ident).first() {
-        return cat_operation(cddl, value, controller, literals);
+        literals.append(&mut cat_operation(cddl, value, controller)?);
       } else {
         unimplemented!()
       }
     }
+    // ( "test" / "testing" ) .cat "123"
     Type2::ParenthesizedType { pt: target, .. } => {
       // Only grab the first type choice literal from the target per
       // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
       if let Some(tc) = target.type_choices.first() {
         // Ignore nested operator
         if tc.type1.operator.is_none() {
-          return cat_operation(cddl, &tc.type1.type2, controller, literals);
+          literals.append(&mut cat_operation(cddl, &tc.type1.type2, controller)?);
         }
       }
 
@@ -825,58 +824,52 @@ pub fn cat_operation(
     }
     Type2::UTF8ByteString { value, .. } => match std::str::from_utf8(value) {
       Ok(value) => match controller {
+        // 'testing' .cat "123"
         Type2::TextValue {
           value: controller, ..
         } => literals.push(format!("{}{}", value, controller).into()),
         Type2::Typename { ident, .. } => {
           for controller in string_literals_from_ident(cddl, ident).iter() {
-            cat_operation(cddl, target, controller, literals)?
+            literals.append(&mut cat_operation(cddl, target, controller)?)
           }
         }
+        // 'testing' .cat '123
         Type2::UTF8ByteString {
           value: controller, ..
         } => match std::str::from_utf8(controller) {
           Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
           Err(e) => return Err(format!("error parsing byte string: {}", e)),
         },
+        // 'testing' .cat h'313233'
         Type2::B16ByteString {
           value: controller, ..
-        } => {
-          let mut buf = [0u8; 1024];
-          match base16::decode_slice(&controller[..], &mut buf) {
-            Ok(_) => match std::str::from_utf8(&buf) {
-              Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
-              Err(e) => return Err(format!("error parsing byte string: {}", e)),
-            },
-            Err(e) => {
-              return Err(format!(
-                "error decoding base16 encoded byte string literal: {}",
-                e
-              ))
-            }
-          }
-        }
+        } => match base16::decode(controller) {
+          Ok(controller) => match String::from_utf8(controller) {
+            Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
+            Err(e) => return Err(format!("error decoding utf-8: {}", e)),
+          },
+          Err(e) => return Err(format!("error decoding base16 byte string literal: {}", e)),
+        },
+        // 'testing' .cat b64'MTIz'
         Type2::B64ByteString {
           value: controller, ..
-        } => {
-          let mut buf = [0u8; 1024];
-          match base64::decode_config_slice(&controller[..], base64::URL_SAFE, &mut buf) {
-            Ok(_) => match std::str::from_utf8(&buf) {
-              Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
-              Err(e) => return Err(format!("error parsing byte string: {}", e)),
-            },
-            Err(e) => {
-              return Err(format!(
-                "error decoding base64 encoded byte string literal: {}",
-                e
-              ))
-            }
+        } => match base64::decode_config(controller, base64::URL_SAFE) {
+          Ok(controller) => match String::from_utf8(controller) {
+            Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
+            Err(e) => return Err(format!("error decoding utf-8: {}", e)),
+          },
+          Err(e) => {
+            return Err(format!(
+              "error decoding base64 encoded byte string literal: {}",
+              e
+            ))
           }
-        }
+        },
+        // 'testing' .cat ( "123" / "1234" )
         Type2::ParenthesizedType { pt: controller, .. } => {
           for controller in controller.type_choices.iter() {
             if controller.type1.operator.is_none() {
-              cat_operation(cddl, target, &controller.type1.type2, literals)?;
+              literals.append(&mut cat_operation(cddl, target, &controller.type1.type2)?);
             }
           }
         }
@@ -885,58 +878,158 @@ pub fn cat_operation(
       Err(e) => return Err(format!("error parsing byte string: {}", e)),
     },
     Type2::B16ByteString { value, .. } => match controller {
+      // h'74657374696E67' .cat "123"
       Type2::TextValue {
         value: controller, ..
       } => {
         let controller = base16::encode_lower(&controller.as_bytes()[..]);
         let concat = [&value[..], &controller.as_bytes()[..]].concat();
-        let mut buf = [0u8; 1024];
-        match base16::decode_slice(&concat[..], &mut buf) {
-          Ok(_) => literals.push(CATOperationResult::Bytes(ByteValue::B16(concat.into()))),
+        match base16::decode(&concat) {
+          // Ignore the decoded value
+          Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
           Err(e) => return Err(format!("concatenated value is invalid base16: {}", e)),
         }
       }
+      // h'74657374696E67' .cat b
       Type2::Typename { ident, .. } => {
         for controller in string_literals_from_ident(cddl, ident).iter() {
-          cat_operation(cddl, target, controller, literals)?
+          literals.append(&mut cat_operation(cddl, target, controller)?)
         }
       }
+      // h'74657374696E67' .cat '123'
       Type2::UTF8ByteString {
         value: controller, ..
       } => {
         let controller = base16::encode_lower(&controller[..]);
         let concat = [&value[..], &controller.as_bytes()[..]].concat();
-        let mut buf = [0u8; 1024];
-        match base16::decode_slice(&concat[..], &mut buf) {
-          Ok(_) => literals.push(CATOperationResult::Bytes(ByteValue::B16(concat.into()))),
+        match base16::decode(&concat) {
+          // Ignore the decoded value
+          Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
           Err(e) => return Err(format!("concatenated value is invalid base16: {}", e)),
         }
       }
+      // h'74657374696E67' .cat h'313233'
       Type2::B16ByteString {
         value: controller, ..
       } => {
         let concat = [&value[..], &controller[..]].concat();
-        let mut buf = [0u8; 1024];
-        match base16::decode_slice(&concat[..], &mut buf) {
-          Ok(_) => literals.push(CATOperationResult::Bytes(ByteValue::B16(concat.into()))),
+        match base16::decode(&concat) {
+          // Ignore the decoded value
+          Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
           Err(e) => return Err(format!("concatenated value is invalid base16: {}", e)),
         }
       }
+      // h'74657374696E67' .cat b64'MTIz'
       Type2::B64ByteString {
         value: controller, ..
-      } => {
-        let controller = base16::encode_lower(&controller[..]);
-        let concat = [&value[..], &controller.as_bytes()[..]].concat();
-        let mut buf = [0u8; 1024];
-        match base16::decode_slice(&concat[..], &mut buf) {
-          Ok(_) => literals.push(CATOperationResult::Bytes(ByteValue::B16(concat.into()))),
-          Err(e) => return Err(format!("concatenated value is invalid base16: {}", e)),
+      } => match base64::decode_config(controller, base64::URL_SAFE) {
+        Ok(controller) => {
+          let controller = base16::encode_lower(&controller);
+          let concat = [&value[..], &controller.as_bytes()[..]].concat();
+          match base16::decode(&concat) {
+            // Ignore the decoded value
+            Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
+            Err(e) => return Err(format!("concatenated value is invalid base16: {}", e)),
+          }
         }
-      }
+        Err(e) => return Err(format!("controller is invalid base64: {}", e)),
+      },
+      // h'74657374696E67' .cat ( "123" / "1234" )
       Type2::ParenthesizedType { pt: controller, .. } => {
         for controller in controller.type_choices.iter() {
           if controller.type1.operator.is_none() {
-            cat_operation(cddl, target, &controller.type1.type2, literals)?;
+            literals.append(&mut cat_operation(cddl, target, &controller.type1.type2)?);
+          }
+        }
+      }
+      _ => unimplemented!(),
+    },
+    Type2::B64ByteString { value, .. } => match controller {
+      // b64'dGVzdGluZw==' .cat "123"
+      Type2::TextValue {
+        value: controller, ..
+      } => match base64::decode_config(value, base64::URL_SAFE) {
+        Ok(value) => {
+          let concat = [&value[..], &controller.as_bytes()[..]].concat();
+          literals.push(
+            ByteValue::B64(
+              base64::encode_config(&concat, base64::URL_SAFE)
+                .into_bytes()
+                .into(),
+            )
+            .into(),
+          )
+        }
+        Err(e) => return Err(format!("target is invalid base64: {}", e)),
+      },
+      // b64'dGVzdGluZw==' .cat b
+      Type2::Typename { ident, .. } => {
+        for controller in string_literals_from_ident(cddl, ident).iter() {
+          literals.append(&mut cat_operation(cddl, target, controller)?)
+        }
+      }
+      // b64'dGVzdGluZw==' .cat '123'
+      Type2::UTF8ByteString {
+        value: controller, ..
+      } => match base64::decode_config(value, base64::URL_SAFE) {
+        Ok(value) => {
+          let concat = [&value[..], &controller[..]].concat();
+          literals.push(
+            ByteValue::B64(
+              base64::encode_config(&concat, base64::URL_SAFE)
+                .into_bytes()
+                .into(),
+            )
+            .into(),
+          )
+        }
+        Err(e) => return Err(format!("target is invalid base64: {}", e)),
+      },
+      // b64'dGVzdGluZw==' .cat h'313233'
+      Type2::B16ByteString {
+        value: controller, ..
+      } => match base64::decode_config(value, base64::URL_SAFE) {
+        Ok(value) => match base16::decode(controller) {
+          Ok(controller) => {
+            let concat = [&value[..], &controller[..]].concat();
+            literals.push(
+              ByteValue::B64(
+                base64::encode_config(&concat, base64::URL_SAFE)
+                  .into_bytes()
+                  .into(),
+              )
+              .into(),
+            )
+          }
+          Err(e) => return Err(format!("controller is invalid base16: {}", e)),
+        },
+        Err(e) => return Err(format!("target is invalid base64: {}", e)),
+      },
+      // b64'dGVzdGluZw==' .cat b64'MTIz'
+      Type2::B64ByteString {
+        value: controller, ..
+      } => match base64::decode_config(value, base64::URL_SAFE) {
+        Ok(value) => match base64::decode_config(controller, base64::URL_SAFE) {
+          Ok(controller) => {
+            let concat = [&value[..], &controller[..]].concat();
+            literals.push(
+              ByteValue::B64(
+                base64::encode_config(&concat, base64::URL_SAFE)
+                  .into_bytes()
+                  .into(),
+              )
+              .into(),
+            )
+          }
+          Err(e) => return Err(format!("controller is invalid base64: {}", e)),
+        },
+        Err(e) => return Err(format!("target is invalid base64: {}", e)),
+      },
+      // b64'dGVzdGluZw==' .cat ( "123" / "1234" )
+      Type2::ParenthesizedType { pt: controller, .. } => {
+        for controller in controller.type_choices.iter() {
+          if controller.type1.operator.is_none() {
+            literals.append(&mut cat_operation(cddl, target, &controller.type1.type2)?);
           }
         }
       }
@@ -945,16 +1038,25 @@ pub fn cat_operation(
     _ => unimplemented!(),
   }
 
-  Ok(())
+  Ok(literals)
 }
 
+/// Resulting data type from a cat operation
 pub enum CATOperationResult<'a> {
+  /// String result
   String(String),
+  /// Bytes results
   Bytes(ByteValue<'a>),
 }
 
 impl<'a> From<String> for CATOperationResult<'a> {
   fn from(literal: String) -> Self {
     CATOperationResult::String(literal)
+  }
+}
+
+impl<'a> From<ByteValue<'a>> for CATOperationResult<'a> {
+  fn from(literal: ByteValue<'a>) -> Self {
+    CATOperationResult::Bytes(literal)
   }
 }
