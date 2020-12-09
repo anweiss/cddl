@@ -741,7 +741,6 @@ pub fn cat_operation<'a>(
   cddl: &CDDL,
   target: &Type2,
   controller: &Type2,
-  // literals: &mut Vec<CATOperationResult>,
 ) -> Result<Vec<CATOperationResult<'a>>, String> {
   let mut literals = Vec::new();
   match target {
@@ -796,17 +795,16 @@ pub fn cat_operation<'a>(
           }
         }
       }
-      _ => unimplemented!(),
+      _ => return Err("invalid controller used for .cat operation".to_string()),
     },
     // a .cat "123"
     Type2::Typename { ident, .. } => {
       // Only grab the first type choice literal from the target per
       // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
-
       if let Some(value) = string_literals_from_ident(cddl, ident).first() {
         literals.append(&mut cat_operation(cddl, value, controller)?);
       } else {
-        unimplemented!()
+        return Err("invalid controller used for .cat operation".to_string());
       }
     }
     // ( "test" / "testing" ) .cat "123"
@@ -873,7 +871,7 @@ pub fn cat_operation<'a>(
             }
           }
         }
-        _ => unimplemented!(),
+        _ => return Err("invalid controller used for .cat operation".to_string()),
       },
       Err(e) => return Err(format!("error parsing byte string: {}", e)),
     },
@@ -942,7 +940,7 @@ pub fn cat_operation<'a>(
           }
         }
       }
-      _ => unimplemented!(),
+      _ => return Err("invalid controller used for .cat operation".to_string()),
     },
     Type2::B64ByteString { value, .. } => match controller {
       // b64'dGVzdGluZw==' .cat "123"
@@ -1033,9 +1031,9 @@ pub fn cat_operation<'a>(
           }
         }
       }
-      _ => unimplemented!(),
+      _ => return Err("invalid controller used for .cat operation".to_string()),
     },
-    _ => unimplemented!(),
+    _ => return Err("invalid target used for .cat operation".to_string()),
   }
 
   Ok(literals)
