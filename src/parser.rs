@@ -1282,55 +1282,59 @@ where
           ))),
         }
       }
-      _ => match self.cur_token.in_standard_prelude() {
-        Some(s) => {
-          let ident = self.identifier_from_ident_token((s, None));
-          self.parser_position.range = self.lexer_position.range;
-          self.parser_position.line = self.lexer_position.line;
+      _ => {
+        self.collect_comments()?;
 
-          Ok(Type2::Typename {
-            ident,
-            generic_args: None,
-            span: (
-              self.parser_position.range.0,
-              self.parser_position.range.1,
-              self.parser_position.line,
-            ),
-          })
-        }
-        None => {
-          self.parser_position.line = self.lexer_position.line;
-          self.parser_position.range = self.lexer_position.range;
+        match self.cur_token.in_standard_prelude() {
+          Some(s) => {
+            let ident = self.identifier_from_ident_token((s, None));
+            self.parser_position.range = self.lexer_position.range;
+            self.parser_position.line = self.lexer_position.line;
 
-          if self.cur_token_is(Token::COLON) || self.cur_token_is(Token::ARROWMAP) {
+            Ok(Type2::Typename {
+              ident,
+              generic_args: None,
+              span: (
+                self.parser_position.range.0,
+                self.parser_position.range.1,
+                self.parser_position.line,
+              ),
+            })
+          }
+          None => {
+            self.parser_position.line = self.lexer_position.line;
+            self.parser_position.range = self.lexer_position.range;
+
+            if self.cur_token_is(Token::COLON) || self.cur_token_is(Token::ARROWMAP) {
+              self.errors.push(ParserError {
+                position: self.parser_position,
+                msg: MissingGroupEntryMemberKey.into(),
+              });
+
+              return Err(Error::PARSER);
+            }
+
+            if self.cur_token_is(Token::RBRACE)
+              || self.cur_token_is(Token::RBRACKET)
+              || self.cur_token_is(Token::RPAREN)
+            {
+              self.errors.push(ParserError {
+                position: self.parser_position,
+                msg: MissingGroupEntry.into(),
+              });
+
+              return Err(Error::PARSER);
+            }
+
             self.errors.push(ParserError {
               position: self.parser_position,
-              msg: MissingGroupEntryMemberKey.into(),
+              msg: InvalidGroupEntrySyntax.into(),
             });
 
-            return Err(Error::PARSER);
+            Err(Error::PARSER)
           }
-
-          if self.cur_token_is(Token::RBRACE)
-            || self.cur_token_is(Token::RBRACKET)
-            || self.cur_token_is(Token::RPAREN)
-          {
-            self.errors.push(ParserError {
-              position: self.parser_position,
-              msg: MissingGroupEntry.into(),
-            });
-
-            return Err(Error::PARSER);
-          }
-
-          self.errors.push(ParserError {
-            position: self.parser_position,
-            msg: InvalidGroupEntrySyntax.into(),
-          });
-
-          Err(Error::PARSER)
         }
-      },
+      }
     };
 
     self.parser_position.range.1 = self.lexer_position.range.1;
