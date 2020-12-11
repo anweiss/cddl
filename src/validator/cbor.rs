@@ -7,7 +7,7 @@ use crate::{
 };
 use chrono::{TimeZone, Utc};
 use serde_cbor::Value;
-use std::{collections::HashMap, convert::TryFrom, fmt};
+use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
 
 use super::*;
 
@@ -1054,7 +1054,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     }
 
     match t2 {
-      Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value)),
+      Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value.clone())),
       Type2::Map { group, .. } => match &self.cbor {
         Value::Map(m) => {
           if self.is_member_key {
@@ -2130,7 +2130,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           return Ok(());
         }
 
-        self.visit_value(&token::Value::TEXT(ident.ident))
+        self.visit_value(&token::Value::TEXT(ident.ident.into()))
       }
       _ => {
         if let Some(cut_value) = self.cut_value.take() {
@@ -2524,7 +2524,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           self.cut_value = Some(Type1::from(value.clone()));
         }
 
-        if let token::Value::TEXT("any") = value {
+        if let token::Value::TEXT(Cow::Borrowed("any")) = value {
           return Ok(());
         }
 

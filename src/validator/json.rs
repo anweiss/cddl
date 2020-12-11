@@ -7,9 +7,12 @@ use crate::{
 };
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
-use std::{collections::HashMap, convert::TryFrom, fmt};
+use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
 
-use super::*;
+use super::{
+  control::{cat_operation, plus_operation},
+  *,
+};
 
 /// JSON validation Result
 pub type Result = std::result::Result<(), Error>;
@@ -154,7 +157,7 @@ pub struct JSONValidator<'a> {
   // Is a cut detected in current state of AST evaluation
   is_cut_present: bool,
   // Str value of cut detected in current state of AST evaluation
-  cut_value: Option<&'a str>,
+  cut_value: Option<Cow<'a, str>>,
   // Validate the generic rule given by str ident in current state of AST
   // evaluation
   eval_generic_rule: Option<&'a str>,
@@ -187,6 +190,7 @@ pub struct JSONValidator<'a> {
   // array item
   array_errors: Option<HashMap<usize, Vec<ValidationError>>>,
   is_colon_shortcut_present: bool,
+  is_root: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -226,7 +230,135 @@ impl<'a> JSONValidator<'a> {
       valid_array_items: None,
       array_errors: None,
       is_colon_shortcut_present: false,
+      is_root: false,
     }
+  }
+
+  fn validate_value_array(&mut self, value: &token::Value) -> visitor::Result<Error> {
+    if let Value::Array(a) = &self.json {
+      // Member keys are annotation only in an array context
+      if self.is_member_key {
+        return Ok(());
+      }
+
+      match validate_array_occurrence(
+        self.occurrence.as_ref().take(),
+        self.entry_counts.as_ref().map(|ec| &ec[..]),
+        a,
+      ) {
+        Ok((iter_items, allow_empty_array)) => {
+          if iter_items {
+            for (idx, v) in a.iter().enumerate() {
+              if let Some(indices) = &self.valid_array_items {
+                if self.is_multi_type_choice && indices.contains(&idx) {
+                  continue;
+                }
+              }
+
+              let mut jv = JSONValidator::new(self.cddl, v.clone());
+              jv.generic_rules = self.generic_rules.clone();
+              jv.eval_generic_rule = self.eval_generic_rule;
+              jv.is_multi_type_choice = self.is_multi_type_choice;
+              jv.ctrl = self.ctrl.clone();
+              jv.json_location
+                .push_str(&format!("{}/{}", self.json_location, idx));
+
+              jv.visit_value(value)?;
+
+              if self.is_multi_type_choice && jv.errors.is_empty() {
+                if let Some(indices) = &mut self.valid_array_items {
+                  indices.push(idx);
+                } else {
+                  self.valid_array_items = Some(vec![idx]);
+                }
+                continue;
+              }
+
+              if let Some(errors) = &mut self.array_errors {
+                if let Some(error) = errors.get_mut(&idx) {
+                  error.append(&mut jv.errors);
+                } else {
+                  errors.insert(idx, jv.errors);
+                }
+              } else {
+                let mut errors = HashMap::new();
+                errors.insert(idx, jv.errors);
+                self.array_errors = Some(errors)
+              }
+            }
+          } else if let Some(idx) = self.group_entry_idx.take() {
+            if let Some(v) = a.get(idx) {
+              let mut jv = JSONValidator::new(self.cddl, v.clone());
+              jv.generic_rules = self.generic_rules.clone();
+              jv.eval_generic_rule = self.eval_generic_rule;
+              jv.is_multi_type_choice = self.is_multi_type_choice;
+              jv.ctrl = self.ctrl.clone();
+              jv.json_location
+                .push_str(&format!("{}/{}", self.json_location, idx));
+
+              jv.visit_value(value)?;
+
+              self.errors.append(&mut jv.errors);
+            } else if !allow_empty_array {
+              self.add_error(format!("expected value {} at index {}", value, idx));
+            }
+          } else {
+            self.add_error(format!("expected value {}, got {}", value, self.json));
+          }
+        }
+        Err(errors) => {
+          for e in errors.into_iter() {
+            self.add_error(e);
+          }
+        }
+      }
+    }
+
+    Ok(())
+  }
+
+  fn validate_object_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error> {
+    if let Value::Object(o) = &self.json {
+      // Bareword member keys are converted to text string values
+      if let token::Value::TEXT(t) = value {
+        if self.is_cut_present {
+          self.cut_value = Some(t.clone());
+        }
+
+        if *t == "any" {
+          return Ok(());
+        }
+
+        // Retrieve the value from key unless optional/zero or more, in which
+        // case advance to next group entry
+        if let Some(v) = o.get(t.as_ref()) {
+          self
+            .validated_keys
+            .get_or_insert(vec![t.to_string()])
+            .push(t.to_string());
+          self.object_value = Some(v.clone());
+          self.json_location.push_str(&format!("/{}", t));
+
+          return Ok(());
+        } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
+          &self.occurrence.take()
+        {
+          self.advance_to_next_entry = true;
+          return Ok(());
+        } else if let Some(Token::NE) = &self.ctrl {
+          return Ok(());
+        } else {
+          self.add_error(format!("object missing key: \"{}\"", t))
+        }
+      } else {
+        self.add_error(format!(
+          "CDDL member key must be string data type. got {}",
+          value
+        ))
+      }
+    }
+
+    Ok(())
   }
 }
 
@@ -237,7 +369,9 @@ impl<'a> Validator<'a, Error> for JSONValidator<'a> {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {
         if rule.generic_params.is_none() {
+          self.is_root = true;
           self.visit_type_rule(rule)?;
+          self.is_root = false;
           break;
         }
       }
@@ -798,6 +932,59 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
     ctrl: &str,
     controller: &Type2<'a>,
   ) -> visitor::Result<Error> {
+    if let Type2::Typename {
+      ident: target_ident,
+      ..
+    } = target
+    {
+      if let Type2::Typename {
+        ident: controller_ident,
+        ..
+      } = controller
+      {
+        if let Some(name) = self.eval_generic_rule {
+          if let Some(gr) = self
+            .generic_rules
+            .iter()
+            .cloned()
+            .find(|gr| gr.name == name)
+          {
+            for (idx, gp) in gr.params.iter().enumerate() {
+              if let Some(arg) = gr.args.get(idx) {
+                if *gp == target_ident.ident {
+                  let t2 = Type2::from(arg.clone());
+
+                  if *gp == controller_ident.ident {
+                    return self.visit_control_operator(&t2, ctrl, &t2);
+                  }
+
+                  return self.visit_control_operator(&arg.type2, ctrl, controller);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if let Some(name) = self.eval_generic_rule {
+        if let Some(gr) = self
+          .generic_rules
+          .iter()
+          .cloned()
+          .find(|gr| gr.name == name)
+        {
+          for (idx, gp) in gr.params.iter().enumerate() {
+            if let Some(arg) = gr.args.get(idx) {
+              if *gp == target_ident.ident {
+                let t2 = Type2::from(arg.clone());
+                return self.visit_control_operator(&t2, ctrl, controller);
+              }
+            }
+          }
+        }
+      }
+    }
+
     match lookup_control_from_str(ctrl) {
       t @ Some(Token::EQ) => match target {
         Type2::Typename { ident, .. } => {
@@ -963,36 +1150,25 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         match cat_operation(self.cddl, target, controller) {
           Ok(values) => {
-            let mut success = false;
-            let mut errors = Vec::new();
-            for v in values.into_iter() {
-              let mut jv = self.clone();
-              match v {
-                CATOperationResult::String(v) => {
-                  jv.visit_value(&(&*v).into())?;
-                  if jv.errors.is_empty() {
-                    success = true;
-                    break;
-                  }
-
-                  errors.append(&mut jv.errors)
-                }
-                CATOperationResult::Bytes(v) => {
-                  jv.visit_value(&token::Value::BYTE(v))?;
-                  if jv.errors.is_empty() {
-                    success = true;
-                    break;
-                  }
-
-                  errors.append(&mut jv.errors)
-                }
-              }
-            }
-
-            if !success {
-              self.errors.append(&mut errors)
+            for v in values.iter() {
+              self.visit_type2(v)?;
             }
           }
+          Err(e) => self.add_error(e),
+        }
+
+        self.ctrl = None;
+      }
+      t @ Some(Token::PLUS) => {
+        self.ctrl = t;
+
+        match plus_operation(self.cddl, target, controller) {
+          Ok(values) => {
+            for v in values.iter() {
+              self.visit_type2(v)?;
+            }
+          }
+
           Err(e) => self.add_error(e),
         }
 
@@ -1008,7 +1184,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
   fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error> {
     match t2 {
-      Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value)),
+      Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value.clone())),
       Type2::Map { group, .. } => match &self.json {
         Value::Object(o) => {
           let o = o.keys().cloned().collect::<Vec<_>>();
@@ -1544,7 +1720,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           return Ok(());
         }
 
-        self.visit_value(&token::Value::TEXT(ident.ident))
+        self.visit_value(&token::Value::TEXT(ident.ident.into()))
       }
       _ => {
         if let Some(cut_value) = self.cut_value.take() {
@@ -1635,6 +1811,37 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
     entry: &TypeGroupnameEntry<'a>,
   ) -> visitor::Result<Error> {
     self.type_group_name_entry = Some(entry.name.ident);
+
+    if let Some(ga) = &entry.generic_args {
+      if let Some(rule) = rule_from_ident(self.cddl, &entry.name) {
+        if let Some(gr) = self
+          .generic_rules
+          .iter_mut()
+          .find(|gr| gr.name == entry.name.ident)
+        {
+          for arg in ga.args.iter() {
+            gr.args.push((*arg.arg).clone());
+          }
+        } else if let Some(params) = generic_params_from_rule(rule) {
+          self.generic_rules.push(GenericRule {
+            name: entry.name.ident,
+            params,
+            args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+          });
+        }
+
+        let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+        jv.generic_rules = self.generic_rules.clone();
+        jv.eval_generic_rule = Some(entry.name.ident);
+        jv.is_multi_type_choice = self.is_multi_type_choice;
+        jv.visit_rule(rule)?;
+
+        self.errors.append(&mut jv.errors);
+
+        return Ok(());
+      }
+    }
+
     walk_type_groupname_entry(self, entry)?;
     self.type_group_name_entry = None;
 
@@ -1660,15 +1867,32 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
   }
 
   fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error> {
-    let error: Option<String> = match &self.json {
-      Value::Number(n) => match value {
-        token::Value::INT(v) => match n.as_i64() {
+    if !self.is_root {
+      if let Value::Array(_) = &self.json {
+        return self.validate_value_array(value);
+      }
+
+      if let Value::Object(_) = &self.json {
+        return self.validate_object_value(value);
+      }
+    }
+
+    let error: Option<String> = match value {
+      token::Value::INT(v) => match &self.json {
+        Value::Number(n) => match n.as_i64() {
           Some(i) => match &self.ctrl {
             Some(Token::NE) if i != *v as i64 => None,
             Some(Token::LT) if i < *v as i64 => None,
             Some(Token::LE) if i <= *v as i64 => None,
             Some(Token::GT) if i > *v as i64 => None,
             Some(Token::GE) if i >= *v as i64 => None,
+            Some(Token::PLUS) => {
+              if i == *v as i64 {
+                None
+              } else {
+                Some(format!("expected computed .plus value {}, got {}", v, n))
+              }
+            }
             None => {
               if i == *v as i64 {
                 None
@@ -1685,7 +1909,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           },
           None => Some(format!("{} cannot be represented as an i64", n)),
         },
-        token::Value::UINT(v) => match n.as_u64() {
+        _ => Some(format!("expected value {}, got {}", v, self.json)),
+      },
+      token::Value::UINT(v) => match &self.json {
+        Value::Number(n) => match n.as_u64() {
           Some(i) => match &self.ctrl {
             Some(Token::NE) if i != *v as u64 => None,
             Some(Token::LT) if i < *v as u64 => None,
@@ -1693,6 +1920,13 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             Some(Token::GT) if i > *v as u64 => None,
             Some(Token::GE) if i >= *v as u64 => None,
             Some(Token::SIZE) if i < 256u64.pow(*v as u32) => None,
+            Some(Token::PLUS) => {
+              if i == *v as u64 {
+                None
+              } else {
+                Some(format!("expected computed .plus value {}, got {}", v, n))
+              }
+            }
             None => {
               if i == *v as u64 {
                 None
@@ -1709,13 +1943,33 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           },
           None => Some(format!("{} cannot be represented as a u64", n)),
         },
-        token::Value::FLOAT(v) => match n.as_f64() {
+        Value::String(s) => match &self.ctrl {
+          Some(Token::SIZE) => {
+            if s.len() == *v {
+              None
+            } else {
+              Some(format!("expected \"{}\" .size {}, got {}", s, v, s.len()))
+            }
+          }
+          _ => Some(format!("expected {}, got {}", v, s)),
+        },
+        _ => Some(format!("expected value {}, got {}", v, self.json)),
+      },
+      token::Value::FLOAT(v) => match &self.json {
+        Value::Number(n) => match n.as_f64() {
           Some(f) => match &self.ctrl {
             Some(Token::NE) if (f - *v).abs() > std::f64::EPSILON => None,
             Some(Token::LT) if f < *v as f64 => None,
             Some(Token::LE) if f <= *v as f64 => None,
             Some(Token::GT) if f > *v as f64 => None,
             Some(Token::GE) if f >= *v as f64 => None,
+            Some(Token::PLUS) => {
+              if (f - *v).abs() < std::f64::EPSILON {
+                None
+              } else {
+                Some(format!("expected computed .plus value {}, got {}", v, n))
+              }
+            }
             None => {
               if (f - *v).abs() < std::f64::EPSILON {
                 None
@@ -1732,10 +1986,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           },
           None => Some(format!("{} cannot be represented as an i64", n)),
         },
-        _ => Some(format!("expected {}, got {}", value, n)),
+        _ => Some(format!("expected value {}, got {}", v, self.json)),
       },
-      Value::String(s) => match value {
-        token::Value::TEXT(t) => match &self.ctrl {
+      token::Value::TEXT(t) => match &self.json {
+        Value::String(s) => match &self.ctrl {
           Some(Token::NE) => {
             if s != t {
               None
@@ -1776,141 +2030,20 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             }
           }
         },
-        token::Value::UINT(u) => match &self.ctrl {
-          Some(Token::SIZE) => {
-            if s.len() == *u {
-              None
-            } else {
-              Some(format!("expected \"{}\" .size {}, got {}", s, u, s.len()))
-            }
-          }
-          _ => Some(format!("expected {}, got {}", u, s)),
-        },
-        token::Value::BYTE(token::ByteValue::UTF8(b)) if s.as_bytes() == b.as_ref() => None,
-        token::Value::BYTE(token::ByteValue::B16(b)) if s.as_bytes() == b.as_ref() => None,
-        token::Value::BYTE(token::ByteValue::B64(b)) if s.as_bytes() == b.as_ref() => None,
-        _ => Some(format!("expected {}, got \"{}\"", value, s)),
+        _ => Some(format!("expected value {}, got {}", t, self.json)),
       },
-      Value::Array(a) => {
-        // Member keys are annotation only in an array context
-        if self.is_member_key {
-          return Ok(());
-        }
-
-        match validate_array_occurrence(
-          self.occurrence.as_ref().take(),
-          self.entry_counts.as_ref().map(|ec| &ec[..]),
-          a,
-        ) {
-          Ok((iter_items, allow_empty_array)) => {
-            if iter_items {
-              for (idx, v) in a.iter().enumerate() {
-                if let Some(indices) = &self.valid_array_items {
-                  if self.is_multi_type_choice && indices.contains(&idx) {
-                    continue;
-                  }
-                }
-
-                let mut jv = JSONValidator::new(self.cddl, v.clone());
-                jv.generic_rules = self.generic_rules.clone();
-                jv.eval_generic_rule = self.eval_generic_rule;
-                jv.is_multi_type_choice = self.is_multi_type_choice;
-                jv.ctrl = self.ctrl.clone();
-                jv.json_location
-                  .push_str(&format!("{}/{}", self.json_location, idx));
-
-                jv.visit_value(value)?;
-
-                if self.is_multi_type_choice && jv.errors.is_empty() {
-                  if let Some(indices) = &mut self.valid_array_items {
-                    indices.push(idx);
-                  } else {
-                    self.valid_array_items = Some(vec![idx]);
-                  }
-                  continue;
-                }
-
-                if let Some(errors) = &mut self.array_errors {
-                  if let Some(error) = errors.get_mut(&idx) {
-                    error.append(&mut jv.errors);
-                  } else {
-                    errors.insert(idx, jv.errors);
-                  }
-                } else {
-                  let mut errors = HashMap::new();
-                  errors.insert(idx, jv.errors);
-                  self.array_errors = Some(errors)
-                }
-              }
-            } else if let Some(idx) = self.group_entry_idx.take() {
-              if let Some(v) = a.get(idx) {
-                let mut jv = JSONValidator::new(self.cddl, v.clone());
-                jv.generic_rules = self.generic_rules.clone();
-                jv.eval_generic_rule = self.eval_generic_rule;
-                jv.is_multi_type_choice = self.is_multi_type_choice;
-                jv.ctrl = self.ctrl.clone();
-                jv.json_location
-                  .push_str(&format!("{}/{}", self.json_location, idx));
-
-                jv.visit_value(value)?;
-
-                self.errors.append(&mut jv.errors);
-              } else if !allow_empty_array {
-                self.add_error(format!("expected value {} at index {}", value, idx));
-              }
-            } else {
-              self.add_error(format!("expected value {}, got {}", value, self.json));
-            }
-          }
-          Err(errors) => {
-            for e in errors.into_iter() {
-              self.add_error(e);
-            }
-          }
-        }
-
-        None
-      }
-      Value::Object(o) => {
-        // Bareword member keys are converted to text string values
-        if let token::Value::TEXT(t) = value {
-          if self.is_cut_present {
-            self.cut_value = Some(t);
-          }
-
-          if *t == "any" {
-            return Ok(());
-          }
-
-          // Retrieve the value from key unless optional/zero or more, in which
-          // case advance to next group entry
-          if let Some(v) = o.get(*t) {
-            self
-              .validated_keys
-              .get_or_insert(vec![t.to_string()])
-              .push(t.to_string());
-            self.object_value = Some(v.clone());
-            self.json_location.push_str(&format!("/{}", t));
-
-            None
-          } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
-            &self.occurrence.take()
-          {
-            self.advance_to_next_entry = true;
-            None
-          } else if let Some(Token::NE) = &self.ctrl {
-            None
-          } else {
-            Some(format!("object missing key: \"{}\"", t))
-          }
-        } else {
-          Some(format!(
-            "CDDL member key must be string data type. got {}",
-            value
-          ))
-        }
-      }
-      _ => Some(format!("expected {}, got {}", value, self.json)),
+      token::Value::BYTE(token::ByteValue::UTF8(b)) => match &self.json {
+        Value::String(s) if s.as_bytes() == b.as_ref() => None,
+        _ => Some(format!("expected byte value {:?}, got {}", b, self.json)),
+      },
+      token::Value::BYTE(token::ByteValue::B16(b)) => match &self.json {
+        Value::String(s) if s.as_bytes() == b.as_ref() => None,
+        _ => Some(format!("expected byte value {:?}, got {}", b, self.json)),
+      },
+      token::Value::BYTE(token::ByteValue::B64(b)) => match &self.json {
+        Value::String(s) if s.as_bytes() == b.as_ref() => None,
+        _ => Some(format!("expected byte value {:?}, got {}", b, self.json)),
+      },
     };
 
     if let Some(e) = error {
@@ -1936,9 +2069,17 @@ mod tests {
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cddl = indoc!(
       r#"
-      a = b64'dGVzdGluZw==' .cat b64'MTIz'"#
+      interval<BASE> = (
+        "test" => BASE .plus a
+      )
+   
+      X = 0
+      a = 10
+      rect = {
+        interval<X>
+      }"#
     );
-    let json = r#""dGVzdGluZzEyMw==""#;
+    let json = r#"{ "test": 11 }"#;
 
     let mut lexer = lexer_from_str(cddl);
     let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
