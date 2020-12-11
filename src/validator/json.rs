@@ -1868,14 +1868,14 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
   }
 
   fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error> {
-    if !self.is_root {
-      if let Value::Array(_) = &self.json {
-        return self.validate_value_array(value);
-      }
+    // FIXME: If during traversal the type being validated is supposed to be a value,
+    // this failsi
+    if let Value::Array(_) = &self.json {
+      return self.validate_value_array(value);
+    }
 
-      if let Value::Object(_) = &self.json {
-        return self.validate_object_value(value);
-      }
+    if let Value::Object(_) = &self.json {
+      return self.validate_object_value(value);
     }
 
     let error: Option<String> = match value {
@@ -2074,13 +2074,14 @@ mod tests {
         "test" => BASE .plus a
       )
    
-      X = 0
-      a = 10
       rect = {
         interval<X>
-      }"#
+      }
+      X = 0
+      a = 10
+      "#
     );
-    let json = r#"{ "test": 11 }"#;
+    let json = r#"{ "test": 10 }"#;
 
     let mut lexer = lexer_from_str(cddl);
     let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
