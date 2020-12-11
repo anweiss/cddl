@@ -868,7 +868,7 @@ pub enum Type2<'a> {
   /// Text string value (enclosed by '"')
   TextValue {
     /// Value
-    value: &'a str,
+    value: Cow<'a, str>,
     /// Span
     span: Span,
   },
@@ -1311,6 +1311,79 @@ impl<'a> From<RangeValue<'a>> for Type2<'a> {
       RangeValue::INT(value) => Type2::IntValue { value, span },
       RangeValue::UINT(value) => Type2::UintValue { value, span },
       RangeValue::FLOAT(value) => Type2::FloatValue { value, span },
+    }
+  }
+}
+
+impl<'a> From<Type1<'a>> for Type2<'a> {
+  fn from(type1: Type1<'a>) -> Self {
+    Type2::ParenthesizedType {
+      pt: Type {
+        type_choices: vec![TypeChoice {
+          type1,
+          comments_after_type: None,
+          comments_before_type: None,
+        }],
+        span: Span::default(),
+      },
+      comments_after_type: None,
+      comments_before_type: None,
+      span: Span::default(),
+    }
+  }
+}
+
+impl<'a> From<usize> for Type2<'a> {
+  fn from(value: usize) -> Self {
+    Type2::UintValue {
+      value,
+      span: Span::default(),
+    }
+  }
+}
+
+impl<'a> From<isize> for Type2<'a> {
+  fn from(value: isize) -> Self {
+    Type2::IntValue {
+      value,
+      span: Span::default(),
+    }
+  }
+}
+
+impl<'a> From<f64> for Type2<'a> {
+  fn from(value: f64) -> Self {
+    Type2::FloatValue {
+      value,
+      span: Span::default(),
+    }
+  }
+}
+
+impl<'a> From<String> for Type2<'a> {
+  fn from(value: String) -> Self {
+    Type2::TextValue {
+      value: value.into(),
+      span: Span::default(),
+    }
+  }
+}
+
+impl<'a> From<ByteValue<'a>> for Type2<'a> {
+  fn from(value: ByteValue<'a>) -> Self {
+    match value {
+      ByteValue::UTF8(value) => Type2::UTF8ByteString {
+        value,
+        span: Span::default(),
+      },
+      ByteValue::B16(value) => Type2::B16ByteString {
+        value,
+        span: Span::default(),
+      },
+      ByteValue::B64(value) => Type2::B64ByteString {
+        value,
+        span: Span::default(),
+      },
     }
   }
 }
