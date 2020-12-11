@@ -925,7 +925,10 @@ where
         );
 
         match value {
-          token::Value::TEXT(t) => Ok(Type2::TextValue { value: t, span }),
+          token::Value::TEXT(t) => Ok(Type2::TextValue {
+            value: t.clone(),
+            span,
+          }),
           token::Value::INT(i) => Ok(Type2::IntValue { value: *i, span }),
           token::Value::UINT(ui) => Ok(Type2::UintValue { value: *ui, span }),
           token::Value::FLOAT(f) => Ok(Type2::FloatValue { value: *f, span }),
@@ -4178,7 +4181,7 @@ mod tests {
                 TypeChoice {
                   type1: Type1 {
                     type2: Type2::TextValue {
-                      value: "mytype1",
+                      value: "mytype1".into(),
                       span: (2, 11, 1),
                     },
                     operator: None,

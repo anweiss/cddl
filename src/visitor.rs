@@ -288,7 +288,7 @@ where
     Type2::FloatValue { value, .. } => visitor.visit_value(&Value::FLOAT(*value)),
     Type2::IntValue { value, .. } => visitor.visit_value(&Value::INT(*value)),
     Type2::UintValue { value, .. } => visitor.visit_value(&Value::UINT(*value)),
-    Type2::TextValue { value, .. } => visitor.visit_value(&Value::TEXT(value)),
+    Type2::TextValue { value, .. } => visitor.visit_value(&Value::TEXT(value.clone())),
     _ => Ok(()),
   }
 }
