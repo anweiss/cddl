@@ -413,7 +413,7 @@ impl<'a> Lexer<'a> {
         (idx, '"') => {
           let tv = self.read_text_value(idx)?;
           self.position.range = (token_offset, self.position.index + 1);
-          Ok((self.position, Token::VALUE(Value::TEXT(tv))))
+          Ok((self.position, Token::VALUE(Value::TEXT(tv.into()))))
         }
         (_, '{') => {
           self.position.range = (token_offset, self.position.index + 1);

@@ -115,10 +115,14 @@ pub enum Token<'a> {
   /// Proposed control extension to support Perl-Compatible Regular Expressions
   /// (PCREs). See https://tools.ietf.org/html/rfc8610#section-3.8.3.2s
   PCRE,
-  /// .cat control operator Proposed control extension for string concatenation.
-  /// See
+  /// .cat control operator
+  /// Proposed control extension for string concatenation. See
   /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-01#section-2.1.
   CAT,
+  /// .plus control operator
+  /// Proposed control extension for numeric addition. See
+  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-01#section-2.2.
+  PLUS,
 
   /// group to choice enumeration '&'
   GTOCHOICE,
@@ -332,7 +336,7 @@ pub enum Value<'a> {
   FLOAT(f64),
   /// Text value
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
-  TEXT(&'a str),
+  TEXT(Cow<'a, str>),
   /// Byte value
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   BYTE(ByteValue<'a>),
@@ -363,7 +367,7 @@ impl<'a> fmt::Display for Value<'a> {
 
 impl<'a> From<&'a str> for Value<'a> {
   fn from(value: &'a str) -> Self {
-    Value::TEXT(value)
+    Value::TEXT(value.into())
   }
 }
 
@@ -483,6 +487,7 @@ impl<'a> fmt::Display for Token<'a> {
       Token::CBORSEQ => write!(f, ".cborseq"),
       Token::WITHIN => write!(f, ".within"),
       Token::CAT => write!(f, ".cat"),
+      Token::PLUS => write!(f, ".plus"),
       Token::AND => write!(f, ".and"),
       Token::LT => write!(f, ".lt"),
       Token::LE => write!(f, ".le"),
@@ -562,6 +567,7 @@ pub fn lookup_control_from_str<'a>(ident: &str) -> Option<Token<'a>> {
     ".default" => Some(Token::DEFAULT),
     ".pcre" => Some(Token::PCRE),
     ".cat" => Some(Token::CAT),
+    ".plus" => Some(Token::PLUS),
     _ => None,
   }
 }
@@ -598,6 +604,7 @@ pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
     Token::DEFAULT => Some(".default"),
     Token::PCRE => Some(".pcre"),
     Token::CAT => Some(".cat"),
+    Token::PLUS => Some(".plus"),
     _ => None,
   }
 }
