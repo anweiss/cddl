@@ -2466,9 +2466,7 @@ pub fn cddl_from_str<'a>(
 pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
   match Parser::new(Lexer::new(input).iter(), input) {
     Ok(mut p) => match p.parse_cddl() {
-      Ok(c) => JsValue::from_serde(&c)
-        .map_err(|e| JsValue::from(e.to_string()))
-        .map(|c| c),
+      Ok(c) => JsValue::from_serde(&c).map_err(|e| JsValue::from(e.to_string())),
       Err(Error::PARSER) => {
         if !p.errors.is_empty() {
           return Err(JsValue::from_serde(&p.errors).map_err(|e| JsValue::from(e.to_string()))?);
