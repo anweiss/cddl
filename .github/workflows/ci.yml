@@ -157,12 +157,14 @@ jobs:
           components: rustfmt, clippy
 
       - name: cargo +${{ matrix.rust_toolchain }} fmt
+        if: ${{ always() }}
         uses: actions-rs/cargo@v1
         with:
           command: fmt
           args: --all -- --check
 
       - name: cargo +${{ matrix.rust_toolchain }} clippy
+        if: ${{ always() }}
         uses: actions-rs/cargo@v1
         with:
           command: clippy
@@ -188,6 +190,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: cargo +${{ matrix.rust_toolchain }} clippy
+        if: ${{ always() }}
         uses: actions-rs/cargo@v1
         with:
           command: clippy
