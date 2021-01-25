@@ -179,7 +179,7 @@ jobs:
         env:
           VSCODE_MARKETPLACE_TOKEN: ${{ secrets.VSCODE_MARKETPLACE_TOKEN }}
         run: |
-          apt-get update && apt-get install -y jq
+          sudo apt-get update && sudo apt-get install -y jq
           npm install -g vsce
           export TAG=`jq -r '.version' package.json`
           vsce show --json anweiss.cddl-languageserver | jq -e --arg TAG "$TAG" -e '.versions[] | select(.version == $TAG)'
