@@ -253,14 +253,15 @@ impl<'a> Rule<'a> {
     } = self
     {
       let type_check = |tc: &TypeChoice| {
-        matches!(tc.type1.type2,
+        matches!(
+          tc.type1.type2,
           Type2::Typename { .. }
-          | Type2::FloatValue { .. }
-          | Type2::IntValue { .. }
-          | Type2::UintValue { .. }
-          | Type2::TextValue { .. }
-          | Type2::B16ByteString { .. }
-          | Type2::B64ByteString { .. }
+            | Type2::FloatValue { .. }
+            | Type2::IntValue { .. }
+            | Type2::UintValue { .. }
+            | Type2::TextValue { .. }
+            | Type2::B16ByteString { .. }
+            | Type2::B64ByteString { .. }
         )
       };
 
