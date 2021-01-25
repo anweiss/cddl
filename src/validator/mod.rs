@@ -60,12 +60,14 @@ pub fn unwrap_rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<
         },
       ..
     } if name == ident && !is_type_choice_alternate => {
-      if type_choices.iter().any(|tc| {
+      let match_fn = |tc: &TypeChoice| {
         matches!(
           tc.type1.type2,
           Type2::Map { .. } | Type2::Array { .. } | Type2::TaggedData { .. }
         )
-      }) {
+      };
+
+      if type_choices.iter().any(match_fn) {
         Some(r)
       } else if let Some(ident) = type_choices.iter().find_map(|tc| {
         if let Type2::Typename {
@@ -680,7 +682,7 @@ pub fn format_regex(input: &str) -> Option<String> {
   }
 
   for find in ["?=", "?!", "?<=", "?<!"].iter() {
-    if formatted_regex.find(find).is_some() {
+    if formatted_regex.contains(find) {
       return None;
     }
   }
