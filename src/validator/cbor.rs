@@ -2115,6 +2115,17 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           return Ok(());
         }
 
+        if token::lookup_ident(ident.ident)
+          .in_standard_prelude()
+          .is_some()
+        {
+          self.add_error(format!(
+            "expecting object value of type {}, got object",
+            ident.ident
+          ));
+          return Ok(());
+        }
+
         self.visit_value(&token::Value::TEXT(ident.ident))
       }
       _ => {
