@@ -1466,31 +1466,31 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             }
 
             if is_ident_string_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
               let values_to_validate = o
                 .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(&k) {
-                      Some(v.clone())
-                    } else {
-                      None
-                    }
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
+                .filter_map(|(k, v)| match &self.validated_keys {
+                  Some(keys) if !keys.contains(&k) => Some(v.clone()),
+                  Some(_) => None,
+                  None => Some(v.clone()),
                 })
                 .collect::<Vec<_>>();
 
               self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
-              }
 
               return Ok(());
             }
           }
+        }
+
+        if token::lookup_ident(ident.ident)
+          .in_standard_prelude()
+          .is_some()
+        {
+          self.add_error(format!(
+            "expecting object value of type {}, got object",
+            ident.ident
+          ));
+          return Ok(());
         }
 
         self.visit_value(&token::Value::TEXT(ident.ident))

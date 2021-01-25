@@ -5,7 +5,7 @@ repository = "https://github.com/anweiss/cddl"
 homepage = "https://cddl.anweiss.tech"
 categories = ["parser-implementations", "encoding", "development-tools", "wasm"]
 license = "MIT"
-version = "0.8.5"
+version = "0.8.6"
 authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
 readme = "README.md"
 edition = "2018"
@@ -23,7 +23,7 @@ base16 = { version = "0.2", default-features = false }
 base64 = { version = "0.13", default-features = false }
 chrono = { version = "0.4", optional = true }
 clap = { version = "2.33", optional = true }
-codespan-reporting = "0.9"
+codespan-reporting = "0.11"
 hexf-parse = "0.1"
 itertools = "0.9"
 lexical-core = "0.7"

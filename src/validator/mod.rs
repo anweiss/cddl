@@ -60,10 +60,12 @@ pub fn unwrap_rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<
         },
       ..
     } if name == ident && !is_type_choice_alternate => {
-      if type_choices
-        .iter()
-        .any(|tc| matches!(tc.type1.type2, Type2::Map { .. } | Type2::Array { .. } | Type2::TaggedData { .. }))
-      {
+      if type_choices.iter().any(|tc| {
+        matches!(
+          tc.type1.type2,
+          Type2::Map { .. } | Type2::Array { .. } | Type2::TaggedData { .. }
+        )
+      }) {
         Some(r)
       } else if let Some(ident) = type_choices.iter().find_map(|tc| {
         if let Type2::Typename {
@@ -78,7 +80,7 @@ pub fn unwrap_rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<
         }
       }) {
         unwrap_rule_from_ident(cddl, ident)
-      }   else {
+      } else {
         None
       }
     }

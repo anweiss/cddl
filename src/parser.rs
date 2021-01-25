@@ -306,9 +306,10 @@ where
 
   /// Parses into a `CDDL` AST
   pub fn parse_cddl(&mut self) -> Result<CDDL<'a>> {
-    let mut c = CDDL::default();
-
-    c.comments = self.collect_comments()?;
+    let mut c = CDDL {
+      comments: self.collect_comments()?,
+      ..Default::default()
+    };
 
     while self.cur_token != Token::EOF {
       match self.parse_rule() {
