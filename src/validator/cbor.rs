@@ -114,6 +114,7 @@ impl ValidationError {
 }
 
 /// cbor validator type
+#[derive(Clone)]
 pub struct CBORValidator<'a> {
   cddl: &'a CDDL<'a>,
   cbor: Value,
@@ -163,6 +164,7 @@ pub struct CBORValidator<'a> {
   // Collect invalid array item errors where the key is the index of the invalid
   // array item
   array_errors: Option<HashMap<usize, Vec<ValidationError>>>,
+  is_colon_shortcut_present: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -201,6 +203,7 @@ impl<'a> CBORValidator<'a> {
       values_to_validate: None,
       valid_array_items: None,
       array_errors: None,
+      is_colon_shortcut_present: false,
     }
   }
 
@@ -1646,8 +1649,12 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       }
     }
 
-    if let Some(r) = rule_from_ident(self.cddl, ident) {
-      return self.visit_rule(r);
+    // self.is_colon_shortcut_present is only true when the ident is part of a
+    // member key
+    if !self.is_colon_shortcut_present {
+      if let Some(r) = rule_from_ident(self.cddl, ident) {
+        return self.visit_rule(r);
+      }
     }
 
     if is_ident_any_type(self.cddl, ident) {
@@ -2222,11 +2229,21 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
   }
 
   fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<ValidationError> {
-    if let MemberKey::Type1 { is_cut, .. } = mk {
-      self.is_cut_present = *is_cut;
+    match mk {
+      MemberKey::Type1 { is_cut, .. } => {
+        self.is_cut_present = *is_cut;
+        walk_memberkey(self, mk)?;
+        self.is_cut_present = false;
+      }
+      MemberKey::Bareword { .. } => {
+        self.is_colon_shortcut_present = true;
+        walk_memberkey(self, mk)?;
+        self.is_colon_shortcut_present = false;
+      }
+      _ => return walk_memberkey(self, mk),
     }
 
-    walk_memberkey(self, mk)
+    Ok(())
   }
 
   fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<ValidationError> {
@@ -2380,7 +2397,6 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               if let Some(s) = b.get(rsv) {
                 if let Some(lsv) = 1u32.checked_shl(*v as u32 & 7) {
                   if (*s as u32 & lsv) != 0 {
-                    println!("b: {:?}", b);
                     None
                   } else {
                     Some(format!(
