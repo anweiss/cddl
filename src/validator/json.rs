@@ -6,6 +6,7 @@ use crate::{
   visitor::{self, *},
 };
 use chrono::{TimeZone, Utc};
+use control::validate_abnf;
 use serde_json::Value;
 use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
 
@@ -1174,6 +1175,25 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         self.ctrl = None;
       }
+      t @ Some(Token::ABNF) => {
+        self.ctrl = t;
+
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match self.json {
+              Value::String(_) | Value::Array(_) => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                ".abnf control can only be matched against a JSON string, got {}",
+                self.json,
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".abnf can only be matched against string data type, got {}",
+            target,
+          )),
+        }
+      }
       _ => {
         self.add_error(format!("unsupported control operator {}", ctrl));
       }
@@ -2015,6 +2035,9 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               Some(format!("expected \"{}\" to match regex \"{}\"", s, t))
             }
           }
+          Some(Token::ABNF) => validate_abnf(t, s)
+            .err()
+            .map(|e| format!("\"{}\" is not valid against abnf: {}", s, e)),
           _ => {
             if s == t {
               None

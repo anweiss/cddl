@@ -1,3 +1,5 @@
+use pest_meta::parser;
+
 use crate::{
   ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL},
   token::ByteValue,
@@ -560,4 +562,69 @@ pub fn plus_operation<'a>(
   }
 
   Ok(values)
+}
+
+pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
+  if let Some(idx) = abnf.find('\n') {
+    let (rule, abnf) = abnf.split_at(idx);
+
+    let rules = abnf_to_pest::parse_abnf(abnf).map_err(|e| e.to_string())?;
+    let mut w = Vec::new();
+    abnf_to_pest::render_rules_to_pest(rules)
+      .render(0, &mut w)
+      .unwrap();
+    let pest = String::from_utf8(w).unwrap();
+
+    let pairs = pest_meta::parser::parse(pest_meta::parser::Rule::grammar_rules, &pest)
+      .map_err(|e| e.to_string())?;
+
+    let ast = pest_meta::parser::consume_rules(pairs).unwrap();
+
+    let vm = pest_vm::Vm::new(pest_meta::optimizer::optimize(ast.clone()));
+
+    let rule = rule.replace("-", "_");
+    let _ = vm.parse(&rule, target).map_err(|e| e.to_string())?;
+  }
+
+  Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use indoc::indoc;
+
+  #[test]
+  fn test_abnf() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let abnf_str = indoc!(
+      r#"
+        date-fullyear
+        date-fullyear   = 4DIGIT
+        date-month      = 2DIGIT  ; 01-12
+        date-mday       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on
+                                  ; month/year
+        time-hour       = 2DIGIT  ; 00-23
+        time-minute     = 2DIGIT  ; 00-59
+        time-second     = 2DIGIT  ; 00-58, 00-59, 00-60 based on leap sec
+                                  ; rules
+        time-secfrac    = "." 1*DIGIT
+        time-numoffset  = ("+" / "-") time-hour ":" time-minute
+        time-offset     = "Z" / time-numoffset
+
+        partial-time    = time-hour ":" time-minute ":" time-second
+                          [time-secfrac]
+        full-date       = date-fullyear "-" date-month "-" date-mday
+        full-time       = partial-time time-offset
+
+        date-time       = full-date "T" full-time
+
+        DIGIT          =  %x30-39 ; 0-9
+        ; abbreviated here
+      "#
+    );
+
+    validate_abnf(abnf_str, "2009")?;
+
+    Ok(())
+  }
 }

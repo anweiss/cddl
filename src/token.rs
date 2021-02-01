@@ -123,6 +123,14 @@ pub enum Token<'a> {
   /// Proposed control extension for numeric addition. See
   /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-01#section-2.2.
   PLUS,
+  /// .abnf control operator
+  /// Proposed control extension for embedded ABNF as UTF-8. See
+  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-01#section-3
+  ABNF,
+  /// .abnfb control operator
+  /// Proposed control extension for embedded ABNF as a sequence of bytes. See
+  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-01#section-3
+  ABNFB,
 
   /// group to choice enumeration '&'
   GTOCHOICE,
@@ -488,6 +496,8 @@ impl<'a> fmt::Display for Token<'a> {
       Token::WITHIN => write!(f, ".within"),
       Token::CAT => write!(f, ".cat"),
       Token::PLUS => write!(f, ".plus"),
+      Token::ABNF => write!(f, ".abnf"),
+      Token::ABNFB => write!(f, ".abnfb"),
       Token::AND => write!(f, ".and"),
       Token::LT => write!(f, ".lt"),
       Token::LE => write!(f, ".le"),
@@ -568,6 +578,8 @@ pub fn lookup_control_from_str<'a>(ident: &str) -> Option<Token<'a>> {
     ".pcre" => Some(Token::PCRE),
     ".cat" => Some(Token::CAT),
     ".plus" => Some(Token::PLUS),
+    ".abnf" => Some(Token::ABNF),
+    ".abnfb" => Some(Token::ABNFB),
     _ => None,
   }
 }
@@ -605,6 +617,8 @@ pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
     Token::PCRE => Some(".pcre"),
     Token::CAT => Some(".cat"),
     Token::PLUS => Some(".plus"),
+    Token::ABNF => Some(".abnf"),
+    Token::ABNFB => Some(".abnfb"),
     _ => None,
   }
 }
