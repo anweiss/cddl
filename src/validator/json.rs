@@ -679,10 +679,9 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
                       "expected \"{}\" string length to be in the range {} <= value <= {}, got {}",
                       s, l, u, len
                     ));
-                    return Ok(());
-                  } else {
-                    return Ok(());
                   }
+
+                  return Ok(());
                 } else if s.len() <= *l || s.len() >= *u {
                   self.add_error(format!(
                     "expected \"{}\" string length to be in the range {} < value < {}, got {}",
