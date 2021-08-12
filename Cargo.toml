@@ -19,36 +19,36 @@ wasm-opt = ["-Oz", "--enable-mutable-globals"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-base16 = { version = "0.2", default-features = false }
-base64 = { version = "0.13", default-features = false }
-chrono = { version = "0.4", optional = true }
-clap = { version = "2.33", optional = true }
-codespan-reporting = "0.11"
-hexf-parse = "0.1"
-itertools = "0.9"
-lexical-core = "0.7"
-regex = { version = "1.4", default-features = false, features = ["std"] }
-regex-syntax = { version = "0.6", optional = true }
-serde = { version = "1.0", optional = true, features = ["derive"] }
+base16 = { version = "0.2.1", default-features = false }
+base64 = { version = "0.13.0", default-features = false }
+chrono = { version = "0.4.19", optional = true }
+clap = { version = "2.33.3", optional = true }
+codespan-reporting = "0.11.1"
+hexf-parse = "0.2.1"
+itertools = "0.10.1"
+lexical-core = "0.7.6"
+regex = { version = "1.5.4", default-features = false, features = ["std"] }
+regex-syntax = { version = "0.6.25", optional = true }
+serde = { version = "1.0.127", optional = true, features = ["derive"] }
 serde_cbor = { version = "0.11.1", optional = true, default-features = false, features = ["std", "tags"] }
-serde_json = { version = "1.0", optional = true, default-features = false }
-uriparse = { version = "0.6", optional = true }
-base64-url = { version = "1.4", optional = true }
+serde_json = { version = "1.0.66", optional = true, default-features = false }
+uriparse = { version = "0.6.3", optional = true }
+base64-url = { version = "1.4.10", optional = true }
 
 [dev-dependencies]
-indoc = "1.0"
-pretty_assertions = { git = "https://github.com/colin-kiegel/rust-pretty-assertions" }
+indoc = "1.0.3"
+pretty_assertions = "0.7.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-crossterm = { version = "0.18", optional = true }
+crossterm = { version = "0.20.0", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-console_error_panic_hook = "0.1"
-wasm-bindgen = { version = "0.2", features = ["serde-serialize"], optional = true }
-wee_alloc = { version = "0.4", optional = true }
+console_error_panic_hook = "0.1.6"
+wasm-bindgen = { version = "0.2.75", features = ["serde-serialize"], optional = true }
+wee_alloc = { version = "0.4.5", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen-test = "0.3"
+wasm-bindgen-test = "0.3.25"
 
 [features]
 default = ["std"]

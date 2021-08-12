@@ -637,7 +637,7 @@ impl<'a> fmt::Display for Type<'a> {
         type_str.push_str(&tc.type1.to_string());
 
         if let Some(comments) = &tc.comments_after_type {
-          type_str.push_str(&comments.to_string().trim_end());
+          type_str.push_str(comments.to_string().trim_end());
         }
 
         continue;

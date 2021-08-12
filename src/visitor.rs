@@ -197,7 +197,7 @@ where
   V: Visitor<'a, E> + ?Sized,
 {
   if let Some(o) = &t1.operator {
-    return visitor.visit_operator(&t1, o);
+    return visitor.visit_operator(t1, o);
   }
 
   visitor.visit_type2(&t1.type2)

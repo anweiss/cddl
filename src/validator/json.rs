@@ -679,10 +679,9 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
                       "expected \"{}\" string length to be in the range {} <= value <= {}, got {}",
                       s, l, u, len
                     ));
-                    return Ok(());
-                  } else {
-                    return Ok(());
                   }
+
+                  return Ok(());
                 } else if s.len() <= *l || s.len() >= *u {
                   self.add_error(format!(
                     "expected \"{}\" string length to be in the range {} < value < {}, got {}",
@@ -1474,7 +1473,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               let values_to_validate = o
                 .iter()
                 .filter_map(|(k, v)| match &self.validated_keys {
-                  Some(keys) if !keys.contains(&k) => Some(v.clone()),
+                  Some(keys) if !keys.contains(k) => Some(v.clone()),
                   Some(_) => None,
                   None => Some(v.clone()),
                 })

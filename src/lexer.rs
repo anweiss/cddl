@@ -540,7 +540,7 @@ impl<'a> Lexer<'a> {
             } else if is_ealpha(c.1) {
               // Controlop
               let ctrlop =
-                token::lookup_control_from_str(&self.read_identifier(idx)?).ok_or_else(|| {
+                token::lookup_control_from_str(self.read_identifier(idx)?).ok_or_else(|| {
                   self.position.range = (token_offset, self.position.index + 1);
 
                   LexerError::from((self.str_input, self.position, InvalidControlOperator))
@@ -609,7 +609,7 @@ impl<'a> Lexer<'a> {
               }
             }
 
-            let ident = token::lookup_ident(&self.read_identifier(idx)?);
+            let ident = token::lookup_ident(self.read_identifier(idx)?);
 
             self.position.range = (token_offset, self.position.index + 1);
 
@@ -882,13 +882,13 @@ impl<'a> Lexer<'a> {
 
             if is_signed {
               return Ok(Token::VALUE(Value::FLOAT(
-                lexical::parse::<f64>(&self.str_input[signed_idx..=end_idx].as_bytes())
+                lexical::parse::<f64>(self.str_input[signed_idx..=end_idx].as_bytes())
                   .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
               )));
             }
 
             return Ok(Token::VALUE(Value::FLOAT(
-              lexical::parse::<f64>(&self.str_input[idx..=end_idx].as_bytes())
+              lexical::parse::<f64>(self.str_input[idx..=end_idx].as_bytes())
                 .map_err(|e| LexerError::from((self.str_input, self.position, e)))?,
             )));
           }
@@ -908,7 +908,7 @@ impl<'a> Lexer<'a> {
     if is_signed {
       if is_exponent {
         return Ok(Token::VALUE(Value::INT(
-          lexical::parse::<f64>(&self.str_input[signed_idx..=end_idx].as_bytes())
+          lexical::parse::<f64>(self.str_input[signed_idx..=end_idx].as_bytes())
             .map_err(|e| LexerError::from((self.str_input, self.position, e)))? as isize,
         )));
       } else {
@@ -922,7 +922,7 @@ impl<'a> Lexer<'a> {
 
     if is_exponent {
       return Ok(Token::VALUE(Value::UINT(
-        lexical::parse::<f64>(&self.str_input[idx..=end_idx].as_bytes())
+        lexical::parse::<f64>(self.str_input[idx..=end_idx].as_bytes())
           .map_err(|e| LexerError::from((self.str_input, self.position, e)))? as usize,
       )));
     }

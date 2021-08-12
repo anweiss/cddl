@@ -664,8 +664,8 @@ where
           let comments_after_ident = self.collect_comments()?;
 
           generic_params.params.push(GenericParam {
-            comments_before_ident,
             param,
+            comments_before_ident,
             comments_after_ident,
           });
 
@@ -1542,11 +1542,7 @@ where
           span.1 = self.lexer_position.range.1;
         }
 
-        let trailing_comments = if let Some(comments) = entry_type.comments_after_type() {
-          Some(comments)
-        } else {
-          None
-        };
+        let trailing_comments = entry_type.comments_after_type();
 
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
           return Ok(GroupEntry::TypeGroupname {
@@ -1605,11 +1601,7 @@ where
       member_key @ Some(_) => {
         let mut entry_type = self.parse_type(None)?;
 
-        let trailing_comments = if let Some(comments) = entry_type.comments_after_type() {
-          Some(comments)
-        } else {
-          None
-        };
+        let trailing_comments = entry_type.comments_after_type();
 
         span.1 = self.parser_position.range.1;
 
@@ -1692,7 +1684,7 @@ where
 
     let end_t1_range = self.lexer_position.range.1;
 
-    let mut ident = self.identifier_from_ident_token((&ident.0, ident.1));
+    let mut ident = self.identifier_from_ident_token((ident.0, ident.1));
     ident.span = (begin_memberkey_range, end_t1_range, begin_memberkey_line);
 
     self.next_token()?;
@@ -2265,12 +2257,8 @@ where
         Ok(Some(Occurrence { occur, comments }))
       }
       Token::VALUE(_) => {
-        let lower = if let Token::VALUE(value) = &self.cur_token {
-          if let token::Value::UINT(li) = *value {
-            Some(li)
-          } else {
-            None
-          }
+        let lower = if let Token::VALUE(token::Value::UINT(li)) = &self.cur_token {
+          Some(*li)
         } else {
           None
         };
@@ -2294,16 +2282,14 @@ where
 
         self.next_token()?;
 
-        let upper = if let Token::VALUE(value) = &self.cur_token {
-          if let token::Value::UINT(ui) = *value {
-            self.parser_position.range.1 = self.lexer_position.range.1;
+        let upper = if let Token::VALUE(token::Value::UINT(ui)) = &self.cur_token {
+          let ui = *ui;
 
-            self.next_token()?;
+          self.parser_position.range.1 = self.lexer_position.range.1;
 
-            Some(ui)
-          } else {
-            None
-          }
+          self.next_token()?;
+
+          Some(ui)
         } else {
           None
         };
@@ -2332,7 +2318,7 @@ where
   }
 
   fn peek_token_is(&self, t: &Token) -> bool {
-    mem::discriminant(&self.peek_token) == mem::discriminant(&t)
+    mem::discriminant(&self.peek_token) == mem::discriminant(t)
   }
 
   fn expect_peek(&mut self, t: &Token) -> Result<bool> {

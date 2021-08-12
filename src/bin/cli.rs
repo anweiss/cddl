@@ -208,7 +208,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut data = Vec::new();
         reader.read_to_end(&mut data)?;
         if let Ok(json) = std::str::from_utf8(&data) {
-          match validate_json_from_str(&cddl_str, &json) {
+          match validate_json_from_str(&cddl_str, json) {
             Ok(()) => {
               writeln!(&mut stdout, "Validation from stdin is successful")?;
               stdoutbuffwrtr.print(&stdout)?;
