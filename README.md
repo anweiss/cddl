@@ -8,7 +8,7 @@ A Rust implementation of the Concise data definition language (CDDL). CDDL is an
 
 This crate includes a handwritten parser and lexer for CDDL, and its development has been heavily inspired by the techniques outlined in Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
-This crate supports validation of both CBOR and JSON data structures. An extremely basic REPL is included as well. This crate's minimum supported Rust version (MSRV) is 1.45.0.
+This crate supports validation of both CBOR and JSON data structures. An extremely basic REPL is included as well. This crate's minimum supported Rust version (MSRV) is 1.46.0.
 
 Also bundled into this repository is a basic language server implementation and extension for Visual Studio Code for editing CDDL. The implementation is backed by the compiled WebAssembly target included in this crate.
 
