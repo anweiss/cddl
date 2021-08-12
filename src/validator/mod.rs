@@ -550,7 +550,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
   if !iter_items && !allow_empty_array {
     if let Some(entry_counts) = entry_counts {
       let len = values.len();
-      if !validate_entry_count(&entry_counts, len) {
+      if !validate_entry_count(entry_counts, len) {
         for ec in entry_counts.iter() {
           if let Some(occur) = &ec.entry_occurrence {
             errors.push(format!(

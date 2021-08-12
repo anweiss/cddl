@@ -1473,7 +1473,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               let values_to_validate = o
                 .iter()
                 .filter_map(|(k, v)| match &self.validated_keys {
-                  Some(keys) if !keys.contains(&k) => Some(v.clone()),
+                  Some(keys) if !keys.contains(k) => Some(v.clone()),
                   Some(_) => None,
                   None => Some(v.clone()),
                 })

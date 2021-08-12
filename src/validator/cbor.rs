@@ -1450,7 +1450,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           cv.is_multi_group_choice = self.is_multi_group_choice;
           cv.cbor_location.push_str(&self.cbor_location);
           cv.type_group_name_entry = self.type_group_name_entry;
-          cv.visit_type(&t)?;
+          cv.visit_type(t)?;
 
           self.errors.append(&mut cv.errors);
           Ok(())
@@ -1840,7 +1840,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                 .iter()
                 .filter_map(|(k, v)| {
                   if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(&k) {
+                    if !keys.contains(k) {
                       if matches!(k, Value::Text(_)) {
                         Some(v.clone())
                       } else {
@@ -1873,7 +1873,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                 .iter()
                 .filter_map(|(k, v)| {
                   if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(&k) {
+                    if !keys.contains(k) {
                       if matches!(k, Value::Integer(_)) {
                         Some(v.clone())
                       } else {
@@ -1906,7 +1906,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                 .iter()
                 .filter_map(|(k, v)| {
                   if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(&k) {
+                    if !keys.contains(k) {
                       if matches!(k, Value::Bool(_)) {
                         Some(v.clone())
                       } else {
@@ -1939,7 +1939,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                 .iter()
                 .filter_map(|(k, v)| {
                   if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(&k) {
+                    if !keys.contains(k) {
                       if matches!(k, Value::Bytes(_)) {
                         Some(v.clone())
                       } else {
@@ -1972,7 +1972,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                 .iter()
                 .filter_map(|(k, v)| {
                   if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(&k) {
+                    if !keys.contains(k) {
                       if matches!(k, Value::Null) {
                         Some(v.clone())
                       } else {
@@ -2005,7 +2005,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                 .iter()
                 .filter_map(|(k, v)| {
                   if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(&k) {
+                    if !keys.contains(k) {
                       if matches!(k, Value::Float(_)) {
                         Some(v.clone())
                       } else {

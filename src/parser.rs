@@ -1684,7 +1684,7 @@ where
 
     let end_t1_range = self.lexer_position.range.1;
 
-    let mut ident = self.identifier_from_ident_token((&ident.0, ident.1));
+    let mut ident = self.identifier_from_ident_token((ident.0, ident.1));
     ident.span = (begin_memberkey_range, end_t1_range, begin_memberkey_line);
 
     self.next_token()?;
@@ -2318,7 +2318,7 @@ where
   }
 
   fn peek_token_is(&self, t: &Token) -> bool {
-    mem::discriminant(&self.peek_token) == mem::discriminant(&t)
+    mem::discriminant(&self.peek_token) == mem::discriminant(t)
   }
 
   fn expect_peek(&mut self, t: &Token) -> Result<bool> {
