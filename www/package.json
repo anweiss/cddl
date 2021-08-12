@@ -28,13 +28,13 @@
   },
   "devDependencies": {
     "copy-webpack-plugin": "^6.0.3",
-    "css-loader": "^1.0.0",
+    "css-loader": "^6.2.0",
     "hello-wasm-pack": "^0.1.0",
     "minimist": "^1.2.5",
-    "monaco-editor": "^0.17.1",
-    "style-loader": "^0.23.1",
-    "webpack": "^4.44.1",
-    "webpack-cli": "^3.3.12",
-    "webpack-dev-server": "^3.11.0"
+    "monaco-editor": "^0.26.1",
+    "style-loader": "^3.2.1",
+    "webpack": "^5.50.0",
+    "webpack-cli": "^4.7.0",
+    "webpack-dev-server": "git://github.com/webpack/webpack-dev-server.git#2e1151eef3e4ae8a3369787d61b2e5763572ede9"
   }
 }
