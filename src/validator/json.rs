@@ -346,7 +346,7 @@ impl<'a> JSONValidator<'a> {
         {
           self.advance_to_next_entry = true;
           return Ok(());
-        } else if let Some(Token::NE) = &self.ctrl {
+        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
           return Ok(());
         } else {
           self.add_error(format!("object missing key: \"{}\"", t))
@@ -545,7 +545,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               }
               return Ok(());
             }
-          } else if let Token::NE = t {
+          } else if let Token::NE | Token::DEFAULT = t {
             if !validate_entry_count(&entry_counts, len) {
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
@@ -1315,7 +1315,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           if group.group_choices.len() == 1
             && group.group_choices[0].group_entries.is_empty()
             && !a.is_empty()
-            && !matches!(self.ctrl, Some(Token::NE))
+            && !matches!(self.ctrl, Some(Token::NE) | Some(Token::DEFAULT))
           {
             self.add_error(format!("expected empty array, got {}", self.json));
             return Ok(());
@@ -1888,7 +1888,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
   fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error> {
     // FIXME: If during traversal the type being validated is supposed to be a value,
-    // this failsi
+    // this fails
     if let Value::Array(_) = &self.json {
       return self.validate_value_array(value);
     }
@@ -1901,7 +1901,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       token::Value::INT(v) => match &self.json {
         Value::Number(n) => match n.as_i64() {
           Some(i) => match &self.ctrl {
-            Some(Token::NE) if i != *v as i64 => None,
+            Some(Token::NE) | Some(Token::DEFAULT) if i != *v as i64 => None,
             Some(Token::LT) if i < *v as i64 => None,
             Some(Token::LE) if i <= *v as i64 => None,
             Some(Token::GT) if i > *v as i64 => None,
@@ -1934,7 +1934,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       token::Value::UINT(v) => match &self.json {
         Value::Number(n) => match n.as_u64() {
           Some(i) => match &self.ctrl {
-            Some(Token::NE) if i != *v as u64 => None,
+            Some(Token::NE) | Some(Token::DEFAULT) if i != *v as u64 => None,
             Some(Token::LT) if i < *v as u64 => None,
             Some(Token::LE) if i <= *v as u64 => None,
             Some(Token::GT) if i > *v as u64 => None,
@@ -1978,7 +1978,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       token::Value::FLOAT(v) => match &self.json {
         Value::Number(n) => match n.as_f64() {
           Some(f) => match &self.ctrl {
-            Some(Token::NE) if (f - *v).abs() > std::f64::EPSILON => None,
+            Some(Token::NE) | Some(Token::DEFAULT) if (f - *v).abs() > std::f64::EPSILON => None,
             Some(Token::LT) if f < *v as f64 => None,
             Some(Token::LE) if f <= *v as f64 => None,
             Some(Token::GT) if f > *v as f64 => None,
@@ -2010,7 +2010,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       },
       token::Value::TEXT(t) => match &self.json {
         Value::String(s) => match &self.ctrl {
-          Some(Token::NE) => {
+          Some(Token::NE) | Some(Token::DEFAULT) => {
             if s != t {
               None
             } else {

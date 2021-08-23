@@ -1198,7 +1198,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           if group.group_choices.len() == 1
             && group.group_choices[0].group_entries.is_empty()
             && !a.is_empty()
-            && !matches!(self.ctrl, Some(Token::NE))
+            && !matches!(self.ctrl, Some(Token::NE) | Some(Token::DEFAULT))
           {
             self.add_error(format!("expected empty array, got {:?}", self.cbor));
             return Ok(());
@@ -2249,7 +2249,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     let error: Option<String> = match &self.cbor {
       Value::Integer(i) => match value {
         token::Value::INT(v) => match &self.ctrl {
-          Some(Token::NE) if *i != *v as i128 => None,
+          Some(Token::NE) | Some(Token::DEFAULT) if *i != *v as i128 => None,
           Some(Token::LT) if *i < *v as i128 => None,
           Some(Token::LE) if *i <= *v as i128 => None,
           Some(Token::GT) if *i > *v as i128 => None,
@@ -2269,7 +2269,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           )),
         },
         token::Value::UINT(v) => match &self.ctrl {
-          Some(Token::NE) if *i != *v as i128 => None,
+          Some(Token::NE) | Some(Token::DEFAULT) if *i != *v as i128 => None,
           Some(Token::LT) if *i < *v as i128 => None,
           Some(Token::LE) if *i <= *v as i128 => None,
           Some(Token::GT) if *i > *v as i128 => None,
@@ -2305,7 +2305,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       },
       Value::Float(f) => match value {
         token::Value::FLOAT(v) => match &self.ctrl {
-          Some(Token::NE) if (f - *v).abs() > std::f64::EPSILON => None,
+          Some(Token::NE) | Some(Token::DEFAULT) if (f - *v).abs() > std::f64::EPSILON => None,
           Some(Token::LT) if *f < *v as f64 => None,
           Some(Token::LE) if *f <= *v as f64 => None,
           Some(Token::GT) if *f > *v as f64 => None,
@@ -2328,7 +2328,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       },
       Value::Text(s) => match value {
         token::Value::TEXT(t) => match &self.ctrl {
-          Some(Token::NE) => {
+          Some(Token::NE) | Some(Token::DEFAULT) => {
             if s != t {
               None
             } else {
@@ -2543,7 +2543,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         {
           self.advance_to_next_entry = true;
           None
-        } else if let Some(Token::NE) = &self.ctrl {
+        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
           None
         } else {
           Some(format!("object missing key: \"{}\"", value))

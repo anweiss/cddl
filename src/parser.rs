@@ -1491,7 +1491,7 @@ where
       self.parse_memberkey(true)?
     };
 
-    if self.cur_token_is(Token::LPAREN) {
+    if self.cur_token_is(Token::LPAREN) && member_key.is_none() {
       self.next_token()?;
 
       let comments_before_group = self.collect_comments()?;
