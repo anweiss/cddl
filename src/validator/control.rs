@@ -214,8 +214,8 @@ pub fn cat_operation<'a>(
       Type2::TextValue {
         value: controller, ..
       } => {
-        let controller = base16::encode_lower(&controller.as_bytes()[..]);
-        let concat = [&value[..], &controller.as_bytes()[..]].concat();
+        let controller = base16::encode_lower(controller.as_bytes());
+        let concat = [&value[..], controller.as_bytes()].concat();
         match base16::decode(&concat) {
           // Ignore the decoded value
           Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
@@ -240,7 +240,7 @@ pub fn cat_operation<'a>(
         value: controller, ..
       } => {
         let controller = base16::encode_lower(&controller[..]);
-        let concat = [&value[..], &controller.as_bytes()[..]].concat();
+        let concat = [&value[..], controller.as_bytes()].concat();
         match base16::decode(&concat) {
           // Ignore the decoded value
           Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
@@ -264,7 +264,7 @@ pub fn cat_operation<'a>(
       } => match base64::decode_config(controller, base64::URL_SAFE) {
         Ok(controller) => {
           let controller = base16::encode_lower(&controller);
-          let concat = [&value[..], &controller.as_bytes()[..]].concat();
+          let concat = [&value[..], controller.as_bytes()].concat();
           match base16::decode(&concat) {
             // Ignore the decoded value
             Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
@@ -289,7 +289,7 @@ pub fn cat_operation<'a>(
         value: controller, ..
       } => match base64::decode_config(value, base64::URL_SAFE) {
         Ok(value) => {
-          let concat = [&value[..], &controller.as_bytes()[..]].concat();
+          let concat = [&value[..], controller.as_bytes()].concat();
           literals.push(
             ByteValue::B64(
               base64::encode_config(&concat, base64::URL_SAFE)
@@ -431,7 +431,7 @@ pub fn plus_operation<'a>(
               type2: nested_controller,
               ..
             }) => {
-              for v in plus_operation(cddl, &controller.type1.type2, &nested_controller)?.iter() {
+              for v in plus_operation(cddl, &controller.type1.type2, nested_controller)?.iter() {
                 values.append(&mut plus_operation(cddl, target, v)?);
               }
             }
@@ -473,7 +473,7 @@ pub fn plus_operation<'a>(
               type2: nested_controller,
               ..
             }) => {
-              for v in plus_operation(cddl, &controller.type1.type2, &nested_controller)?.iter() {
+              for v in plus_operation(cddl, &controller.type1.type2, nested_controller)?.iter() {
                 values.append(&mut plus_operation(cddl, target, v)?);
               }
             }
@@ -512,7 +512,7 @@ pub fn plus_operation<'a>(
               type2: nested_controller,
               ..
             }) => {
-              for v in plus_operation(cddl, &controller.type1.type2, &nested_controller)?.iter() {
+              for v in plus_operation(cddl, &controller.type1.type2, nested_controller)?.iter() {
                 values.append(&mut plus_operation(cddl, target, v)?);
               }
             }
@@ -542,7 +542,7 @@ pub fn plus_operation<'a>(
             type2: nested_controller,
             ..
           }) => {
-            for v in plus_operation(cddl, &tc.type1.type2, &nested_controller)?.iter() {
+            for v in plus_operation(cddl, &tc.type1.type2, nested_controller)?.iter() {
               values.append(&mut plus_operation(cddl, v, controller)?);
             }
           }
@@ -580,7 +580,7 @@ pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
 
     let ast = pest_meta::parser::consume_rules(pairs).unwrap();
 
-    let vm = pest_vm::Vm::new(pest_meta::optimizer::optimize(ast.clone()));
+    let vm = pest_vm::Vm::new(pest_meta::optimizer::optimize(ast));
 
     let rule = rule.replace("-", "_");
     let _ = vm.parse(&rule, target).map_err(|e| e.to_string())?;
