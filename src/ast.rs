@@ -1369,6 +1369,16 @@ impl<'a> From<String> for Type2<'a> {
   }
 }
 
+// Convenience method for testing
+impl<'a> From<&'a str> for Type2<'a> {
+  fn from(value: &'a str) -> Self {
+    Type2::UTF8ByteString {
+      value: value.as_bytes().into(),
+      span: Span::default(),
+    }
+  }
+}
+
 impl<'a> From<ByteValue<'a>> for Type2<'a> {
   fn from(value: ByteValue<'a>) -> Self {
     match value {

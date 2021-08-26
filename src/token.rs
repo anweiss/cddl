@@ -119,6 +119,10 @@ pub enum Token<'a> {
   /// Proposed control extension for string concatenation. See
   /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-01#section-2.1.
   CAT,
+  /// .det control operator Proposed control extension for string concatenation
+  /// with dedenting. See
+  /// https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05#section-2.3.
+  DET,
   /// .plus control operator
   /// Proposed control extension for numeric addition. See
   /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-01#section-2.2.
@@ -495,6 +499,7 @@ impl<'a> fmt::Display for Token<'a> {
       Token::CBORSEQ => write!(f, ".cborseq"),
       Token::WITHIN => write!(f, ".within"),
       Token::CAT => write!(f, ".cat"),
+      Token::DET => write!(f, ".det"),
       Token::PLUS => write!(f, ".plus"),
       Token::ABNF => write!(f, ".abnf"),
       Token::ABNFB => write!(f, ".abnfb"),
@@ -577,6 +582,7 @@ pub fn lookup_control_from_str<'a>(ident: &str) -> Option<Token<'a>> {
     ".default" => Some(Token::DEFAULT),
     ".pcre" => Some(Token::PCRE),
     ".cat" => Some(Token::CAT),
+    ".det" => Some(Token::DET),
     ".plus" => Some(Token::PLUS),
     ".abnf" => Some(Token::ABNF),
     ".abnfb" => Some(Token::ABNFB),
@@ -616,6 +622,7 @@ pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
     Token::DEFAULT => Some(".default"),
     Token::PCRE => Some(".pcre"),
     Token::CAT => Some(".cat"),
+    Token::DET => Some(".det"),
     Token::PLUS => Some(".plus"),
     Token::ABNF => Some(".abnf"),
     Token::ABNFB => Some(".abnfb"),

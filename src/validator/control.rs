@@ -1,4 +1,5 @@
-use pest_meta::parser;
+use itertools::Itertools;
+use pest_meta;
 
 use crate::{
   ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL},
@@ -61,6 +62,7 @@ pub fn cat_operation<'a>(
   cddl: &CDDL,
   target: &Type2,
   controller: &Type2,
+  is_dedent: bool,
 ) -> Result<Vec<Type2<'a>>, String> {
   let mut literals = Vec::new();
   match target {
@@ -68,7 +70,13 @@ pub fn cat_operation<'a>(
       // "testing" .cat "123"
       Type2::TextValue {
         value: controller, ..
-      } => literals.push(format!("{}{}", value, controller).into()),
+      } => {
+        if is_dedent {
+          literals.push(format!("{}{}", dedent_str(value), dedent_str(controller)).into())
+        } else {
+          literals.push(format!("{}{}", value, controller).into())
+        }
+      }
       // "testing" .cat a
       Type2::Typename { ident, .. } => {
         let sl = string_literals_from_ident(cddl, ident);
@@ -79,14 +87,22 @@ pub fn cat_operation<'a>(
           ));
         }
         for controller in sl.iter() {
-          literals.append(&mut cat_operation(cddl, target, controller)?)
+          literals.append(&mut cat_operation(cddl, target, controller, is_dedent)?)
         }
       }
       // "testing" .cat '123'
       Type2::UTF8ByteString {
         value: controller, ..
       } => match std::str::from_utf8(controller) {
-        Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
+        Ok(controller) => {
+          let controller = controller.trim_start_matches('\'').trim_end_matches('\'');
+
+          if is_dedent {
+            literals.push(format!("{}{}", dedent_str(value), dedent_str(controller)).into())
+          } else {
+            literals.push(format!("{}{}", value, controller).into())
+          }
+        }
         Err(e) => return Err(format!("error parsing byte string: {}", e)),
       },
       // "testing" .cat h'313233'
@@ -94,7 +110,13 @@ pub fn cat_operation<'a>(
         value: controller, ..
       } => match base16::decode(controller) {
         Ok(controller) => match String::from_utf8(controller) {
-          Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
+          Ok(controller) => {
+            if is_dedent {
+              literals.push(format!("{}{}", dedent_str(value), dedent_str(&controller)).into())
+            } else {
+              literals.push(format!("{}{}", value, controller).into())
+            }
+          }
           Err(e) => return Err(format!("error decoding utf-8: {}", e)),
         },
         Err(e) => return Err(format!("error decoding base16 byte string literal: {}", e)),
@@ -104,7 +126,13 @@ pub fn cat_operation<'a>(
         value: controller, ..
       } => match base64::decode_config(controller, base64::URL_SAFE) {
         Ok(controller) => match String::from_utf8(controller) {
-          Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
+          Ok(controller) => {
+            if is_dedent {
+              literals.push(format!("{}{}", dedent_str(value), dedent_str(&controller)).into())
+            } else {
+              literals.push(format!("{}{}", value, controller).into())
+            }
+          }
           Err(e) => return Err(format!("error decoding utf-8: {}", e)),
         },
         Err(e) => {
@@ -118,7 +146,12 @@ pub fn cat_operation<'a>(
       Type2::ParenthesizedType { pt: controller, .. } => {
         for controller in controller.type_choices.iter() {
           if controller.type1.operator.is_none() {
-            literals.append(&mut cat_operation(cddl, target, &controller.type1.type2)?);
+            literals.append(&mut cat_operation(
+              cddl,
+              target,
+              &controller.type1.type2,
+              is_dedent,
+            )?);
           }
         }
       }
@@ -129,7 +162,7 @@ pub fn cat_operation<'a>(
       // Only grab the first type choice literal from the target per
       // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
       if let Some(value) = string_literals_from_ident(cddl, ident).first() {
-        literals.append(&mut cat_operation(cddl, value, controller)?);
+        literals.append(&mut cat_operation(cddl, value, controller, is_dedent)?);
       } else {
         return Err("invalid controller used for .cat operation".to_string());
       }
@@ -141,7 +174,12 @@ pub fn cat_operation<'a>(
       if let Some(tc) = target.type_choices.first() {
         // Ignore nested operator
         if tc.type1.operator.is_none() {
-          literals.append(&mut cat_operation(cddl, &tc.type1.type2, controller)?);
+          literals.append(&mut cat_operation(
+            cddl,
+            &tc.type1.type2,
+            controller,
+            is_dedent,
+          )?);
         }
       }
 
@@ -152,7 +190,15 @@ pub fn cat_operation<'a>(
         // 'testing' .cat "123"
         Type2::TextValue {
           value: controller, ..
-        } => literals.push(format!("{}{}", value, controller).into()),
+        } => {
+          let value = value.trim_start_matches('\'').trim_end_matches('\'');
+
+          if is_dedent {
+            literals.push(format!("{}{}", dedent_str(value), dedent_str(controller)).into())
+          } else {
+            literals.push(format!("{}{}", value, controller).into())
+          }
+        }
         Type2::Typename { ident, .. } => {
           let sl = string_literals_from_ident(cddl, ident);
           if sl.is_empty() {
@@ -162,14 +208,23 @@ pub fn cat_operation<'a>(
             ));
           }
           for controller in sl.iter() {
-            literals.append(&mut cat_operation(cddl, target, controller)?)
+            literals.append(&mut cat_operation(cddl, target, controller, is_dedent)?)
           }
         }
         // 'testing' .cat '123
         Type2::UTF8ByteString {
           value: controller, ..
         } => match std::str::from_utf8(controller) {
-          Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
+          Ok(controller) => {
+            let value = value.trim_start_matches('\'').trim_end_matches('\'');
+            let controller = controller.trim_start_matches('\'').trim_end_matches('\'');
+
+            if is_dedent {
+              literals.push(format!("{}{}", dedent_str(value), dedent_str(controller)).into())
+            } else {
+              literals.push(format!("{}{}", value, controller).into())
+            }
+          }
           Err(e) => return Err(format!("error parsing byte string: {}", e)),
         },
         // 'testing' .cat h'313233'
@@ -177,7 +232,15 @@ pub fn cat_operation<'a>(
           value: controller, ..
         } => match base16::decode(controller) {
           Ok(controller) => match String::from_utf8(controller) {
-            Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
+            Ok(controller) => {
+              let value = value.trim_start_matches('\'').trim_end_matches('\'');
+
+              if is_dedent {
+                literals.push(format!("{}{}", dedent_str(value), dedent_str(&controller)).into())
+              } else {
+                literals.push(format!("{}{}", value, controller).into())
+              }
+            }
             Err(e) => return Err(format!("error decoding utf-8: {}", e)),
           },
           Err(e) => return Err(format!("error decoding base16 byte string literal: {}", e)),
@@ -187,7 +250,15 @@ pub fn cat_operation<'a>(
           value: controller, ..
         } => match base64::decode_config(controller, base64::URL_SAFE) {
           Ok(controller) => match String::from_utf8(controller) {
-            Ok(controller) => literals.push(format!("{}{}", value, controller).into()),
+            Ok(controller) => {
+              let value = value.trim_start_matches('\'').trim_end_matches('\'');
+
+              if is_dedent {
+                literals.push(format!("{}{}", dedent_str(value), dedent_str(&controller)).into())
+              } else {
+                literals.push(format!("{}{}", value, controller).into())
+              }
+            }
             Err(e) => return Err(format!("error decoding utf-8: {}", e)),
           },
           Err(e) => {
@@ -201,7 +272,12 @@ pub fn cat_operation<'a>(
         Type2::ParenthesizedType { pt: controller, .. } => {
           for controller in controller.type_choices.iter() {
             if controller.type1.operator.is_none() {
-              literals.append(&mut cat_operation(cddl, target, &controller.type1.type2)?);
+              literals.append(&mut cat_operation(
+                cddl,
+                target,
+                &controller.type1.type2,
+                is_dedent,
+              )?);
             }
           }
         }
@@ -214,8 +290,17 @@ pub fn cat_operation<'a>(
       Type2::TextValue {
         value: controller, ..
       } => {
-        let controller = base16::encode_lower(controller.as_bytes());
-        let concat = [&value[..], controller.as_bytes()].concat();
+        let controller = if is_dedent {
+          base16::encode_lower(dedent_str(controller).as_bytes())
+        } else {
+          base16::encode_lower(controller.as_bytes())
+        };
+
+        let concat = if is_dedent {
+          [&dedent_bytes(value, false)?[..], controller.as_bytes()].concat()
+        } else {
+          [&value[..], controller.as_bytes()].concat()
+        };
         match base16::decode(&concat) {
           // Ignore the decoded value
           Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
@@ -232,15 +317,25 @@ pub fn cat_operation<'a>(
           ));
         }
         for controller in sl.iter() {
-          literals.append(&mut cat_operation(cddl, target, controller)?)
+          literals.append(&mut cat_operation(cddl, target, controller, is_dedent)?)
         }
       }
       // h'74657374696E67' .cat '123'
       Type2::UTF8ByteString {
         value: controller, ..
       } => {
-        let controller = base16::encode_lower(&controller[..]);
-        let concat = [&value[..], controller.as_bytes()].concat();
+        let controller = if is_dedent {
+          base16::encode_lower(&dedent_bytes(controller, true)?)
+        } else {
+          base16::encode_lower(&controller[..])
+        };
+
+        let concat = if is_dedent {
+          [&dedent_bytes(value, false)?[..], controller.as_bytes()].concat()
+        } else {
+          [&value[..], controller.as_bytes()].concat()
+        };
+
         match base16::decode(&concat) {
           // Ignore the decoded value
           Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
@@ -251,7 +346,15 @@ pub fn cat_operation<'a>(
       Type2::B16ByteString {
         value: controller, ..
       } => {
-        let concat = [&value[..], &controller[..]].concat();
+        let concat = if is_dedent {
+          [
+            &dedent_bytes(value, false)?[..],
+            &dedent_bytes(controller, false)?[..],
+          ]
+          .concat()
+        } else {
+          [&value[..], &controller[..]].concat()
+        };
         match base16::decode(&concat) {
           // Ignore the decoded value
           Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
@@ -264,7 +367,15 @@ pub fn cat_operation<'a>(
       } => match base64::decode_config(controller, base64::URL_SAFE) {
         Ok(controller) => {
           let controller = base16::encode_lower(&controller);
-          let concat = [&value[..], controller.as_bytes()].concat();
+          let concat = if is_dedent {
+            [
+              &dedent_bytes(value, false)?[..],
+              dedent_str(&controller).as_bytes(),
+            ]
+            .concat()
+          } else {
+            [&value[..], controller.as_bytes()].concat()
+          };
           match base16::decode(&concat) {
             // Ignore the decoded value
             Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
@@ -277,7 +388,12 @@ pub fn cat_operation<'a>(
       Type2::ParenthesizedType { pt: controller, .. } => {
         for controller in controller.type_choices.iter() {
           if controller.type1.operator.is_none() {
-            literals.append(&mut cat_operation(cddl, target, &controller.type1.type2)?);
+            literals.append(&mut cat_operation(
+              cddl,
+              target,
+              &controller.type1.type2,
+              is_dedent,
+            )?);
           }
         }
       }
@@ -289,7 +405,16 @@ pub fn cat_operation<'a>(
         value: controller, ..
       } => match base64::decode_config(value, base64::URL_SAFE) {
         Ok(value) => {
-          let concat = [&value[..], controller.as_bytes()].concat();
+          let concat = if is_dedent {
+            [
+              &dedent_bytes(&value, false)?[..],
+              dedent_str(controller).as_bytes(),
+            ]
+            .concat()
+          } else {
+            [&value[..], controller.as_bytes()].concat()
+          };
+
           literals.push(
             ByteValue::B64(
               base64::encode_config(&concat, base64::URL_SAFE)
@@ -311,7 +436,7 @@ pub fn cat_operation<'a>(
           ));
         }
         for controller in sl.iter() {
-          literals.append(&mut cat_operation(cddl, target, controller)?)
+          literals.append(&mut cat_operation(cddl, target, controller, is_dedent)?)
         }
       }
       // b64'dGVzdGluZw==' .cat '123'
@@ -319,7 +444,16 @@ pub fn cat_operation<'a>(
         value: controller, ..
       } => match base64::decode_config(value, base64::URL_SAFE) {
         Ok(value) => {
-          let concat = [&value[..], &controller[..]].concat();
+          let concat = if is_dedent {
+            [
+              &dedent_bytes(&value, false)?[..],
+              &dedent_bytes(controller, true)?[..],
+            ]
+            .concat()
+          } else {
+            [&value[..], &controller[..]].concat()
+          };
+
           literals.push(
             ByteValue::B64(
               base64::encode_config(&concat, base64::URL_SAFE)
@@ -337,7 +471,15 @@ pub fn cat_operation<'a>(
       } => match base64::decode_config(value, base64::URL_SAFE) {
         Ok(value) => match base16::decode(controller) {
           Ok(controller) => {
-            let concat = [&value[..], &controller[..]].concat();
+            let concat = if is_dedent {
+              [
+                &dedent_bytes(&value, false)?[..],
+                &dedent_bytes(&controller, false)?[..],
+              ]
+              .concat()
+            } else {
+              [&value[..], &controller[..]].concat()
+            };
             literals.push(
               ByteValue::B64(
                 base64::encode_config(&concat, base64::URL_SAFE)
@@ -357,7 +499,15 @@ pub fn cat_operation<'a>(
       } => match base64::decode_config(value, base64::URL_SAFE) {
         Ok(value) => match base64::decode_config(controller, base64::URL_SAFE) {
           Ok(controller) => {
-            let concat = [&value[..], &controller[..]].concat();
+            let concat = if is_dedent {
+              [
+                &dedent_bytes(&value, false)?[..],
+                &dedent_bytes(&controller, false)?[..],
+              ]
+              .concat()
+            } else {
+              [&value[..], &controller[..]].concat()
+            };
             literals.push(
               ByteValue::B64(
                 base64::encode_config(&concat, base64::URL_SAFE)
@@ -375,7 +525,12 @@ pub fn cat_operation<'a>(
       Type2::ParenthesizedType { pt: controller, .. } => {
         for controller in controller.type_choices.iter() {
           if controller.type1.operator.is_none() {
-            literals.append(&mut cat_operation(cddl, target, &controller.type1.type2)?);
+            literals.append(&mut cat_operation(
+              cddl,
+              target,
+              &controller.type1.type2,
+              is_dedent,
+            )?);
           }
         }
       }
@@ -390,6 +545,47 @@ pub fn cat_operation<'a>(
   }
 
   Ok(literals)
+}
+
+fn dedent_str(source: &str) -> String {
+  // #[cfg(windows)]
+  // let line_ending = "\r\n";
+  // #[cfg(not(windows))]
+  let line_ending = "\n";
+
+  source
+    .split(line_ending)
+    .map(|l| l.trim_start())
+    .join(line_ending)
+}
+
+fn dedent_bytes(source: &[u8], is_utf8_byte_string: bool) -> Result<Vec<u8>, String> {
+  #[cfg(windows)]
+  let line_ending = "\r\n";
+  #[cfg(not(windows))]
+  let line_ending = "\n";
+
+  if is_utf8_byte_string {
+    return Ok(
+      std::str::from_utf8(source)
+        .map_err(|e| e.to_string())?
+        .trim_start_matches('\'')
+        .trim_end_matches('\'')
+        .split(line_ending)
+        .map(|l| l.trim_start())
+        .join(line_ending)
+        .into_bytes(),
+    );
+  }
+
+  Ok(
+    std::str::from_utf8(source)
+      .map_err(|e| e.to_string())?
+      .split(line_ending)
+      .map(|l| l.trim_start())
+      .join(line_ending)
+      .into_bytes(),
+  )
 }
 
 /// Numeric addition of target and controller
@@ -591,8 +787,80 @@ pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+  use crate::{ast::Span, cddl_from_str, lexer_from_str};
+
   use super::*;
   use indoc::indoc;
+
+  #[test]
+  fn test_cat() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl_str = indoc!(
+      r#"
+        a = "foo" .cat '
+          bar
+          baz
+        '
+      "#
+    );
+
+    let mut l = lexer_from_str(cddl_str);
+    let cddl = cddl_from_str(&mut l, cddl_str, true)?;
+
+    assert_eq!(
+      cat_operation(
+        &cddl,
+        &Type2::from("foo".to_string()),
+        &Type2::from(indoc!(
+          r#"'
+            bar
+            baz
+          '"#,
+        )),
+        false,
+      )?,
+      vec![Type2::TextValue {
+        value: "foo\n  bar\n  baz\n".into(),
+        span: Span::default(),
+      }],
+    );
+
+    Ok(())
+  }
+
+  #[test]
+  fn test_cat_with_dedent() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl_str = indoc!(
+      r#"
+        a = "foo" .det b
+        b = '
+          bar
+          baz
+        '
+      "#
+    );
+
+    let mut l = lexer_from_str(cddl_str);
+    let cddl = cddl_from_str(&mut l, cddl_str, true)?;
+
+    assert_eq!(
+      cat_operation(
+        &cddl,
+        &Type2::from("foo".to_string()),
+        &Type2::Typename {
+          ident: "b".into(),
+          generic_args: None,
+          span: Span::default(),
+        },
+        true,
+      )?,
+      vec![Type2::TextValue {
+        value: "foo\nbar\nbaz\n".into(),
+        span: Span::default(),
+      }]
+    );
+
+    Ok(())
+  }
 
   #[test]
   fn test_abnf() -> std::result::Result<(), Box<dyn std::error::Error>> {

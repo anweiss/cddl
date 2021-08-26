@@ -1149,7 +1149,21 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       t @ Some(Token::CAT) => {
         self.ctrl = t;
 
-        match cat_operation(self.cddl, target, controller) {
+        match cat_operation(self.cddl, target, controller, false) {
+          Ok(values) => {
+            for v in values.iter() {
+              self.visit_type2(v)?;
+            }
+          }
+          Err(e) => self.add_error(e),
+        }
+
+        self.ctrl = None;
+      }
+      t @ Some(Token::DET) => {
+        self.ctrl = t;
+
+        match cat_operation(self.cddl, target, controller, true) {
           Ok(values) => {
             for v in values.iter() {
               self.visit_type2(v)?;

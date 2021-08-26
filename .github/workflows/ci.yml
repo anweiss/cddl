@@ -141,7 +141,7 @@ jobs:
   style-linting:
     strategy:
       matrix:
-        rust_toolchain: [stable, beta]
+        rust_toolchain: [stable]
     name: Style linting
     runs-on: ubuntu-latest
     steps:
@@ -173,7 +173,7 @@ jobs:
   wasm-style-linting:
     strategy:
       matrix:
-        rust_toolchain: [stable, beta]
+        rust_toolchain: [stable]
     name: wasm style linting
     runs-on: ubuntu-latest
     steps:
