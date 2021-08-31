@@ -214,7 +214,7 @@
 //!   "address": "1234 Lakeshore Dr"
 //! }"#;
 //!
-//! assert!(validate_json_from_str(cddl, json).is_ok())
+//! assert!(validate_json_from_str(cddl, json, None).is_ok())
 //! ```
 //!
 //! This crate uses the [Serde](https://serde.rs/) framework, and more
