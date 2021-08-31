@@ -41,7 +41,7 @@ fn validate_did_json_examples() -> Result<(), Box<dyn Error>> {
       for file in fs::read_dir(entry.path())? {
         let file = file?;
         if file.path().extension().and_then(OsStr::to_str).unwrap() == "json" {
-          let r = validate_json_from_str(&cddl, &fs::read_to_string(file.path())?);
+          let r = validate_json_from_str(&cddl, &fs::read_to_string(file.path())?, None);
           println!("assert ok {:?}", file.path());
           if let Err(e) = &r {
             println!("error validating {:?}\n", file.path());

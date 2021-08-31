@@ -33,12 +33,16 @@ impl Validatable for serde_cbor::Value {}
 impl Validatable for serde_json::Value {}
 
 /// Validate JSON string from a given CDDL document string
-pub fn validate_json_from_str(cddl: &str, json: &str) -> json::Result {
+pub fn validate_json_from_str(
+  cddl: &str,
+  json: &str,
+  enabled_features: Option<&[&str]>,
+) -> json::Result {
   let mut lexer = lexer_from_str(cddl);
   let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing)?;
   let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
-  let mut jv = JSONValidator::new(&cddl, json);
+  let mut jv = JSONValidator::new(&cddl, json, enabled_features);
   jv.validate()
 }
 
@@ -60,6 +64,74 @@ pub fn rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a Rul
     Rule::Group { rule, .. } if rule.name == *ident && !rule.is_group_choice_alternate => Some(r),
     _ => None,
   })
+}
+
+/// Find text values from a given identifier
+pub fn text_value_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a Type2<'a>> {
+  cddl.rules.iter().find_map(|r| match r {
+    Rule::Type { rule, .. } if rule.name == *ident => {
+      rule.value.type_choices.iter().find_map(|tc| {
+        if tc.type1.operator.is_none() {
+          match &tc.type1.type2 {
+            Type2::TextValue { .. } | Type2::UTF8ByteString { .. } => Some(&tc.type1.type2),
+            Type2::Typename { ident, .. } => text_value_from_ident(cddl, ident),
+            Type2::ParenthesizedType { pt, .. } => pt.type_choices.iter().find_map(|tc| {
+              if tc.type1.operator.is_none() {
+                text_value_from_type2(cddl, &tc.type1.type2)
+              } else {
+                None
+              }
+            }),
+            _ => None,
+          }
+        } else {
+          None
+        }
+      })
+    }
+    _ => None,
+  })
+}
+
+/// Find text values from a given Type2
+pub fn text_value_from_type2<'a>(cddl: &'a CDDL, t2: &'a Type2<'a>) -> Option<&'a Type2<'a>> {
+  match t2 {
+    Type2::TextValue { .. } | Type2::UTF8ByteString { .. } => Some(t2),
+    Type2::Typename { ident, .. } => text_value_from_ident(cddl, ident),
+    Type2::Array { group, .. } => group.group_choices.iter().find_map(|gc| {
+      if gc.group_entries.len() == 2 {
+        if let Some(ge) = gc.group_entries.first() {
+          if let GroupEntry::ValueMemberKey { ge, .. } = &ge.0 {
+            if ge.member_key.is_none() {
+              ge.entry_type.type_choices.iter().find_map(|tc| {
+                if tc.type1.operator.is_none() {
+                  text_value_from_type2(cddl, &tc.type1.type2)
+                } else {
+                  None
+                }
+              })
+            } else {
+              None
+            }
+          } else {
+            None
+          }
+        } else {
+          None
+        }
+      } else {
+        None
+      }
+    }),
+    Type2::ParenthesizedType { pt, .. } => pt.type_choices.iter().find_map(|tc| {
+      if tc.type1.operator.is_none() {
+        text_value_from_type2(cddl, &tc.type1.type2)
+      } else {
+        None
+      }
+    }),
+    _ => None,
+  }
 }
 
 /// Unwrap array, map or tag type rule from ident

@@ -117,7 +117,7 @@ pub enum Token<'a> {
   PCRE,
   /// .cat control operator
   /// Proposed control extension for string concatenation. See
-  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-01#section-2.1.
+  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-2.1.
   CAT,
   /// .det control operator Proposed control extension for string concatenation
   /// with dedenting. See
@@ -125,16 +125,19 @@ pub enum Token<'a> {
   DET,
   /// .plus control operator
   /// Proposed control extension for numeric addition. See
-  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-01#section-2.2.
+  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-2.2.
   PLUS,
   /// .abnf control operator
   /// Proposed control extension for embedded ABNF as UTF-8. See
-  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-01#section-3
+  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-3
   ABNF,
   /// .abnfb control operator
   /// Proposed control extension for embedded ABNF as a sequence of bytes. See
-  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-01#section-3
+  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-3
   ABNFB,
+  /// .feature control operator Proposed control extension for features. See
+  /// https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05#section-4
+  FEATURE,
 
   /// group to choice enumeration '&'
   GTOCHOICE,
@@ -503,6 +506,7 @@ impl<'a> fmt::Display for Token<'a> {
       Token::PLUS => write!(f, ".plus"),
       Token::ABNF => write!(f, ".abnf"),
       Token::ABNFB => write!(f, ".abnfb"),
+      Token::FEATURE => write!(f, ".feature"),
       Token::AND => write!(f, ".and"),
       Token::LT => write!(f, ".lt"),
       Token::LE => write!(f, ".le"),
@@ -586,6 +590,7 @@ pub fn lookup_control_from_str<'a>(ident: &str) -> Option<Token<'a>> {
     ".plus" => Some(Token::PLUS),
     ".abnf" => Some(Token::ABNF),
     ".abnfb" => Some(Token::ABNFB),
+    ".feature" => Some(Token::FEATURE),
     _ => None,
   }
 }
@@ -626,6 +631,7 @@ pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
     Token::PLUS => Some(".plus"),
     Token::ABNF => Some(".abnf"),
     Token::ABNFB => Some(".abnfb"),
+    Token::FEATURE => Some(".feature"),
     _ => None,
   }
 }

@@ -30,5 +30,6 @@ fn verify_json_validation() -> json::Result {
   validate_json_from_str(
     &fs::read_to_string("tests/fixtures/cddl/reputon.cddl").unwrap(),
     &fs::read_to_string("tests/fixtures/json/reputon.json").unwrap(),
+    None,
   )
 }

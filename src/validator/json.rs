@@ -27,6 +27,8 @@ pub enum Error {
   JSONParsing(serde_json::Error),
   /// CDDL parsing error
   CDDLParsing(String),
+  /// UTF8 parsing error,
+  UTF8Parsing(std::str::Utf8Error),
 }
 
 impl fmt::Display for Error {
@@ -41,6 +43,7 @@ impl fmt::Display for Error {
       }
       Error::JSONParsing(error) => write!(f, "error parsing JSON: {}", error),
       Error::CDDLParsing(error) => write!(f, "error parsing CDDL: {}", error),
+      Error::UTF8Parsing(error) => write!(f, "error pasing utf8: {}", error),
     }
   }
 }
@@ -192,6 +195,8 @@ pub struct JSONValidator<'a> {
   array_errors: Option<HashMap<usize, Vec<ValidationError>>>,
   is_colon_shortcut_present: bool,
   is_root: bool,
+  enabled_features: Option<&'a [&'a str]>,
+  has_feature_errors: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -203,7 +208,7 @@ struct GenericRule<'a> {
 
 impl<'a> JSONValidator<'a> {
   /// New JSONValidation from CDDL AST and JSON value
-  pub fn new(cddl: &'a CDDL<'a>, json: Value) -> Self {
+  pub fn new(cddl: &'a CDDL<'a>, json: Value, enabled_features: Option<&'a [&'a str]>) -> Self {
     JSONValidator {
       cddl,
       json,
@@ -232,6 +237,8 @@ impl<'a> JSONValidator<'a> {
       array_errors: None,
       is_colon_shortcut_present: false,
       is_root: false,
+      enabled_features,
+      has_feature_errors: false,
     }
   }
 
@@ -256,7 +263,7 @@ impl<'a> JSONValidator<'a> {
                 }
               }
 
-              let mut jv = JSONValidator::new(self.cddl, v.clone());
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -289,7 +296,7 @@ impl<'a> JSONValidator<'a> {
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
-              let mut jv = JSONValidator::new(self.cddl, v.clone());
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -479,7 +486,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       if matches!(self.json, Value::Array(_)) {
         let error_count = self.errors.len();
         self.visit_type_choice(type_choice)?;
-        if self.errors.len() == error_count {
+        if self.errors.len() == error_count && !self.has_feature_errors {
           // Disregard invalid type choice validation errors if one of the
           // choices validates successfully
           let type_choice_error_count = self.errors.len() - initial_error_count;
@@ -496,7 +503,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       let error_count = self.errors.len();
       self.visit_type_choice(type_choice)?;
 
-      if self.errors.len() == error_count {
+      if self.errors.len() == error_count && !self.has_feature_errors {
         // Disregard invalid type choice validation errors if one of the
         // choices validates successfully
         let type_choice_error_count = self.errors.len() - initial_error_count;
@@ -640,7 +647,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 }
               }
 
-              let mut jv = JSONValidator::new(self.cddl, v.clone());
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.ctrl = self.ctrl.clone();
@@ -673,7 +680,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
-              let mut jv = JSONValidator::new(self.cddl, v.clone());
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.ctrl = self.ctrl.clone();
@@ -1207,6 +1214,36 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             target,
           )),
         }
+
+        self.ctrl = None;
+      }
+      t @ Some(Token::FEATURE) => {
+        self.ctrl = t;
+
+        if let Some(ef) = self.enabled_features {
+          let tv = text_value_from_type2(self.cddl, controller);
+          if let Some(Type2::TextValue { value, .. }) = tv {
+            if ef.contains(&&**value) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            }
+          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
+            if ef.contains(&std::str::from_utf8(value).map_err(Error::UTF8Parsing)?) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            }
+          }
+        }
+
+        self.ctrl = None;
       }
       _ => {
         self.add_error(format!("unsupported control operator {}", ctrl));
@@ -1259,7 +1296,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                     }
                   }
 
-                  let mut jv = JSONValidator::new(self.cddl, v.clone());
+                  let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
                   jv.generic_rules = self.generic_rules.clone();
                   jv.eval_generic_rule = self.eval_generic_rule;
                   jv.ctrl = self.ctrl.clone();
@@ -1292,7 +1329,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 }
               } else if let Some(idx) = self.group_entry_idx.take() {
                 if let Some(v) = a.get(idx) {
-                  let mut jv = JSONValidator::new(self.cddl, v.clone());
+                  let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
                   jv.generic_rules = self.generic_rules.clone();
                   jv.eval_generic_rule = self.eval_generic_rule;
                   jv.ctrl = self.ctrl.clone();
@@ -1390,7 +1427,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               });
             }
 
-            let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = Some(ident.ident);
             jv.is_group_to_choice_enum = true;
@@ -1446,7 +1483,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               });
             }
 
-            let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = Some(ident.ident);
             jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1494,7 +1531,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               });
             }
 
-            let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = Some(ident.ident);
             jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1653,7 +1690,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                   }
                 }
 
-                let mut jv = JSONValidator::new(self.cddl, v.clone());
+                let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
                 jv.generic_rules = self.generic_rules.clone();
                 jv.eval_generic_rule = self.eval_generic_rule;
                 jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1686,7 +1723,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               }
             } else if let Some(idx) = self.group_entry_idx.take() {
               if let Some(v) = a.get(idx) {
-                let mut jv = JSONValidator::new(self.cddl, v.clone());
+                let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
                 jv.generic_rules = self.generic_rules.clone();
                 jv.eval_generic_rule = self.eval_generic_rule;
                 jv.ctrl = self.ctrl.clone();
@@ -1795,7 +1832,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
     if let Some(values) = &self.values_to_validate {
       for v in values.iter() {
-        let mut jv = JSONValidator::new(self.cddl, v.clone());
+        let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
         jv.generic_rules = self.generic_rules.clone();
         jv.eval_generic_rule = self.eval_generic_rule;
         jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1816,7 +1853,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
     }
 
     if let Some(v) = self.object_value.take() {
-      let mut jv = JSONValidator::new(self.cddl, v);
+      let mut jv = JSONValidator::new(self.cddl, v, self.enabled_features);
       jv.generic_rules = self.generic_rules.clone();
       jv.eval_generic_rule = self.eval_generic_rule;
       jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1864,7 +1901,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           });
         }
 
-        let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+        let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
         jv.generic_rules = self.generic_rules.clone();
         jv.eval_generic_rule = Some(entry.name.ident);
         jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -2106,15 +2143,15 @@ mod tests {
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cddl = indoc!(
       r#"
-      interval<BASE> = (
-        "test" => BASE .plus a
-      )
-   
-      rect = {
-        interval<X>
-      }
-      X = 0
-      a = 10
+        interval<BASE> = (
+          "test" => BASE .plus a
+        )
+    
+        rect = {
+          interval<X>
+        }
+        X = 0
+        a = 10
       "#
     );
     let json = r#"{ "test": 10 }"#;
@@ -2128,7 +2165,34 @@ mod tests {
     let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
     let cddl = cddl.unwrap();
-    let mut jv = JSONValidator::new(&cddl, json);
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    jv.validate()?;
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_with_feature() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        v = JC<"v", 2>
+        JC<J, C> = J .feature "json" / C .feature "cbor"
+      "#
+    );
+
+    let json = r#""v""#;
+
+    let mut lexer = lexer_from_str(cddl);
+    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
+
+    let cddl = cddl.unwrap();
+
+    let mut jv = JSONValidator::new(&cddl, json, Some(&["json"]));
     jv.validate()?;
 
     Ok(())

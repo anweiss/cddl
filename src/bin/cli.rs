@@ -158,17 +158,19 @@ fn main() -> Result<(), Box<dyn Error>> {
 
           if let Some(ext) = p.extension() {
             match ext.to_str() {
-              Some("json") => match validate_json_from_str(&cddl_str, &fs::read_to_string(file)?) {
-                Ok(()) => {
-                  writeln!(&mut stdout, "Validation of {:?} is successful", p)?;
-                  stdoutbuffwrtr.print(&stdout)?;
+              Some("json") => {
+                match validate_json_from_str(&cddl_str, &fs::read_to_string(file)?, None) {
+                  Ok(()) => {
+                    writeln!(&mut stdout, "Validation of {:?} is successful", p)?;
+                    stdoutbuffwrtr.print(&stdout)?;
+                  }
+                  Err(e) => {
+                    writeln!(&mut stderr, "Validation of {:?} failed", p)?;
+                    writeln!(&mut stderr, "\n{}", e)?;
+                    stderrbuffwrtr.print(&stderr)?;
+                  }
                 }
-                Err(e) => {
-                  writeln!(&mut stderr, "Validation of {:?} failed", p)?;
-                  writeln!(&mut stderr, "\n{}", e)?;
-                  stderrbuffwrtr.print(&stderr)?;
-                }
-              },
+              }
               Some("cbor") => {
                 let mut f = File::open(p)?;
                 let mut data = Vec::new();
@@ -208,7 +210,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut data = Vec::new();
         reader.read_to_end(&mut data)?;
         if let Ok(json) = std::str::from_utf8(&data) {
-          match validate_json_from_str(&cddl_str, json) {
+          match validate_json_from_str(&cddl_str, json, None) {
             Ok(()) => {
               writeln!(&mut stdout, "Validation from stdin is successful")?;
               stdoutbuffwrtr.print(&stdout)?;
