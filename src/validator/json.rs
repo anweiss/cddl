@@ -6,14 +6,14 @@ use crate::{
   visitor::{self, *},
 };
 use chrono::{TimeZone, Utc};
-use control::validate_abnf;
+
+#[cfg(feature = "additional-controls")]
+use control::{cat_operation, plus_operation, validate_abnf};
+
 use serde_json::Value;
 use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
 
-use super::{
-  control::{cat_operation, plus_operation},
-  *,
-};
+use super::*;
 
 /// JSON validation Result
 pub type Result = std::result::Result<(), Error>;
@@ -1153,6 +1153,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
         self.ctrl = None;
       }
+      #[cfg(feature = "additional-controls")]
       t @ Some(Token::CAT) => {
         self.ctrl = t;
 
@@ -1167,6 +1168,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         self.ctrl = None;
       }
+      #[cfg(feature = "additional-controls")]
       t @ Some(Token::DET) => {
         self.ctrl = t;
 
@@ -1181,6 +1183,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         self.ctrl = None;
       }
+      #[cfg(feature = "additional-controls")]
       t @ Some(Token::PLUS) => {
         self.ctrl = t;
 
@@ -1196,6 +1199,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         self.ctrl = None;
       }
+      #[cfg(feature = "additional-controls")]
       t @ Some(Token::ABNF) => {
         self.ctrl = t;
 
@@ -1217,6 +1221,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         self.ctrl = None;
       }
+      #[cfg(feature = "additional-controls")]
       t @ Some(Token::FEATURE) => {
         self.ctrl = t;
 
@@ -1957,6 +1962,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             Some(Token::LE) if i <= *v as i64 => None,
             Some(Token::GT) if i > *v as i64 => None,
             Some(Token::GE) if i >= *v as i64 => None,
+            #[cfg(feature = "additional-controls")]
             Some(Token::PLUS) => {
               if i == *v as i64 {
                 None
@@ -1991,6 +1997,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             Some(Token::GT) if i > *v as u64 => None,
             Some(Token::GE) if i >= *v as u64 => None,
             Some(Token::SIZE) if i < 256u64.pow(*v as u32) => None,
+            #[cfg(feature = "additional-controls")]
             Some(Token::PLUS) => {
               if i == *v as u64 {
                 None
@@ -2034,6 +2041,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             Some(Token::LE) if f <= *v as f64 => None,
             Some(Token::GT) if f > *v as f64 => None,
             Some(Token::GE) if f >= *v as f64 => None,
+            #[cfg(feature = "additional-controls")]
             Some(Token::PLUS) => {
               if (f - *v).abs() < std::f64::EPSILON {
                 None
@@ -2086,21 +2094,25 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               Some(format!("expected \"{}\" to match regex \"{}\"", s, t))
             }
           }
+          #[cfg(feature = "additional-controls")]
           Some(Token::ABNF) => validate_abnf(t, s)
             .err()
             .map(|e| format!("\"{}\" is not valid against abnf: {}", s, e)),
           _ => {
             if s == t {
               None
-            } else if let Some(Token::CAT) = &self.ctrl {
-              Some(format!(
-                "expected value to match concatenated string {}, got \"{}\"",
-                value, s
-              ))
             } else if let Some(ctrl) = &self.ctrl {
               Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
             } else {
               Some(format!("expected value {} got \"{}\"", value, s))
+            }
+
+            #[cfg(feature = "additional-controls")]
+            if let Some(Token::CAT) = &self.ctrl {
+              Some(format!(
+                "expected value to match concatenated string {}, got \"{}\"",
+                value, s
+              ))
             }
           }
         },
@@ -2136,11 +2148,14 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
 #[cfg(test)]
 mod tests {
+  #![allow(unused_imports)]
+
   use super::*;
   use indoc::indoc;
 
+  #[cfg(feature = "additional-controls")]
   #[test]
-  fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
+  fn validate_plus() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cddl = indoc!(
       r#"
         interval<BASE> = (
@@ -2171,8 +2186,9 @@ mod tests {
     Ok(())
   }
 
+  #[cfg(feature = "additional-controls")]
   #[test]
-  fn validate_with_feature() -> std::result::Result<(), Box<dyn std::error::Error>> {
+  fn validate_feature() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cddl = indoc!(
       r#"
         v = JC<"v", 2>

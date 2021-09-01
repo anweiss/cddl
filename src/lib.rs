@@ -476,8 +476,8 @@ pub mod visitor;
 
 #[doc(inline)]
 pub use self::{
-  lexer::{lexer_from_str, LexerError},
-  parser::{cddl_from_str, ParserError},
+  lexer::{lexer_from_str, Error as LexerError},
+  parser::{cddl_from_str, Error as ParserError},
   token::Token,
 };
 

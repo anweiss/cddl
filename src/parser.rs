@@ -4,7 +4,7 @@ use super::{
     ErrorMsg,
     MsgType::{self, *},
   },
-  lexer::{self, Lexer, LexerError, Position},
+  lexer::{self, Lexer, Position},
   token::{self, SocketPlug, Token},
 };
 #[cfg(feature = "std")]
@@ -18,7 +18,9 @@ use codespan_reporting::{
 #[cfg(feature = "std")]
 use std::borrow::Cow;
 
-use std::{cmp::Ordering, fmt, mem, result};
+use std::{cmp::Ordering, mem, result};
+
+use displaydoc::Display;
 
 #[cfg(not(feature = "std"))]
 use alloc::{
@@ -50,51 +52,36 @@ where
   peek_lexer_position: Position,
   parser_position: Position,
   /// Vec of collected parsing errors
-  pub errors: Vec<ParserError>,
+  pub errors: Vec<Error>,
 }
 
 /// Parsing error types
-#[derive(Debug)]
+#[derive(Debug, Display)]
 pub enum Error {
   /// Parsing errors
+  #[displaydoc("{0}")]
   CDDL(String),
-  /// Parsing error occurred. Used with the `print_errors()` method
-  PARSER,
+  #[displaydoc("parsing error: position {position:?}, msg: {msg}")]
+  /// Parsing error occurred
+  PARSER {
+    /// Error position
+    position: Position,
+    /// Error message
+    msg: ErrorMsg,
+  },
+  #[displaydoc("{0}")]
   /// Lexing error
-  LEXER(LexerError),
+  LEXER(lexer::Error),
   /// Regex error
+  #[displaydoc("regex parsing error: {0}")]
   REGEX(regex::Error),
-}
-
-/// Parser error information and position
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug)]
-pub struct ParserError {
-  position: Position,
-  msg: ErrorMsg,
-}
-
-impl fmt::Display for Error {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    match self {
-      Error::CDDL(e) => write!(f, "{}", e),
-      Error::PARSER => write!(f, "Parser error"),
-      Error::LEXER(e) => write!(f, "{}", e),
-      Error::REGEX(e) => write!(f, "{}", e),
-    }
-  }
+  #[displaydoc("incremental parsing error")]
+  /// Incremental parsing error
+  INCREMENTAL,
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for Error {
-  fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-    match self {
-      Error::LEXER(le) => Some(le),
-      Error::REGEX(re) => Some(re),
-      _ => None,
-    }
-  }
-}
+impl std::error::Error for Error {}
 
 impl<'a, I> Parser<'a, I>
 where
@@ -145,7 +132,7 @@ where
   ///
   /// let input = r#"mycddl = ( int / float )"#;
   /// if let Ok(mut p) = Parser::new(Lexer::new(input).iter(), input) {
-  ///   if let Err(Error::PARSER) = p.parse_cddl() {
+  ///   if let Err(Error::INCREMENTAL) = p.parse_cddl() {
   ///     let _ = p.report_errors(true);
   ///   }
   /// }
@@ -165,10 +152,11 @@ where
 
     let mut labels = Vec::new();
     for error in self.errors.iter() {
-      labels.push(
-        Label::primary(file_id, error.position.range.0..error.position.range.1)
-          .with_message(error.msg.to_string()),
-      );
+      if let Error::PARSER { position, msg } = error {
+        labels.push(
+          Label::primary(file_id, position.range.0..position.range.1).with_message(msg.to_string()),
+        );
+      }
     }
 
     let diagnostic = Diagnostic::error()
@@ -223,10 +211,11 @@ where
 
     let mut labels = Vec::new();
     for error in self.errors.iter() {
-      labels.push(
-        Label::primary(file_id, error.position.range.0..error.position.range.1)
-          .with_message(error.msg.to_string()),
-      );
+      if let Error::PARSER { position, msg } = error {
+        labels.push(
+          Label::primary(file_id, position.range.0..position.range.1).with_message(msg.to_string()),
+        );
+      }
     }
 
     let diagnostic = Diagnostic::error()
@@ -240,7 +229,7 @@ where
 
     term::emit(&mut writer, &config, &files, &diagnostic).ok()?;
 
-    Some(String::from_utf8(buffer).ok()?)
+    String::from_utf8(buffer).ok()
   }
 
   fn next_token(&mut self) -> Result<()> {
@@ -320,7 +309,7 @@ where
             self.parser_position.range = (r.span().0, r.span().1);
             self.parser_position.line = r.span().2;
 
-            self.errors.push(ParserError {
+            self.errors.push(Error::PARSER {
               position: self.parser_position,
               msg: DuplicateRuleIdentifier.into(),
             });
@@ -330,7 +319,7 @@ where
 
           c.rules.push(r);
         }
-        Err(Error::PARSER) => {
+        Err(Error::INCREMENTAL) => {
           if !self.cur_token_is(Token::EOF) {
             self.advance_to_next_rule()?;
           }
@@ -354,16 +343,16 @@ where
     // good convention to make the latter case stand out to the human reader is
     // to write "a = (b,)")."
     if !self.errors.is_empty() {
-      return Err(Error::PARSER);
+      return Err(Error::INCREMENTAL);
     }
 
     if c.rules.is_empty() {
-      self.errors.push(ParserError {
+      self.errors.push(Error::PARSER {
         position: self.parser_position,
         msg: NoRulesDefined.into(),
       });
 
-      return Err(Error::PARSER);
+      return Err(Error::INCREMENTAL);
     }
 
     Ok(c)
@@ -380,12 +369,12 @@ where
         self.parser_position.range = self.lexer_position.range;
         self.parser_position.line = self.lexer_position.line;
 
-        self.errors.push(ParserError {
+        self.errors.push(Error::PARSER {
           position: self.parser_position,
           msg: InvalidRuleIdentifier.into(),
         });
 
-        return Err(Error::PARSER);
+        return Err(Error::INCREMENTAL);
       }
     };
 
@@ -406,12 +395,12 @@ where
       self.parser_position.range = (begin_rule_range, self.lexer_position.range.1);
       self.parser_position.line = self.lexer_position.line;
 
-      self.errors.push(ParserError {
+      self.errors.push(Error::PARSER {
         position: self.parser_position,
         msg: MsgType::MissingAssignmentToken.into(),
       });
 
-      return Err(Error::PARSER);
+      return Err(Error::INCREMENTAL);
     }
 
     let mut is_type_choice_alternate = false;
@@ -429,23 +418,23 @@ where
           self.parser_position.range = (begin_rule_range, self.lexer_position.range.1);
           self.parser_position.line = self.lexer_position.line;
 
-          self.errors.push(ParserError {
+          self.errors.push(Error::PARSER {
             position: self.parser_position,
             msg: MsgType::TypeSocketNamesMustBeTypeAugmentations.into(),
           });
 
-          return Err(Error::PARSER);
+          return Err(Error::INCREMENTAL);
         }
         SocketPlug::GROUP if !is_group_choice_alternate => {
           self.parser_position.range = (begin_rule_range, self.lexer_position.range.1);
           self.parser_position.line = self.lexer_position.line;
 
-          self.errors.push(ParserError {
+          self.errors.push(Error::PARSER {
             position: self.parser_position,
             msg: MsgType::GroupSocketNamesMustBeGroupAugmentations.into(),
           });
 
-          return Err(Error::PARSER);
+          return Err(Error::INCREMENTAL);
         }
         _ => (),
       }
@@ -608,7 +597,7 @@ where
           || self.cur_token_is(Token::TCHOICEALT)
           || self.cur_token_is(Token::GCHOICEALT)
         {
-          self.errors.push(ParserError {
+          self.errors.push(Error::PARSER {
             position: Position {
               line: begin_rule_line,
               column: begin_rule_col,
@@ -618,7 +607,7 @@ where
             msg: IncompleteRuleEntry.into(),
           });
 
-          return Err(Error::PARSER);
+          return Err(Error::INCREMENTAL);
         }
 
         let span = (
@@ -673,12 +662,12 @@ where
             self.parser_position.range = (begin_range + 1, self.peek_lexer_position.range.0);
             self.parser_position.line = self.lexer_position.line;
 
-            self.errors.push(ParserError {
+            self.errors.push(Error::PARSER {
               position: self.parser_position,
               msg: InvalidGenericSyntax.into(),
             });
 
-            return Err(Error::PARSER);
+            return Err(Error::INCREMENTAL);
           }
         }
         Token::COMMA => self.next_token()?,
@@ -686,23 +675,23 @@ where
           self.parser_position.range = (self.lexer_position.range.0, self.lexer_position.range.1);
           self.parser_position.line = self.lexer_position.line;
 
-          self.errors.push(ParserError {
+          self.errors.push(Error::PARSER {
             position: self.parser_position,
             msg: InvalidGenericIdentifier.into(),
           });
 
-          return Err(Error::PARSER);
+          return Err(Error::INCREMENTAL);
         }
         _ => {
           self.parser_position.range = (begin_range, self.lexer_position.range.0);
           self.parser_position.line = self.lexer_position.line;
 
-          self.errors.push(ParserError {
+          self.errors.push(Error::PARSER {
             position: self.parser_position,
             msg: InvalidGenericSyntax.into(),
           });
 
-          return Err(Error::PARSER);
+          return Err(Error::INCREMENTAL);
         }
       }
     }
@@ -750,12 +739,12 @@ where
       }
 
       if self.cur_token_is(Token::EOF) {
-        self.errors.push(ParserError {
+        self.errors.push(Error::PARSER {
           position: self.parser_position,
           msg: MissingGenericClosingDelimiter.into(),
         });
 
-        return Err(Error::PARSER);
+        return Err(Error::INCREMENTAL);
       }
     }
 
@@ -1133,12 +1122,12 @@ where
           });
         }
 
-        self.errors.push(ParserError {
+        self.errors.push(Error::PARSER {
           position: self.parser_position,
           msg: InvalidUnwrapSyntax.into(),
         });
 
-        Err(Error::PARSER)
+        Err(Error::INCREMENTAL)
       }
 
       // & ( group )
@@ -1206,11 +1195,11 @@ where
             })
           }
           _ => {
-            self.errors.push(ParserError {
+            self.errors.push(Error::PARSER {
               position: self.parser_position,
               msg: InvalidGroupToChoiceEnumSyntax.into(),
             });
-            Err(Error::PARSER)
+            Err(Error::INCREMENTAL)
           }
         }
       }
@@ -1232,12 +1221,12 @@ where
           (Some(6), tag) => {
             self.next_token()?;
             if !self.cur_token_is(Token::LPAREN) {
-              self.errors.push(ParserError {
+              self.errors.push(Error::PARSER {
                 position: self.parser_position,
                 msg: InvalidTagSyntax.into(),
               });
 
-              return Err(Error::PARSER);
+              return Err(Error::INCREMENTAL);
             }
 
             self.next_token()?;
@@ -1249,12 +1238,12 @@ where
             let comments_after_type = self.collect_comments()?;
 
             if !self.cur_token_is(Token::RPAREN) {
-              self.errors.push(ParserError {
+              self.errors.push(Error::PARSER {
                 position: self.parser_position,
                 msg: InvalidTagSyntax.into(),
               });
 
-              return Err(Error::PARSER);
+              return Err(Error::INCREMENTAL);
             }
 
             Ok(Type2::TaggedData {
@@ -1310,32 +1299,32 @@ where
             self.parser_position.range = self.lexer_position.range;
 
             if self.cur_token_is(Token::COLON) || self.cur_token_is(Token::ARROWMAP) {
-              self.errors.push(ParserError {
+              self.errors.push(Error::PARSER {
                 position: self.parser_position,
                 msg: MissingGroupEntryMemberKey.into(),
               });
 
-              return Err(Error::PARSER);
+              return Err(Error::INCREMENTAL);
             }
 
             if self.cur_token_is(Token::RBRACE)
               || self.cur_token_is(Token::RBRACKET)
               || self.cur_token_is(Token::RPAREN)
             {
-              self.errors.push(ParserError {
+              self.errors.push(Error::PARSER {
                 position: self.parser_position,
                 msg: MissingGroupEntry.into(),
               });
 
-              return Err(Error::PARSER);
+              return Err(Error::INCREMENTAL);
             }
 
-            self.errors.push(ParserError {
+            self.errors.push(Error::PARSER {
               position: self.parser_position,
               msg: InvalidGroupEntrySyntax.into(),
             });
 
-            Err(Error::PARSER)
+            Err(Error::INCREMENTAL)
           }
         }
       }
@@ -1376,12 +1365,12 @@ where
 
     if let Some(cd) = closing_delimiter.as_ref() {
       if cd != &self.cur_token {
-        self.errors.push(ParserError {
+        self.errors.push(Error::PARSER {
           position: self.lexer_position,
           msg: MissingClosingDelimiter.into(),
         });
 
-        return Err(Error::PARSER);
+        return Err(Error::INCREMENTAL);
       }
     }
 
@@ -1509,11 +1498,11 @@ where
       let comments_after_group = self.collect_comments()?;
 
       if !self.cur_token_is(Token::RPAREN) {
-        self.errors.push(ParserError {
+        self.errors.push(Error::PARSER {
           position: self.lexer_position,
           msg: MissingClosingParend.into(),
         });
-        return Err(Error::PARSER);
+        return Err(Error::INCREMENTAL);
       }
 
       span.1 = self.parser_position.range.1;
@@ -1708,11 +1697,11 @@ where
       let comments_after_cut = self.collect_comments()?;
 
       if !self.cur_token_is(Token::ARROWMAP) {
-        self.errors.push(ParserError {
+        self.errors.push(Error::PARSER {
           position: self.lexer_position,
           msg: InvalidMemberKeyArrowMapSyntax.into(),
         });
-        return Err(Error::PARSER);
+        return Err(Error::INCREMENTAL);
       }
 
       let end_memberkey_range = self.lexer_position.range.1;
@@ -1855,11 +1844,11 @@ where
           let comments_after_cut = self.collect_comments()?;
 
           if !self.cur_token_is(Token::ARROWMAP) {
-            self.errors.push(ParserError {
+            self.errors.push(Error::PARSER {
               position: self.lexer_position,
               msg: InvalidMemberKeyArrowMapSyntax.into(),
             });
-            return Err(Error::PARSER);
+            return Err(Error::INCREMENTAL);
           }
 
           let end_memberkey_range = self.lexer_position.range.1;
@@ -1884,11 +1873,11 @@ where
           let comments = self.collect_comments()?;
 
           if !self.cur_token_is(Token::ARROWMAP) && !self.cur_token_is(Token::COLON) {
-            self.errors.push(ParserError {
+            self.errors.push(Error::PARSER {
               position: self.lexer_position,
               msg: InvalidMemberKeySyntax.into(),
             });
-            return Err(Error::PARSER);
+            return Err(Error::INCREMENTAL);
           }
 
           self.parser_position.range.1 = self.lexer_position.range.1;
@@ -1964,12 +1953,12 @@ where
           comments_after_type_or_group = self.collect_comments()?;
 
           if self.cur_token_is(Token::EOF) {
-            self.errors.push(ParserError {
+            self.errors.push(Error::PARSER {
               position: self.lexer_position,
               msg: MissingClosingParend.into(),
             });
 
-            return Err(Error::PARSER);
+            return Err(Error::INCREMENTAL);
           }
         }
 
@@ -1978,12 +1967,12 @@ where
           let mut p = Parser::new(tokens.into_iter(), self.str_input)?;
           let group = match p.parse_group() {
             Ok(g) => g,
-            Err(Error::PARSER) => {
+            Err(Error::INCREMENTAL) => {
               for e in p.errors.into_iter() {
                 self.errors.push(e);
               }
 
-              return Err(Error::PARSER);
+              return Err(Error::INCREMENTAL);
             }
             Err(e) => return Err(e),
           };
@@ -1999,12 +1988,12 @@ where
         let mut p = Parser::new(tokens.into_iter(), self.str_input)?;
         let t = match p.parse_type(None) {
           Ok(t) => t,
-          Err(Error::PARSER) => {
+          Err(Error::INCREMENTAL) => {
             for e in p.errors.into_iter() {
               self.errors.push(e);
             }
 
-            return Err(Error::PARSER);
+            return Err(Error::INCREMENTAL);
           }
           Err(e) => return Err(e),
         };
@@ -2017,11 +2006,11 @@ where
           let comments_after_cut = self.collect_comments()?;
 
           if !self.cur_token_is(Token::ARROWMAP) {
-            self.errors.push(ParserError {
+            self.errors.push(Error::PARSER {
               position: self.lexer_position,
               msg: InvalidMemberKeyArrowMapSyntax.into(),
             });
-            return Err(Error::PARSER);
+            return Err(Error::INCREMENTAL);
           }
 
           let end_memberkey_range = self.lexer_position.range.1;
@@ -2125,11 +2114,11 @@ where
           let comments_after_cut = self.collect_comments()?;
 
           if !self.cur_token_is(Token::ARROWMAP) {
-            self.errors.push(ParserError {
+            self.errors.push(Error::PARSER {
               position: self.lexer_position,
               msg: InvalidMemberKeyArrowMapSyntax.into(),
             });
-            return Err(Error::PARSER);
+            return Err(Error::INCREMENTAL);
           }
 
           let end_memberkey_range = self.lexer_position.range.1;
@@ -2279,12 +2268,12 @@ where
             return Ok(None);
           }
 
-          self.errors.push(ParserError {
+          self.errors.push(Error::PARSER {
             position: self.lexer_position,
             msg: InvalidOccurrenceSyntax.into(),
           });
 
-          return Err(Error::PARSER);
+          return Err(Error::INCREMENTAL);
         }
 
         self.next_token()?;
@@ -2383,7 +2372,7 @@ pub fn cddl_from_str<'a>(
   match Parser::new(lexer.iter(), input).map_err(|e| e.to_string()) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c),
-      Err(Error::PARSER) => {
+      Err(Error::INCREMENTAL) => {
         let e = if print_stderr {
           p.report_errors(true)
         } else {
@@ -2394,7 +2383,7 @@ pub fn cddl_from_str<'a>(
           return Err(e);
         }
 
-        Err(Error::PARSER.to_string())
+        Err(Error::INCREMENTAL.to_string())
       }
       Err(e) => Err(e.to_string()),
     },
@@ -2428,12 +2417,12 @@ pub fn cddl_from_str<'a>(
   match Parser::new(lexer.iter(), input).map_err(|e| e.to_string()) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c),
-      Err(Error::PARSER) => {
+      Err(Error::INCREMENTAL) => {
         if let Some(e) = p.report_errors() {
           return Err(e);
         }
 
-        Err(Error::PARSER.to_string())
+        Err(Error::INCREMENTAL.to_string())
       }
       Err(e) => Err(e.to_string()),
     },
@@ -2462,15 +2451,38 @@ pub fn cddl_from_str<'a>(
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
+  #[derive(Serialize)]
+  struct ParserError {
+    position: Position,
+    msg: ErrorMsg,
+  }
+
   match Parser::new(Lexer::new(input).iter(), input) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => JsValue::from_serde(&c).map_err(|e| JsValue::from(e.to_string())),
-      Err(Error::PARSER) => {
+      Err(Error::INCREMENTAL) => {
         if !p.errors.is_empty() {
-          return Err(JsValue::from_serde(&p.errors).map_err(|e| JsValue::from(e.to_string()))?);
+          return Err(
+            JsValue::from_serde(
+              &p.errors
+                .iter()
+                .filter_map(|e| {
+                  if let Error::PARSER { position, msg } = e {
+                    Some(ParserError {
+                      position: *position,
+                      msg: msg.clone(),
+                    })
+                  } else {
+                    None
+                  }
+                })
+                .collect::<Vec<ParserError>>(),
+            )
+            .map_err(|e| JsValue::from(e.to_string()))?,
+          );
         }
 
-        Err(JsValue::from(Error::PARSER.to_string()))
+        Err(JsValue::from(Error::INCREMENTAL.to_string()))
       }
       Err(e) => Err(JsValue::from(e.to_string())),
     },
@@ -2486,12 +2498,12 @@ pub fn format_cddl_from_str(input: &str) -> result::Result<String, JsValue> {
   match Parser::new(Lexer::new(input).iter(), input) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c.to_string()),
-      Err(Error::PARSER) => {
+      Err(Error::INCREMENTAL) => {
         if !p.errors.is_empty() {
           return Err(JsValue::from_serde(&p.errors).map_err(|e| JsValue::from(e.to_string()))?);
         }
 
-        Err(JsValue::from(Error::PARSER.to_string()))
+        Err(JsValue::from(Error::INCREMENTAL.to_string()))
       }
       Err(e) => Err(JsValue::from(e.to_string())),
     },
@@ -2522,7 +2534,7 @@ mod tests {
       Ok(mut p) => match p.parse_cddl() {
         Ok(_) => Ok(()),
         #[cfg(feature = "std")]
-        Err(Error::PARSER) if !p.errors.is_empty() => {
+        Err(Error::INCREMENTAL) if !p.errors.is_empty() => {
           let e = p.report_errors(false).unwrap().unwrap();
 
           #[cfg(feature = "std")]
@@ -2544,7 +2556,7 @@ mod tests {
           Ok(())
         }
         #[cfg(not(feature = "std"))]
-        Err(Error::PARSER) if !p.errors.is_empty() => {
+        Err(Error::INCREMENTAL) if !p.errors.is_empty() => {
           assert_eq!(
             p.report_errors().unwrap(),
             indoc!(
@@ -2612,7 +2624,7 @@ mod tests {
       Ok(mut p) => match p.parse_genericparm() {
         Ok(_) => Ok(()),
         #[cfg(feature = "std")]
-        Err(Error::PARSER) if !p.errors.is_empty() => {
+        Err(Error::INCREMENTAL) if !p.errors.is_empty() => {
           let e = p.report_errors(false).unwrap().unwrap();
 
           #[cfg(feature = "std")]
@@ -2634,7 +2646,7 @@ mod tests {
           Ok(())
         }
         #[cfg(not(feature = "std"))]
-        Err(Error::PARSER) if !p.errors.is_empty() => {
+        Err(Error::INCREMENTAL) if !p.errors.is_empty() => {
           assert_eq!(
             p.report_errors().unwrap(),
             indoc!(
@@ -2673,7 +2685,7 @@ mod tests {
       Ok(mut p) => match p.parse_cddl() {
         Ok(_) => Ok(()),
         #[cfg(feature = "std")]
-        Err(Error::PARSER) if !p.errors.is_empty() => {
+        Err(Error::INCREMENTAL) if !p.errors.is_empty() => {
           let e = p.report_errors(false).unwrap().unwrap();
 
           println!("{}", e);
@@ -2700,7 +2712,7 @@ mod tests {
           Ok(())
         }
         #[cfg(not(feature = "std"))]
-        Err(Error::PARSER) if !p.errors.is_empty() => {
+        Err(Error::INCREMENTAL) if !p.errors.is_empty() => {
           assert_eq!(
             p.report_errors().unwrap(),
             indoc!(

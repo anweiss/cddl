@@ -1,10 +1,7 @@
-use itertools::Itertools;
+#[cfg(feature = "additional-controls")]
 use pest_meta;
 
-use crate::{
-  ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL},
-  token::ByteValue,
-};
+use crate::ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL};
 
 /// Retrieve all text strings and byte string literals from a given rule
 /// identifier. Used for proposed .cat control operator.
@@ -57,6 +54,7 @@ pub fn numeric_values_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec<
   literals
 }
 
+#[cfg(feature = "additional-controls")]
 /// Concatenate target and controller
 pub fn cat_operation<'a>(
   cddl: &CDDL,
@@ -547,6 +545,7 @@ pub fn cat_operation<'a>(
   Ok(literals)
 }
 
+#[cfg(feature = "additional-controls")]
 fn dedent_str(source: &str) -> String {
   // #[cfg(windows)]
   // let line_ending = "\r\n";
@@ -559,6 +558,7 @@ fn dedent_str(source: &str) -> String {
     .join(line_ending)
 }
 
+#[cfg(feature = "additional-controls")]
 fn dedent_bytes(source: &[u8], is_utf8_byte_string: bool) -> Result<Vec<u8>, String> {
   #[cfg(windows)]
   let line_ending = "\r\n";
@@ -760,6 +760,7 @@ pub fn plus_operation<'a>(
   Ok(values)
 }
 
+#[cfg(feature = "additional-controls")]
 pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
   if let Some(idx) = abnf.find('\n') {
     let (rule, abnf) = abnf.split_at(idx);
@@ -787,11 +788,14 @@ pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+  #![allow(unused_imports)]
+
   use crate::{ast::Span, cddl_from_str, lexer_from_str};
 
   use super::*;
   use indoc::indoc;
 
+  #[cfg(feature = "additional-controls")]
   #[test]
   fn test_cat() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cddl_str = indoc!(
@@ -827,6 +831,7 @@ mod tests {
     Ok(())
   }
 
+  #[cfg(feature = "additional-controls")]
   #[test]
   fn test_cat_with_dedent() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cddl_str = indoc!(
@@ -862,6 +867,7 @@ mod tests {
     Ok(())
   }
 
+  #[cfg(feature = "additional-controls")]
   #[test]
   fn test_abnf() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let abnf_str = indoc!(

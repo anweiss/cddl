@@ -618,13 +618,13 @@ fn verify_cddl() -> Result<()> {
       }
 
       #[cfg(feature = "std")]
-      Err(Error::PARSER) if !p.errors.is_empty() => {
+      Err(Error::INCREMENTAL) if !p.errors.is_empty() => {
         let _ = p.report_errors(true);
 
         Err(Error::CDDL(p.report_errors(false).unwrap().unwrap()))
       }
       #[cfg(not(feature = "std"))]
-      Err(Error::PARSER) if !p.errors.is_empty() => {
+      Err(Error::INCREMENTAL) if !p.errors.is_empty() => {
         let _ = p.report_errors();
 
         Err(Error::CDDL(p.report_errors().unwrap()))
