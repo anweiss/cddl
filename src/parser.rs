@@ -2495,12 +2495,35 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
 #[wasm_bindgen]
 /// Formats cddl from input string
 pub fn format_cddl_from_str(input: &str) -> result::Result<String, JsValue> {
+  #[derive(Serialize)]
+  struct ParserError {
+    position: Position,
+    msg: ErrorMsg,
+  }
+
   match Parser::new(Lexer::new(input).iter(), input) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c.to_string()),
       Err(Error::INCREMENTAL) => {
         if !p.errors.is_empty() {
-          return Err(JsValue::from_serde(&p.errors).map_err(|e| JsValue::from(e.to_string()))?);
+          return Err(
+            JsValue::from_serde(
+              &p.errors
+                .iter()
+                .filter_map(|e| {
+                  if let Error::PARSER { position, msg } = e {
+                    Some(ParserError {
+                      position: *position,
+                      msg: msg.clone(),
+                    })
+                  } else {
+                    None
+                  }
+                })
+                .collect::<Vec<ParserError>>(),
+            )
+            .map_err(|e| JsValue::from(e.to_string()))?,
+          );
         }
 
         Err(JsValue::from(Error::INCREMENTAL.to_string()))
