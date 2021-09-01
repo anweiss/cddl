@@ -17,7 +17,7 @@ fn verify_cddl_compiles() -> Result<(), parser::Error> {
     match parser::cddl_from_str(&mut lexer_from_str(&file_content), &file_content, true) {
       Ok(_) => println!("file: {:#?} ... success", file.path()),
       Err(_) => {
-        return Err(parser::Error::PARSER);
+        return Err(parser::Error::INCREMENTAL);
       }
     }
   }

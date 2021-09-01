@@ -2,6 +2,11 @@
 use pest_meta;
 
 use crate::ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL};
+#[cfg(feature = "additional-controls")]
+use crate::validator::ByteValue;
+
+#[cfg(feature = "additional-controls")]
+use itertools::Itertools;
 
 /// Retrieve all text strings and byte string literals from a given rule
 /// identifier. Used for proposed .cat control operator.

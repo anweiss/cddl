@@ -15,6 +15,8 @@ use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
 
 use super::*;
 
+use cfg_if;
+
 /// JSON validation Result
 pub type Result = std::result::Result<(), Error>;
 
@@ -2098,21 +2100,31 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           Some(Token::ABNF) => validate_abnf(t, s)
             .err()
             .map(|e| format!("\"{}\" is not valid against abnf: {}", s, e)),
-          _ => {
-            if s == t {
-              None
-            } else if let Some(ctrl) = &self.ctrl {
-              Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
-            } else {
-              Some(format!("expected value {} got \"{}\"", value, s))
-            }
 
-            #[cfg(feature = "additional-controls")]
-            if let Some(Token::CAT) = &self.ctrl {
-              Some(format!(
-                "expected value to match concatenated string {}, got \"{}\"",
-                value, s
-              ))
+          _ => {
+            cfg_if::cfg_if! {
+              if #[cfg(feature = "additional'controls")] {
+                if s == t {
+                  None
+                } else if let Some(Token::CAT) = &self.ctrl {
+                  Some(format!(
+                    "expected value to match concatenated string {}, got \"{}\"",
+                    value, s
+                  ))
+                } else if let Some(ctrl) = &self.ctrl {
+                  Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
+                } else {
+                  Some(format!("expected value {} got \"{}\"", value, s))
+                }
+              } else {
+                if s == t {
+                  None
+                } else if let Some(ctrl) = &self.ctrl {
+                  Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
+                } else {
+                  Some(format!("expected value {} got \"{}\"", value, s))
+                }
+              }
             }
           }
         },
