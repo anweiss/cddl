@@ -50,6 +50,7 @@ where
   peek_token: Token<'a>,
   lexer_position: Position,
   peek_lexer_position: Position,
+  #[cfg(feature = "ast-span")]
   parser_position: Position,
   /// Vec of collected parsing errors
   pub errors: Vec<Error>,
@@ -61,10 +62,15 @@ pub enum Error {
   /// Parsing errors
   #[displaydoc("{0}")]
   CDDL(String),
-  #[displaydoc("parsing error: position {position:?}, msg: {msg}")]
+  #[cfg_attr(
+    feature = "ast-span",
+    displaydoc("parsing error: position {position:?}, msg: {msg}")
+  )]
+  #[cfg_attr(not(feature = "ast-span"), displaydoc("parsing error: msg: {msg}"))]
   /// Parsing error occurred
   PARSER {
     /// Error position
+    #[cfg(feature = "ast-span")]
     position: Position,
     /// Error message
     msg: ErrorMsg,
@@ -108,6 +114,7 @@ where
       errors: Vec::default(),
       lexer_position: Position::default(),
       peek_lexer_position: Position::default(),
+      #[cfg(feature = "ast-span")]
       parser_position: Position::default(),
     };
 
@@ -152,9 +159,17 @@ where
 
     let mut labels = Vec::new();
     for error in self.errors.iter() {
-      if let Error::PARSER { position, msg } = error {
+      if let Error::PARSER {
+        #[cfg(feature = "ast-span")]
+        position,
+        msg,
+      } = error
+      {
         labels.push(
+          #[cfg(feature = "ast-span")]
           Label::primary(file_id, position.range.0..position.range.1).with_message(msg.to_string()),
+          #[cfg(not(feature = "ast-span"))]
+          Label::primary(file_id, 0..0).with_message(msg.to_string()),
         );
       }
     }
@@ -306,10 +321,14 @@ where
           let rule_exists =
             |existing_rule: &Rule| r.name() == existing_rule.name() && !r.is_choice_alternate();
           if c.rules.iter().any(rule_exists) {
-            self.parser_position.range = (r.span().0, r.span().1);
-            self.parser_position.line = r.span().2;
+            #[cfg(feature = "ast-span")]
+            {
+              self.parser_position.range = (r.span().0, r.span().1);
+              self.parser_position.line = r.span().2;
+            }
 
             self.errors.push(Error::PARSER {
+              #[cfg(feature = "ast-span")]
               position: self.parser_position,
               msg: DuplicateRuleIdentifier.into(),
             });
@@ -348,6 +367,7 @@ where
 
     if c.rules.is_empty() {
       self.errors.push(Error::PARSER {
+        #[cfg(feature = "ast-span")]
         position: self.parser_position,
         msg: NoRulesDefined.into(),
       });
@@ -359,17 +379,24 @@ where
   }
 
   fn parse_rule(&mut self) -> Result<Rule<'a>> {
+    #[cfg(feature = "ast-span")]
     let begin_rule_range = self.lexer_position.range.0;
+    #[cfg(feature = "ast-span")]
     let begin_rule_line = self.lexer_position.line;
+    #[cfg(feature = "ast-span")]
     let begin_rule_col = self.lexer_position.column;
 
     let ident = match &self.cur_token {
       Token::IDENT(i) => self.identifier_from_ident_token(*i),
       _ => {
-        self.parser_position.range = self.lexer_position.range;
-        self.parser_position.line = self.lexer_position.line;
+        #[cfg(feature = "ast-span")]
+        {
+          self.parser_position.range = self.lexer_position.range;
+          self.parser_position.line = self.lexer_position.line;
+        }
 
         self.errors.push(Error::PARSER {
+          #[cfg(feature = "ast-span")]
           position: self.parser_position,
           msg: InvalidRuleIdentifier.into(),
         });
@@ -392,10 +419,14 @@ where
       && !self.expect_peek(&Token::TCHOICEALT)?
       && !self.expect_peek(&Token::GCHOICEALT)?
     {
-      self.parser_position.range = (begin_rule_range, self.lexer_position.range.1);
-      self.parser_position.line = self.lexer_position.line;
+      #[cfg(feature = "ast-span")]
+      {
+        self.parser_position.range = (begin_rule_range, self.lexer_position.range.1);
+        self.parser_position.line = self.lexer_position.line;
+      }
 
       self.errors.push(Error::PARSER {
+        #[cfg(feature = "ast-span")]
         position: self.parser_position,
         msg: MsgType::MissingAssignmentToken.into(),
       });
@@ -415,10 +446,14 @@ where
     if let Some(socket) = &ident.socket {
       match socket {
         SocketPlug::TYPE if !is_type_choice_alternate => {
-          self.parser_position.range = (begin_rule_range, self.lexer_position.range.1);
-          self.parser_position.line = self.lexer_position.line;
+          #[cfg(feature = "ast-span")]
+          {
+            self.parser_position.range = (begin_rule_range, self.lexer_position.range.1);
+            self.parser_position.line = self.lexer_position.line;
+          }
 
           self.errors.push(Error::PARSER {
+            #[cfg(feature = "ast-span")]
             position: self.parser_position,
             msg: MsgType::TypeSocketNamesMustBeTypeAugmentations.into(),
           });
@@ -426,10 +461,14 @@ where
           return Err(Error::INCREMENTAL);
         }
         SocketPlug::GROUP if !is_group_choice_alternate => {
-          self.parser_position.range = (begin_rule_range, self.lexer_position.range.1);
-          self.parser_position.line = self.lexer_position.line;
+          #[cfg(feature = "ast-span")]
+          {
+            self.parser_position.range = (begin_rule_range, self.lexer_position.range.1);
+            self.parser_position.line = self.lexer_position.line;
+          }
 
           self.errors.push(Error::PARSER {
+            #[cfg(feature = "ast-span")]
             position: self.parser_position,
             msg: MsgType::GroupSocketNamesMustBeGroupAugmentations.into(),
           });
@@ -452,6 +491,7 @@ where
 
           let comments_after_rule = self.collect_comments()?;
 
+          #[cfg(feature = "ast-span")]
           let span = (
             begin_rule_range,
             self.parser_position.range.1,
@@ -468,11 +508,13 @@ where
               comments_after_assigng: comments_after_assign,
             }),
             comments_after_rule,
+            #[cfg(feature = "ast-span")]
             span,
           })
         } else {
           let mut t = self.parse_type(None)?;
 
+          #[cfg(feature = "ast-span")]
           let span = (
             begin_rule_range,
             self.parser_position.range.1,
@@ -495,15 +537,18 @@ where
               comments_after_assignt: comments_after_assign,
             },
             comments_after_rule,
+            #[cfg(feature = "ast-span")]
             span,
           })
         }
       }
       Token::LPAREN | Token::ASTERISK | Token::ONEORMORE | Token::OPTIONAL => {
+        #[cfg(feature = "ast-span")]
         let begin_pt_range = self.lexer_position.range.0;
 
         let ge = self.parse_grpent(true)?;
 
+        #[cfg(feature = "ast-span")]
         let mut end_rule_range = self.parser_position.range.1;
 
         let comments_after_rule = self.collect_comments()?;
@@ -535,6 +580,7 @@ where
                           comments_before_type: comments_before_group.clone(),
                           pt: ge.entry_type.clone(),
                           comments_after_type: comments_after_group.clone(),
+                          #[cfg(feature = "ast-span")]
                           span: (
                             begin_pt_range,
                             self.parser_position.range.1,
@@ -542,7 +588,10 @@ where
                           ),
                         }))?;
 
-                        end_rule_range = self.parser_position.range.1;
+                        #[cfg(feature = "ast-span")]
+                        {
+                          end_rule_range = self.parser_position.range.1;
+                        }
 
                         return Ok(Rule::Type {
                           rule: TypeRule {
@@ -554,6 +603,7 @@ where
                             comments_after_assignt: comments_after_assign,
                           },
                           comments_after_rule,
+                          #[cfg(feature = "ast-span")]
                           span: (begin_rule_range, end_rule_range, begin_rule_line),
                         });
                       }
@@ -575,6 +625,7 @@ where
             comments_after_assigng: comments_after_assign,
           }),
           comments_after_rule,
+          #[cfg(feature = "ast-span")]
           span: (begin_rule_range, end_rule_range, begin_rule_line),
         })
       }
@@ -598,6 +649,7 @@ where
           || self.cur_token_is(Token::GCHOICEALT)
         {
           self.errors.push(Error::PARSER {
+            #[cfg(feature = "ast-span")]
             position: Position {
               line: begin_rule_line,
               column: begin_rule_col,
@@ -610,6 +662,7 @@ where
           return Err(Error::INCREMENTAL);
         }
 
+        #[cfg(feature = "ast-span")]
         let span = (
           begin_rule_range,
           self.parser_position.range.1,
@@ -626,6 +679,7 @@ where
             comments_after_assignt: comments_after_assign,
           },
           comments_after_rule,
+          #[cfg(feature = "ast-span")]
           span,
         })
       }
@@ -633,6 +687,7 @@ where
   }
 
   fn parse_genericparm(&mut self) -> Result<GenericParams<'a>> {
+    #[cfg(feature = "ast-span")]
     let begin_range = self.lexer_position.range.0;
 
     if self.cur_token_is(Token::LANGLEBRACKET) {
@@ -659,10 +714,14 @@ where
           });
 
           if !self.cur_token_is(Token::COMMA) && !self.cur_token_is(Token::RANGLEBRACKET) {
-            self.parser_position.range = (begin_range + 1, self.peek_lexer_position.range.0);
-            self.parser_position.line = self.lexer_position.line;
+            #[cfg(feature = "ast-span")]
+            {
+              self.parser_position.range = (begin_range + 1, self.peek_lexer_position.range.0);
+              self.parser_position.line = self.lexer_position.line;
+            }
 
             self.errors.push(Error::PARSER {
+              #[cfg(feature = "ast-span")]
               position: self.parser_position,
               msg: InvalidGenericSyntax.into(),
             });
@@ -672,10 +731,14 @@ where
         }
         Token::COMMA => self.next_token()?,
         Token::VALUE(_) => {
-          self.parser_position.range = (self.lexer_position.range.0, self.lexer_position.range.1);
-          self.parser_position.line = self.lexer_position.line;
+          #[cfg(feature = "ast-span")]
+          {
+            self.parser_position.range = (self.lexer_position.range.0, self.lexer_position.range.1);
+            self.parser_position.line = self.lexer_position.line;
+          }
 
           self.errors.push(Error::PARSER {
+            #[cfg(feature = "ast-span")]
             position: self.parser_position,
             msg: InvalidGenericIdentifier.into(),
           });
@@ -683,10 +746,14 @@ where
           return Err(Error::INCREMENTAL);
         }
         _ => {
-          self.parser_position.range = (begin_range, self.lexer_position.range.0);
-          self.parser_position.line = self.lexer_position.line;
+          #[cfg(feature = "ast-span")]
+          {
+            self.parser_position.range = (begin_range, self.lexer_position.range.0);
+            self.parser_position.line = self.lexer_position.line;
+          }
 
           self.errors.push(Error::PARSER {
+            #[cfg(feature = "ast-span")]
             position: self.parser_position,
             msg: InvalidGenericSyntax.into(),
           });
@@ -700,8 +767,11 @@ where
     // advance beyond the closing '>' to retain the expect_peek semantics for
     // '=', '/=' and '//='
 
-    let end_range = self.lexer_position.range.1;
-    generic_params.span = (begin_range, end_range, self.lexer_position.line);
+    #[cfg(feature = "ast-span")]
+    {
+      let end_range = self.lexer_position.range.1;
+      generic_params.span = (begin_range, end_range, self.lexer_position.line);
+    }
 
     Ok(generic_params)
   }
@@ -711,7 +781,9 @@ where
       self.next_token()?;
     }
 
+    #[cfg(feature = "ast-span")]
     let begin_generic_arg_range = self.lexer_position.range.0;
+    #[cfg(feature = "ast-span")]
     let begin_generic_arg_line = self.lexer_position.line;
 
     // Required for type2 mutual recursion
@@ -740,6 +812,7 @@ where
 
       if self.cur_token_is(Token::EOF) {
         self.errors.push(Error::PARSER {
+          #[cfg(feature = "ast-span")]
           position: self.parser_position,
           msg: MissingGenericClosingDelimiter.into(),
         });
@@ -749,33 +822,47 @@ where
     }
 
     if self.cur_token_is(Token::RANGLEBRACKET) {
-      self.parser_position.range.1 = self.lexer_position.range.1;
+      #[cfg(feature = "ast-span")]
+      {
+        self.parser_position.range.1 = self.lexer_position.range.1;
+      }
       self.next_token()?;
     }
 
-    generic_args.span = (
-      begin_generic_arg_range,
-      self.parser_position.range.1,
-      begin_generic_arg_line,
-    );
+    #[cfg(feature = "ast-span")]
+    {
+      generic_args.span = (
+        begin_generic_arg_range,
+        self.parser_position.range.1,
+        begin_generic_arg_line,
+      );
+    }
 
     Ok(generic_args)
   }
 
   fn parse_type(&mut self, parenthesized_type: Option<Type2<'a>>) -> Result<Type<'a>> {
-    self.parser_position.range = self.lexer_position.range;
-    self.parser_position.line = self.lexer_position.line;
+    #[cfg(feature = "ast-span")]
+    {
+      self.parser_position.range = self.lexer_position.range;
+      self.parser_position.line = self.lexer_position.line;
 
-    let begin_type_range = if let Some(Type2::ParenthesizedType { span, .. }) = parenthesized_type {
-      self.parser_position.line = span.2;
+      
+    }
 
-      span.0
-    } else {
-      self.parser_position.range.0
-    };
+    #[cfg(feature = "ast-span")]
+    let begin_type_range = if let Some(Type2::ParenthesizedType { span, .. }) = parenthesized_type
+      {
+        self.parser_position.line = span.2;
+
+        span.0
+      } else {
+        self.parser_position.range.0
+      };
 
     let mut t = Type {
       type_choices: Vec::new(),
+      #[cfg(feature = "ast-span")]
       span: (begin_type_range, 0, self.parser_position.line),
     };
 
@@ -805,37 +892,46 @@ where
       t.type_choices.push(tc);
     }
 
-    t.span.1 = self.parser_position.range.1;
+    #[cfg(feature = "ast-span")]
+    {
+      t.span.1 = self.parser_position.range.1;
+    }
 
     Ok(t)
   }
 
   fn parse_type1(&mut self, parenthesized_type: Option<Type2<'a>>) -> Result<Type1<'a>> {
+    #[cfg(feature = "ast-span")]
     let mut begin_type1_line = self.lexer_position.line;
-    let begin_type1_range = self.lexer_position.range.0;
+    #[cfg(feature = "ast-span")]
+    let mut begin_type1_range = self.lexer_position.range.0;
 
-    let (t2_1, begin_type1_range) = if let Some(Type2::ParenthesizedType {
+    let t2_1 = if let Some(Type2::ParenthesizedType {
       comments_before_type,
       pt,
       comments_after_type,
+      #[cfg(feature = "ast-span")]
       span,
     }) = parenthesized_type
     {
-      begin_type1_line = span.2;
+      #[cfg(feature = "ast-span")]
+      {
+        begin_type1_line = span.2;
+        begin_type1_range = span.0;
+      }
 
-      (
-        Type2::ParenthesizedType {
-          comments_before_type,
-          pt,
-          comments_after_type,
-          span,
-        },
-        span.0,
-      )
+      Type2::ParenthesizedType {
+        comments_before_type,
+        pt,
+        comments_after_type,
+        #[cfg(feature = "ast-span")]
+        span,
+      }
     } else {
-      (self.parse_type2()?, begin_type1_range)
+      self.parse_type2()?
     };
 
+    #[cfg(feature = "ast-span")]
     let mut span = (
       begin_type1_range,
       self.lexer_position.range.1,
@@ -846,28 +942,42 @@ where
 
     let op = match &self.cur_token {
       Token::RANGEOP(i) => {
-        span.0 = self.lexer_position.range.0;
+        #[cfg(feature = "ast-span")]
+        {
+          span.0 = self.lexer_position.range.0;
+        }
 
         Some(RangeCtlOp::RangeOp {
           is_inclusive: *i,
+          #[cfg(feature = "ast-span")]
           span,
         })
       }
       _ => match token::control_str_from_token(&self.cur_token) {
         Some(ctrl) => {
-          span.0 = self.lexer_position.range.0;
+          #[cfg(feature = "ast-span")]
+          {
+            span.0 = self.lexer_position.range.0;
+          }
 
-          Some(RangeCtlOp::CtlOp { ctrl, span })
+          Some(RangeCtlOp::CtlOp {
+            ctrl,
+            #[cfg(feature = "ast-span")]
+            span,
+          })
         }
         None => None,
       },
     };
 
-    span = (
-      begin_type1_range,
-      self.parser_position.range.1,
-      begin_type1_line,
-    );
+    #[cfg(feature = "ast-span")]
+    {
+      span = (
+        begin_type1_range,
+        self.parser_position.range.1,
+        begin_type1_line,
+      );
+    }
 
     match op {
       Some(operator) => {
@@ -877,7 +987,10 @@ where
 
         let t2 = self.parse_type2()?;
 
-        span.1 = self.parser_position.range.1;
+        #[cfg(feature = "ast-span")]
+        {
+          span.1 = self.parser_position.range.1;
+        }
 
         Ok(Type1 {
           type2: t2_1,
@@ -888,6 +1001,7 @@ where
             type2: t2,
           }),
           comments_after_type: None,
+          #[cfg(feature = "ast-span")]
           span,
         })
       }
@@ -895,6 +1009,7 @@ where
         type2: t2_1,
         operator: None,
         comments_after_type,
+        #[cfg(feature = "ast-span")]
         span,
       }),
     }
@@ -904,9 +1019,13 @@ where
     let t2 = match &self.cur_token {
       // value
       Token::VALUE(value) => {
-        self.parser_position.range = self.lexer_position.range;
-        self.parser_position.line = self.lexer_position.line;
+        #[cfg(feature = "ast-span")]
+        {
+          self.parser_position.range = self.lexer_position.range;
+          self.parser_position.line = self.lexer_position.line;
+        }
 
+        #[cfg(feature = "ast-span")]
         let span = (
           self.parser_position.range.0,
           self.parser_position.range.1,
@@ -916,41 +1035,60 @@ where
         match value {
           token::Value::TEXT(t) => Ok(Type2::TextValue {
             value: t.clone(),
+            #[cfg(feature = "ast-span")]
             span,
           }),
-          token::Value::INT(i) => Ok(Type2::IntValue { value: *i, span }),
-          token::Value::UINT(ui) => Ok(Type2::UintValue { value: *ui, span }),
-          token::Value::FLOAT(f) => Ok(Type2::FloatValue { value: *f, span }),
+          token::Value::INT(i) => Ok(Type2::IntValue {
+            value: *i,
+            #[cfg(feature = "ast-span")]
+            span,
+          }),
+          token::Value::UINT(ui) => Ok(Type2::UintValue {
+            value: *ui,
+            #[cfg(feature = "ast-span")]
+            span,
+          }),
+          token::Value::FLOAT(f) => Ok(Type2::FloatValue {
+            value: *f,
+            #[cfg(feature = "ast-span")]
+            span,
+          }),
           token::Value::BYTE(token::ByteValue::UTF8(Cow::Borrowed(utf8))) => {
             Ok(Type2::UTF8ByteString {
               value: Cow::Borrowed(utf8),
+              #[cfg(feature = "ast-span")]
               span,
             })
           }
           token::Value::BYTE(token::ByteValue::UTF8(Cow::Owned(utf8))) => {
             Ok(Type2::UTF8ByteString {
               value: Cow::Owned(utf8.to_owned()),
+              #[cfg(feature = "ast-span")]
               span,
             })
           }
           token::Value::BYTE(token::ByteValue::B16(Cow::Borrowed(b16))) => {
             Ok(Type2::B16ByteString {
               value: Cow::Borrowed(b16),
+              #[cfg(feature = "ast-span")]
               span,
             })
           }
           token::Value::BYTE(token::ByteValue::B16(Cow::Owned(b16))) => Ok(Type2::B16ByteString {
             value: Cow::Owned(b16.to_owned()),
+            #[cfg(feature = "ast-span")]
             span,
           }),
           token::Value::BYTE(token::ByteValue::B64(Cow::Borrowed(b64))) => {
             Ok(Type2::B64ByteString {
               value: Cow::Borrowed(b64),
+              #[cfg(feature = "ast-span")]
               span,
             })
           }
           token::Value::BYTE(token::ByteValue::B64(Cow::Owned(b64))) => Ok(Type2::B64ByteString {
             value: Cow::Owned(b64.to_owned()),
+            #[cfg(feature = "ast-span")]
             span,
           }),
         }
@@ -958,7 +1096,9 @@ where
 
       // typename [genericarg]
       Token::IDENT(ident) => {
+        #[cfg(feature = "ast-span")]
         let begin_type2_range = self.lexer_position.range.0;
+        #[cfg(feature = "ast-span")]
         let begin_type2_line = self.lexer_position.line;
 
         // optional genericarg detected
@@ -966,21 +1106,27 @@ where
           let ident = self.identifier_from_ident_token(*ident);
           let ga = self.parse_genericargs()?;
 
+          #[cfg(feature = "ast-span")]
           let end_type2_range = self.parser_position.range.1;
 
           return Ok(Type2::Typename {
             ident,
             generic_args: Some(ga),
+            #[cfg(feature = "ast-span")]
             span: (begin_type2_range, end_type2_range, begin_type2_line),
           });
         }
 
-        self.parser_position.range = self.lexer_position.range;
-        self.parser_position.line = self.lexer_position.line;
+        #[cfg(feature = "ast-span")]
+        {
+          self.parser_position.range = self.lexer_position.range;
+          self.parser_position.line = self.lexer_position.line;
+        }
 
         Ok(Type2::Typename {
           ident: self.identifier_from_ident_token(*ident),
           generic_args: None,
+          #[cfg(feature = "ast-span")]
           span: (
             self.parser_position.range.0,
             self.parser_position.range.1,
@@ -991,7 +1137,9 @@ where
 
       // ( type )
       Token::LPAREN => {
+        #[cfg(feature = "ast-span")]
         let begin_type2_range = self.lexer_position.range.0;
+        #[cfg(feature = "ast-span")]
         let begin_type2_line = self.lexer_position.line;
 
         self.next_token()?;
@@ -1000,9 +1148,12 @@ where
 
         let pt = self.parse_type(None)?;
 
-        self.parser_position.range.0 = begin_type2_range;
-        self.parser_position.range.1 = self.lexer_position.range.1;
-        self.parser_position.line = begin_type2_line;
+        #[cfg(feature = "ast-span")]
+        {
+          self.parser_position.range.0 = begin_type2_range;
+          self.parser_position.range.1 = self.lexer_position.range.1;
+          self.parser_position.line = begin_type2_line;
+        }
 
         let comments_after_type = self.collect_comments()?;
 
@@ -1010,6 +1161,7 @@ where
           comments_before_type,
           comments_after_type,
           pt,
+          #[cfg(feature = "ast-span")]
           span: (
             self.parser_position.range.0,
             self.parser_position.range.1,
@@ -1020,7 +1172,9 @@ where
 
       // { group }
       Token::LBRACE => {
+        #[cfg(feature = "ast-span")]
         let begin_type2_range = self.lexer_position.range.0;
+        #[cfg(feature = "ast-span")]
         let begin_type2_line = self.lexer_position.line;
 
         let mut group = self.parse_group()?;
@@ -1035,6 +1189,7 @@ where
           None
         };
 
+        #[cfg(feature = "ast-span")]
         let span = (
           begin_type2_range,
           self.lexer_position.range.1,
@@ -1046,6 +1201,7 @@ where
         Ok(Type2::Map {
           comments_before_group,
           group,
+          #[cfg(feature = "ast-span")]
           span,
           comments_after_group,
         })
@@ -1053,7 +1209,9 @@ where
 
       // [ group ]
       Token::LBRACKET => {
+        #[cfg(feature = "ast-span")]
         let begin_type2_range = self.lexer_position.range.0;
+        #[cfg(feature = "ast-span")]
         let begin_type2_line = self.lexer_position.line;
 
         let mut group = self.parse_group()?;
@@ -1072,6 +1230,7 @@ where
           None
         };
 
+        #[cfg(feature = "ast-span")]
         let span = (
           begin_type2_range,
           self.lexer_position.range.1,
@@ -1084,6 +1243,7 @@ where
           comments_before_group,
           group,
           comments_after_group,
+          #[cfg(feature = "ast-span")]
           span,
         })
       }
@@ -1110,6 +1270,7 @@ where
               comments,
               ident,
               generic_args: Some(self.parse_genericargs()?),
+              #[cfg(feature = "ast-span")]
               span: (0, 0, 0),
             });
           }
@@ -1118,11 +1279,13 @@ where
             comments,
             ident,
             generic_args: None,
+            #[cfg(feature = "ast-span")]
             span: (0, 0, 0),
           });
         }
 
         self.errors.push(Error::PARSER {
+          #[cfg(feature = "ast-span")]
           position: self.parser_position,
           msg: InvalidUnwrapSyntax.into(),
         });
@@ -1133,7 +1296,9 @@ where
       // & ( group )
       // & groupname [genericarg]
       Token::GTOCHOICE => {
+        #[cfg(feature = "ast-span")]
         let begin_type2_range = self.lexer_position.range.0;
+        #[cfg(feature = "ast-span")]
         let begin_type2_line = self.lexer_position.line;
 
         self.next_token()?;
@@ -1155,6 +1320,7 @@ where
               comments_before_group,
               group,
               comments_after_group,
+              #[cfg(feature = "ast-span")]
               span: (
                 begin_type2_range,
                 self.parser_position.range.1,
@@ -1173,6 +1339,7 @@ where
                 comments,
                 ident,
                 generic_args,
+                #[cfg(feature = "ast-span")]
                 span: (
                   begin_type2_range,
                   self.parser_position.range.1,
@@ -1181,12 +1348,16 @@ where
               });
             }
 
-            self.parser_position.range.1 = self.lexer_position.range.1;
+            #[cfg(feature = "ast-span")]
+            {
+              self.parser_position.range.1 = self.lexer_position.range.1;
+            }
 
             Ok(Type2::ChoiceFromGroup {
               comments,
               ident,
               generic_args: None,
+              #[cfg(feature = "ast-span")]
               span: (
                 begin_type2_range,
                 self.parser_position.range.1,
@@ -1196,6 +1367,7 @@ where
           }
           _ => {
             self.errors.push(Error::PARSER {
+              #[cfg(feature = "ast-span")]
               position: self.parser_position,
               msg: InvalidGroupToChoiceEnumSyntax.into(),
             });
@@ -1213,7 +1385,9 @@ where
       //   Tag::ANY => Ok(Type2::Any),
       // },
       Token::TAG(t) => {
+        #[cfg(feature = "ast-span")]
         let begin_type2_range = self.lexer_position.range.0;
+        #[cfg(feature = "ast-span")]
         let begin_type2_line = self.lexer_position.line;
 
         match *t {
@@ -1222,6 +1396,7 @@ where
             self.next_token()?;
             if !self.cur_token_is(Token::LPAREN) {
               self.errors.push(Error::PARSER {
+                #[cfg(feature = "ast-span")]
                 position: self.parser_position,
                 msg: InvalidTagSyntax.into(),
               });
@@ -1239,6 +1414,7 @@ where
 
             if !self.cur_token_is(Token::RPAREN) {
               self.errors.push(Error::PARSER {
+                #[cfg(feature = "ast-span")]
                 position: self.parser_position,
                 msg: InvalidTagSyntax.into(),
               });
@@ -1251,6 +1427,7 @@ where
               comments_before_type,
               t,
               comments_after_type,
+              #[cfg(feature = "ast-span")]
               span: (
                 begin_type2_range,
                 self.parser_position.range.1,
@@ -1262,17 +1439,21 @@ where
           (Some(mt), constraint) => Ok(Type2::DataMajorType {
             mt,
             constraint,
+            #[cfg(feature = "ast-span")]
             span: (
               begin_type2_range,
               self.lexer_position.range.1,
               begin_type2_line,
             ),
           }),
+          #[cfg(feature = "ast-span")]
           _ => Ok(Type2::Any((
             begin_type2_range,
             self.lexer_position.range.1,
             begin_type2_line,
           ))),
+          #[cfg(not(feature = "ast-span"))]
+          _ => Ok(Type2::Any),
         }
       }
       _ => {
@@ -1281,12 +1462,16 @@ where
         match self.cur_token.in_standard_prelude() {
           Some(s) => {
             let ident = self.identifier_from_ident_token((s, None));
-            self.parser_position.range = self.lexer_position.range;
-            self.parser_position.line = self.lexer_position.line;
+            #[cfg(feature = "ast-span")]
+            {
+              self.parser_position.range = self.lexer_position.range;
+              self.parser_position.line = self.lexer_position.line;
+            }
 
             Ok(Type2::Typename {
               ident,
               generic_args: None,
+              #[cfg(feature = "ast-span")]
               span: (
                 self.parser_position.range.0,
                 self.parser_position.range.1,
@@ -1295,11 +1480,15 @@ where
             })
           }
           None => {
-            self.parser_position.line = self.lexer_position.line;
-            self.parser_position.range = self.lexer_position.range;
+            #[cfg(feature = "ast-span")]
+            {
+              self.parser_position.line = self.lexer_position.line;
+              self.parser_position.range = self.lexer_position.range;
+            }
 
             if self.cur_token_is(Token::COLON) || self.cur_token_is(Token::ARROWMAP) {
               self.errors.push(Error::PARSER {
+                #[cfg(feature = "ast-span")]
                 position: self.parser_position,
                 msg: MissingGroupEntryMemberKey.into(),
               });
@@ -1312,6 +1501,7 @@ where
               || self.cur_token_is(Token::RPAREN)
             {
               self.errors.push(Error::PARSER {
+                #[cfg(feature = "ast-span")]
                 position: self.parser_position,
                 msg: MissingGroupEntry.into(),
               });
@@ -1320,6 +1510,7 @@ where
             }
 
             self.errors.push(Error::PARSER {
+              #[cfg(feature = "ast-span")]
               position: self.parser_position,
               msg: InvalidGroupEntrySyntax.into(),
             });
@@ -1330,7 +1521,10 @@ where
       }
     };
 
-    self.parser_position.range.1 = self.lexer_position.range.1;
+    #[cfg(feature = "ast-span")]
+    {
+      self.parser_position.range.1 = self.lexer_position.range.1;
+    }
 
     self.next_token()?;
 
@@ -1338,6 +1532,7 @@ where
   }
 
   fn parse_group(&mut self) -> Result<Group<'a>> {
+    #[cfg(feature = "ast-span")]
     let begin_group_range = if self.cur_token_is(Token::LBRACE)
       || self.cur_token_is(Token::LPAREN)
       || self.cur_token_is(Token::LBRACKET)
@@ -1352,6 +1547,7 @@ where
 
     let mut group = Group {
       group_choices: Vec::new(),
+      #[cfg(feature = "ast-span")]
       span: (begin_group_range, 0, self.lexer_position.line),
     };
 
@@ -1361,11 +1557,15 @@ where
       group.group_choices.push(self.parse_grpchoice()?);
     }
 
-    group.span.1 = self.parser_position.range.1;
+    #[cfg(feature = "ast-span")]
+    {
+      group.span.1 = self.parser_position.range.1;
+    }
 
     if let Some(cd) = closing_delimiter.as_ref() {
       if cd != &self.cur_token {
         self.errors.push(Error::PARSER {
+          #[cfg(feature = "ast-span")]
           position: self.lexer_position,
           msg: MissingClosingDelimiter.into(),
         });
@@ -1381,6 +1581,7 @@ where
     let mut grpchoice = GroupChoice {
       group_entries: Vec::new(),
       comments_before_grpchoice: None,
+      #[cfg(feature = "ast-span")]
       span: (self.lexer_position.range.0, 0, self.lexer_position.line),
     };
 
@@ -1389,11 +1590,17 @@ where
 
       grpchoice.comments_before_grpchoice = self.collect_comments()?;
 
-      grpchoice.span.0 = self.lexer_position.range.0;
+      #[cfg(feature = "ast-span")]
+      {
+        grpchoice.span.0 = self.lexer_position.range.0;
+      }
     } else if self.cur_token_is(Token::LBRACE) || self.cur_token_is(Token::LBRACKET) {
       self.next_token()?;
 
-      grpchoice.span.0 = self.lexer_position.range.0;
+      #[cfg(feature = "ast-span")]
+      {
+        grpchoice.span.0 = self.lexer_position.range.0;
+      }
     };
 
     grpchoice.comments_before_grpchoice = self.collect_comments()?;
@@ -1417,7 +1624,10 @@ where
           },
         ));
 
-        grpchoice.span.1 = self.parser_position.range.1;
+        #[cfg(feature = "ast-span")]
+        {
+          grpchoice.span.1 = self.parser_position.range.1;
+        }
 
         return Ok(grpchoice);
       }
@@ -1438,7 +1648,10 @@ where
         && !self.peek_token_is(&Token::ARROWMAP)
         && !self.cur_token_is(Token::EOF)
       {
-        self.parser_position.range.1 = self.lexer_position.range.1;
+        #[cfg(feature = "ast-span")]
+        {
+          self.parser_position.range.1 = self.lexer_position.range.1;
+        }
         self.next_token()?;
       }
 
@@ -1447,7 +1660,10 @@ where
       if self.cur_token_is(Token::COMMA) {
         optional_comma = true;
 
-        self.parser_position.range.1 = self.lexer_position.range.1;
+        #[cfg(feature = "ast-span")]
+        {
+          self.parser_position.range.1 = self.lexer_position.range.1;
+        }
         self.next_token()?;
       }
 
@@ -1462,13 +1678,18 @@ where
       ));
     }
 
-    grpchoice.span.1 = self.parser_position.range.1;
+    #[cfg(feature = "ast-span")]
+    {
+      grpchoice.span.1 = self.parser_position.range.1;
+    }
 
     Ok(grpchoice)
   }
 
   fn parse_grpent(&mut self, from_rule: bool) -> Result<GroupEntry<'a>> {
+    #[cfg(feature = "ast-span")]
     let begin_grpent_range = self.lexer_position.range.0;
+    #[cfg(feature = "ast-span")]
     let begin_grpent_line = self.lexer_position.line;
 
     let occur = self.parse_occur(true)?;
@@ -1487,25 +1708,33 @@ where
 
       let group = self.parse_group()?;
 
+      #[cfg(feature = "ast-span")]
       let mut span = (
         begin_grpent_range,
         self.parser_position.range.1,
         begin_grpent_line,
       );
 
-      self.parser_position.range.1 = self.lexer_position.range.1;
+      #[cfg(feature = "ast-span")]
+      {
+        self.parser_position.range.1 = self.lexer_position.range.1;
+      }
 
       let comments_after_group = self.collect_comments()?;
 
       if !self.cur_token_is(Token::RPAREN) {
         self.errors.push(Error::PARSER {
+          #[cfg(feature = "ast-span")]
           position: self.lexer_position,
           msg: MissingClosingParend.into(),
         });
         return Err(Error::INCREMENTAL);
       }
 
-      span.1 = self.parser_position.range.1;
+      #[cfg(feature = "ast-span")]
+      {
+        span.1 = self.parser_position.range.1;
+      }
 
       self.next_token()?;
 
@@ -1514,10 +1743,12 @@ where
         group,
         comments_before_group,
         comments_after_group,
+        #[cfg(feature = "ast-span")]
         span,
       });
     }
 
+    #[cfg(feature = "ast-span")]
     let mut span = (
       begin_grpent_range,
       self.parser_position.range.1,
@@ -1530,12 +1761,14 @@ where
         comments_before_type_or_group,
         comments_after_type_or_group,
       }) => {
+        #[cfg(feature = "ast-span")]
         if self.cur_token_is(Token::COMMA) {
           span.1 = self.lexer_position.range.1;
         }
 
         let trailing_comments = entry_type.comments_after_type();
 
+        #[cfg(feature = "ast-span")]
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
           return Ok(GroupEntry::TypeGroupname {
             ge: TypeGroupnameEntry {
@@ -1546,6 +1779,19 @@ where
             leading_comments: comments_before_type_or_group,
             trailing_comments,
             span,
+          });
+        }
+
+        #[cfg(not(feature = "ast-span"))]
+        if let Some((name, generic_args)) = entry_type.groupname_entry() {
+          return Ok(GroupEntry::TypeGroupname {
+            ge: TypeGroupnameEntry {
+              occur,
+              name,
+              generic_args,
+            },
+            leading_comments: comments_before_type_or_group,
+            trailing_comments,
           });
         }
 
@@ -1570,6 +1816,7 @@ where
           }),
           leading_comments: comments_before_type_or_group,
           trailing_comments,
+          #[cfg(feature = "ast-span")]
           span,
         })
       }
@@ -1578,6 +1825,7 @@ where
         comments_before_type_or_group,
         comments_after_type_or_group,
       }) => {
+        #[cfg(feature = "ast-span")]
         if self.cur_token_is(Token::COMMA) {
           span.1 = self.lexer_position.range.1;
         }
@@ -1585,6 +1833,7 @@ where
         Ok(GroupEntry::InlineGroup {
           occur,
           group,
+          #[cfg(feature = "ast-span")]
           span,
           comments_before_group: comments_before_type_or_group,
           comments_after_group: comments_after_type_or_group,
@@ -1595,8 +1844,12 @@ where
 
         let trailing_comments = entry_type.comments_after_type();
 
-        span.1 = self.parser_position.range.1;
+        #[cfg(feature = "ast-span")]
+        {
+          span.1 = self.parser_position.range.1;
+        }
 
+        #[cfg(feature = "ast-span")]
         if self.cur_token_is(Token::COMMA) {
           span.1 = self.lexer_position.range.1;
         }
@@ -1609,13 +1862,17 @@ where
           }),
           leading_comments: None,
           trailing_comments,
+          #[cfg(feature = "ast-span")]
           span,
         })
       }
       None => {
         let mut entry_type = self.parse_type(None)?;
 
-        span.1 = self.parser_position.range.1;
+        #[cfg(feature = "ast-span")]
+        {
+          span.1 = self.parser_position.range.1;
+        }
 
         let trailing_comments = if let Some(comments) = entry_type.comments_after_type() {
           Some(comments)
@@ -1623,10 +1880,12 @@ where
           self.collect_comments()?
         };
 
+        #[cfg(feature = "ast-span")]
         if self.cur_token_is(Token::COMMA) {
           span.1 = self.lexer_position.range.1;
         }
 
+        #[cfg(feature = "ast-span")]
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
           if generic_args.is_some() && self.peek_token_is(&Token::LANGLEBRACKET) {
             while !self.peek_token_is(&Token::RANGLEBRACKET) {
@@ -1648,6 +1907,27 @@ where
           });
         }
 
+        #[cfg(not(feature = "ast-span"))]
+        if let Some((name, generic_args)) = entry_type.groupname_entry() {
+          if generic_args.is_some() && self.peek_token_is(&Token::LANGLEBRACKET) {
+            while !self.peek_token_is(&Token::RANGLEBRACKET) {
+              self.next_token()?;
+            }
+
+            self.next_token()?;
+          }
+
+          return Ok(GroupEntry::TypeGroupname {
+            ge: TypeGroupnameEntry {
+              occur,
+              name,
+              generic_args,
+            },
+            leading_comments: None,
+            trailing_comments,
+          });
+        }
+
         Ok(GroupEntry::ValueMemberKey {
           ge: Box::from(ValueMemberKeyEntry {
             occur,
@@ -1656,6 +1936,7 @@ where
           }),
           leading_comments: None,
           trailing_comments,
+          #[cfg(feature = "ast-span")]
           span,
         })
       }
@@ -1669,8 +1950,8 @@ where
     &mut self,
     is_optional: bool,
     ident: (&'a str, Option<token::SocketPlug>),
-    begin_memberkey_range: usize,
-    begin_memberkey_line: usize,
+    #[cfg(feature = "ast-span")] begin_memberkey_range: usize,
+    #[cfg(feature = "ast-span")] begin_memberkey_line: usize,
   ) -> Result<Option<MemberKey<'a>>> {
     if !self.peek_token_is(&Token::COLON)
       && !self.peek_token_is(&Token::ARROWMAP)
@@ -1680,12 +1961,22 @@ where
       return Ok(None);
     }
 
-    self.parser_position.range.1 = self.peek_lexer_position.range.1;
+    #[cfg(feature = "ast-span")]
+    {
+      self.parser_position.range.1 = self.peek_lexer_position.range.1;
+    }
 
+    #[cfg(feature = "ast-span")]
     let end_t1_range = self.lexer_position.range.1;
 
+    #[cfg(feature = "ast-span")]
     let mut ident = self.identifier_from_ident_token((ident.0, ident.1));
-    ident.span = (begin_memberkey_range, end_t1_range, begin_memberkey_line);
+    #[cfg(not(feature = "ast-span"))]
+    let ident = self.identifier_from_ident_token((ident.0, ident.1));
+    #[cfg(feature = "ast-span")]
+    {
+      ident.span = (begin_memberkey_range, end_t1_range, begin_memberkey_line);
+    }
 
     self.next_token()?;
 
@@ -1698,12 +1989,14 @@ where
 
       if !self.cur_token_is(Token::ARROWMAP) {
         self.errors.push(Error::PARSER {
+          #[cfg(feature = "ast-span")]
           position: self.lexer_position,
           msg: InvalidMemberKeyArrowMapSyntax.into(),
         });
         return Err(Error::INCREMENTAL);
       }
 
+      #[cfg(feature = "ast-span")]
       let end_memberkey_range = self.lexer_position.range.1;
 
       let comments_after_arrowmap = if let Token::COMMENT(_) = self.peek_token {
@@ -1719,16 +2012,19 @@ where
           type2: Type2::Typename {
             ident,
             generic_args: None,
+            #[cfg(feature = "ast-span")]
             span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
           },
           operator: None,
           comments_after_type: None,
+          #[cfg(feature = "ast-span")]
           span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
         }),
         comments_before_cut,
         is_cut: true,
         comments_after_cut,
         comments_after_arrowmap,
+        #[cfg(feature = "ast-span")]
         span: (
           begin_memberkey_range,
           end_memberkey_range,
@@ -1740,6 +2036,7 @@ where
 
       Some(t1)
     } else if self.cur_token_is(Token::ARROWMAP) {
+      #[cfg(feature = "ast-span")]
       let end_memberkey_range = self.lexer_position.range.1;
 
       let comments_after_arrowmap = if let Token::COMMENT(_) = self.peek_token {
@@ -1755,16 +2052,19 @@ where
           type2: Type2::Typename {
             ident,
             generic_args: None,
+            #[cfg(feature = "ast-span")]
             span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
           },
           operator: None,
           comments_after_type: None,
+          #[cfg(feature = "ast-span")]
           span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
         }),
         comments_before_cut,
         is_cut: false,
         comments_after_cut: None,
         comments_after_arrowmap,
+        #[cfg(feature = "ast-span")]
         span: (
           begin_memberkey_range,
           end_memberkey_range,
@@ -1786,6 +2086,7 @@ where
         ident,
         comments: comments_before_cut,
         comments_after_colon,
+        #[cfg(feature = "ast-span")]
         span: (
           begin_memberkey_range,
           self.parser_position.range.1,
@@ -1798,14 +2099,18 @@ where
   }
 
   fn parse_memberkey(&mut self, is_optional: bool) -> Result<Option<MemberKey<'a>>> {
+    #[cfg(feature = "ast-span")]
     let begin_memberkey_range = self.lexer_position.range.0;
+    #[cfg(feature = "ast-span")]
     let begin_memberkey_line = self.lexer_position.line;
 
     if let Some(t) = self.cur_token.in_standard_prelude() {
       return self.parse_memberkey_from_ident(
         is_optional,
         (t, None),
+        #[cfg(feature = "ast-span")]
         begin_memberkey_range,
+        #[cfg(feature = "ast-span")]
         begin_memberkey_line,
       );
     }
@@ -1817,7 +2122,9 @@ where
         self.parse_memberkey_from_ident(
           is_optional,
           ident,
+          #[cfg(feature = "ast-span")]
           begin_memberkey_range,
+          #[cfg(feature = "ast-span")]
           begin_memberkey_line,
         )
       }
@@ -1830,7 +2137,10 @@ where
           return Ok(None);
         }
 
-        self.parser_position.range.1 = self.peek_lexer_position.range.1;
+        #[cfg(feature = "ast-span")]
+        {
+          self.parser_position.range.1 = self.peek_lexer_position.range.1;
+        }
 
         let value = value.clone();
 
@@ -1845,12 +2155,14 @@ where
 
           if !self.cur_token_is(Token::ARROWMAP) {
             self.errors.push(Error::PARSER {
+              #[cfg(feature = "ast-span")]
               position: self.lexer_position,
               msg: InvalidMemberKeyArrowMapSyntax.into(),
             });
             return Err(Error::INCREMENTAL);
           }
 
+          #[cfg(feature = "ast-span")]
           let end_memberkey_range = self.lexer_position.range.1;
 
           self.next_token()?;
@@ -1863,6 +2175,7 @@ where
             is_cut: true,
             comments_after_cut,
             comments_after_arrowmap: memberkey_comments,
+            #[cfg(feature = "ast-span")]
             span: (
               begin_memberkey_range,
               end_memberkey_range,
@@ -1874,13 +2187,17 @@ where
 
           if !self.cur_token_is(Token::ARROWMAP) && !self.cur_token_is(Token::COLON) {
             self.errors.push(Error::PARSER {
+              #[cfg(feature = "ast-span")]
               position: self.lexer_position,
               msg: InvalidMemberKeySyntax.into(),
             });
             return Err(Error::INCREMENTAL);
           }
 
-          self.parser_position.range.1 = self.lexer_position.range.1;
+          #[cfg(feature = "ast-span")]
+          {
+            self.parser_position.range.1 = self.lexer_position.range.1;
+          }
 
           self.next_token()?;
 
@@ -1890,6 +2207,7 @@ where
             value,
             comments,
             comments_after_colon: memberkey_comments,
+            #[cfg(feature = "ast-span")]
             span: (
               begin_memberkey_range,
               self.parser_position.range.1,
@@ -1907,7 +2225,9 @@ where
       // Indicates either an inline parenthesized type or an inline group. If
       // the latter, don't parse as memberkey
       Token::LPAREN => {
+        #[cfg(feature = "ast-span")]
         let begin_memberkey_range = self.lexer_position.range.0;
+        #[cfg(feature = "ast-span")]
         let begin_memberkey_line = self.lexer_position.line;
 
         let mut nested_parend_count = 0;
@@ -1922,6 +2242,7 @@ where
 
         let mut has_group_entries = false;
         let mut closing_parend = false;
+        #[cfg(feature = "ast-span")]
         let mut closing_parend_index = 0;
         while !closing_parend {
           if self.cur_token_is(Token::ARROWMAP) || self.cur_token_is(Token::COLON) {
@@ -1938,7 +2259,10 @@ where
               Ordering::Greater => nested_parend_count -= 1,
               Ordering::Equal | Ordering::Less => {
                 closing_parend = true;
-                closing_parend_index = self.lexer_position.range.1;
+                #[cfg(feature = "ast-span")]
+                {
+                  closing_parend_index = self.lexer_position.range.1;
+                }
               }
             }
           }
@@ -1946,7 +2270,10 @@ where
           let t = self.cur_token.clone();
           tokens.push(Ok((self.lexer_position, t)));
 
-          self.parser_position.range.1 = self.lexer_position.range.1;
+          #[cfg(feature = "ast-span")]
+          {
+            self.parser_position.range.1 = self.lexer_position.range.1;
+          }
 
           self.next_token()?;
 
@@ -1954,6 +2281,7 @@ where
 
           if self.cur_token_is(Token::EOF) {
             self.errors.push(Error::PARSER {
+              #[cfg(feature = "ast-span")]
               position: self.lexer_position,
               msg: MissingClosingParend.into(),
             });
@@ -2007,12 +2335,14 @@ where
 
           if !self.cur_token_is(Token::ARROWMAP) {
             self.errors.push(Error::PARSER {
+              #[cfg(feature = "ast-span")]
               position: self.lexer_position,
               msg: InvalidMemberKeyArrowMapSyntax.into(),
             });
             return Err(Error::INCREMENTAL);
           }
 
+          #[cfg(feature = "ast-span")]
           let end_memberkey_range = self.lexer_position.range.1;
 
           let t1 = Some(MemberKey::Type1 {
@@ -2021,6 +2351,7 @@ where
                 pt: t,
                 comments_before_type: comments_before_type_or_group,
                 comments_after_type: comments_after_type_or_group,
+                #[cfg(feature = "ast-span")]
                 span: (
                   begin_memberkey_range,
                   closing_parend_index,
@@ -2029,6 +2360,7 @@ where
               },
               comments_after_type: comments_before_cut.clone(),
               operator: None,
+              #[cfg(feature = "ast-span")]
               span: (
                 begin_memberkey_range,
                 closing_parend_index,
@@ -2039,6 +2371,7 @@ where
             is_cut: true,
             comments_after_cut,
             comments_after_arrowmap: None,
+            #[cfg(feature = "ast-span")]
             span: (
               begin_memberkey_range,
               end_memberkey_range,
@@ -2052,7 +2385,10 @@ where
         let t1 = if self.cur_token_is(Token::ARROWMAP) {
           self.next_token()?;
 
-          self.parser_position.range.1 = self.lexer_position.range.1;
+          #[cfg(feature = "ast-span")]
+          {
+            self.parser_position.range.1 = self.lexer_position.range.1;
+          }
 
           let memberkey_comments = self.collect_comments()?;
 
@@ -2062,6 +2398,7 @@ where
                 pt: t,
                 comments_before_type: comments_before_type_or_group,
                 comments_after_type: comments_after_type_or_group,
+                #[cfg(feature = "ast-span")]
                 span: (
                   begin_memberkey_range,
                   closing_parend_index,
@@ -2070,6 +2407,7 @@ where
               },
               comments_after_type: comments_before_cut.clone(),
               operator: None,
+              #[cfg(feature = "ast-span")]
               span: (
                 begin_memberkey_range,
                 closing_parend_index,
@@ -2080,6 +2418,7 @@ where
             is_cut: false,
             comments_after_cut: None,
             comments_after_arrowmap: memberkey_comments,
+            #[cfg(feature = "ast-span")]
             span: (
               begin_memberkey_range,
               self.lexer_position.range.0,
@@ -2090,6 +2429,7 @@ where
           Some(MemberKey::NonMemberKey {
             non_member_key: NonMemberKey::Type(Type {
               type_choices: t.type_choices,
+              #[cfg(feature = "ast-span")]
               span: (
                 begin_memberkey_range,
                 self.parser_position.range.1,
@@ -2115,12 +2455,14 @@ where
 
           if !self.cur_token_is(Token::ARROWMAP) {
             self.errors.push(Error::PARSER {
+              #[cfg(feature = "ast-span")]
               position: self.lexer_position,
               msg: InvalidMemberKeyArrowMapSyntax.into(),
             });
             return Err(Error::INCREMENTAL);
           }
 
+          #[cfg(feature = "ast-span")]
           let end_memberkey_range = self.lexer_position.range.1;
 
           self.next_token()?;
@@ -2133,6 +2475,7 @@ where
             is_cut: true,
             comments_after_cut,
             comments_after_arrowmap: memberkey_comments,
+            #[cfg(feature = "ast-span")]
             span: (
               begin_memberkey_range,
               end_memberkey_range,
@@ -2144,7 +2487,10 @@ where
         let t1 = if self.cur_token_is(Token::ARROWMAP) {
           self.next_token()?;
 
-          self.parser_position.range.1 = self.lexer_position.range.1;
+          #[cfg(feature = "ast-span")]
+          {
+            self.parser_position.range.1 = self.lexer_position.range.1;
+          }
 
           let memberkey_comments = self.collect_comments()?;
 
@@ -2154,6 +2500,7 @@ where
             is_cut: false,
             comments_after_cut: None,
             comments_after_arrowmap: memberkey_comments,
+            #[cfg(feature = "ast-span")]
             span: (
               begin_memberkey_range,
               self.parser_position.range.1,
@@ -2168,6 +2515,7 @@ where
                 comments_after_type: None,
                 type1: t1,
               }],
+              #[cfg(feature = "ast-span")]
               span: (
                 begin_memberkey_range,
                 self.parser_position.range.1,
@@ -2185,51 +2533,72 @@ where
   }
 
   fn parse_occur(&mut self, is_optional: bool) -> Result<Option<Occurrence<'a>>> {
+    #[cfg(feature = "ast-span")]
     let begin_occur_range = self.lexer_position.range.0;
+    #[cfg(feature = "ast-span")]
     let begin_occur_line = self.lexer_position.line;
-    self.parser_position.line = self.lexer_position.line;
+    #[cfg(feature = "ast-span")]
+    {
+      self.parser_position.line = self.lexer_position.line;
+    }
 
     match &self.cur_token {
       Token::OPTIONAL => {
-        self.parser_position.range = self.lexer_position.range;
+        #[cfg(feature = "ast-span")]
+        {
+          self.parser_position.range = self.lexer_position.range;
+        }
 
         self.next_token()?;
 
         let comments = self.collect_comments()?;
 
         Ok(Some(Occurrence {
+          #[cfg(feature = "ast-span")]
           occur: Occur::Optional((
             self.parser_position.range.0,
             self.parser_position.range.1,
             self.parser_position.line,
           )),
+          #[cfg(not(feature = "ast-span"))]
+          occur: Occur::Optional,
           comments,
         }))
       }
       Token::ONEORMORE => {
-        self.parser_position.range = self.lexer_position.range;
+        #[cfg(feature = "ast-span")]
+        {
+          self.parser_position.range = self.lexer_position.range;
+        }
 
         self.next_token()?;
 
         let comments = self.collect_comments()?;
 
         Ok(Some(Occurrence {
+          #[cfg(feature = "ast-span")]
           occur: Occur::OneOrMore((
             self.parser_position.range.0,
             self.parser_position.range.1,
             self.parser_position.line,
           )),
+          #[cfg(not(feature = "ast-span"))]
+          occur: Occur::OneOrMore,
           comments,
         }))
       }
       Token::ASTERISK => {
         let occur = if let Token::VALUE(token::Value::UINT(u)) = &self.peek_token {
-          self.parser_position.range.0 = self.lexer_position.range.0;
-          self.parser_position.range.1 = self.peek_lexer_position.range.1;
+          #[cfg(feature = "ast-span")]
+          {
+            self.parser_position.range.0 = self.lexer_position.range.0;
+            self.parser_position.range.1 = self.peek_lexer_position.range.1;
+          }
 
           Occur::Exact {
             lower: None,
             upper: Some(*u),
+            #[cfg(feature = "ast-span")]
             span: (
               self.parser_position.range.0,
               self.parser_position.range.1,
@@ -2237,13 +2606,18 @@ where
             ),
           }
         } else {
-          self.parser_position.range = self.lexer_position.range;
+          #[cfg(feature = "ast-span")]
+          {
+            self.parser_position.range = self.lexer_position.range;
+            Occur::ZeroOrMore((
+              self.parser_position.range.0,
+              self.parser_position.range.1,
+              self.parser_position.line,
+            ))
+          }
 
-          Occur::ZeroOrMore((
-            self.parser_position.range.0,
-            self.parser_position.range.1,
-            self.parser_position.line,
-          ))
+          #[cfg(not(feature = "ast-span"))]
+          Occur::ZeroOrMore
         };
 
         self.next_token()?;
@@ -2269,6 +2643,7 @@ where
           }
 
           self.errors.push(Error::PARSER {
+            #[cfg(feature = "ast-span")]
             position: self.lexer_position,
             msg: InvalidOccurrenceSyntax.into(),
           });
@@ -2278,14 +2653,20 @@ where
 
         self.next_token()?;
 
-        self.parser_position.range.1 = self.lexer_position.range.1;
+        #[cfg(feature = "ast-span")]
+        {
+          self.parser_position.range.1 = self.lexer_position.range.1;
+        }
 
         self.next_token()?;
 
         let upper = if let Token::VALUE(token::Value::UINT(ui)) = &self.cur_token {
           let ui = *ui;
 
-          self.parser_position.range.1 = self.lexer_position.range.1;
+          #[cfg(feature = "ast-span")]
+          {
+            self.parser_position.range.1 = self.lexer_position.range.1;
+          }
 
           self.next_token()?;
 
@@ -2300,6 +2681,7 @@ where
           occur: Occur::Exact {
             lower,
             upper,
+            #[cfg(feature = "ast-span")]
             span: (
               begin_occur_range,
               self.parser_position.range.1,
@@ -2337,6 +2719,7 @@ where
     Identifier {
       ident: ident.0,
       socket: ident.1,
+      #[cfg(feature = "ast-span")]
       span: (
         self.lexer_position.range.0,
         self.lexer_position.range.1,
@@ -2536,6 +2919,7 @@ pub fn format_cddl_from_str(input: &str) -> result::Result<String, JsValue> {
 
 #[cfg(test)]
 #[allow(unused_imports)]
+#[cfg(feature = "ast-span")]
 mod tests {
   use super::{
     super::{ast, lexer::Lexer, token::SocketPlug},

@@ -1,3 +1,5 @@
+#![cfg(feature = "ast-span")]
+
 use cddl::{
   ast::*,
   lexer::Lexer,

@@ -19,6 +19,7 @@ use alloc::{
 };
 
 /// Starting index, ending index and line number
+#[cfg(feature = "ast-span")]
 pub type Span = (usize, usize, usize);
 
 #[derive(Default, Debug, PartialEq, Clone)]
@@ -124,6 +125,7 @@ pub struct Identifier<'a> {
   /// Optional socket
   pub socket: Option<SocketPlug>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 }
 
@@ -156,6 +158,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
             return Identifier {
               ident,
               socket: Some(SocketPlug::GROUP),
+              #[cfg(feature = "ast-span")]
               span: (0, 0, 0),
             };
           }
@@ -164,6 +167,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
         return Identifier {
           ident,
           socket: Some(SocketPlug::TYPE),
+          #[cfg(feature = "ast-span")]
           span: (0, 0, 0),
         };
       }
@@ -172,6 +176,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
     Identifier {
       ident,
       socket: None,
+      #[cfg(feature = "ast-span")]
       span: (0, 0, 0),
     }
   }
@@ -204,6 +209,7 @@ pub enum Rule<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     rule: TypeRule<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -215,6 +221,7 @@ pub enum Rule<'a> {
     /// Group rule
     rule: Box<GroupRule<'a>>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -225,6 +232,7 @@ pub enum Rule<'a> {
 
 impl<'a> Rule<'a> {
   /// Return `Span` for `Rule`
+  #[cfg(feature = "ast-span")]
   pub fn span(&self) -> Span {
     match self {
       Rule::Type { span, .. } => *span,
@@ -461,6 +469,7 @@ pub struct GenericParams<'a> {
   /// List of generic parameters
   pub params: Vec<GenericParam<'a>>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 }
 
@@ -468,6 +477,7 @@ impl<'a> Default for GenericParams<'a> {
   fn default() -> Self {
     GenericParams {
       params: Vec::new(),
+      #[cfg(feature = "ast-span")]
       span: (0, 0, 0),
     }
   }
@@ -524,6 +534,7 @@ pub struct GenericArgs<'a> {
   /// Generic arguments
   pub args: Vec<GenericArg<'a>>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 }
 
@@ -532,6 +543,7 @@ impl<'a> GenericArgs<'a> {
   pub fn default() -> Self {
     GenericArgs {
       args: Vec::new(),
+      #[cfg(feature = "ast-span")]
       span: (0, 0, 0),
     }
   }
@@ -588,6 +600,7 @@ pub struct Type<'a> {
   /// Type choices
   pub type_choices: Vec<TypeChoice<'a>>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 }
 
@@ -666,6 +679,7 @@ impl<'a> Type<'a> {
   /// Used to delineate between grpent with `Type` and group entry with group
   /// name identifier `id`
   #[allow(clippy::type_complexity)]
+  #[cfg(feature = "ast-span")]
   pub fn groupname_entry(&self) -> Option<(Identifier<'a>, Option<GenericArgs<'a>>, Span)> {
     if self.type_choices.len() == 1 {
       if let Some(tc) = self.type_choices.first() {
@@ -677,6 +691,28 @@ impl<'a> Type<'a> {
           } = &tc.type1.type2
           {
             return Some((ident.clone(), generic_args.clone(), *span));
+          }
+        }
+      }
+    }
+
+    None
+  }
+
+  /// Used to delineate between grpent with `Type` and group entry with group
+  /// name identifier `id`
+  #[allow(clippy::type_complexity)]
+  #[cfg(not(feature = "ast-span"))]
+  pub fn groupname_entry(&self) -> Option<(Identifier<'a>, Option<GenericArgs<'a>>)> {
+    if self.type_choices.len() == 1 {
+      if let Some(tc) = self.type_choices.first() {
+        if tc.type1.operator.is_none() {
+          if let Type2::Typename {
+            ident,
+            generic_args,
+          } = &tc.type1.type2
+          {
+            return Some((ident.clone(), generic_args.clone()));
           }
         }
       }
@@ -699,6 +735,7 @@ pub struct Type1<'a> {
   /// Range or control operator over a second type
   pub operator: Option<Operator<'a>>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -708,19 +745,49 @@ pub struct Type1<'a> {
 
 impl<'a> From<Value<'a>> for Type1<'a> {
   fn from(value: Value<'a>) -> Self {
+    #[cfg(feature = "ast-span")]
     let span = Span::default();
     let type2 = match value {
-      Value::TEXT(value) => Type2::TextValue { value, span },
-      Value::INT(value) => Type2::IntValue { value, span },
-      Value::FLOAT(value) => Type2::FloatValue { value, span },
-      Value::UINT(value) => Type2::UintValue { value, span },
-      Value::BYTE(ByteValue::B16(value)) => Type2::B16ByteString { value, span },
-      Value::BYTE(ByteValue::B64(value)) => Type2::B64ByteString { value, span },
-      Value::BYTE(ByteValue::UTF8(value)) => Type2::UTF8ByteString { value, span },
+      Value::TEXT(value) => Type2::TextValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      Value::INT(value) => Type2::IntValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      Value::FLOAT(value) => Type2::FloatValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      Value::UINT(value) => Type2::UintValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      Value::BYTE(ByteValue::B16(value)) => Type2::B16ByteString {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      Value::BYTE(ByteValue::B64(value)) => Type2::B64ByteString {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      Value::BYTE(ByteValue::UTF8(value)) => Type2::UTF8ByteString {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
     };
 
     Type1 {
       type2,
+      #[cfg(feature = "ast-span")]
       span,
       operator: None,
       comments_after_type: None,
@@ -797,6 +864,7 @@ pub enum RangeCtlOp<'a> {
     /// Is inclusive
     is_inclusive: bool,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
   /// Control operator
@@ -804,6 +872,7 @@ pub enum RangeCtlOp<'a> {
     /// Control identifier
     ctrl: &'a str,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 }
@@ -846,6 +915,7 @@ pub enum Type2<'a> {
     /// Value
     value: isize,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -854,6 +924,7 @@ pub enum Type2<'a> {
     /// Value
     value: usize,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -862,6 +933,7 @@ pub enum Type2<'a> {
     /// Value
     value: f64,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -870,6 +942,7 @@ pub enum Type2<'a> {
     /// Value
     value: Cow<'a, str>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -878,6 +951,7 @@ pub enum Type2<'a> {
     /// Value
     value: Cow<'a, [u8]>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -886,6 +960,7 @@ pub enum Type2<'a> {
     /// Value
     value: Cow<'a, [u8]>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -894,6 +969,7 @@ pub enum Type2<'a> {
     /// Value
     value: Cow<'a, [u8]>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -904,6 +980,7 @@ pub enum Type2<'a> {
     /// Generic arguments
     generic_args: Option<GenericArgs<'a>>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -912,6 +989,7 @@ pub enum Type2<'a> {
     /// Type
     pt: Type<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -927,6 +1005,7 @@ pub enum Type2<'a> {
     /// Group
     group: Group<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -942,6 +1021,7 @@ pub enum Type2<'a> {
     /// Span
     group: Group<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -959,6 +1039,7 @@ pub enum Type2<'a> {
     /// Generic arguments
     generic_args: Option<GenericArgs<'a>>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -971,6 +1052,7 @@ pub enum Type2<'a> {
     /// Group
     group: Group<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -991,6 +1073,7 @@ pub enum Type2<'a> {
     /// Generic arguments
     generic_args: Option<GenericArgs<'a>>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -1006,6 +1089,7 @@ pub enum Type2<'a> {
     /// Type
     t: Type<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -1023,11 +1107,17 @@ pub enum Type2<'a> {
     /// Constraint
     constraint: Option<usize>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
   /// Any data item
+  #[cfg(feature = "ast-span")]
   Any(Span),
+
+  /// Any data item
+  #[cfg(not(feature = "ast-span"))]
+  Any,
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -1289,13 +1379,17 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", mt)
       }
+      #[cfg(feature = "ast-span")]
       Type2::Any(_) => write!(f, "#"),
+      #[cfg(not(feature = "ast-span"))]
+      Type2::Any => write!(f, "#"),
     }
   }
 }
 
 impl<'a> From<RangeValue<'a>> for Type2<'a> {
   fn from(rv: RangeValue<'a>) -> Self {
+    #[cfg(feature = "ast-span")]
     let span = (0, 0, 0);
 
     match rv {
@@ -1303,14 +1397,28 @@ impl<'a> From<RangeValue<'a>> for Type2<'a> {
         ident: Identifier {
           ident: ident.0,
           socket: ident.1,
+          #[cfg(feature = "ast-span")]
           span,
         },
         generic_args: None,
+        #[cfg(feature = "ast-span")]
         span,
       },
-      RangeValue::INT(value) => Type2::IntValue { value, span },
-      RangeValue::UINT(value) => Type2::UintValue { value, span },
-      RangeValue::FLOAT(value) => Type2::FloatValue { value, span },
+      RangeValue::INT(value) => Type2::IntValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      RangeValue::UINT(value) => Type2::UintValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      RangeValue::FLOAT(value) => Type2::FloatValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
     }
   }
 }
@@ -1324,10 +1432,12 @@ impl<'a> From<Type1<'a>> for Type2<'a> {
           comments_after_type: None,
           comments_before_type: None,
         }],
+        #[cfg(feature = "ast-span")]
         span: Span::default(),
       },
       comments_after_type: None,
       comments_before_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }
   }
@@ -1337,6 +1447,7 @@ impl<'a> From<usize> for Type2<'a> {
   fn from(value: usize) -> Self {
     Type2::UintValue {
       value,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }
   }
@@ -1346,6 +1457,7 @@ impl<'a> From<isize> for Type2<'a> {
   fn from(value: isize) -> Self {
     Type2::IntValue {
       value,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }
   }
@@ -1355,6 +1467,7 @@ impl<'a> From<f64> for Type2<'a> {
   fn from(value: f64) -> Self {
     Type2::FloatValue {
       value,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }
   }
@@ -1364,6 +1477,7 @@ impl<'a> From<String> for Type2<'a> {
   fn from(value: String) -> Self {
     Type2::TextValue {
       value: value.into(),
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }
   }
@@ -1374,6 +1488,7 @@ impl<'a> From<&'a str> for Type2<'a> {
   fn from(value: &'a str) -> Self {
     Type2::UTF8ByteString {
       value: value.as_bytes().into(),
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }
   }
@@ -1384,14 +1499,17 @@ impl<'a> From<ByteValue<'a>> for Type2<'a> {
     match value {
       ByteValue::UTF8(value) => Type2::UTF8ByteString {
         value,
+        #[cfg(feature = "ast-span")]
         span: Span::default(),
       },
       ByteValue::B16(value) => Type2::B16ByteString {
         value,
+        #[cfg(feature = "ast-span")]
         span: Span::default(),
       },
       ByteValue::B64(value) => Type2::B64ByteString {
         value,
+        #[cfg(feature = "ast-span")]
         span: Span::default(),
       },
     }
@@ -1406,6 +1524,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::TSTR),
       comments_after_type: None,
       comments_before_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::TIME => Some(Type2::TaggedData {
@@ -1413,6 +1532,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::NUMBER),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::BIGUINT => Some(Type2::TaggedData {
@@ -1420,6 +1540,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::BSTR),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::BIGNINT => Some(Type2::TaggedData {
@@ -1427,6 +1548,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::BSTR),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::DECFRAC => unimplemented!(),
@@ -1436,6 +1558,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::ANY),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::EB64LEGACY => Some(Type2::TaggedData {
@@ -1443,6 +1566,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::ANY),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::EB16 => Some(Type2::TaggedData {
@@ -1450,6 +1574,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::ANY),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::ENCODEDCBOR => Some(Type2::TaggedData {
@@ -1457,6 +1582,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::BSTR),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::URI => Some(Type2::TaggedData {
@@ -1464,6 +1590,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::TSTR),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::B64URL => Some(Type2::TaggedData {
@@ -1471,6 +1598,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::TSTR),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::B64LEGACY => Some(Type2::TaggedData {
@@ -1478,6 +1606,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::TSTR),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::REGEXP => Some(Type2::TaggedData {
@@ -1485,6 +1614,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::TSTR),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::MIMEMESSAGE => Some(Type2::TaggedData {
@@ -1492,6 +1622,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::TSTR),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::CBORANY => Some(Type2::TaggedData {
@@ -1499,6 +1630,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       t: type_from_token(Token::ANY),
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     _ => None,
@@ -1512,16 +1644,19 @@ pub fn type_from_token(token: Token) -> Type {
       type1: Type1 {
         comments_after_type: None,
         operator: None,
+        #[cfg(feature = "ast-span")]
         span: Span::default(),
         type2: Type2::Typename {
           ident: Identifier::from(token),
           generic_args: None,
+          #[cfg(feature = "ast-span")]
           span: Span::default(),
         },
       },
       comments_after_type: None,
       comments_before_type: None,
     }],
+    #[cfg(feature = "ast-span")]
     span: Span::default(),
   }
 }
@@ -1538,6 +1673,7 @@ pub struct Group<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   pub group_choices: Vec<GroupChoice<'a>>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 }
 
@@ -1611,6 +1747,7 @@ pub struct GroupChoice<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   pub group_entries: Vec<(GroupEntry<'a>, OptionalComma<'a>)>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 
   // No trailing comments since these will be captured by the S ["," S] matching
@@ -1629,6 +1766,7 @@ impl<'a> GroupChoice<'a> {
         .cloned()
         .map(|ge| (ge, OptionalComma::default()))
         .collect::<Vec<_>>(),
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
       comments_before_grpchoice: None,
     }
@@ -1803,6 +1941,7 @@ pub enum GroupEntry<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     ge: Box<ValueMemberKeyEntry<'a>>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -1819,6 +1958,7 @@ pub enum GroupEntry<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     ge: TypeGroupnameEntry<'a>,
     /// span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -1836,6 +1976,7 @@ pub enum GroupEntry<'a> {
     /// Group
     group: Group<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -2135,6 +2276,7 @@ pub enum MemberKey<'a> {
     /// Is cut indicator present
     is_cut: bool,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -2154,6 +2296,7 @@ pub enum MemberKey<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     ident: Identifier<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -2170,6 +2313,7 @@ pub enum MemberKey<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     value: Value<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -2342,23 +2486,42 @@ pub enum Occur {
     /// Upper bound
     upper: Option<usize>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
   /// Occurrence indicator in the form *, allowing zero or more occurrences
+  #[cfg(feature = "ast-span")]
   ZeroOrMore(Span),
 
+  /// Occurrence indicator in the form *, allowing zero or more occurrences
+  #[cfg(not(feature = "ast-span"))]
+  ZeroOrMore,
+
   /// Occurrence indicator in the form +, allowing one or more occurrences
+  #[cfg(feature = "ast-span")]
   OneOrMore(Span),
 
+  #[cfg(not(feature = "ast-span"))]
+  /// Occurrence indicator in the form +, allowing one or more occurrences
+  OneOrMore,
+
   /// Occurrence indicator in the form ?, allowing an optional occurrence
+  #[cfg(feature = "ast-span")]
   Optional(Span),
+
+  /// Occurrence indicator in the form ?, allowing an optional occurrence
+  #[cfg(not(feature = "ast-span"))]
+  Optional,
 }
 
 impl fmt::Display for Occur {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
+      #[cfg(feature = "ast-span")]
       Occur::ZeroOrMore(_) => write!(f, "*"),
+      #[cfg(not(feature = "ast-span"))]
+      Occur::ZeroOrMore => write!(f, "*"),
       Occur::Exact { lower, upper, .. } => {
         if let Some(li) = lower {
           if let Some(ui) = upper {
@@ -2374,8 +2537,14 @@ impl fmt::Display for Occur {
 
         write!(f, "*")
       }
+      #[cfg(feature = "ast-span")]
       Occur::OneOrMore(_) => write!(f, "+"),
+      #[cfg(not(feature = "ast-span"))]
+      Occur::OneOrMore => write!(f, "+"),
+      #[cfg(feature = "ast-span")]
       Occur::Optional(_) => write!(f, "?"),
+      #[cfg(not(feature = "ast-span"))]
+      Occur::Optional => write!(f, "?"),
     }
   }
 }
@@ -2397,6 +2566,7 @@ mod tests {
         },
         leading_comments: None,
         trailing_comments: None,
+        #[cfg(feature = "ast-span")]
         span: (0, 0, 0),
       }
       .to_string(),
@@ -2418,6 +2588,7 @@ mod tests {
                     ident: "key1".into(),
                     comments: None,
                     comments_after_colon: None,
+                    #[cfg(feature = "ast-span")]
                     span: (0, 0, 0),
                   }),
                   entry_type: Type {
@@ -2425,20 +2596,24 @@ mod tests {
                       type1: Type1 {
                         type2: Type2::TextValue {
                           value: "value1".into(),
+                          #[cfg(feature = "ast-span")]
                           span: (0, 0, 0),
                         },
                         operator: None,
                         comments_after_type: None,
+                        #[cfg(feature = "ast-span")]
                         span: (0, 0, 0),
                       },
                       comments_before_type: None,
                       comments_after_type: None,
                     }],
+                    #[cfg(feature = "ast-span")]
                     span: (0, 0, 0),
                   },
                 }),
                 leading_comments: None,
                 trailing_comments: None,
+                #[cfg(feature = "ast-span")]
                 span: (0, 0, 0),
               },
               OptionalComma {
@@ -2454,6 +2629,7 @@ mod tests {
                     ident: "key2".into(),
                     comments: None,
                     comments_after_colon: None,
+                    #[cfg(feature = "ast-span")]
                     span: (0, 0, 0),
                   }),
                   entry_type: Type {
@@ -2461,20 +2637,24 @@ mod tests {
                       type1: Type1 {
                         type2: Type2::TextValue {
                           value: "value2".into(),
+                          #[cfg(feature = "ast-span")]
                           span: (0, 0, 0),
                         },
                         operator: None,
                         comments_after_type: None,
+                        #[cfg(feature = "ast-span")]
                         span: (0, 0, 0),
                       },
                       comments_before_type: None,
                       comments_after_type: None,
                     }],
+                    #[cfg(feature = "ast-span")]
                     span: (0, 0, 0),
                   },
                 }),
                 leading_comments: None,
                 trailing_comments: None,
+                #[cfg(feature = "ast-span")]
                 span: (0, 0, 0),
               },
               OptionalComma {
@@ -2484,8 +2664,10 @@ mod tests {
             ),
           ],
           comments_before_grpchoice: None,
+          #[cfg(feature = "ast-span")]
           span: (0, 0, 0),
         }],
+        #[cfg(feature = "ast-span")]
         span: (0, 0, 0),
       }
       .to_string(),

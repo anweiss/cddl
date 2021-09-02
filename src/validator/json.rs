@@ -341,6 +341,7 @@ impl<'a> JSONValidator<'a> {
 
         // Retrieve the value from key unless optional/zero or more, in which
         // case advance to next group entry
+        #[cfg(feature = "ast-span")]
         if let Some(v) = o.get(t.as_ref()) {
           self
             .validated_keys
@@ -353,6 +354,27 @@ impl<'a> JSONValidator<'a> {
         } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
           &self.occurrence.take()
         {
+          self.advance_to_next_entry = true;
+          return Ok(());
+        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
+          return Ok(());
+        } else {
+          self.add_error(format!("object missing key: \"{}\"", t))
+        }
+
+        // Retrieve the value from key unless optional/zero or more, in which
+        // case advance to next group entry
+        #[cfg(not(feature = "ast-span"))]
+        if let Some(v) = o.get(t.as_ref()) {
+          self
+            .validated_keys
+            .get_or_insert(vec![t.to_string()])
+            .push(t.to_string());
+          self.object_value = Some(v.clone());
+          self.json_location.push_str(&format!("/{}", t));
+
+          return Ok(());
+        } else if let Some(Occur::Optional) | Some(Occur::ZeroOrMore) = &self.occurrence.take() {
           self.advance_to_next_entry = true;
           return Ok(());
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
@@ -1127,7 +1149,15 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
+          #[cfg(feature = "ast-span")]
           if let Some(Occur::Optional(_)) = self.occurrence.take() {
+            self.add_error(format!(
+              "expected default value {}, got {}",
+              controller, self.json
+            ));
+          }
+          #[cfg(not(feature = "ast-span"))]
+          if let Some(Occur::Optional) = self.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {}",
               controller, self.json
@@ -1561,7 +1591,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         Ok(())
       }
+      #[cfg(feature = "ast-span")]
       Type2::Any(_) => Ok(()),
+      #[cfg(not(feature = "ast-span"))]
+      Type2::Any => Ok(()),
       _ => {
         self.add_error(format!(
           "unsupported data type for validating JSON, got {}",
@@ -1759,8 +1792,37 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       }
       Value::Object(o) => {
         if let Some(occur) = &self.occurrence {
+          #[cfg(feature = "ast-span")]
           if let Occur::ZeroOrMore(_) | Occur::OneOrMore(_) = occur {
             if let Occur::OneOrMore(_) = occur {
+              if o.is_empty() {
+                self.add_error(format!(
+                  "object cannot be empty, one or more entries with key type {} required",
+                  ident
+                ));
+                return Ok(());
+              }
+            }
+
+            if is_ident_string_data_type(self.cddl, ident) {
+              let values_to_validate = o
+                .iter()
+                .filter_map(|(k, v)| match &self.validated_keys {
+                  Some(keys) if !keys.contains(k) => Some(v.clone()),
+                  Some(_) => None,
+                  None => Some(v.clone()),
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+
+              return Ok(());
+            }
+          }
+
+          #[cfg(not(feature = "ast-span"))]
+          if let Occur::ZeroOrMore | Occur::OneOrMore = occur {
+            if let Occur::OneOrMore = occur {
               if o.is_empty() {
                 self.add_error(format!(
                   "object cannot be empty, one or more entries with key type {} required",

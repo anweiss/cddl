@@ -795,7 +795,9 @@ pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
 mod tests {
   #![allow(unused_imports)]
 
-  use crate::{ast::Span, cddl_from_str, lexer_from_str};
+  #[cfg(feature = "ast-span")]
+  use crate::ast::Span;
+  use crate::{cddl_from_str, lexer_from_str};
 
   use super::*;
   use indoc::indoc;
