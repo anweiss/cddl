@@ -52,11 +52,12 @@ wee_alloc = { version = "0.4.5", optional = true }
 wasm-bindgen-test = "0.3.25"
 
 [features]
-default = ["std", "ast-span"]
+default = ["std", "ast-span", "ast-comments"]
 std = ["base16/alloc", "base64/alloc", "serde_json", "serde_cbor", "serde", "chrono", "wasm-bindgen", "clap", "crossterm", "uriparse", "base64-url", "regex-syntax"]
 lsp = ["std"]
 additional-controls = []
 ast-span = []
+ast-comments = []
 
 [[bin]]
 name = "cddl"
@@ -72,7 +73,7 @@ test = false
 
 [[test]]
 name = "cddl"
-required-features = ["std", "ast-span"]
+required-features = ["std", "ast-span", "ast-comments"]
 path = "tests/cddl.rs"
 
 [profile.release]

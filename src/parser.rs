@@ -7,7 +7,7 @@ use super::{
   lexer::{self, Lexer, Position},
   token::{self, SocketPlug, Token},
 };
-#[cfg(feature = "std")]
+
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
@@ -18,7 +18,7 @@ use codespan_reporting::{
 #[cfg(feature = "std")]
 use std::borrow::Cow;
 
-use std::{cmp::Ordering, mem, result};
+use std::{cmp::Ordering, marker::PhantomData, mem, result};
 
 use displaydoc::Display;
 
@@ -286,6 +286,7 @@ where
     Ok(())
   }
 
+  #[cfg(feature = "ast-comments")]
   fn collect_comments(&mut self) -> Result<Option<Comments<'a>>> {
     #[cfg_attr(not(feature = "lsp"), allow(unused_mut))]
     let mut comments: Option<Comments> = None;
@@ -316,9 +317,25 @@ where
     Ok(comments)
   }
 
+  #[cfg(not(feature = "ast-comments"))]
+  fn advance_newline(&mut self) -> Result<()> {
+    while let Token::NEWLINE = self.cur_token {
+      #[cfg(feature = "lsp")]
+      comments.get_or_insert(Comments::default()).0.push("\n");
+
+      self.next_token()?;
+    }
+
+    Ok(())
+  }
+
   /// Parses into a `CDDL` AST
   pub fn parse_cddl(&mut self) -> Result<CDDL<'a>> {
+    #[cfg(not(feature = "ast-comments"))]
+    self.advance_newline()?;
+
     let mut c = CDDL {
+      #[cfg(feature = "ast-comments")]
       comments: self.collect_comments()?,
       ..Default::default()
     };
@@ -421,7 +438,10 @@ where
       None
     };
 
+    #[cfg(feature = "ast-comments")]
     let comments_before_assign = self.collect_comments()?;
+    #[cfg(not(feature = "ast-comments"))]
+    self.advance_newline()?;
 
     if !self.expect_peek(&Token::ASSIGN)?
       && !self.expect_peek(&Token::TCHOICEALT)?
@@ -489,7 +509,10 @@ where
 
     self.next_token()?;
 
+    #[cfg(feature = "ast-comments")]
     let comments_after_assign = self.collect_comments()?;
+    #[cfg(not(feature = "ast-comments"))]
+    self.advance_newline()?;
 
     match self.cur_token {
       // Check for an occurrence indicator of uint followed by an asterisk '*'
@@ -497,7 +520,10 @@ where
         if self.peek_token_is(&Token::ASTERISK) {
           let ge = self.parse_grpent(true)?;
 
+          #[cfg(feature = "ast-comments")]
           let comments_after_rule = self.collect_comments()?;
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           #[cfg(feature = "ast-span")]
           let span = (
@@ -512,15 +538,21 @@ where
               generic_params: gp,
               is_group_choice_alternate,
               entry: ge,
+              #[cfg(feature = "ast-comments")]
               comments_before_assigng: comments_before_assign,
+              #[cfg(feature = "ast-comments")]
               comments_after_assigng: comments_after_assign,
             }),
+            #[cfg(feature = "ast-comments")]
             comments_after_rule,
             #[cfg(feature = "ast-span")]
             span,
           })
         } else {
+          #[cfg(feature = "ast-comments")]
           let mut t = self.parse_type(None)?;
+          #[cfg(not(feature = "ast-comments"))]
+          let t = self.parse_type(None)?;
 
           #[cfg(feature = "ast-span")]
           let span = (
@@ -529,11 +561,15 @@ where
             begin_rule_line,
           );
 
+          #[cfg(feature = "ast-comments")]
           let comments_after_rule = if let Some(comments) = t.comments_after_type() {
             Some(comments)
           } else {
             self.collect_comments()?
           };
+
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           Ok(Rule::Type {
             rule: TypeRule {
@@ -541,9 +577,12 @@ where
               generic_params: gp,
               is_type_choice_alternate,
               value: t,
+              #[cfg(feature = "ast-comments")]
               comments_before_assignt: comments_before_assign,
+              #[cfg(feature = "ast-comments")]
               comments_after_assignt: comments_after_assign,
             },
+            #[cfg(feature = "ast-comments")]
             comments_after_rule,
             #[cfg(feature = "ast-span")]
             span,
@@ -559,7 +598,10 @@ where
         #[cfg(feature = "ast-span")]
         let mut end_rule_range = self.parser_position.range.1;
 
+        #[cfg(feature = "ast-comments")]
         let comments_after_rule = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         // If a group entry is an inline group with no leading occurrence
         // indicator, and its group has only a single element that is not
@@ -570,7 +612,9 @@ where
         if let GroupEntry::InlineGroup {
           occur: None,
           group,
+          #[cfg(feature = "ast-comments")]
           comments_before_group,
+          #[cfg(feature = "ast-comments")]
           comments_after_group,
           ..
         } = &ge
@@ -585,8 +629,10 @@ where
                     if let GroupEntry::ValueMemberKey { ge, .. } = &group_entry.0 {
                       if ge.occur.is_none() && ge.member_key.is_none() {
                         let value = self.parse_type(Some(Type2::ParenthesizedType {
+                          #[cfg(feature = "ast-comments")]
                           comments_before_type: comments_before_group.clone(),
                           pt: ge.entry_type.clone(),
+                          #[cfg(feature = "ast-comments")]
                           comments_after_type: comments_after_group.clone(),
                           #[cfg(feature = "ast-span")]
                           span: (
@@ -607,9 +653,12 @@ where
                             generic_params: gp,
                             is_type_choice_alternate,
                             value,
+                            #[cfg(feature = "ast-comments")]
                             comments_before_assignt: comments_before_assign,
+                            #[cfg(feature = "ast-comments")]
                             comments_after_assignt: comments_after_assign,
                           },
+                          #[cfg(feature = "ast-comments")]
                           comments_after_rule,
                           #[cfg(feature = "ast-span")]
                           span: (begin_rule_range, end_rule_range, begin_rule_line),
@@ -629,9 +678,12 @@ where
             generic_params: gp,
             is_group_choice_alternate,
             entry: ge,
+            #[cfg(feature = "ast-comments")]
             comments_before_assigng: comments_before_assign,
+            #[cfg(feature = "ast-comments")]
             comments_after_assigng: comments_after_assign,
           }),
+          #[cfg(feature = "ast-comments")]
           comments_after_rule,
           #[cfg(feature = "ast-span")]
           span: (begin_rule_range, end_rule_range, begin_rule_line),
@@ -640,17 +692,24 @@ where
       _ => {
         // If type rule is an unwrap type, advance token after parsing type
         let advance_token = matches!(self.cur_token, Token::UNWRAP);
+        #[cfg(feature = "ast-comments")]
         let mut t = self.parse_type(None)?;
+        #[cfg(not(feature = "ast-comments"))]
+        let t = self.parse_type(None)?;
 
         if advance_token {
           self.next_token()?;
         }
 
+        #[cfg(feature = "ast-comments")]
         let comments_after_rule = if let Some(comments) = t.comments_after_type() {
           Some(comments)
         } else {
           self.collect_comments()?
         };
+
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         if self.cur_token_is(Token::ASSIGN)
           || self.cur_token_is(Token::TCHOICEALT)
@@ -683,9 +742,12 @@ where
             generic_params: gp,
             is_type_choice_alternate,
             value: t,
+            #[cfg(feature = "ast-comments")]
             comments_before_assignt: comments_before_assign,
+            #[cfg(feature = "ast-comments")]
             comments_after_assignt: comments_after_assign,
           },
+          #[cfg(feature = "ast-comments")]
           comments_after_rule,
           #[cfg(feature = "ast-span")]
           span,
@@ -705,7 +767,10 @@ where
     let mut generic_params = GenericParams::default();
 
     while !self.cur_token_is(Token::RANGLEBRACKET) {
+      #[cfg(feature = "ast-comments")]
       let comments_before_ident = self.collect_comments()?;
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
       match &self.cur_token {
         Token::IDENT(ident) => {
@@ -713,11 +778,16 @@ where
 
           self.next_token()?;
 
+          #[cfg(feature = "ast-comments")]
           let comments_after_ident = self.collect_comments()?;
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           generic_params.params.push(GenericParam {
             param,
+            #[cfg(feature = "ast-comments")]
             comments_before_ident,
+            #[cfg(feature = "ast-comments")]
             comments_after_ident,
           });
 
@@ -802,15 +872,23 @@ where
     let mut generic_args = GenericArgs::default();
 
     while !self.cur_token_is(Token::RANGLEBRACKET) {
+      #[cfg(feature = "ast-comments")]
       let leading_comments = self.collect_comments()?;
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
       let t1 = self.parse_type1(None)?;
 
+      #[cfg(feature = "ast-comments")]
       let trailing_comments = self.collect_comments()?;
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
       generic_args.args.push(GenericArg {
+        #[cfg(feature = "ast-comments")]
         comments_before_type: leading_comments,
         arg: Box::from(t1),
+        #[cfg(feature = "ast-comments")]
         comments_after_type: trailing_comments,
       });
 
@@ -871,28 +949,53 @@ where
       span: (begin_type_range, 0, self.parser_position.line),
     };
 
+    #[cfg(feature = "ast-comments")]
     let mut tc = TypeChoice {
       type1: self.parse_type1(parenthesized_type)?,
       comments_before_type: None,
       comments_after_type: None,
     };
 
-    tc.comments_after_type = self.collect_comments()?;
+    #[cfg(not(feature = "ast-comments"))]
+    let tc = TypeChoice {
+      type1: self.parse_type1(parenthesized_type)?,
+    };
+
+    #[cfg(feature = "ast-comments")]
+    {
+      tc.comments_after_type = self.collect_comments()?;
+    }
+    #[cfg(not(feature = "ast-comments"))]
+    self.advance_newline()?;
 
     t.type_choices.push(tc);
 
     while self.cur_token_is(Token::TCHOICE) {
       self.next_token()?;
 
+      #[cfg(feature = "ast-comments")]
       let comments_before_type = self.collect_comments()?;
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
+      #[cfg(feature = "ast-comments")]
       let mut tc = TypeChoice {
         comments_before_type,
         comments_after_type: None,
         type1: self.parse_type1(None)?,
       };
 
-      tc.comments_after_type = self.collect_comments()?;
+      #[cfg(not(feature = "ast-comments"))]
+      let tc = TypeChoice {
+        type1: self.parse_type1(None)?,
+      };
+
+      #[cfg(feature = "ast-comments")]
+      {
+        tc.comments_after_type = self.collect_comments()?;
+      }
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
       t.type_choices.push(tc);
     }
@@ -912,8 +1015,10 @@ where
     let mut begin_type1_range = self.lexer_position.range.0;
 
     let t2_1 = if let Some(Type2::ParenthesizedType {
+      #[cfg(feature = "ast-comments")]
       comments_before_type,
       pt,
+      #[cfg(feature = "ast-comments")]
       comments_after_type,
       #[cfg(feature = "ast-span")]
       span,
@@ -926,8 +1031,10 @@ where
       }
 
       Type2::ParenthesizedType {
+        #[cfg(feature = "ast-comments")]
         comments_before_type,
         pt,
+        #[cfg(feature = "ast-comments")]
         comments_after_type,
         #[cfg(feature = "ast-span")]
         span,
@@ -943,7 +1050,10 @@ where
       begin_type1_line,
     );
 
+    #[cfg(feature = "ast-comments")]
     let comments_after_type = self.collect_comments()?;
+    #[cfg(not(feature = "ast-comments"))]
+    self.advance_newline()?;
 
     let op = match &self.cur_token {
       Token::RANGEOP(i) => {
@@ -988,7 +1098,10 @@ where
       Some(operator) => {
         self.next_token()?;
 
+        #[cfg(feature = "ast-comments")]
         let comments_after_operator = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         let t2 = self.parse_type2()?;
 
@@ -1000,11 +1113,14 @@ where
         Ok(Type1 {
           type2: t2_1,
           operator: Some(Operator {
+            #[cfg(feature = "ast-comments")]
             comments_before_operator: comments_after_type,
             operator,
+            #[cfg(feature = "ast-comments")]
             comments_after_operator,
             type2: t2,
           }),
+          #[cfg(feature = "ast-comments")]
           comments_after_type: None,
           #[cfg(feature = "ast-span")]
           span,
@@ -1013,6 +1129,7 @@ where
       None => Ok(Type1 {
         type2: t2_1,
         operator: None,
+        #[cfg(feature = "ast-comments")]
         comments_after_type,
         #[cfg(feature = "ast-span")]
         span,
@@ -1149,7 +1266,10 @@ where
 
         self.next_token()?;
 
+        #[cfg(feature = "ast-comments")]
         let comments_before_type = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         let pt = self.parse_type(None)?;
 
@@ -1160,10 +1280,15 @@ where
           self.parser_position.line = begin_type2_line;
         }
 
+        #[cfg(feature = "ast-comments")]
         let comments_after_type = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         Ok(Type2::ParenthesizedType {
+          #[cfg(feature = "ast-comments")]
           comments_before_type,
+          #[cfg(feature = "ast-comments")]
           comments_after_type,
           pt,
           #[cfg(feature = "ast-span")]
@@ -1182,8 +1307,12 @@ where
         #[cfg(feature = "ast-span")]
         let begin_type2_line = self.lexer_position.line;
 
+        #[cfg(feature = "ast-comments")]
         let mut group = self.parse_group()?;
+        #[cfg(not(feature = "ast-comments"))]
+        let group = self.parse_group()?;
 
+        #[cfg(feature = "ast-comments")]
         let comments_before_group = if let Some(GroupChoice {
           comments_before_grpchoice,
           ..
@@ -1201,13 +1330,18 @@ where
           begin_type2_line,
         );
 
+        #[cfg(feature = "ast-comments")]
         let comments_after_group = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         Ok(Type2::Map {
+          #[cfg(feature = "ast-comments")]
           comments_before_group,
           group,
           #[cfg(feature = "ast-span")]
           span,
+          #[cfg(feature = "ast-comments")]
           comments_after_group,
         })
       }
@@ -1219,8 +1353,12 @@ where
         #[cfg(feature = "ast-span")]
         let begin_type2_line = self.lexer_position.line;
 
+        #[cfg(feature = "ast-comments")]
         let mut group = self.parse_group()?;
+        #[cfg(not(feature = "ast-comments"))]
+        let group = self.parse_group()?;
 
+        #[cfg(feature = "ast-comments")]
         let comments_before_group = if let Some(GroupChoice {
           comments_before_grpchoice,
           ..
@@ -1242,11 +1380,16 @@ where
           begin_type2_line,
         );
 
+        #[cfg(feature = "ast-comments")]
         let comments_after_group = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         Ok(Type2::Array {
+          #[cfg(feature = "ast-comments")]
           comments_before_group,
           group,
+          #[cfg(feature = "ast-comments")]
           comments_after_group,
           #[cfg(feature = "ast-span")]
           span,
@@ -1257,7 +1400,10 @@ where
       Token::UNWRAP => {
         self.next_token()?;
 
+        #[cfg(feature = "ast-comments")]
         let comments = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         let ident = if let Some(ident) = self.cur_token.in_standard_prelude() {
           Some(self.identifier_from_ident_token((ident, None)))
@@ -1272,6 +1418,7 @@ where
             self.next_token()?;
 
             return Ok(Type2::Unwrap {
+              #[cfg(feature = "ast-comments")]
               comments,
               ident,
               generic_args: Some(self.parse_genericargs()?),
@@ -1281,6 +1428,7 @@ where
           }
 
           return Ok(Type2::Unwrap {
+            #[cfg(feature = "ast-comments")]
             comments,
             ident,
             generic_args: None,
@@ -1308,22 +1456,34 @@ where
 
         self.next_token()?;
 
+        #[cfg(feature = "ast-comments")]
         let comments = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         match &self.cur_token {
           Token::LPAREN => {
             self.next_token()?;
 
+            #[cfg(feature = "ast-comments")]
             let comments_before_group = self.collect_comments()?;
+            #[cfg(not(feature = "ast-comments"))]
+            self.advance_newline()?;
 
             let group = self.parse_group()?;
 
+            #[cfg(feature = "ast-comments")]
             let comments_after_group = self.collect_comments()?;
+            #[cfg(not(feature = "ast-comments"))]
+            self.advance_newline()?;
 
             Ok(Type2::ChoiceFromInlineGroup {
+              #[cfg(feature = "ast-comments")]
               comments,
+              #[cfg(feature = "ast-comments")]
               comments_before_group,
               group,
+              #[cfg(feature = "ast-comments")]
               comments_after_group,
               #[cfg(feature = "ast-span")]
               span: (
@@ -1341,6 +1501,7 @@ where
               let generic_args = Some(self.parse_genericargs()?);
 
               return Ok(Type2::ChoiceFromGroup {
+                #[cfg(feature = "ast-comments")]
                 comments,
                 ident,
                 generic_args,
@@ -1359,6 +1520,7 @@ where
             }
 
             Ok(Type2::ChoiceFromGroup {
+              #[cfg(feature = "ast-comments")]
               comments,
               ident,
               generic_args: None,
@@ -1411,11 +1573,17 @@ where
 
             self.next_token()?;
 
+            #[cfg(feature = "ast-comments")]
             let comments_before_type = self.collect_comments()?;
+            #[cfg(not(feature = "ast-comments"))]
+            self.advance_newline()?;
 
             let t = self.parse_type(None)?;
 
+            #[cfg(feature = "ast-comments")]
             let comments_after_type = self.collect_comments()?;
+            #[cfg(not(feature = "ast-comments"))]
+            self.advance_newline()?;
 
             if !self.cur_token_is(Token::RPAREN) {
               self.errors.push(Error::PARSER {
@@ -1429,8 +1597,10 @@ where
 
             Ok(Type2::TaggedData {
               tag,
+              #[cfg(feature = "ast-comments")]
               comments_before_type,
               t,
+              #[cfg(feature = "ast-comments")]
               comments_after_type,
               #[cfg(feature = "ast-span")]
               span: (
@@ -1462,7 +1632,10 @@ where
         }
       }
       _ => {
+        #[cfg(feature = "ast-comments")]
         self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         match self.cur_token.in_standard_prelude() {
           Some(s) => {
@@ -1585,6 +1758,7 @@ where
   fn parse_grpchoice(&mut self) -> Result<GroupChoice<'a>> {
     let mut grpchoice = GroupChoice {
       group_entries: Vec::new(),
+      #[cfg(feature = "ast-comments")]
       comments_before_grpchoice: None,
       #[cfg(feature = "ast-span")]
       span: (self.lexer_position.range.0, 0, self.lexer_position.line),
@@ -1593,7 +1767,12 @@ where
     if self.cur_token_is(Token::GCHOICE) {
       self.next_token()?;
 
-      grpchoice.comments_before_grpchoice = self.collect_comments()?;
+      #[cfg(feature = "ast-comments")]
+      {
+        grpchoice.comments_before_grpchoice = self.collect_comments()?;
+      }
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
       #[cfg(feature = "ast-span")]
       {
@@ -1608,7 +1787,12 @@ where
       }
     };
 
-    grpchoice.comments_before_grpchoice = self.collect_comments()?;
+    #[cfg(feature = "ast-comments")]
+    {
+      grpchoice.comments_before_grpchoice = self.collect_comments()?;
+    }
+    #[cfg(not(feature = "ast-comments"))]
+    self.advance_newline()?;
 
     // TODO: The logic in this while loop is quite messy. Need to figure out a
     // better way to advance the token when parsing the entries in a group
@@ -1625,7 +1809,9 @@ where
           ge,
           OptionalComma {
             optional_comma: false,
+            #[cfg(feature = "ast-comments")]
             trailing_comments: None,
+            _a: PhantomData::default(),
           },
         ));
 
@@ -1672,13 +1858,18 @@ where
         self.next_token()?;
       }
 
+      #[cfg(feature = "ast-comments")]
       let trailing_comments = self.collect_comments()?;
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
       grpchoice.group_entries.push((
         ge,
         OptionalComma {
           optional_comma,
+          #[cfg(feature = "ast-comments")]
           trailing_comments,
+          _a: PhantomData::default(),
         },
       ));
     }
@@ -1709,7 +1900,10 @@ where
     if self.cur_token_is(Token::LPAREN) && member_key.is_none() {
       self.next_token()?;
 
+      #[cfg(feature = "ast-comments")]
       let comments_before_group = self.collect_comments()?;
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
       let group = self.parse_group()?;
 
@@ -1725,7 +1919,10 @@ where
         self.parser_position.range.1 = self.lexer_position.range.1;
       }
 
+      #[cfg(feature = "ast-comments")]
       let comments_after_group = self.collect_comments()?;
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
       if !self.cur_token_is(Token::RPAREN) {
         self.errors.push(Error::PARSER {
@@ -1746,7 +1943,9 @@ where
       return Ok(GroupEntry::InlineGroup {
         occur,
         group,
+        #[cfg(feature = "ast-comments")]
         comments_before_group,
+        #[cfg(feature = "ast-comments")]
         comments_after_group,
         #[cfg(feature = "ast-span")]
         span,
@@ -1762,8 +1961,13 @@ where
 
     match member_key {
       Some(MemberKey::NonMemberKey {
-        non_member_key: NonMemberKey::Type(mut entry_type),
+        #[cfg(feature = "ast-comments")]
+          non_member_key: NonMemberKey::Type(mut entry_type),
+        #[cfg(not(feature = "ast-comments"))]
+          non_member_key: NonMemberKey::Type(entry_type),
+        #[cfg(feature = "ast-comments")]
         comments_before_type_or_group,
+        #[cfg(feature = "ast-comments")]
         comments_after_type_or_group,
       }) => {
         #[cfg(feature = "ast-span")]
@@ -1771,6 +1975,7 @@ where
           span.1 = self.lexer_position.range.1;
         }
 
+        #[cfg(feature = "ast-comments")]
         let trailing_comments = entry_type.comments_after_type();
 
         #[cfg(feature = "ast-span")]
@@ -1781,7 +1986,9 @@ where
               name,
               generic_args,
             },
+            #[cfg(feature = "ast-comments")]
             leading_comments: comments_before_type_or_group,
+            #[cfg(feature = "ast-comments")]
             trailing_comments,
             span,
           });
@@ -1795,7 +2002,9 @@ where
               name,
               generic_args,
             },
+            #[cfg(feature = "ast-comments")]
             leading_comments: comments_before_type_or_group,
+            #[cfg(feature = "ast-comments")]
             trailing_comments,
           });
         }
@@ -1807,6 +2016,7 @@ where
           self.next_token()?;
         }
 
+        #[cfg(feature = "ast-comments")]
         let trailing_comments = if let Some(comments) = entry_type.comments_after_type() {
           Some(comments)
         } else {
@@ -1819,7 +2029,9 @@ where
             member_key: None,
             entry_type,
           }),
+          #[cfg(feature = "ast-comments")]
           leading_comments: comments_before_type_or_group,
+          #[cfg(feature = "ast-comments")]
           trailing_comments,
           #[cfg(feature = "ast-span")]
           span,
@@ -1827,7 +2039,9 @@ where
       }
       Some(MemberKey::NonMemberKey {
         non_member_key: NonMemberKey::Group(group),
+        #[cfg(feature = "ast-comments")]
         comments_before_type_or_group,
+        #[cfg(feature = "ast-comments")]
         comments_after_type_or_group,
       }) => {
         #[cfg(feature = "ast-span")]
@@ -1840,13 +2054,19 @@ where
           group,
           #[cfg(feature = "ast-span")]
           span,
+          #[cfg(feature = "ast-comments")]
           comments_before_group: comments_before_type_or_group,
+          #[cfg(feature = "ast-comments")]
           comments_after_group: comments_after_type_or_group,
         })
       }
       member_key @ Some(_) => {
+        #[cfg(feature = "ast-comments")]
         let mut entry_type = self.parse_type(None)?;
+        #[cfg(not(feature = "ast-comments"))]
+        let entry_type = self.parse_type(None)?;
 
+        #[cfg(feature = "ast-comments")]
         let trailing_comments = entry_type.comments_after_type();
 
         #[cfg(feature = "ast-span")]
@@ -1865,25 +2085,33 @@ where
             member_key,
             entry_type,
           }),
+          #[cfg(feature = "ast-comments")]
           leading_comments: None,
+          #[cfg(feature = "ast-comments")]
           trailing_comments,
           #[cfg(feature = "ast-span")]
           span,
         })
       }
       None => {
+        #[cfg(feature = "ast-comments")]
         let mut entry_type = self.parse_type(None)?;
+        #[cfg(not(feature = "ast-comments"))]
+        let entry_type = self.parse_type(None)?;
 
         #[cfg(feature = "ast-span")]
         {
           span.1 = self.parser_position.range.1;
         }
 
+        #[cfg(feature = "ast-comments")]
         let trailing_comments = if let Some(comments) = entry_type.comments_after_type() {
           Some(comments)
         } else {
           self.collect_comments()?
         };
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         #[cfg(feature = "ast-span")]
         if self.cur_token_is(Token::COMMA) {
@@ -1906,7 +2134,9 @@ where
               name,
               generic_args,
             },
+            #[cfg(feature = "ast-comments")]
             leading_comments: None,
+            #[cfg(feature = "ast-comments")]
             trailing_comments,
             span,
           });
@@ -1928,7 +2158,9 @@ where
               name,
               generic_args,
             },
+            #[cfg(feature = "ast-comments")]
             leading_comments: None,
+            #[cfg(feature = "ast-comments")]
             trailing_comments,
           });
         }
@@ -1939,7 +2171,9 @@ where
             member_key: None,
             entry_type,
           }),
+          #[cfg(feature = "ast-comments")]
           leading_comments: None,
+          #[cfg(feature = "ast-comments")]
           trailing_comments,
           #[cfg(feature = "ast-span")]
           span,
@@ -1985,12 +2219,18 @@ where
 
     self.next_token()?;
 
+    #[cfg(feature = "ast-comments")]
     let comments_before_cut = self.collect_comments()?;
+    #[cfg(not(feature = "ast-comments"))]
+    self.advance_newline()?;
 
     let mk = if self.cur_token_is(Token::CUT) {
       self.next_token()?;
 
+      #[cfg(feature = "ast-comments")]
       let comments_after_cut = self.collect_comments()?;
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
       if !self.cur_token_is(Token::ARROWMAP) {
         self.errors.push(Error::PARSER {
@@ -2004,6 +2244,7 @@ where
       #[cfg(feature = "ast-span")]
       let end_memberkey_range = self.lexer_position.range.1;
 
+      #[cfg(feature = "ast-comments")]
       let comments_after_arrowmap = if let Token::COMMENT(_) = self.peek_token {
         self.next_token()?;
 
@@ -2011,6 +2252,9 @@ where
       } else {
         None
       };
+
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
       let t1 = MemberKey::Type1 {
         t1: Box::from(Type1 {
@@ -2021,13 +2265,17 @@ where
             span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
           },
           operator: None,
+          #[cfg(feature = "ast-comments")]
           comments_after_type: None,
           #[cfg(feature = "ast-span")]
           span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
         }),
+        #[cfg(feature = "ast-comments")]
         comments_before_cut,
         is_cut: true,
+        #[cfg(feature = "ast-comments")]
         comments_after_cut,
+        #[cfg(feature = "ast-comments")]
         comments_after_arrowmap,
         #[cfg(feature = "ast-span")]
         span: (
@@ -2044,6 +2292,7 @@ where
       #[cfg(feature = "ast-span")]
       let end_memberkey_range = self.lexer_position.range.1;
 
+      #[cfg(feature = "ast-comments")]
       let comments_after_arrowmap = if let Token::COMMENT(_) = self.peek_token {
         self.next_token()?;
 
@@ -2051,6 +2300,9 @@ where
       } else {
         None
       };
+
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
       let t1 = MemberKey::Type1 {
         t1: Box::from(Type1 {
@@ -2061,13 +2313,17 @@ where
             span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
           },
           operator: None,
+          #[cfg(feature = "ast-comments")]
           comments_after_type: None,
           #[cfg(feature = "ast-span")]
           span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
         }),
+        #[cfg(feature = "ast-comments")]
         comments_before_cut,
         is_cut: false,
+        #[cfg(feature = "ast-comments")]
         comments_after_cut: None,
+        #[cfg(feature = "ast-comments")]
         comments_after_arrowmap,
         #[cfg(feature = "ast-span")]
         span: (
@@ -2085,11 +2341,16 @@ where
         self.next_token()?;
       }
 
+      #[cfg(feature = "ast-comments")]
       let comments_after_colon = self.collect_comments()?;
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
 
       Some(MemberKey::Bareword {
         ident,
+        #[cfg(feature = "ast-comments")]
         comments: comments_before_cut,
+        #[cfg(feature = "ast-comments")]
         comments_after_colon,
         #[cfg(feature = "ast-span")]
         span: (
@@ -2151,12 +2412,18 @@ where
 
         let t1 = self.parse_type1(None)?;
 
+        #[cfg(feature = "ast-comments")]
         let comments_before_cut = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         let mk = if self.cur_token_is(Token::CUT) {
           self.next_token()?;
 
+          #[cfg(feature = "ast-comments")]
           let comments_after_cut = self.collect_comments()?;
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           if !self.cur_token_is(Token::ARROWMAP) {
             self.errors.push(Error::PARSER {
@@ -2172,13 +2439,19 @@ where
 
           self.next_token()?;
 
+          #[cfg(feature = "ast-comments")]
           let memberkey_comments = self.collect_comments()?;
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           Some(MemberKey::Type1 {
             t1: Box::from(t1),
+            #[cfg(feature = "ast-comments")]
             comments_before_cut,
             is_cut: true,
+            #[cfg(feature = "ast-comments")]
             comments_after_cut,
+            #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: memberkey_comments,
             #[cfg(feature = "ast-span")]
             span: (
@@ -2188,7 +2461,10 @@ where
             ),
           })
         } else {
+          #[cfg(feature = "ast-comments")]
           let comments = self.collect_comments()?;
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           if !self.cur_token_is(Token::ARROWMAP) && !self.cur_token_is(Token::COLON) {
             self.errors.push(Error::PARSER {
@@ -2206,11 +2482,16 @@ where
 
           self.next_token()?;
 
+          #[cfg(feature = "ast-comments")]
           let memberkey_comments = self.collect_comments()?;
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           Some(MemberKey::Value {
             value,
+            #[cfg(feature = "ast-comments")]
             comments,
+            #[cfg(feature = "ast-comments")]
             comments_after_colon: memberkey_comments,
             #[cfg(feature = "ast-span")]
             span: (
@@ -2239,10 +2520,14 @@ where
 
         self.next_token()?;
 
+        #[cfg(feature = "ast-comments")]
         let comments_before_type_or_group = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         let mut tokens: Vec<lexer::Item> = Vec::new();
 
+        #[cfg(feature = "ast-comments")]
         let mut comments_after_type_or_group = None;
 
         let mut has_group_entries = false;
@@ -2282,7 +2567,12 @@ where
 
           self.next_token()?;
 
-          comments_after_type_or_group = self.collect_comments()?;
+          #[cfg(feature = "ast-comments")]
+          {
+            comments_after_type_or_group = self.collect_comments()?;
+          }
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           if self.cur_token_is(Token::EOF) {
             self.errors.push(Error::PARSER {
@@ -2312,7 +2602,9 @@ where
 
           return Ok(Some(MemberKey::NonMemberKey {
             non_member_key: NonMemberKey::Group(group),
+            #[cfg(feature = "ast-comments")]
             comments_before_type_or_group,
+            #[cfg(feature = "ast-comments")]
             comments_after_type_or_group,
           }));
         }
@@ -2331,12 +2623,18 @@ where
           Err(e) => return Err(e),
         };
 
+        #[cfg(feature = "ast-comments")]
         let comments_before_cut = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         if self.cur_token_is(Token::CUT) {
           self.next_token()?;
 
+          #[cfg(feature = "ast-comments")]
           let comments_after_cut = self.collect_comments()?;
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           if !self.cur_token_is(Token::ARROWMAP) {
             self.errors.push(Error::PARSER {
@@ -2354,7 +2652,9 @@ where
             t1: Box::from(Type1 {
               type2: Type2::ParenthesizedType {
                 pt: t,
+                #[cfg(feature = "ast-comments")]
                 comments_before_type: comments_before_type_or_group,
+                #[cfg(feature = "ast-comments")]
                 comments_after_type: comments_after_type_or_group,
                 #[cfg(feature = "ast-span")]
                 span: (
@@ -2363,6 +2663,7 @@ where
                   begin_memberkey_line,
                 ),
               },
+              #[cfg(feature = "ast-comments")]
               comments_after_type: comments_before_cut.clone(),
               operator: None,
               #[cfg(feature = "ast-span")]
@@ -2372,9 +2673,12 @@ where
                 begin_memberkey_line,
               ),
             }),
+            #[cfg(feature = "ast-comments")]
             comments_before_cut,
             is_cut: true,
+            #[cfg(feature = "ast-comments")]
             comments_after_cut,
+            #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: None,
             #[cfg(feature = "ast-span")]
             span: (
@@ -2395,13 +2699,18 @@ where
             self.parser_position.range.1 = self.lexer_position.range.1;
           }
 
+          #[cfg(feature = "ast-comments")]
           let memberkey_comments = self.collect_comments()?;
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           Some(MemberKey::Type1 {
             t1: Box::from(Type1 {
               type2: Type2::ParenthesizedType {
                 pt: t,
+                #[cfg(feature = "ast-comments")]
                 comments_before_type: comments_before_type_or_group,
+                #[cfg(feature = "ast-comments")]
                 comments_after_type: comments_after_type_or_group,
                 #[cfg(feature = "ast-span")]
                 span: (
@@ -2410,6 +2719,7 @@ where
                   begin_memberkey_line,
                 ),
               },
+              #[cfg(feature = "ast-comments")]
               comments_after_type: comments_before_cut.clone(),
               operator: None,
               #[cfg(feature = "ast-span")]
@@ -2419,9 +2729,12 @@ where
                 begin_memberkey_line,
               ),
             }),
+            #[cfg(feature = "ast-comments")]
             comments_before_cut,
             is_cut: false,
+            #[cfg(feature = "ast-comments")]
             comments_after_cut: None,
+            #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: memberkey_comments,
             #[cfg(feature = "ast-span")]
             span: (
@@ -2441,7 +2754,9 @@ where
                 begin_memberkey_line,
               ),
             }),
+            #[cfg(feature = "ast-comments")]
             comments_before_type_or_group,
+            #[cfg(feature = "ast-comments")]
             comments_after_type_or_group,
           })
         };
@@ -2451,12 +2766,18 @@ where
       _ => {
         let t1 = self.parse_type1(None)?;
 
+        #[cfg(feature = "ast-comments")]
         let comments_before_cut = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         if self.cur_token_is(Token::CUT) {
           self.next_token()?;
 
+          #[cfg(feature = "ast-comments")]
           let comments_after_cut = self.collect_comments()?;
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           if !self.cur_token_is(Token::ARROWMAP) {
             self.errors.push(Error::PARSER {
@@ -2472,13 +2793,19 @@ where
 
           self.next_token()?;
 
+          #[cfg(feature = "ast-comments")]
           let memberkey_comments = self.collect_comments()?;
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           return Ok(Some(MemberKey::Type1 {
             t1: Box::from(t1),
+            #[cfg(feature = "ast-comments")]
             comments_before_cut,
             is_cut: true,
+            #[cfg(feature = "ast-comments")]
             comments_after_cut,
+            #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: memberkey_comments,
             #[cfg(feature = "ast-span")]
             span: (
@@ -2497,13 +2824,19 @@ where
             self.parser_position.range.1 = self.lexer_position.range.1;
           }
 
+          #[cfg(feature = "ast-comments")]
           let memberkey_comments = self.collect_comments()?;
+          #[cfg(not(feature = "ast-comments"))]
+          self.advance_newline()?;
 
           Some(MemberKey::Type1 {
             t1: Box::from(t1),
+            #[cfg(feature = "ast-comments")]
             comments_before_cut,
             is_cut: false,
+            #[cfg(feature = "ast-comments")]
             comments_after_cut: None,
+            #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: memberkey_comments,
             #[cfg(feature = "ast-span")]
             span: (
@@ -2516,7 +2849,9 @@ where
           Some(MemberKey::NonMemberKey {
             non_member_key: NonMemberKey::Type(Type {
               type_choices: vec![TypeChoice {
+                #[cfg(feature = "ast-comments")]
                 comments_before_type: None,
+                #[cfg(feature = "ast-comments")]
                 comments_after_type: None,
                 type1: t1,
               }],
@@ -2527,7 +2862,9 @@ where
                 begin_memberkey_line,
               ),
             }),
+            #[cfg(feature = "ast-comments")]
             comments_before_type_or_group: None,
+            #[cfg(feature = "ast-comments")]
             comments_after_type_or_group: comments_before_cut,
           })
         };
@@ -2556,7 +2893,10 @@ where
 
         self.next_token()?;
 
+        #[cfg(feature = "ast-comments")]
         let comments = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         Ok(Some(Occurrence {
           #[cfg(feature = "ast-span")]
@@ -2567,7 +2907,9 @@ where
           )),
           #[cfg(not(feature = "ast-span"))]
           occur: Occur::Optional,
+          #[cfg(feature = "ast-comments")]
           comments,
+          _a: PhantomData::default(),
         }))
       }
       Token::ONEORMORE => {
@@ -2578,7 +2920,10 @@ where
 
         self.next_token()?;
 
+        #[cfg(feature = "ast-comments")]
         let comments = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         Ok(Some(Occurrence {
           #[cfg(feature = "ast-span")]
@@ -2589,7 +2934,9 @@ where
           )),
           #[cfg(not(feature = "ast-span"))]
           occur: Occur::OneOrMore,
+          #[cfg(feature = "ast-comments")]
           comments,
+          _a: PhantomData::default(),
         }))
       }
       Token::ASTERISK => {
@@ -2631,9 +2978,17 @@ where
           self.next_token()?;
         }
 
+        #[cfg(feature = "ast-comments")]
         let comments = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
-        Ok(Some(Occurrence { occur, comments }))
+        Ok(Some(Occurrence {
+          occur,
+          #[cfg(feature = "ast-comments")]
+          comments,
+          _a: PhantomData::default(),
+        }))
       }
       Token::VALUE(_) => {
         let lower = if let Token::VALUE(token::Value::UINT(li)) = &self.cur_token {
@@ -2680,7 +3035,10 @@ where
           None
         };
 
+        #[cfg(feature = "ast-comments")]
         let comments = self.collect_comments()?;
+        #[cfg(not(feature = "ast-comments"))]
+        self.advance_newline()?;
 
         Ok(Some(Occurrence {
           occur: Occur::Exact {
@@ -2693,7 +3051,9 @@ where
               begin_occur_line,
             ),
           },
+          #[cfg(feature = "ast-comments")]
           comments,
+          _a: PhantomData::default(),
         }))
       }
       _ => Ok(None),
@@ -2925,6 +3285,7 @@ pub fn format_cddl_from_str(input: &str) -> result::Result<String, JsValue> {
 #[cfg(test)]
 #[allow(unused_imports)]
 #[cfg(feature = "ast-span")]
+#[cfg(feature = "ast-comments")]
 mod tests {
   use super::{
     super::{ast, lexer::Lexer, token::SocketPlug},
@@ -3606,6 +3967,7 @@ mod tests {
                       span: (1, 3, 1),
                     },
                     comments: None,
+                    _a: PhantomData::default(),
                   }),
                   name: Identifier {
                     ident: "reputon".into(),
@@ -3621,6 +3983,7 @@ mod tests {
               OptionalComma {
                 optional_comma: false,
                 trailing_comments: None,
+                _a: PhantomData::default(),
               },
             )],
             comments_before_grpchoice: None,
@@ -3641,6 +4004,7 @@ mod tests {
                   occur: Some(Occurrence {
                     occur: Occur::OneOrMore((1, 2, 1)),
                     comments: None,
+                    _a: PhantomData::default(),
                   }),
                   name: Identifier {
                     ident: "reputon".into(),
@@ -3656,6 +4020,7 @@ mod tests {
               OptionalComma {
                 optional_comma: false,
                 trailing_comments: None,
+                _a: PhantomData::default(),
               },
             )],
             comments_before_grpchoice: None,
@@ -3698,6 +4063,7 @@ mod tests {
               OptionalComma {
                 optional_comma: false,
                 trailing_comments: None,
+                _a: PhantomData::default(),
               },
             )],
             comments_before_grpchoice: None,
@@ -3719,6 +4085,7 @@ mod tests {
                   occur: Some(Occurrence {
                     occur: Occur::Optional((2, 3, 1)),
                     comments: None,
+                    _a: PhantomData::default(),
                   }),
                   member_key: Some(MemberKey::Type1 {
                     t1: Box::from(Type1 {
@@ -3765,6 +4132,7 @@ mod tests {
               OptionalComma {
                 optional_comma: true,
                 trailing_comments: None,
+                _a: PhantomData::default(),
               },
             )],
             comments_before_grpchoice: None,
@@ -3827,6 +4195,7 @@ mod tests {
                         OptionalComma {
                           optional_comma: true,
                           trailing_comments: None,
+                          _a: PhantomData::default(),
                         },
                       ),
                       (
@@ -3872,6 +4241,7 @@ mod tests {
                         OptionalComma {
                           optional_comma: false,
                           trailing_comments: None,
+                          _a: PhantomData::default(),
                         },
                       ),
                     ],
@@ -3888,6 +4258,7 @@ mod tests {
               OptionalComma {
                 optional_comma: false,
                 trailing_comments: None,
+                _a: PhantomData::default(),
               },
             )],
             comments_before_grpchoice: None,
@@ -3942,6 +4313,7 @@ mod tests {
                                       occur: Some(Occurrence {
                                         occur: Occur::ZeroOrMore((3, 4, 1)),
                                         comments: None,
+                                        _a: PhantomData::default(),
                                       }),
                                       name: Identifier {
                                         ident: "file-entry".into(),
@@ -3957,6 +4329,7 @@ mod tests {
                                   OptionalComma {
                                     optional_comma: false,
                                     trailing_comments: None,
+                                    _a: PhantomData::default(),
                                   },
                                 )],
                                 comments_before_grpchoice: None,
@@ -3985,6 +4358,7 @@ mod tests {
                 OptionalComma {
                   optional_comma: true,
                   trailing_comments: None,
+                  _a: PhantomData::default(),
                 },
               ),
               (
@@ -4004,6 +4378,7 @@ mod tests {
                                       occur: Some(Occurrence {
                                         occur: Occur::ZeroOrMore((19, 20, 1)),
                                         comments: None,
+                                        _a: PhantomData::default(),
                                       }),
                                       name: Identifier {
                                         ident: "directory-entry".into(),
@@ -4019,6 +4394,7 @@ mod tests {
                                   OptionalComma {
                                     optional_comma: false,
                                     trailing_comments: None,
+                                    _a: PhantomData::default(),
                                   },
                                 )],
                                 comments_before_grpchoice: None,
@@ -4047,6 +4423,7 @@ mod tests {
                 OptionalComma {
                   optional_comma: false,
                   trailing_comments: None,
+                  _a: PhantomData::default(),
                 },
               ),
             ],
@@ -4082,6 +4459,7 @@ mod tests {
                   OptionalComma {
                     optional_comma: true,
                     trailing_comments: None,
+                    _a: PhantomData::default(),
                   },
                 ),
                 (
@@ -4102,6 +4480,7 @@ mod tests {
                   OptionalComma {
                     optional_comma: false,
                     trailing_comments: None,
+                    _a: PhantomData::default(),
                   },
                 ),
               ],
@@ -4128,6 +4507,7 @@ mod tests {
                   OptionalComma {
                     optional_comma: true,
                     trailing_comments: None,
+                    _a: PhantomData::default(),
                   },
                 ),
                 (
@@ -4148,6 +4528,7 @@ mod tests {
                   OptionalComma {
                     optional_comma: false,
                     trailing_comments: None,
+                    _a: PhantomData::default(),
                   },
                 ),
               ],
@@ -4183,6 +4564,7 @@ mod tests {
                 OptionalComma {
                   optional_comma: true,
                   trailing_comments: None,
+                  _a: PhantomData::default(),
                 },
               ),
               (
@@ -4203,6 +4585,7 @@ mod tests {
                 OptionalComma {
                   optional_comma: true,
                   trailing_comments: None,
+                  _a: PhantomData::default(),
                 },
               ),
               (
@@ -4223,6 +4606,7 @@ mod tests {
                 OptionalComma {
                   optional_comma: true,
                   trailing_comments: None,
+                  _a: PhantomData::default(),
                 },
               ),
               (
@@ -4243,6 +4627,7 @@ mod tests {
                 OptionalComma {
                   optional_comma: false,
                   trailing_comments: None,
+                  _a: PhantomData::default(),
                 },
               ),
             ],
@@ -4285,6 +4670,7 @@ mod tests {
           occur: Some(Occurrence {
             occur: Occur::ZeroOrMore((0, 1, 1)),
             comments: None,
+            _a: PhantomData::default(),
           }),
           member_key: Some(MemberKey::Type1 {
             t1: Box::from(Type1 {
@@ -4386,6 +4772,7 @@ mod tests {
           occur: Some(Occurrence {
             occur: Occur::Optional((0, 1, 1)),
             comments: None,
+            _a: PhantomData::default(),
           }),
           member_key: Some(MemberKey::Value {
             value: token::Value::UINT(0),
@@ -4480,6 +4867,7 @@ mod tests {
           occur: Some(Occurrence {
             occur: Occur::ZeroOrMore((0, 1, 1)),
             comments: None,
+            _a: PhantomData::default(),
           }),
           member_key: Some(MemberKey::Type1 {
             t1: Box::from(Type1 {
@@ -4504,6 +4892,7 @@ mod tests {
                       OptionalComma {
                         optional_comma: false,
                         trailing_comments: None,
+                        _a: PhantomData::default(),
                       },
                     )],
                     comments_before_grpchoice: None,
@@ -4709,14 +5098,17 @@ mod tests {
           span: (0, 3, 1),
         },
         comments: None,
+        _a: PhantomData::default(),
       },
       Occurrence {
         occur: Occur::ZeroOrMore((0, 1, 1)),
         comments: None,
+        _a: PhantomData::default(),
       },
       Occurrence {
         occur: Occur::OneOrMore((0, 1, 1)),
         comments: None,
+        _a: PhantomData::default(),
       },
       Occurrence {
         occur: Occur::Exact {
@@ -4725,6 +5117,7 @@ mod tests {
           span: (0, 2, 1),
         },
         comments: None,
+        _a: PhantomData::default(),
       },
       Occurrence {
         occur: Occur::Exact {
@@ -4733,10 +5126,12 @@ mod tests {
           span: (0, 2, 1),
         },
         comments: None,
+        _a: PhantomData::default(),
       },
       Occurrence {
         occur: Occur::Optional((0, 1, 1)),
         comments: None,
+        _a: PhantomData::default(),
       },
     ];
 

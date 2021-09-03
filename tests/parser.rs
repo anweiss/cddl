@@ -1,4 +1,7 @@
 #![cfg(feature = "ast-span")]
+#![cfg(feature = "ast-comments")]
+
+use std::marker::PhantomData;
 
 use cddl::{
   ast::*,
@@ -177,6 +180,7 @@ fn verify_cddl() -> Result<()> {
                       span: (63, 65, 4),
                     },
                     comments: None,
+                    _a: PhantomData::default(),
                   }),
                   group: Group {
                     group_choices: vec![GroupChoice {
@@ -198,6 +202,7 @@ fn verify_cddl() -> Result<()> {
                         OptionalComma {
                           optional_comma: false,
                           trailing_comments: None,
+                          _a: PhantomData::default(),
                         },
                       )],
                       comments_before_grpchoice: None,
@@ -358,6 +363,7 @@ fn verify_cddl() -> Result<()> {
                                 OptionalComma {
                                   optional_comma: true,
                                   trailing_comments: None,
+                                  _a: PhantomData::default(),
                                 },
                               ),
                               (
@@ -403,6 +409,7 @@ fn verify_cddl() -> Result<()> {
                                 OptionalComma {
                                   optional_comma: false,
                                   trailing_comments: None,
+                                  _a: PhantomData::default(),
                                 },
                               ),
                             ],
@@ -518,6 +525,7 @@ fn verify_cddl() -> Result<()> {
                         OptionalComma {
                           optional_comma: false,
                           trailing_comments: None,
+                          _a: PhantomData::default(),
                         },
                       )],
                       comments_before_grpchoice: None,
