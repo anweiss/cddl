@@ -468,7 +468,6 @@ pub mod repl;
 pub mod token;
 /// Validators for JSON and CBOR data structures
 #[cfg(feature = "std")]
-#[cfg(not(target_arch = "wasm32"))]
 pub mod validator;
 
 /// CDDL AST visitor

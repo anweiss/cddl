@@ -12,15 +12,35 @@ use cbor::CBORValidator;
 use json::JSONValidator;
 use serde::de::Deserialize;
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
 use crate::{
   ast::{
     GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type2, TypeChoice, TypeRule,
     CDDL,
   },
-  cddl_from_str, lexer_from_str,
   token::*,
   visitor::Visitor,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{cddl_from_str, lexer_from_str};
+
+#[cfg(target_arch = "wasm32")]
+use crate::{
+  error::ErrorMsg,
+  lexer::{Lexer, Position},
+  parser::{self, Parser},
+};
+#[cfg(target_arch = "wasm32")]
+use serde::Serialize;
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Serialize)]
+struct ParserError {
+  position: Position,
+  msg: ErrorMsg,
+}
 
 trait Validator<'a, E: Error>: Visitor<'a, E> {
   fn validate(&mut self) -> std::result::Result<(), E>;
@@ -32,6 +52,7 @@ trait Validatable {}
 impl Validatable for serde_cbor::Value {}
 impl Validatable for serde_json::Value {}
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Validate JSON string from a given CDDL document string
 pub fn validate_json_from_str(
   cddl: &str,
@@ -46,6 +67,48 @@ pub fn validate_json_from_str(
   jv.validate()
 }
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+/// Validate JSON string from a given CDDL document string
+pub fn validate_json_from_str(
+  cddl: &str,
+  json: &str,
+  enabled_features: Option<Box<[JsValue]>>,
+) -> std::result::Result<JsValue, JsValue> {
+  let mut l = Lexer::new(cddl);
+  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      JsValue::from_serde(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
+
+  let json =
+    serde_json::from_str::<serde_json::Value>(json).map_err(|e| JsValue::from(e.to_string()))?;
+
+  let mut jv = JSONValidator::new(&c, json, enabled_features);
+  jv.validate()
+    .map_err(|e| JsValue::from(e.to_string()))
+    .map(|_| JsValue::default())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 /// Validate CBOR slice from a given CDDL document string
 pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result {
   let mut lexer = lexer_from_str(cddl);
@@ -55,6 +118,46 @@ pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result {
 
   let mut cv = CBORValidator::new(&cddl, cbor);
   cv.validate()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+/// Validate CBOR slice from a given CDDL document string
+pub fn validate_cbor_from_slice(
+  cddl: &str,
+  cbor_slice: &[u8],
+) -> std::result::Result<JsValue, JsValue> {
+  let mut l = Lexer::new(cddl);
+  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      JsValue::from_serde(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
+
+  let cbor = serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice)
+    .map_err(|e| JsValue::from(e.to_string()))?;
+
+  let mut cv = CBORValidator::new(&c, cbor);
+  cv.validate()
+    .map_err(|e| JsValue::from(e.to_string()))
+    .map(|_| JsValue::default())
 }
 
 /// Find non-choice alternate rule from a given identifier

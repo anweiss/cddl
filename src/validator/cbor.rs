@@ -2822,6 +2822,7 @@ pub fn token_value_into_cbor_value(value: token::Value) -> serde_cbor::Value {
 }
 
 #[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests {
   use super::*;
 
