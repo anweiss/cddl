@@ -226,9 +226,17 @@ where
 
     let mut labels = Vec::new();
     for error in self.errors.iter() {
-      if let Error::PARSER { position, msg } = error {
+      if let Error::PARSER {
+        #[cfg(feature = "ast-span")]
+        position,
+        msg,
+      } = error
+      {
         labels.push(
+          #[cfg(feature = "ast-span")]
           Label::primary(file_id, position.range.0..position.range.1).with_message(msg.to_string()),
+          #[cfg(not(feature = "ast-span"))]
+          Label::primary(file_id, 0..0).with_message(msg.to_string()),
         );
       }
     }
@@ -846,19 +854,16 @@ where
     {
       self.parser_position.range = self.lexer_position.range;
       self.parser_position.line = self.lexer_position.line;
-
-      
     }
 
     #[cfg(feature = "ast-span")]
-    let begin_type_range = if let Some(Type2::ParenthesizedType { span, .. }) = parenthesized_type
-      {
-        self.parser_position.line = span.2;
+    let begin_type_range = if let Some(Type2::ParenthesizedType { span, .. }) = parenthesized_type {
+      self.parser_position.line = span.2;
 
-        span.0
-      } else {
-        self.parser_position.range.0
-      };
+      span.0
+    } else {
+      self.parser_position.range.0
+    };
 
     let mut t = Type {
       type_choices: Vec::new(),
