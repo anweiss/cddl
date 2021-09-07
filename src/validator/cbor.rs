@@ -1,4 +1,5 @@
 #![cfg(feature = "std")]
+#![cfg(feature = "cbor")]
 
 use crate::{
   ast::*,

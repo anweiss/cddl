@@ -1,4 +1,5 @@
 #![cfg(feature = "std")]
+#![cfg(feature = "json")]
 
 use crate::{
   ast::*,

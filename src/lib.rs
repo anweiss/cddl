@@ -482,5 +482,12 @@ pub use self::{
 
 #[doc(inline)]
 #[cfg(feature = "std")]
+#[cfg(feature = "cbor")]
 #[cfg(not(target_arch = "wasm32"))]
-pub use self::validator::{validate_cbor_from_slice, validate_json_from_str};
+pub use self::validator::validate_cbor_from_slice;
+
+#[doc(inline)]
+#[cfg(feature = "std")]
+#[cfg(feature = "json")]
+#[cfg(not(target_arch = "wasm32"))]
+pub use self::validator::validate_json_from_str;

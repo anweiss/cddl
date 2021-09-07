@@ -1,4 +1,5 @@
 #![cfg(feature = "std")]
+#![cfg(feature = "cbor")]
 #![cfg(not(target_arch = "wasm32"))]
 
 use cddl::{self, validator::validate_cbor_from_slice};

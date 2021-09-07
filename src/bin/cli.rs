@@ -1,3 +1,6 @@
+#![cfg(feature = "cbor")]
+#![cfg(feature = "json")]
+
 #[macro_use]
 extern crate clap;
 

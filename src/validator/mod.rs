@@ -8,7 +8,9 @@ mod control;
 
 use std::error::Error;
 
+#[cfg(feature = "cbor")]
 use cbor::CBORValidator;
+#[cfg(feature = "json")]
 use json::JSONValidator;
 use serde::de::Deserialize;
 
@@ -53,6 +55,7 @@ impl Validatable for serde_cbor::Value {}
 impl Validatable for serde_json::Value {}
 
 #[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "json")]
 /// Validate JSON string from a given CDDL document string
 pub fn validate_json_from_str(
   cddl: &str,
@@ -73,6 +76,7 @@ pub fn validate_json_from_str(
 
 #[cfg(target_arch = "wasm32")]
 #[cfg(feature = "additional-controls")]
+#[cfg(feature = "json")]
 #[wasm_bindgen]
 /// Validate JSON string from a given CDDL document string
 pub fn validate_json_from_str(
@@ -114,6 +118,7 @@ pub fn validate_json_from_str(
 }
 
 #[cfg(target_arch = "wasm32")]
+#[cfg(feature = "json")]
 #[cfg(not(feature = "additional-controls"))]
 #[wasm_bindgen]
 /// Validate JSON string from a given CDDL document string
@@ -152,6 +157,7 @@ pub fn validate_json_from_str(cddl: &str, json: &str) -> std::result::Result<JsV
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "cbor")]
 /// Validate CBOR slice from a given CDDL document string
 pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result {
   let mut lexer = lexer_from_str(cddl);
@@ -164,6 +170,7 @@ pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[cfg(feature = "cbor")]
 #[wasm_bindgen]
 /// Validate CBOR slice from a given CDDL document string
 pub fn validate_cbor_from_slice(
