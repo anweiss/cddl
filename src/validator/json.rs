@@ -15,8 +15,6 @@ use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
 
 use super::*;
 
-use cfg_if;
-
 /// JSON validation Result
 pub type Result = std::result::Result<(), Error>;
 
@@ -198,9 +196,12 @@ pub struct JSONValidator<'a> {
   is_colon_shortcut_present: bool,
   is_root: bool,
   #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(feature = "additional-controls")]
   enabled_features: Option<&'a [&'a str]>,
   #[cfg(target_arch = "wasm32")]
+  #[cfg(feature = "additional-controls")]
   enabled_features: Option<Box<[JsValue]>>,
+  #[cfg(feature = "additional-controls")]
   has_feature_errors: bool,
 }
 
@@ -213,6 +214,7 @@ struct GenericRule<'a> {
 
 impl<'a> JSONValidator<'a> {
   #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(feature = "additional-controls")]
   /// New JSONValidation from CDDL AST and JSON value
   pub fn new(cddl: &'a CDDL<'a>, json: Value, enabled_features: Option<&'a [&'a str]>) -> Self {
     JSONValidator {
@@ -248,7 +250,43 @@ impl<'a> JSONValidator<'a> {
     }
   }
 
+  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(not(feature = "additional-controls"))]
+  /// New JSONValidation from CDDL AST and JSON value
+  pub fn new(cddl: &'a CDDL<'a>, json: Value) -> Self {
+    JSONValidator {
+      cddl,
+      json,
+      errors: Vec::default(),
+      cddl_location: String::new(),
+      json_location: String::new(),
+      occurrence: None,
+      group_entry_idx: None,
+      object_value: None,
+      is_member_key: false,
+      is_cut_present: false,
+      cut_value: None,
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
+      ctrl: None,
+      is_group_to_choice_enum: false,
+      is_multi_type_choice: false,
+      is_multi_group_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
+      entry_counts: None,
+      validated_keys: None,
+      values_to_validate: None,
+      valid_array_items: None,
+      array_errors: None,
+      is_colon_shortcut_present: false,
+      is_root: false,
+    }
+  }
+
   #[cfg(target_arch = "wasm32")]
+  #[cfg(feature = "additional-controls")]
   /// New JSONValidation from CDDL AST and JSON value
   pub fn new(cddl: &'a CDDL<'a>, json: Value, enabled_features: Option<Box<[JsValue]>>) -> Self {
     JSONValidator {
@@ -284,6 +322,41 @@ impl<'a> JSONValidator<'a> {
     }
   }
 
+  #[cfg(target_arch = "wasm32")]
+  #[cfg(not(feature = "additional-controls"))]
+  /// New JSONValidation from CDDL AST and JSON value
+  pub fn new(cddl: &'a CDDL<'a>, json: Value) -> Self {
+    JSONValidator {
+      cddl,
+      json,
+      errors: Vec::default(),
+      cddl_location: String::new(),
+      json_location: String::new(),
+      occurrence: None,
+      group_entry_idx: None,
+      object_value: None,
+      is_member_key: false,
+      is_cut_present: false,
+      cut_value: None,
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
+      ctrl: None,
+      is_group_to_choice_enum: false,
+      is_multi_type_choice: false,
+      is_multi_group_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
+      entry_counts: None,
+      validated_keys: None,
+      values_to_validate: None,
+      valid_array_items: None,
+      array_errors: None,
+      is_colon_shortcut_present: false,
+      is_root: false,
+    }
+  }
+
   fn validate_value_array(&mut self, value: &token::Value) -> visitor::Result<Error> {
     if let Value::Array(a) = &self.json {
       // Member keys are annotation only in an array context
@@ -305,7 +378,11 @@ impl<'a> JSONValidator<'a> {
                 }
               }
 
+              #[cfg(feature = "additional-controls")]
               let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(not(feature = "additional-controls"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone());
+
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -338,7 +415,11 @@ impl<'a> JSONValidator<'a> {
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
+              #[cfg(feature = "additional-controls")]
               let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(not(feature = "additional-controls"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone());
+
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -550,7 +631,20 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       if matches!(self.json, Value::Array(_)) {
         let error_count = self.errors.len();
         self.visit_type_choice(type_choice)?;
+        #[cfg(feature = "additional-controls")]
         if self.errors.len() == error_count && !self.has_feature_errors {
+          // Disregard invalid type choice validation errors if one of the
+          // choices validates successfully
+          let type_choice_error_count = self.errors.len() - initial_error_count;
+          if type_choice_error_count > 0 {
+            for _ in 0..type_choice_error_count {
+              self.errors.pop();
+            }
+          }
+        }
+
+        #[cfg(not(feature = "additional-controls"))]
+        if self.errors.len() == error_count {
           // Disregard invalid type choice validation errors if one of the
           // choices validates successfully
           let type_choice_error_count = self.errors.len() - initial_error_count;
@@ -567,7 +661,22 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       let error_count = self.errors.len();
       self.visit_type_choice(type_choice)?;
 
+      #[cfg(feature = "additional-controls")]
       if self.errors.len() == error_count && !self.has_feature_errors {
+        // Disregard invalid type choice validation errors if one of the
+        // choices validates successfully
+        let type_choice_error_count = self.errors.len() - initial_error_count;
+        if type_choice_error_count > 0 {
+          for _ in 0..type_choice_error_count {
+            self.errors.pop();
+          }
+        }
+
+        return Ok(());
+      }
+
+      #[cfg(not(feature = "additional-controls"))]
+      if self.errors.len() == error_count {
         // Disregard invalid type choice validation errors if one of the
         // choices validates successfully
         let type_choice_error_count = self.errors.len() - initial_error_count;
@@ -711,7 +820,11 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 }
               }
 
+              #[cfg(feature = "additional-controls")]
               let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(not(feature = "additional-controls"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone());
+
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.ctrl = self.ctrl.clone();
@@ -744,7 +857,11 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
+              #[cfg(feature = "additional-controls")]
               let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(not(feature = "additional-controls"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone());
+
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.ctrl = self.ctrl.clone();
@@ -1373,8 +1490,12 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                     }
                   }
 
+                  #[cfg(feature = "additional-controls")]
                   let mut jv =
                     JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  #[cfg(not(feature = "additional-controls"))]
+                  let mut jv = JSONValidator::new(self.cddl, v.clone());
+
                   jv.generic_rules = self.generic_rules.clone();
                   jv.eval_generic_rule = self.eval_generic_rule;
                   jv.ctrl = self.ctrl.clone();
@@ -1407,8 +1528,12 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 }
               } else if let Some(idx) = self.group_entry_idx.take() {
                 if let Some(v) = a.get(idx) {
+                  #[cfg(feature = "additional-controls")]
                   let mut jv =
                     JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  #[cfg(not(feature = "additional-controls"))]
+                  let mut jv = JSONValidator::new(self.cddl, v.clone());
+
                   jv.generic_rules = self.generic_rules.clone();
                   jv.eval_generic_rule = self.eval_generic_rule;
                   jv.ctrl = self.ctrl.clone();
@@ -1506,8 +1631,12 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               });
             }
 
+            #[cfg(feature = "additional-controls")]
             let mut jv =
               JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+            #[cfg(not(feature = "additional-controls"))]
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = Some(ident.ident);
             jv.is_group_to_choice_enum = true;
@@ -1563,8 +1692,12 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               });
             }
 
+            #[cfg(feature = "additional-controls")]
             let mut jv =
               JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+            #[cfg(not(feature = "additional-controls"))]
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = Some(ident.ident);
             jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1612,8 +1745,12 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               });
             }
 
+            #[cfg(feature = "additional-controls")]
             let mut jv =
               JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+            #[cfg(not(feature = "additional-controls"))]
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = Some(ident.ident);
             jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1775,8 +1912,12 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                   }
                 }
 
+                #[cfg(feature = "additional-controls")]
                 let mut jv =
                   JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(not(feature = "additional-controls"))]
+                let mut jv = JSONValidator::new(self.cddl, v.clone());
+
                 jv.generic_rules = self.generic_rules.clone();
                 jv.eval_generic_rule = self.eval_generic_rule;
                 jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1809,8 +1950,12 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               }
             } else if let Some(idx) = self.group_entry_idx.take() {
               if let Some(v) = a.get(idx) {
+                #[cfg(feature = "additional-controls")]
                 let mut jv =
                   JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(not(feature = "additional-controls"))]
+                let mut jv = JSONValidator::new(self.cddl, v.clone());
+
                 jv.generic_rules = self.generic_rules.clone();
                 jv.eval_generic_rule = self.eval_generic_rule;
                 jv.ctrl = self.ctrl.clone();
@@ -1948,7 +2093,11 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
     if let Some(values) = &self.values_to_validate {
       for v in values.iter() {
+        #[cfg(feature = "additional-controls")]
         let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+        #[cfg(not(feature = "additional-controls"))]
+        let mut jv = JSONValidator::new(self.cddl, v.clone());
+
         jv.generic_rules = self.generic_rules.clone();
         jv.eval_generic_rule = self.eval_generic_rule;
         jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1969,7 +2118,11 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
     }
 
     if let Some(v) = self.object_value.take() {
-      let mut jv = JSONValidator::new(self.cddl, v, self.enabled_features.clone());
+      #[cfg(feature = "additional-controls")]
+      let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+      #[cfg(not(feature = "additional-controls"))]
+      let mut jv = JSONValidator::new(self.cddl, v.clone());
+
       jv.generic_rules = self.generic_rules.clone();
       jv.eval_generic_rule = self.eval_generic_rule;
       jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -2017,8 +2170,12 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           });
         }
 
+        #[cfg(feature = "additional-controls")]
         let mut jv =
           JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+        #[cfg(not(feature = "additional-controls"))]
+        let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+
         jv.generic_rules = self.generic_rules.clone();
         jv.eval_generic_rule = Some(entry.name.ident);
         jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -2212,29 +2369,27 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             .map(|e| format!("\"{}\" is not valid against abnf: {}", s, e)),
 
           _ => {
-            cfg_if::cfg_if! {
-              if #[cfg(feature = "additional'controls")] {
-                if s == t {
-                  None
-                } else if let Some(Token::CAT) = &self.ctrl {
-                  Some(format!(
-                    "expected value to match concatenated string {}, got \"{}\"",
-                    value, s
-                  ))
-                } else if let Some(ctrl) = &self.ctrl {
-                  Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
-                } else {
-                  Some(format!("expected value {} got \"{}\"", value, s))
-                }
-              } else {
-                if s == t {
-                  None
-                } else if let Some(ctrl) = &self.ctrl {
-                  Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
-                } else {
-                  Some(format!("expected value {} got \"{}\"", value, s))
-                }
-              }
+            #[cfg(feature = "additional-controls")]
+            if s == t {
+              None
+            } else if let Some(Token::CAT) = &self.ctrl {
+              Some(format!(
+                "expected value to match concatenated string {}, got \"{}\"",
+                value, s
+              ))
+            } else if let Some(ctrl) = &self.ctrl {
+              Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
+            } else {
+              Some(format!("expected value {} got \"{}\"", value, s))
+            }
+
+            #[cfg(not(feature = "additional-controls"))]
+            if s == t {
+              None
+            } else if let Some(ctrl) = &self.ctrl {
+              Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
+            } else {
+              Some(format!("expected value {} got \"{}\"", value, s))
             }
           }
         },

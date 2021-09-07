@@ -57,17 +57,22 @@ impl Validatable for serde_json::Value {}
 pub fn validate_json_from_str(
   cddl: &str,
   json: &str,
-  enabled_features: Option<&[&str]>,
+  #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
 ) -> json::Result {
   let mut lexer = lexer_from_str(cddl);
   let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing)?;
   let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
+  #[cfg(feature = "additional-controls")]
   let mut jv = JSONValidator::new(&cddl, json, enabled_features);
+  #[cfg(not(feature = "additional-controls"))]
+  let mut jv = JSONValidator::new(&cddl, json);
+
   jv.validate()
 }
 
 #[cfg(target_arch = "wasm32")]
+#[cfg(feature = "additional-controls")]
 #[wasm_bindgen]
 /// Validate JSON string from a given CDDL document string
 pub fn validate_json_from_str(
@@ -103,6 +108,44 @@ pub fn validate_json_from_str(
     serde_json::from_str::<serde_json::Value>(json).map_err(|e| JsValue::from(e.to_string()))?;
 
   let mut jv = JSONValidator::new(&c, json, enabled_features);
+  jv.validate()
+    .map_err(|e| JsValue::from(e.to_string()))
+    .map(|_| JsValue::default())
+}
+
+#[cfg(target_arch = "wasm32")]
+#[cfg(not(feature = "additional-controls"))]
+#[wasm_bindgen]
+/// Validate JSON string from a given CDDL document string
+pub fn validate_json_from_str(cddl: &str, json: &str) -> std::result::Result<JsValue, JsValue> {
+  let mut l = Lexer::new(cddl);
+  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      JsValue::from_serde(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
+
+  let json =
+    serde_json::from_str::<serde_json::Value>(json).map_err(|e| JsValue::from(e.to_string()))?;
+
+  let mut jv = JSONValidator::new(&c, json);
   jv.validate()
     .map_err(|e| JsValue::from(e.to_string()))
     .map(|_| JsValue::default())

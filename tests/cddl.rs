@@ -1,4 +1,5 @@
 #![cfg(feature = "std")]
+#![cfg(feature = "additional-controls")]
 #![cfg(not(target_arch = "wasm32"))]
 
 use cddl::{lexer_from_str, parser, validate_json_from_str, validator::json};

@@ -8,7 +8,9 @@ use super::{
   token::{self, SocketPlug, Token},
 };
 
+#[cfg(feature = "std")]
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
+
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
   files::SimpleFiles,

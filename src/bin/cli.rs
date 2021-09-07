@@ -159,7 +159,12 @@ fn main() -> Result<(), Box<dyn Error>> {
           if let Some(ext) = p.extension() {
             match ext.to_str() {
               Some("json") => {
-                match validate_json_from_str(&cddl_str, &fs::read_to_string(file)?, None) {
+                #[cfg(feature = "additional-controls")]
+                let r = validate_json_from_str(&cddl_str, &fs::read_to_string(file)?, None);
+                #[cfg(not(feature = "additional-controls"))]
+                let r = validate_json_from_str(&cddl_str, &fs::read_to_string(file)?);
+
+                match r {
                   Ok(()) => {
                     writeln!(&mut stdout, "Validation of {:?} is successful", p)?;
                     stdoutbuffwrtr.print(&stdout)?;
@@ -210,7 +215,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut data = Vec::new();
         reader.read_to_end(&mut data)?;
         if let Ok(json) = std::str::from_utf8(&data) {
-          match validate_json_from_str(&cddl_str, json, None) {
+          #[cfg(feature = "additional-controls")]
+          let r = validate_json_from_str(&cddl_str, json, None);
+          #[cfg(not(feature = "additional-controls"))]
+          let r = validate_json_from_str(&cddl_str, json);
+
+          match r {
             Ok(()) => {
               writeln!(&mut stdout, "Validation from stdin is successful")?;
               stdoutbuffwrtr.print(&stdout)?;
