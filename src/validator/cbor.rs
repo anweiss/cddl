@@ -1300,7 +1300,31 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
             match self.cbor {
-              Value::Text(_) | Value::Array(_) => self.visit_type2(controller)?,
+              Value::Text(_) | Value::Array(_) => {
+                if let Type2::ParenthesizedType { pt, .. } = controller {
+                  match abnf_from_complex_controller(self.cddl, pt) {
+                    Ok(values) => {
+                      let error_count = self.errors.len();
+                      for v in values.iter() {
+                        let cur_errors = self.errors.len();
+
+                        self.visit_type2(v)?;
+
+                        if self.errors.len() == cur_errors {
+                          for _ in 0..self.errors.len() - error_count {
+                            self.errors.pop();
+                          }
+
+                          break;
+                        }
+                      }
+                    }
+                    Err(e) => self.add_error(e),
+                  }
+                } else {
+                  self.visit_type2(controller)?
+                }
+              }
               _ => self.add_error(format!(
                 ".abnf control can only be matched against a cbor string, got {:?}",
                 self.cbor,
