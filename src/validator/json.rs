@@ -2456,7 +2456,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             #[cfg(feature = "additional-controls")]
             if s == t {
               None
-            } else if let Some(Token::CAT) = &self.ctrl {
+            } else if let Some(Token::CAT) | Some(Token::DET) = &self.ctrl {
               Some(format!(
                 "expected value to match concatenated string {}, got \"{}\"",
                 value, s

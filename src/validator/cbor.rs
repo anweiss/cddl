@@ -3135,6 +3135,21 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
             .err()
             .map(|e| format!("\"{}\" is not valid against abnf: {}", s, e)),
           _ => {
+            #[cfg(feature = "additional-controls")]
+            if s == t {
+              None
+            } else if let Some(Token::CAT) | Some(Token::DET) = &self.ctrl {
+              Some(format!(
+                "expected value to match concatenated string {}, got \"{}\"",
+                value, s
+              ))
+            } else if let Some(ctrl) = &self.ctrl {
+              Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
+            } else {
+              Some(format!("expected value {} got \"{}\"", value, s))
+            }
+
+            #[cfg(not(feature = "additional-controls"))]
             if s == t {
               None
             } else if let Some(ctrl) = &self.ctrl {
