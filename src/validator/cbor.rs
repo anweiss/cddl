@@ -184,6 +184,8 @@ pub struct CBORValidator<'a> {
   enabled_features: Option<Box<[JsValue]>>,
   #[cfg(feature = "additional-controls")]
   has_feature_errors: bool,
+  #[cfg(feature = "additional-controls")]
+  disabled_features: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -228,6 +230,7 @@ impl<'a> CBORValidator<'a> {
       is_root: false,
       enabled_features,
       has_feature_errors: false,
+      disabled_features: None,
     }
   }
 
@@ -300,6 +303,7 @@ impl<'a> CBORValidator<'a> {
       is_root: false,
       enabled_features,
       has_feature_errors: false,
+      disabled_features: None,
     }
   }
 
@@ -452,9 +456,14 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
       // / integer ]), collect all errors and filter after the fact
       if matches!(self.cbor, Value::Array(_)) {
         let error_count = self.errors.len();
+
         self.visit_type_choice(type_choice)?;
+
         #[cfg(feature = "additional-controls")]
-        if self.errors.len() == error_count && !self.has_feature_errors {
+        if self.errors.len() == error_count
+          && !self.has_feature_errors
+          && self.disabled_features.is_none()
+        {
           // Disregard invalid type choice validation errors if one of the
           // choices validates successfully
           let type_choice_error_count = self.errors.len() - initial_error_count;
@@ -484,7 +493,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
       self.visit_type_choice(type_choice)?;
 
       #[cfg(feature = "additional-controls")]
-      if self.errors.len() == error_count && !self.has_feature_errors {
+      if self.errors.len() == error_count
+        && !self.has_feature_errors
+        && self.disabled_features.is_none()
+      {
         // Disregard invalid type choice validation errors if one of the
         // choices validates successfully
         let type_choice_error_count = self.errors.len() - initial_error_count;
@@ -1390,6 +1402,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
+      #[cfg(not(target_arch = "wasm32"))]
       t @ Some(Token::FEATURE) => {
         self.ctrl = t;
 
@@ -1403,15 +1416,69 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
                 self.has_feature_errors = true;
               }
               self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
             }
           } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
-            if ef.contains(&std::str::from_utf8(value).map_err(Error::UTF8Parsing)?) {
+            let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
+            if ef.contains(&value) {
               let err_count = self.errors.len();
               self.visit_type2(target)?;
               if self.errors.len() > err_count {
                 self.has_feature_errors = true;
               }
               self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
+            }
+          }
+        }
+
+        self.ctrl = None;
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      #[cfg(target_arch = "wasm32")]
+      t @ Some(Token::FEATURE) => {
+        self.ctrl = t;
+
+        if let Some(ef) = &self.enabled_features {
+          let tv = text_value_from_type2(self.cddl, controller);
+          if let Some(Type2::TextValue { value, .. }) = tv {
+            if ef.contains(&JsValue::from(value.as_ref())) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
+            }
+          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
+            let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
+            if ef.contains(&JsValue::from(value)) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
             }
           }
         }
@@ -3476,6 +3543,32 @@ mod tests {
 
     let mut cv = CBORValidator::new(&cddl, cbor, None);
     cv.validate()?;
+
+    Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn validate_feature() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        v = JC<"v", 2>
+        JC<J, C> = J .feature "json" / C .feature "cbor"
+      "#
+    );
+
+    let mut lexer = lexer_from_str(cddl);
+    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let cbor = serde_cbor::Value::Integer(2);
+
+    let cddl = cddl.unwrap();
+
+    let mut jv = CBORValidator::new(&cddl, cbor, Some(&["cbor"]));
+    jv.validate()?;
 
     Ok(())
   }

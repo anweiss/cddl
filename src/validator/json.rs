@@ -30,6 +30,8 @@ pub enum Error {
   CDDLParsing(String),
   /// UTF8 parsing error,
   UTF8Parsing(std::str::Utf8Error),
+  /// Disabled feature
+  DisabledFeature(String),
 }
 
 impl fmt::Display for Error {
@@ -45,6 +47,7 @@ impl fmt::Display for Error {
       Error::JSONParsing(error) => write!(f, "error parsing JSON: {}", error),
       Error::CDDLParsing(error) => write!(f, "error parsing CDDL: {}", error),
       Error::UTF8Parsing(error) => write!(f, "error pasing utf8: {}", error),
+      Error::DisabledFeature(feature) => write!(f, "feature {} is not enabled", feature),
     }
   }
 }
@@ -204,6 +207,8 @@ pub struct JSONValidator<'a> {
   enabled_features: Option<Box<[JsValue]>>,
   #[cfg(feature = "additional-controls")]
   has_feature_errors: bool,
+  #[cfg(feature = "additional-controls")]
+  disabled_features: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -248,6 +253,7 @@ impl<'a> JSONValidator<'a> {
       is_root: false,
       enabled_features,
       has_feature_errors: false,
+      disabled_features: None,
     }
   }
 
@@ -632,8 +638,12 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       if matches!(self.json, Value::Array(_)) {
         let error_count = self.errors.len();
         self.visit_type_choice(type_choice)?;
+
         #[cfg(feature = "additional-controls")]
-        if self.errors.len() == error_count && !self.has_feature_errors {
+        if self.errors.len() == error_count
+          && !self.has_feature_errors
+          && self.disabled_features.is_none()
+        {
           // Disregard invalid type choice validation errors if one of the
           // choices validates successfully
           let type_choice_error_count = self.errors.len() - initial_error_count;
@@ -663,7 +673,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       self.visit_type_choice(type_choice)?;
 
       #[cfg(feature = "additional-controls")]
-      if self.errors.len() == error_count && !self.has_feature_errors {
+      if self.errors.len() == error_count
+        && !self.has_feature_errors
+        && self.disabled_features.is_none()
+      {
         // Disregard invalid type choice validation errors if one of the
         // choices validates successfully
         let type_choice_error_count = self.errors.len() - initial_error_count;
@@ -1484,15 +1497,26 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 self.has_feature_errors = true;
               }
               self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
             }
           } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
-            if ef.contains(&std::str::from_utf8(value).map_err(Error::UTF8Parsing)?) {
+            let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
+            if ef.contains(&value) {
               let err_count = self.errors.len();
               self.visit_type2(target)?;
               if self.errors.len() > err_count {
                 self.has_feature_errors = true;
               }
               self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
             }
           }
         }
@@ -1514,17 +1538,26 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 self.has_feature_errors = true;
               }
               self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
             }
           } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
-            if ef.contains(&JsValue::from(
-              std::str::from_utf8(value).map_err(Error::UTF8Parsing)?,
-            )) {
+            let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
+            if ef.contains(&JsValue::from(value)) {
               let err_count = self.errors.len();
               self.visit_type2(target)?;
               if self.errors.len() > err_count {
                 self.has_feature_errors = true;
               }
               self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
             }
           }
         }
@@ -2554,7 +2587,7 @@ mod tests {
     let cddl = indoc!(
       r#"
         v = JC<"v", 2>
-        JC<J, C> = J .feature "json" / C .feature "cbor"
+        JC<J, C> =  C .feature "cbor" / J .feature "json"
       "#
     );
 
