@@ -1,5 +1,5 @@
 #![cfg(feature = "std")]
-#![cfg(feature = "additional-controls")]
+#![cfg(not(feature = "additional-controls"))]
 #![cfg(not(target_arch = "wasm32"))]
 
 use cddl::{validate_cbor_from_slice, validate_json_from_str};
@@ -42,7 +42,10 @@ fn validate_did_json_examples() -> Result<(), Box<dyn Error>> {
       for file in fs::read_dir(entry.path())? {
         let file = file?;
         if file.path().extension().and_then(OsStr::to_str).unwrap() == "json" {
+          #[cfg(feature = "additional-controls")]
           let r = validate_json_from_str(&cddl, &fs::read_to_string(file.path())?, None);
+          #[cfg(not(feature = "additional-controls"))]
+          let r = validate_json_from_str(&cddl, &fs::read_to_string(file.path())?);
           println!("assert ok {:?}", file.path());
           if let Err(e) = &r {
             println!("error validating {:?}\n", file.path());

@@ -1,12 +1,11 @@
-#[cfg(feature = "additional-controls")]
-use pest_meta;
-
 use crate::ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL};
-#[cfg(feature = "additional-controls")]
-use crate::validator::ByteValue;
 
+#[cfg(feature = "additional-controls")]
+use crate::{ast::Type, token::lookup_control_from_str, validator::ByteValue, Token};
 #[cfg(feature = "additional-controls")]
 use itertools::Itertools;
+#[cfg(feature = "additional-controls")]
+use pest_meta;
 
 /// Retrieve all text strings and byte string literals from a given rule
 /// identifier. Used for proposed .cat control operator.
@@ -60,7 +59,8 @@ pub fn numeric_values_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec<
 }
 
 #[cfg(feature = "additional-controls")]
-/// Concatenate target and controller
+/// Concatenate target and controller. The Vec return type is to accomodate more
+/// than one type choice in the controller.
 pub fn cat_operation<'a>(
   cddl: &CDDL,
   target: &Type2,
@@ -68,6 +68,8 @@ pub fn cat_operation<'a>(
   is_dedent: bool,
 ) -> Result<Vec<Type2<'a>>, String> {
   let mut literals = Vec::new();
+  let ctrl = if is_dedent { Token::DET } else { Token::CAT };
+
   match target {
     Type2::TextValue { value, .. } => match controller {
       // "testing" .cat "123"
@@ -158,7 +160,7 @@ pub fn cat_operation<'a>(
           }
         }
       }
-      _ => return Err("invalid controller used for .cat operation".to_string()),
+      _ => return Err(format!("invalid controller used for {} operation", ctrl)),
     },
     // a .cat "123"
     Type2::Typename { ident, .. } => {
@@ -167,7 +169,7 @@ pub fn cat_operation<'a>(
       if let Some(value) = string_literals_from_ident(cddl, ident).first() {
         literals.append(&mut cat_operation(cddl, value, controller, is_dedent)?);
       } else {
-        return Err("invalid controller used for .cat operation".to_string());
+        return Err(format!("invalid controller used for {} operation", ctrl));
       }
     }
     // ( "test" / "testing" ) .cat "123"
@@ -186,7 +188,7 @@ pub fn cat_operation<'a>(
         }
       }
 
-      return Err("invalid target type in .cat control operator".to_string());
+      return Err(format!("invalid target type in {} control operator", ctrl));
     }
     Type2::UTF8ByteString { value, .. } => match std::str::from_utf8(value) {
       Ok(value) => match controller {
@@ -284,7 +286,7 @@ pub fn cat_operation<'a>(
             }
           }
         }
-        _ => return Err("invalid controller used for .cat operation".to_string()),
+        _ => return Err(format!("invalid controller used for {} operation", ctrl)),
       },
       Err(e) => return Err(format!("error parsing byte string: {}", e)),
     },
@@ -400,7 +402,7 @@ pub fn cat_operation<'a>(
           }
         }
       }
-      _ => return Err("invalid controller used for .cat operation".to_string()),
+      _ => return Err(format!("invalid controller used for {} operation", ctrl)),
     },
     Type2::B64ByteString { value, .. } => match controller {
       // b64'dGVzdGluZw==' .cat "123"
@@ -537,12 +539,12 @@ pub fn cat_operation<'a>(
           }
         }
       }
-      _ => return Err("invalid controller used for .cat operation".to_string()),
+      _ => return Err(format!("invalid controller used for {} operation", ctrl)),
     },
     _ => {
       return Err(format!(
-        "invalid target used for .cat operation, got {}",
-        target
+        "invalid target used for {} operation, got {}",
+        ctrl, target
       ))
     }
   }
@@ -593,7 +595,8 @@ fn dedent_bytes(source: &[u8], is_utf8_byte_string: bool) -> Result<Vec<u8>, Str
   )
 }
 
-/// Numeric addition of target and controller
+/// Numeric addition of target and controller. The Vec return type is to
+/// accomodate more than one type choice in the controller
 pub fn plus_operation<'a>(
   cddl: &CDDL,
   target: &Type2,
@@ -791,7 +794,31 @@ pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
   Ok(())
 }
 
+/// If the controller for an .abnf/.abnfb control operator is a parenthesized
+/// type with a nested .cat/.det, it needs to be parsed beforehand. The Vec
+/// return type is to accomodate more than one type choice in the controller.
+#[cfg(feature = "additional-controls")]
+pub fn abnf_from_complex_controller<'a>(
+  cddl: &'a CDDL,
+  controller: &Type,
+) -> Result<Vec<Type2<'a>>, String> {
+  if let Some(tc) = controller.type_choices.first() {
+    if let Some(operator) = &tc.type1.operator {
+      if let RangeCtlOp::CtlOp { ctrl, .. } = operator.operator {
+        match lookup_control_from_str(ctrl) {
+          Some(Token::CAT) => return cat_operation(cddl, &tc.type1.type2, &operator.type2, false),
+          Some(Token::DET) => return cat_operation(cddl, &tc.type1.type2, &operator.type2, true),
+          _ => return Err("invalid_controller".to_string()),
+        }
+      }
+    }
+  }
+
+  Err("invalid controller".to_string())
+}
+
 #[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests {
   #![allow(unused_imports)]
 

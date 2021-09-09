@@ -184,7 +184,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let mut data = Vec::new();
                 f.read_to_end(&mut data)?;
 
-                match validate_cbor_from_slice(&cddl_str, &data) {
+                #[cfg(feature = "additional-controls")]
+                let c = validate_cbor_from_slice(&cddl_str, &data, None);
+                #[cfg(not(feature = "additional-controls"))]
+                let c = validate_cbor_from_slice(&cddl_str, &data);
+
+                match c {
                   Ok(()) => {
                     writeln!(&mut stdout, "Validation of {:?} is successful", p)?;
                     stdoutbuffwrtr.print(&stdout)?;
@@ -235,7 +240,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
           }
         } else {
-          match validate_cbor_from_slice(&cddl_str, &data) {
+          #[cfg(feature = "additional-controls")]
+          let c = validate_cbor_from_slice(&cddl_str, &data, None);
+          #[cfg(not(feature = "additional-controls"))]
+          let c = validate_cbor_from_slice(&cddl_str, &data);
+
+          match c {
             Ok(()) => {
               writeln!(&mut stdout, "Validation from stdin is successful")?;
               stdoutbuffwrtr.print(&stdout)?;

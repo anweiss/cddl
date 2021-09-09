@@ -8,21 +8,19 @@ use super::{
   token::{self, SocketPlug, Token},
 };
 
-#[cfg(feature = "std")]
-use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
+use std::{cmp::Ordering, marker::PhantomData, mem, result};
 
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
   files::SimpleFiles,
   term,
 };
+use displaydoc::Display;
 
 #[cfg(feature = "std")]
+use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
+#[cfg(feature = "std")]
 use std::borrow::Cow;
-
-use std::{cmp::Ordering, marker::PhantomData, mem, result};
-
-use displaydoc::Display;
 
 #[cfg(not(feature = "std"))]
 use alloc::{

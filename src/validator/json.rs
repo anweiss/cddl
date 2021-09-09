@@ -1,20 +1,20 @@
 #![cfg(feature = "std")]
 #![cfg(feature = "json")]
 
+use super::*;
 use crate::{
   ast::*,
   token::{self, Token},
   visitor::{self, *},
 };
+
+use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
+
 use chrono::{TimeZone, Utc};
+use serde_json::Value;
 
 #[cfg(feature = "additional-controls")]
 use control::{cat_operation, plus_operation, validate_abnf};
-
-use serde_json::Value;
-use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
-
-use super::*;
 
 /// JSON validation Result
 pub type Result = std::result::Result<(), Error>;
@@ -380,7 +380,7 @@ impl<'a> JSONValidator<'a> {
               }
 
               #[cfg(feature = "additional-controls")]
-              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
               #[cfg(not(feature = "additional-controls"))]
               let mut jv = JSONValidator::new(self.cddl, v.clone());
 
@@ -417,7 +417,7 @@ impl<'a> JSONValidator<'a> {
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
               #[cfg(feature = "additional-controls")]
-              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
               #[cfg(not(feature = "additional-controls"))]
               let mut jv = JSONValidator::new(self.cddl, v.clone());
 
@@ -822,7 +822,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               }
 
               #[cfg(feature = "additional-controls")]
-              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
               #[cfg(not(feature = "additional-controls"))]
               let mut jv = JSONValidator::new(self.cddl, v.clone());
 
@@ -859,7 +859,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
               #[cfg(feature = "additional-controls")]
-              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
               #[cfg(not(feature = "additional-controls"))]
               let mut jv = JSONValidator::new(self.cddl, v.clone());
 
@@ -1349,8 +1349,20 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         match cat_operation(self.cddl, target, controller, false) {
           Ok(values) => {
+            let error_count = self.errors.len();
+
             for v in values.iter() {
+              let cur_errors = self.errors.len();
+
               self.visit_type2(v)?;
+
+              if self.errors.len() == cur_errors {
+                for _ in 0..self.errors.len() - error_count {
+                  self.errors.pop();
+                }
+
+                break;
+              }
             }
           }
           Err(e) => self.add_error(e),
@@ -1364,8 +1376,20 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         match cat_operation(self.cddl, target, controller, true) {
           Ok(values) => {
+            let error_count = self.errors.len();
+
             for v in values.iter() {
+              let cur_errors = self.errors.len();
+
               self.visit_type2(v)?;
+
+              if self.errors.len() == cur_errors {
+                for _ in 0..self.errors.len() - error_count {
+                  self.errors.pop();
+                }
+
+                break;
+              }
             }
           }
           Err(e) => self.add_error(e),
@@ -1379,8 +1403,18 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         match plus_operation(self.cddl, target, controller) {
           Ok(values) => {
+            let error_count = self.errors.len();
             for v in values.iter() {
+              let cur_errors = self.errors.len();
+
               self.visit_type2(v)?;
+              if self.errors.len() == cur_errors {
+                for _ in 0..self.errors.len() - error_count {
+                  self.errors.pop();
+                }
+
+                break;
+              }
             }
           }
 
@@ -1412,6 +1446,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         self.ctrl = None;
       }
       #[cfg(feature = "additional-controls")]
+      #[cfg(not(target_arch = "wasm32"))]
       t @ Some(Token::FEATURE) => {
         self.ctrl = t;
 
@@ -1428,6 +1463,38 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             }
           } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
             if ef.contains(&std::str::from_utf8(value).map_err(Error::UTF8Parsing)?) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            }
+          }
+        }
+
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      #[cfg(target_arch = "wasm32")]
+      t @ Some(Token::FEATURE) => {
+        self.ctrl = t;
+
+        if let Some(ef) = &self.enabled_features {
+          let tv = text_value_from_type2(self.cddl, controller);
+          if let Some(Type2::TextValue { value, .. }) = tv {
+            if ef.contains(&JsValue::from(value.as_ref())) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            }
+          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
+            if ef.contains(&JsValue::from(
+              std::str::from_utf8(value).map_err(Error::UTF8Parsing)?,
+            )) {
               let err_count = self.errors.len();
               self.visit_type2(target)?;
               if self.errors.len() > err_count {
@@ -1492,8 +1559,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                   }
 
                   #[cfg(feature = "additional-controls")]
-                  let mut jv =
-                    JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
                   #[cfg(not(feature = "additional-controls"))]
                   let mut jv = JSONValidator::new(self.cddl, v.clone());
 
@@ -1530,8 +1596,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               } else if let Some(idx) = self.group_entry_idx.take() {
                 if let Some(v) = a.get(idx) {
                   #[cfg(feature = "additional-controls")]
-                  let mut jv =
-                    JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
                   #[cfg(not(feature = "additional-controls"))]
                   let mut jv = JSONValidator::new(self.cddl, v.clone());
 
@@ -1633,8 +1698,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             }
 
             #[cfg(feature = "additional-controls")]
-            let mut jv =
-              JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
             #[cfg(not(feature = "additional-controls"))]
             let mut jv = JSONValidator::new(self.cddl, self.json.clone());
 
@@ -1694,8 +1758,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             }
 
             #[cfg(feature = "additional-controls")]
-            let mut jv =
-              JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
             #[cfg(not(feature = "additional-controls"))]
             let mut jv = JSONValidator::new(self.cddl, self.json.clone());
 
@@ -1747,8 +1810,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             }
 
             #[cfg(feature = "additional-controls")]
-            let mut jv =
-              JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
             #[cfg(not(feature = "additional-controls"))]
             let mut jv = JSONValidator::new(self.cddl, self.json.clone());
 
@@ -1914,8 +1976,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 }
 
                 #[cfg(feature = "additional-controls")]
-                let mut jv =
-                  JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
                 #[cfg(not(feature = "additional-controls"))]
                 let mut jv = JSONValidator::new(self.cddl, v.clone());
 
@@ -1952,8 +2013,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             } else if let Some(idx) = self.group_entry_idx.take() {
               if let Some(v) = a.get(idx) {
                 #[cfg(feature = "additional-controls")]
-                let mut jv =
-                  JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
                 #[cfg(not(feature = "additional-controls"))]
                 let mut jv = JSONValidator::new(self.cddl, v.clone());
 
@@ -2095,7 +2155,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
     if let Some(values) = &self.values_to_validate {
       for v in values.iter() {
         #[cfg(feature = "additional-controls")]
-        let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+        let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
         #[cfg(not(feature = "additional-controls"))]
         let mut jv = JSONValidator::new(self.cddl, v.clone());
 
@@ -2120,9 +2180,9 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
     if let Some(v) = self.object_value.take() {
       #[cfg(feature = "additional-controls")]
-      let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+      let mut jv = JSONValidator::new(self.cddl, v, self.enabled_features);
       #[cfg(not(feature = "additional-controls"))]
-      let mut jv = JSONValidator::new(self.cddl, v.clone());
+      let mut jv = JSONValidator::new(self.cddl, v);
 
       jv.generic_rules = self.generic_rules.clone();
       jv.eval_generic_rule = self.eval_generic_rule;
@@ -2172,8 +2232,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
 
         #[cfg(feature = "additional-controls")]
-        let mut jv =
-          JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+        let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
         #[cfg(not(feature = "additional-controls"))]
         let mut jv = JSONValidator::new(self.cddl, self.json.clone());
 
@@ -2425,6 +2484,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 }
 
 #[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests {
   #![allow(unused_imports)]
 

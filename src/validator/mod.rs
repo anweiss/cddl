@@ -1,10 +1,18 @@
 /// CBOR validation implementation
 pub mod cbor;
-
 /// JSON validation implementation
 pub mod json;
 
 mod control;
+
+use crate::{
+  ast::{
+    GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type2, TypeChoice, TypeRule,
+    CDDL,
+  },
+  token::*,
+  visitor::Visitor,
+};
 
 use std::error::Error;
 
@@ -15,20 +23,6 @@ use json::JSONValidator;
 use serde::de::Deserialize;
 
 #[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
-
-use crate::{
-  ast::{
-    GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type2, TypeChoice, TypeRule,
-    CDDL,
-  },
-  token::*,
-  visitor::Visitor,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::{cddl_from_str, lexer_from_str};
-
-#[cfg(target_arch = "wasm32")]
 use crate::{
   error::ErrorMsg,
   lexer::{Lexer, Position},
@@ -36,6 +30,11 @@ use crate::{
 };
 #[cfg(target_arch = "wasm32")]
 use serde::Serialize;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{cddl_from_str, lexer_from_str};
 
 #[cfg(target_arch = "wasm32")]
 #[derive(Serialize)]
@@ -158,6 +157,25 @@ pub fn validate_json_from_str(cddl: &str, json: &str) -> std::result::Result<JsV
 
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(feature = "cbor")]
+#[cfg(feature = "additional-controls")]
+/// Validate CBOR slice from a given CDDL document string
+pub fn validate_cbor_from_slice(
+  cddl: &str,
+  cbor_slice: &[u8],
+  enabled_features: Option<&[&str]>,
+) -> cbor::Result {
+  let mut lexer = lexer_from_str(cddl);
+  let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(cbor::Error::CDDLParsing)?;
+  let cbor =
+    serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice).map_err(cbor::Error::CBORParsing)?;
+
+  let mut cv = CBORValidator::new(&cddl, cbor, enabled_features);
+  cv.validate()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "cbor")]
+#[cfg(not(feature = "additional-controls"))]
 /// Validate CBOR slice from a given CDDL document string
 pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result {
   let mut lexer = lexer_from_str(cddl);
@@ -171,6 +189,50 @@ pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result {
 
 #[cfg(target_arch = "wasm32")]
 #[cfg(feature = "cbor")]
+#[cfg(feature = "additional-controls")]
+#[wasm_bindgen]
+/// Validate CBOR slice from a given CDDL document string
+pub fn validate_cbor_from_slice(
+  cddl: &str,
+  cbor_slice: &[u8],
+  enabled_features: Option<Box<[JsValue]>>,
+) -> std::result::Result<JsValue, JsValue> {
+  let mut l = Lexer::new(cddl);
+  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      JsValue::from_serde(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
+
+  let cbor = serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice)
+    .map_err(|e| JsValue::from(e.to_string()))?;
+
+  let mut cv = CBORValidator::new(&c, cbor, enabled_features);
+  cv.validate()
+    .map_err(|e| JsValue::from(e.to_string()))
+    .map(|_| JsValue::default())
+}
+
+#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "cbor")]
+#[cfg(not(feature = "additional-controls"))]
 #[wasm_bindgen]
 /// Validate CBOR slice from a given CDDL document string
 pub fn validate_cbor_from_slice(

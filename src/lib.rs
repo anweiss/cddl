@@ -214,7 +214,11 @@
 //!   "address": "1234 Lakeshore Dr"
 //! }"#;
 //!
-//! assert!(validate_json_from_str(cddl, json).is_ok())
+//! #[cfg(not(feature = "additional-controls"))]
+//! assert!(validate_json_from_str(cddl, json).is_ok());
+//!
+//! #[cfg(feature = "additional-controls")]
+//! assert!(validate_json_from_str(cddl, json, None).is_ok());
 //! ```
 //!
 //! This crate uses the [Serde](https://serde.rs/) framework, and more
@@ -370,7 +374,11 @@
 //!
 //! let cbor = b"\xF4";
 //!
-//! assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
+//! #[cfg(not(feature = "additional-controls"))]
+//! assert!(validate_cbor_from_slice(cddl, cbor).is_ok());
+//!
+//! #[cfg(feature = "additional-controls")]
+//! assert!(validate_cbor_from_slice(cddl, cbor, None).is_ok());
 //! ```
 //!
 //! This crate also uses [Serde](https://serde.rs/) and
