@@ -654,7 +654,9 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
                 }
               }
 
-              #[cfg(feature = "additional-controls")]
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
               let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
               #[cfg(not(feature = "additional-controls"))]
               let mut cv = CBORValidator::new(self.cddl, v.clone());
@@ -691,7 +693,9 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
-              #[cfg(feature = "additional-controls")]
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
               let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
               #[cfg(not(feature = "additional-controls"))]
               let mut cv = CBORValidator::new(self.cddl, v.clone());
@@ -1502,8 +1506,11 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           Ok(value) => {
             let current_location = self.cbor_location.clone();
 
-            #[cfg(feature = "additional-controls")]
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut cv = CBORValidator::new(self.cddl, value, self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
             let mut cv = CBORValidator::new(self.cddl, value, self.enabled_features);
+
             #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, value);
 
@@ -1536,12 +1543,19 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           Ok(Value::Array(_)) => {
             let current_location = self.cbor_location.clone();
 
-            #[cfg(feature = "additional-controls")]
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut cv = CBORValidator::new(
+              self.cddl,
+              value.unwrap_or(Value::Null),
+              self.enabled_features.clone(),
+            );
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
             let mut cv = CBORValidator::new(
               self.cddl,
               value.unwrap_or(Value::Null),
               self.enabled_features,
             );
+
             #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, value.unwrap_or(Value::Null));
 
@@ -1582,6 +1596,9 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
 
             for (k, v) in m.iter() {
               #[cfg(feature = "additional-controls")]
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut cv = CBORValidator::new(self.cddl, k.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
               let mut cv = CBORValidator::new(self.cddl, k.clone(), self.enabled_features);
               #[cfg(not(feature = "additional-controls"))]
               let mut cv = CBORValidator::new(self.cddl, k.clone());
@@ -1649,7 +1666,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
                     }
                   }
 
-                  #[cfg(feature = "additional-controls")]
+                  #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                  let mut cv =
+                    CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
                   let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
                   #[cfg(not(feature = "additional-controls"))]
                   let mut cv = CBORValidator::new(self.cddl, v.clone());
@@ -1686,7 +1706,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
                 }
               } else if let Some(idx) = self.group_entry_idx.take() {
                 if let Some(v) = a.get(idx) {
-                  #[cfg(feature = "additional-controls")]
+                  #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                  let mut cv =
+                    CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
                   let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
                   #[cfg(not(feature = "additional-controls"))]
                   let mut cv = CBORValidator::new(self.cddl, v.clone());
@@ -1775,7 +1798,9 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           self.entry_counts = Some(entry_counts);
 
           for (k, v) in m.iter() {
-            #[cfg(feature = "additional-controls")]
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut cv = CBORValidator::new(self.cddl, k.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
             let mut cv = CBORValidator::new(self.cddl, k.clone(), self.enabled_features);
             #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, k.clone());
@@ -1834,7 +1859,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
               });
             }
 
-            #[cfg(feature = "additional-controls")]
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut cv =
+              CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
             let mut cv = CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features);
             #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
@@ -1894,7 +1922,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
               });
             }
 
-            #[cfg(feature = "additional-controls")]
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut cv =
+              CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
             let mut cv = CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features);
             #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
@@ -1946,7 +1977,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
               });
             }
 
-            #[cfg(feature = "additional-controls")]
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut cv =
+              CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
             let mut cv = CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features);
             #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
@@ -1991,7 +2025,13 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
             return Ok(());
           }
 
-          #[cfg(feature = "additional-controls")]
+          #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+          let mut cv = CBORValidator::new(
+            self.cddl,
+            value.as_ref().clone(),
+            self.enabled_features.clone(),
+          );
+          #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
           let mut cv = CBORValidator::new(self.cddl, value.as_ref().clone(), self.enabled_features);
           #[cfg(not(feature = "additional-controls"))]
           let mut cv = CBORValidator::new(self.cddl, value.as_ref().clone());
@@ -2316,7 +2356,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
                   }
                 }
 
-                #[cfg(feature = "additional-controls")]
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut cv =
+                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
                 let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
                 #[cfg(not(feature = "additional-controls"))]
                 let mut cv = CBORValidator::new(self.cddl, v.clone());
@@ -2353,7 +2396,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
               }
             } else if let Some(idx) = self.group_entry_idx.take() {
               if let Some(v) = a.get(idx) {
-                #[cfg(feature = "additional-controls")]
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut cv =
+                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
                 let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
                 #[cfg(not(feature = "additional-controls"))]
                 let mut cv = CBORValidator::new(self.cddl, v.clone());
@@ -2946,7 +2992,9 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
 
     if let Some(values) = &self.values_to_validate {
       for v in values.iter() {
-        #[cfg(feature = "additional-controls")]
+        #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+        let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+        #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
         let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
         #[cfg(not(feature = "additional-controls"))]
         let mut cv = CBORValidator::new(self.cddl, v.clone());
@@ -2971,7 +3019,9 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
     }
 
     if let Some(v) = self.object_value.take() {
-      #[cfg(feature = "additional-controls")]
+      #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+      let mut cv = CBORValidator::new(self.cddl, v, self.enabled_features.clone());
+      #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
       let mut cv = CBORValidator::new(self.cddl, v, self.enabled_features);
       #[cfg(not(feature = "additional-controls"))]
       let mut cv = CBORValidator::new(self.cddl, v);
@@ -3023,7 +3073,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           });
         }
 
-        #[cfg(feature = "additional-controls")]
+        #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+        let mut cv =
+          CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features.clone());
+        #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
         let mut cv = CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features);
         #[cfg(not(feature = "additional-controls"))]
         let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
@@ -3337,7 +3390,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
                   }
                 }
 
-                #[cfg(feature = "additional-controls")]
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut cv =
+                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
                 let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
                 #[cfg(not(feature = "additional-controls"))]
                 let mut cv = CBORValidator::new(self.cddl, v.clone());
@@ -3374,7 +3430,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
               }
             } else if let Some(idx) = self.group_entry_idx.take() {
               if let Some(v) = a.get(idx) {
-                #[cfg(feature = "additional-controls")]
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut cv =
+                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
                 let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
                 #[cfg(not(feature = "additional-controls"))]
                 let mut cv = CBORValidator::new(self.cddl, v.clone());

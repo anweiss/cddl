@@ -326,6 +326,7 @@ impl<'a> JSONValidator<'a> {
       is_root: false,
       enabled_features,
       has_feature_errors: false,
+      disabled_features: None,
     }
   }
 
@@ -385,7 +386,9 @@ impl<'a> JSONValidator<'a> {
                 }
               }
 
-              #[cfg(feature = "additional-controls")]
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
               let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
               #[cfg(not(feature = "additional-controls"))]
               let mut jv = JSONValidator::new(self.cddl, v.clone());
@@ -422,7 +425,9 @@ impl<'a> JSONValidator<'a> {
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
-              #[cfg(feature = "additional-controls")]
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
               let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
               #[cfg(not(feature = "additional-controls"))]
               let mut jv = JSONValidator::new(self.cddl, v.clone());
@@ -834,7 +839,9 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 }
               }
 
-              #[cfg(feature = "additional-controls")]
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
               let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
               #[cfg(not(feature = "additional-controls"))]
               let mut jv = JSONValidator::new(self.cddl, v.clone());
@@ -871,7 +878,9 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
-              #[cfg(feature = "additional-controls")]
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
               let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
               #[cfg(not(feature = "additional-controls"))]
               let mut jv = JSONValidator::new(self.cddl, v.clone());
@@ -1615,7 +1624,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                     }
                   }
 
-                  #[cfg(feature = "additional-controls")]
+                  #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                  let mut jv =
+                    JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
                   let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
                   #[cfg(not(feature = "additional-controls"))]
                   let mut jv = JSONValidator::new(self.cddl, v.clone());
@@ -1652,7 +1664,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 }
               } else if let Some(idx) = self.group_entry_idx.take() {
                 if let Some(v) = a.get(idx) {
-                  #[cfg(feature = "additional-controls")]
+                  #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                  let mut jv =
+                    JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
                   let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
                   #[cfg(not(feature = "additional-controls"))]
                   let mut jv = JSONValidator::new(self.cddl, v.clone());
@@ -1754,7 +1769,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               });
             }
 
-            #[cfg(feature = "additional-controls")]
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut jv =
+              JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
             let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
             #[cfg(not(feature = "additional-controls"))]
             let mut jv = JSONValidator::new(self.cddl, self.json.clone());
@@ -1814,7 +1832,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               });
             }
 
-            #[cfg(feature = "additional-controls")]
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut jv =
+              JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
             let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
             #[cfg(not(feature = "additional-controls"))]
             let mut jv = JSONValidator::new(self.cddl, self.json.clone());
@@ -1866,7 +1887,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               });
             }
 
-            #[cfg(feature = "additional-controls")]
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut jv =
+              JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
             let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
             #[cfg(not(feature = "additional-controls"))]
             let mut jv = JSONValidator::new(self.cddl, self.json.clone());
@@ -2032,7 +2056,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                   }
                 }
 
-                #[cfg(feature = "additional-controls")]
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut jv =
+                  JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
                 let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
                 #[cfg(not(feature = "additional-controls"))]
                 let mut jv = JSONValidator::new(self.cddl, v.clone());
@@ -2069,7 +2096,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               }
             } else if let Some(idx) = self.group_entry_idx.take() {
               if let Some(v) = a.get(idx) {
-                #[cfg(feature = "additional-controls")]
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut jv =
+                  JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
                 let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
                 #[cfg(not(feature = "additional-controls"))]
                 let mut jv = JSONValidator::new(self.cddl, v.clone());
@@ -2211,7 +2241,9 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
     if let Some(values) = &self.values_to_validate {
       for v in values.iter() {
-        #[cfg(feature = "additional-controls")]
+        #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+        let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+        #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
         let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
         #[cfg(not(feature = "additional-controls"))]
         let mut jv = JSONValidator::new(self.cddl, v.clone());
@@ -2236,7 +2268,9 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
     }
 
     if let Some(v) = self.object_value.take() {
-      #[cfg(feature = "additional-controls")]
+      #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+      let mut jv = JSONValidator::new(self.cddl, v, self.enabled_features.clone());
+      #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
       let mut jv = JSONValidator::new(self.cddl, v, self.enabled_features);
       #[cfg(not(feature = "additional-controls"))]
       let mut jv = JSONValidator::new(self.cddl, v);
@@ -2288,7 +2322,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           });
         }
 
-        #[cfg(feature = "additional-controls")]
+        #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+        let mut jv =
+          JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+        #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
         let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
         #[cfg(not(feature = "additional-controls"))]
         let mut jv = JSONValidator::new(self.cddl, self.json.clone());

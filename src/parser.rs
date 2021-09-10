@@ -1068,21 +1068,18 @@ where
           span,
         })
       }
-      _ => match token::control_str_from_token(&self.cur_token) {
-        Some(ctrl) => {
-          #[cfg(feature = "ast-span")]
-          {
-            span.0 = self.lexer_position.range.0;
-          }
-
-          Some(RangeCtlOp::CtlOp {
-            ctrl,
-            #[cfg(feature = "ast-span")]
-            span,
-          })
+      _ => token::control_str_from_token(&self.cur_token).map(|ctrl| {
+        #[cfg(feature = "ast-span")]
+        {
+          span.0 = self.lexer_position.range.0;
         }
-        None => None,
-      },
+
+        RangeCtlOp::CtlOp {
+          ctrl,
+          #[cfg(feature = "ast-span")]
+          span,
+        }
+      }),
     };
 
     #[cfg(feature = "ast-span")]
