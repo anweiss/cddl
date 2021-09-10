@@ -57,7 +57,7 @@ cargo install cddl
 docker pull ghcr.io/anweiss/cddl-cli:latest
 ```
 
-### Usage
+### CLI usage
 
 Instructions for using the tool can be viewed by executing the `help` subcommand:
 
@@ -102,7 +102,7 @@ docker run -i --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:latest valida
 
 You can also find a simple RFC 8610 conformance tool at https://cddl.anweiss.tech. This same codebase has been compiled for use in the browser via WebAssembly.
 
-## Visual Studio Code Extension
+## Visual Studio Code extension
 
 An extension for editing CDDL documents with Visual Studio Code has been published to the Marketplace [here](https://marketplace.visualstudio.com/items?itemName=anweiss.cddl-languageserver). You can find more information in the [README](cddl-lsp/README.md).
 
@@ -144,6 +144,30 @@ cddl = "0.8"
 ```
 
 Both JSON and CBOR validation require `std`.
+
+### Feature flags
+
+A few convenience features have been included to make the AST more concise and for enabling additional functionality. You can build with `default-features = false` for a `no_std` build and selectively enable any of the features below.
+
+**`--feature ast-span`**
+
+Add the `Span` type to the AST for keeping track of the position of the lexer and parser. Enabled by default.
+
+**`--feature ast-comments`**
+
+Include comment strings in the AST. Enabled by default.
+
+**`--feature json`**
+
+Enable JSON validation. Enabled by default.
+
+**`--feature cbor`**
+
+Enable CBOR validation. Enabled by default.
+
+**`--feature additional-controls`**
+
+Enable validation support for the additional control operators proposed in [https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05](https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05). Enabled by default.
 
 ### Parsing CDDL
 
@@ -267,6 +291,32 @@ Below is the table of supported control operators:
 
 <a name="regex">3</a>: Due to Perl-Compatible Regular Expressions (PCREs) being more widely used than XSD regular expressions, this crate also provides support for the proposed `.pcre` control extension in place of the `.regexp` operator (see [Discussion](https://tools.ietf.org/html/rfc8610#section-3.8.3.2) and [CDDL-Freezer proposal](https://tools.ietf.org/html/draft-bormann-cbor-cddl-freezer-03#section-5.1)). Ensure that your regex string is properly JSON escaped when using this control.
 
+If you've enabled the `additional-controls` feature, the table of controls below is also available for use:
+
+| Control operator | Supported                                                                                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.plus`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.cat`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.det`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.abnf`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.abnfb`         | Ignored when validating JSON                                                                                                                      |
+| `.feature`       | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+
+You can activate features during validation as follows:
+
+```rust
+use cddl::validate_json_from_str;
+
+let cddl = r#"
+  v = JC<"v", 2>
+  JC<J, C> =  C .feature "cbor" / J .feature "json"
+"#;
+
+let json = r#""v""#;
+
+assert!(validate_json_from_str(cddl, json, Some(&["json"])).is_ok())
+```
+
 #### Comparing with JSON schema and JSON schema language
 
 [CDDL](https://tools.ietf.org/html/rfc8610), [JSON schema](https://json-schema.org/) and [JSON schema language](https://tools.ietf.org/html/draft-json-schema-language-02) can all be used to define JSON data structures. However, the approaches taken to develop each of these are vastly different. A good place to find past discussions on the differences between these formats is the [IETF mail archive](https://mailarchive.ietf.org/arch/), specifically in the JSON and CBOR lists. The purpose of this crate is not to argue for the use of CDDL over any one of these formats, but simply to provide an example implementation in Rust.
@@ -305,6 +355,32 @@ The following tags are supported when validating CBOR:
 | `regexp = #6.35(tstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 | `mime-message = #6.36(tstr)`             | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 | `cbor-any = #6.55799(any)`               | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+
+If you've enabled the `additional-controls` feature, the table of controls below is also available for use:
+
+| Control operator | Supported                                                                                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.plus`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.cat`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.det`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.abnf`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.abnfb`         | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.feature`       | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+
+You can activate features during validation by passing a slice of feature strings as follows:
+
+```rust
+use cddl::validate_cbor_from_slice;
+
+let cddl = r#"
+  v = JC<"v", 2>
+  JC<J, C> =  C .feature "cbor" / J .feature "json"
+"#;
+
+let cbor = b"\x02";
+
+assert!(validate_cbor_from_slice(cddl, cbor, Some(&["cbor"])).is_ok())
+```
 
 ## `no_std` support
 

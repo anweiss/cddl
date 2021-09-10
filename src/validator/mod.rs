@@ -1,3 +1,5 @@
+#![cfg(not(feature = "lsp"))]
+
 /// CBOR validation implementation
 pub mod cbor;
 /// JSON validation implementation

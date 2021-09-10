@@ -1,5 +1,6 @@
 #![cfg(feature = "cbor")]
 #![cfg(feature = "json")]
+#![cfg(not(feature = "lsp"))]
 
 #[macro_use]
 extern crate clap;

@@ -1,5 +1,6 @@
 #![cfg(feature = "std")]
 #![cfg(feature = "cbor")]
+#![cfg(not(feature = "lsp"))]
 
 use super::*;
 use crate::{
@@ -3133,6 +3134,15 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
               Some(format!("expected computed .plus value {}, got {}", v, i))
             }
           }
+          #[cfg(feature = "additional-controls")]
+          None | Some(Token::FEATURE) => {
+            if *i == *v as i128 {
+              None
+            } else {
+              Some(format!("expected value {}, got {}", v, i))
+            }
+          }
+          #[cfg(not(feature = "additional-controls"))]
           None => {
             if *i == *v as i128 {
               None
@@ -3173,6 +3183,15 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
               Some(format!("expected computed .plus value {}, got {}", v, i))
             }
           }
+          #[cfg(feature = "additional-controls")]
+          None | Some(Token::FEATURE) => {
+            if *i == *v as i128 {
+              None
+            } else {
+              Some(format!("expected value {}, got {}", v, i))
+            }
+          }
+          #[cfg(not(feature = "additional-controls"))]
           None => {
             if *i == *v as i128 {
               None
@@ -3205,6 +3224,15 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
               Some(format!("expected computed .plus value {}, got {}", v, f))
             }
           }
+          #[cfg(feature = "additional-controls")]
+          None | Some(Token::FEATURE) => {
+            if (f - *v).abs() < std::f64::EPSILON {
+              None
+            } else {
+              Some(format!("expected value {}, got {}", v, f))
+            }
+          }
+          #[cfg(not(feature = "additional-controls"))]
           None => {
             if (f - *v).abs() < std::f64::EPSILON {
               None

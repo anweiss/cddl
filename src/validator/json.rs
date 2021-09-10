@@ -1,5 +1,6 @@
 #![cfg(feature = "std")]
 #![cfg(feature = "json")]
+#![cfg(not(feature = "lsp"))]
 
 use super::*;
 use crate::{

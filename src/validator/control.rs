@@ -1,3 +1,6 @@
+#![cfg(any(feature = "json", feature = "cbor"))]
+#![cfg(not(feature = "lsp"))]
+
 use crate::ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL};
 
 #[cfg(feature = "additional-controls")]
