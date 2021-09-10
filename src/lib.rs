@@ -3,7 +3,7 @@
 //! [![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl)
 //! [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl)
 //! [![Publish
-//! packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.8.7&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22)
+//! packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.9.0&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22)
 //! [![Build and
 //! Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22)
 //!
@@ -183,7 +183,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cddl = "0.8"
+//! cddl = "0.9"
 //! ```
 //!
 //! Both JSON and CBOR validation require `std`.
@@ -499,7 +499,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cddl = { version = "0.8", default-features = false }
+//! cddl = { version = "0.9", default-features = false }
 //! ```
 //!
 //! Zero-copy parsing is implemented to the extent that is possible. Allocation

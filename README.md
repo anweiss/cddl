@@ -1,6 +1,6 @@
 # cddl-rs
 
-[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Publish packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.8.7&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22) [![Build and Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22)
+[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Publish packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.9.0&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22) [![Build and Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22)
 
 > This crate was originally developed as a personal learning exercise for getting acquainted with Rust and parsing in general. There are likely more performant and stable libraries out there for parsing CDDL. While there are some examples of this crate being used in production, careful consideration should be made prior to using this crate as such.
 
@@ -140,7 +140,7 @@ Simply add the dependency to `Cargo.toml`:
 
 ```toml
 [dependencies]
-cddl = "0.8"
+cddl = "0.9"
 ```
 
 Both JSON and CBOR validation require `std`.
@@ -388,7 +388,7 @@ Only the lexer and parser can be used in a `no_std` context provided that a heap
 
 ```toml
 [dependencies]
-cddl = { version = "0.8", default-features = false }
+cddl = { version = "0.9", default-features = false }
 ```
 
 Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling and diagnostics.
