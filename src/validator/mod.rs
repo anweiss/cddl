@@ -1,32 +1,183 @@
+#![cfg(not(feature = "lsp"))]
+
 /// CBOR validation implementation
 pub mod cbor;
-
 /// JSON validation implementation
 pub mod json;
 
-use cbor::CBORValidator;
-use json::JSONValidator;
-use serde::de::Deserialize;
+mod control;
 
 use crate::{
   ast::{
     GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type2, TypeChoice, TypeRule,
     CDDL,
   },
-  cddl_from_str, lexer_from_str,
   token::*,
+  visitor::Visitor,
 };
 
+use std::error::Error;
+
+#[cfg(feature = "cbor")]
+use cbor::CBORValidator;
+#[cfg(feature = "json")]
+use json::JSONValidator;
+use serde::de::Deserialize;
+
+#[cfg(target_arch = "wasm32")]
+use crate::{
+  error::ErrorMsg,
+  lexer::{Lexer, Position},
+  parser::{self, Parser},
+};
+#[cfg(target_arch = "wasm32")]
+use serde::Serialize;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{cddl_from_str, lexer_from_str};
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Serialize)]
+struct ParserError {
+  position: Position,
+  msg: ErrorMsg,
+}
+
+trait Validator<'a, E: Error>: Visitor<'a, E> {
+  fn validate(&mut self) -> std::result::Result<(), E>;
+  fn add_error(&mut self, reason: String);
+}
+
+trait Validatable {}
+
+impl Validatable for serde_cbor::Value {}
+impl Validatable for serde_json::Value {}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "json")]
 /// Validate JSON string from a given CDDL document string
-pub fn validate_json_from_str(cddl: &str, json: &str) -> json::Result {
+pub fn validate_json_from_str(
+  cddl: &str,
+  json: &str,
+  #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
+) -> json::Result {
   let mut lexer = lexer_from_str(cddl);
   let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing)?;
   let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
+  #[cfg(feature = "additional-controls")]
+  let mut jv = JSONValidator::new(&cddl, json, enabled_features);
+  #[cfg(not(feature = "additional-controls"))]
   let mut jv = JSONValidator::new(&cddl, json);
+
   jv.validate()
 }
 
+#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "additional-controls")]
+#[cfg(feature = "json")]
+#[wasm_bindgen]
+/// Validate JSON string from a given CDDL document string
+pub fn validate_json_from_str(
+  cddl: &str,
+  json: &str,
+  enabled_features: Option<Box<[JsValue]>>,
+) -> std::result::Result<JsValue, JsValue> {
+  let mut l = Lexer::new(cddl);
+  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      JsValue::from_serde(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
+
+  let json =
+    serde_json::from_str::<serde_json::Value>(json).map_err(|e| JsValue::from(e.to_string()))?;
+
+  let mut jv = JSONValidator::new(&c, json, enabled_features);
+  jv.validate()
+    .map_err(|e| JsValue::from(e.to_string()))
+    .map(|_| JsValue::default())
+}
+
+#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "json")]
+#[cfg(not(feature = "additional-controls"))]
+#[wasm_bindgen]
+/// Validate JSON string from a given CDDL document string
+pub fn validate_json_from_str(cddl: &str, json: &str) -> std::result::Result<JsValue, JsValue> {
+  let mut l = Lexer::new(cddl);
+  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      JsValue::from_serde(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
+
+  let json =
+    serde_json::from_str::<serde_json::Value>(json).map_err(|e| JsValue::from(e.to_string()))?;
+
+  let mut jv = JSONValidator::new(&c, json);
+  jv.validate()
+    .map_err(|e| JsValue::from(e.to_string()))
+    .map(|_| JsValue::default())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "cbor")]
+#[cfg(feature = "additional-controls")]
+/// Validate CBOR slice from a given CDDL document string
+pub fn validate_cbor_from_slice(
+  cddl: &str,
+  cbor_slice: &[u8],
+  enabled_features: Option<&[&str]>,
+) -> cbor::Result {
+  let mut lexer = lexer_from_str(cddl);
+  let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(cbor::Error::CDDLParsing)?;
+  let cbor =
+    serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice).map_err(cbor::Error::CBORParsing)?;
+
+  let mut cv = CBORValidator::new(&cddl, cbor, enabled_features);
+  cv.validate()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "cbor")]
+#[cfg(not(feature = "additional-controls"))]
 /// Validate CBOR slice from a given CDDL document string
 pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result {
   let mut lexer = lexer_from_str(cddl);
@@ -38,6 +189,91 @@ pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result {
   cv.validate()
 }
 
+#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "cbor")]
+#[cfg(feature = "additional-controls")]
+#[wasm_bindgen]
+/// Validate CBOR slice from a given CDDL document string
+pub fn validate_cbor_from_slice(
+  cddl: &str,
+  cbor_slice: &[u8],
+  enabled_features: Option<Box<[JsValue]>>,
+) -> std::result::Result<JsValue, JsValue> {
+  let mut l = Lexer::new(cddl);
+  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      JsValue::from_serde(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
+
+  let cbor = serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice)
+    .map_err(|e| JsValue::from(e.to_string()))?;
+
+  let mut cv = CBORValidator::new(&c, cbor, enabled_features);
+  cv.validate()
+    .map_err(|e| JsValue::from(e.to_string()))
+    .map(|_| JsValue::default())
+}
+
+#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "cbor")]
+#[cfg(not(feature = "additional-controls"))]
+#[wasm_bindgen]
+/// Validate CBOR slice from a given CDDL document string
+pub fn validate_cbor_from_slice(
+  cddl: &str,
+  cbor_slice: &[u8],
+) -> std::result::Result<JsValue, JsValue> {
+  let mut l = Lexer::new(cddl);
+  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      JsValue::from_serde(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
+
+  let cbor = serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice)
+    .map_err(|e| JsValue::from(e.to_string()))?;
+
+  let mut cv = CBORValidator::new(&c, cbor);
+  cv.validate()
+    .map_err(|e| JsValue::from(e.to_string()))
+    .map(|_| JsValue::default())
+}
+
 /// Find non-choice alternate rule from a given identifier
 pub fn rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a Rule<'a>> {
   cddl.rules.iter().find_map(|r| match r {
@@ -45,6 +281,74 @@ pub fn rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a Rul
     Rule::Group { rule, .. } if rule.name == *ident && !rule.is_group_choice_alternate => Some(r),
     _ => None,
   })
+}
+
+/// Find text values from a given identifier
+pub fn text_value_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a Type2<'a>> {
+  cddl.rules.iter().find_map(|r| match r {
+    Rule::Type { rule, .. } if rule.name == *ident => {
+      rule.value.type_choices.iter().find_map(|tc| {
+        if tc.type1.operator.is_none() {
+          match &tc.type1.type2 {
+            Type2::TextValue { .. } | Type2::UTF8ByteString { .. } => Some(&tc.type1.type2),
+            Type2::Typename { ident, .. } => text_value_from_ident(cddl, ident),
+            Type2::ParenthesizedType { pt, .. } => pt.type_choices.iter().find_map(|tc| {
+              if tc.type1.operator.is_none() {
+                text_value_from_type2(cddl, &tc.type1.type2)
+              } else {
+                None
+              }
+            }),
+            _ => None,
+          }
+        } else {
+          None
+        }
+      })
+    }
+    _ => None,
+  })
+}
+
+/// Find text values from a given Type2
+pub fn text_value_from_type2<'a>(cddl: &'a CDDL, t2: &'a Type2<'a>) -> Option<&'a Type2<'a>> {
+  match t2 {
+    Type2::TextValue { .. } | Type2::UTF8ByteString { .. } => Some(t2),
+    Type2::Typename { ident, .. } => text_value_from_ident(cddl, ident),
+    Type2::Array { group, .. } => group.group_choices.iter().find_map(|gc| {
+      if gc.group_entries.len() == 2 {
+        if let Some(ge) = gc.group_entries.first() {
+          if let GroupEntry::ValueMemberKey { ge, .. } = &ge.0 {
+            if ge.member_key.is_none() {
+              ge.entry_type.type_choices.iter().find_map(|tc| {
+                if tc.type1.operator.is_none() {
+                  text_value_from_type2(cddl, &tc.type1.type2)
+                } else {
+                  None
+                }
+              })
+            } else {
+              None
+            }
+          } else {
+            None
+          }
+        } else {
+          None
+        }
+      } else {
+        None
+      }
+    }),
+    Type2::ParenthesizedType { pt, .. } => pt.type_choices.iter().find_map(|tc| {
+      if tc.type1.operator.is_none() {
+        text_value_from_type2(cddl, &tc.type1.type2)
+      } else {
+        None
+      }
+    }),
+    _ => None,
+  }
 }
 
 /// Unwrap array, map or tag type rule from ident
@@ -495,13 +799,28 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
   values: &[T],
 ) -> std::result::Result<(bool, bool), Vec<String>> {
   let mut iter_items = false;
+  #[cfg(feature = "ast-span")]
   let allow_empty_array = matches!(occurrence, Some(Occur::Optional(_)));
+  #[cfg(not(feature = "ast-span"))]
+  let allow_empty_array = matches!(occurrence, Some(Occur::Optional));
 
   let mut errors = Vec::new();
 
   match occurrence {
+    #[cfg(feature = "ast-span")]
     Some(Occur::ZeroOrMore(_)) => iter_items = true,
+    #[cfg(not(feature = "ast-span"))]
+    Some(Occur::ZeroOrMore) => iter_items = true,
+    #[cfg(feature = "ast-span")]
     Some(Occur::OneOrMore(_)) => {
+      if values.is_empty() {
+        errors.push("array must have at least one item".to_string());
+      } else {
+        iter_items = true;
+      }
+    }
+    #[cfg(not(feature = "ast-span"))]
+    Some(Occur::OneOrMore) => {
       if values.is_empty() {
         errors.push("array must have at least one item".to_string());
       } else {
@@ -531,7 +850,16 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 
       iter_items = true;
     }
+    #[cfg(feature = "ast-span")]
     Some(Occur::Optional(_)) => {
+      if values.len() > 1 {
+        errors.push("array must have 0 or 1 items".to_string());
+      }
+
+      iter_items = false;
+    }
+    #[cfg(not(feature = "ast-span"))]
+    Some(Occur::Optional) => {
       if values.len() > 1 {
         errors.push("array must have 0 or 1 items".to_string());
       }
@@ -632,8 +960,14 @@ pub fn validate_entry_count(valid_entry_counts: &[EntryCount], num_entries: usiz
   valid_entry_counts.iter().any(|ec| {
     num_entries == ec.count as usize
       || match ec.entry_occurrence {
+        #[cfg(feature = "ast-span")]
         Some(Occur::ZeroOrMore(_)) | Some(Occur::Optional(_)) => true,
+        #[cfg(not(feature = "ast-span"))]
+        Some(Occur::ZeroOrMore) | Some(Occur::Optional) => true,
+        #[cfg(feature = "ast-span")]
         Some(Occur::OneOrMore(_)) if num_entries > 0 => true,
+        #[cfg(not(feature = "ast-span"))]
+        Some(Occur::OneOrMore) if num_entries > 0 => true,
         Some(Occur::Exact { lower, upper, .. }) => {
           if let Some(lower) = lower {
             if let Some(upper) = upper {

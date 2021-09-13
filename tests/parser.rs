@@ -1,3 +1,8 @@
+#![cfg(feature = "ast-span")]
+#![cfg(feature = "ast-comments")]
+
+use std::marker::PhantomData;
+
 use cddl::{
   ast::*,
   lexer::Lexer,
@@ -175,6 +180,7 @@ fn verify_cddl() -> Result<()> {
                       span: (63, 65, 4),
                     },
                     comments: None,
+                    _a: PhantomData::default(),
                   }),
                   group: Group {
                     group_choices: vec![GroupChoice {
@@ -196,6 +202,7 @@ fn verify_cddl() -> Result<()> {
                         OptionalComma {
                           optional_comma: false,
                           trailing_comments: None,
+                          _a: PhantomData::default(),
                         },
                       )],
                       comments_before_grpchoice: None,
@@ -356,6 +363,7 @@ fn verify_cddl() -> Result<()> {
                                 OptionalComma {
                                   optional_comma: true,
                                   trailing_comments: None,
+                                  _a: PhantomData::default(),
                                 },
                               ),
                               (
@@ -401,6 +409,7 @@ fn verify_cddl() -> Result<()> {
                                 OptionalComma {
                                   optional_comma: false,
                                   trailing_comments: None,
+                                  _a: PhantomData::default(),
                                 },
                               ),
                             ],
@@ -516,6 +525,7 @@ fn verify_cddl() -> Result<()> {
                         OptionalComma {
                           optional_comma: false,
                           trailing_comments: None,
+                          _a: PhantomData::default(),
                         },
                       )],
                       comments_before_grpchoice: None,
@@ -618,13 +628,13 @@ fn verify_cddl() -> Result<()> {
       }
 
       #[cfg(feature = "std")]
-      Err(Error::PARSER) if !p.errors.is_empty() => {
+      Err(Error::INCREMENTAL) if !p.errors.is_empty() => {
         let _ = p.report_errors(true);
 
         Err(Error::CDDL(p.report_errors(false).unwrap().unwrap()))
       }
       #[cfg(not(feature = "std"))]
-      Err(Error::PARSER) if !p.errors.is_empty() => {
+      Err(Error::INCREMENTAL) if !p.errors.is_empty() => {
         let _ = p.report_errors();
 
         Err(Error::CDDL(p.report_errors().unwrap()))

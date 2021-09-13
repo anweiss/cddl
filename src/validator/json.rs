@@ -1,15 +1,21 @@
 #![cfg(feature = "std")]
+#![cfg(feature = "json")]
+#![cfg(not(feature = "lsp"))]
 
+use super::*;
 use crate::{
   ast::*,
   token::{self, Token},
   visitor::{self, *},
 };
+
+use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
+
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
-use std::{collections::HashMap, convert::TryFrom, fmt};
 
-use super::*;
+#[cfg(feature = "additional-controls")]
+use control::{abnf_from_complex_controller, cat_operation, plus_operation, validate_abnf};
 
 /// JSON validation Result
 pub type Result = std::result::Result<(), Error>;
@@ -23,6 +29,10 @@ pub enum Error {
   JSONParsing(serde_json::Error),
   /// CDDL parsing error
   CDDLParsing(String),
+  /// UTF8 parsing error,
+  UTF8Parsing(std::str::Utf8Error),
+  /// Disabled feature
+  DisabledFeature(String),
 }
 
 impl fmt::Display for Error {
@@ -37,6 +47,8 @@ impl fmt::Display for Error {
       }
       Error::JSONParsing(error) => write!(f, "error parsing JSON: {}", error),
       Error::CDDLParsing(error) => write!(f, "error parsing CDDL: {}", error),
+      Error::UTF8Parsing(error) => write!(f, "error pasing utf8: {}", error),
+      Error::DisabledFeature(feature) => write!(f, "feature {} is not enabled", feature),
     }
   }
 }
@@ -47,6 +59,20 @@ impl std::error::Error for Error {
       Error::JSONParsing(error) => Some(error),
       _ => None,
     }
+  }
+}
+
+impl Error {
+  fn from_validator(jv: &JSONValidator, reason: String) -> Self {
+    Error::Validation(vec![ValidationError {
+      cddl_location: jv.cddl_location.clone(),
+      json_location: jv.json_location.clone(),
+      reason,
+      is_multi_type_choice: jv.is_multi_type_choice,
+      is_group_to_choice_enum: jv.is_group_to_choice_enum,
+      type_group_name_entry: jv.type_group_name_entry.map(|e| e.to_string()),
+      is_multi_group_choice: jv.is_multi_group_choice,
+    }])
   }
 }
 
@@ -85,10 +111,18 @@ impl fmt::Display for ValidationError {
       error_str.push_str(&format!(" group entry associated with rule \"{}\"", entry));
     }
 
+    if self.json_location.is_empty() {
+      return write!(
+        f,
+        "{} at the root of the JSON document: {}",
+        error_str, self.reason
+      );
+    }
+
     write!(
       f,
-      "{} at cddl location \"{}\" and JSON location {}: {}",
-      error_str, self.cddl_location, self.json_location, self.reason
+      "{} at JSON location {}: {}",
+      error_str, self.json_location, self.reason
     )
   }
 }
@@ -113,8 +147,8 @@ impl ValidationError {
   }
 }
 
-#[derive(Clone)]
 /// JSON validator type
+#[derive(Clone)]
 pub struct JSONValidator<'a> {
   cddl: &'a CDDL<'a>,
   json: Value,
@@ -132,7 +166,7 @@ pub struct JSONValidator<'a> {
   // Is a cut detected in current state of AST evaluation
   is_cut_present: bool,
   // Str value of cut detected in current state of AST evaluation
-  cut_value: Option<&'a str>,
+  cut_value: Option<Cow<'a, str>>,
   // Validate the generic rule given by str ident in current state of AST
   // evaluation
   eval_generic_rule: Option<&'a str>,
@@ -165,6 +199,17 @@ pub struct JSONValidator<'a> {
   // array item
   array_errors: Option<HashMap<usize, Vec<ValidationError>>>,
   is_colon_shortcut_present: bool,
+  is_root: bool,
+  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(feature = "additional-controls")]
+  enabled_features: Option<&'a [&'a str]>,
+  #[cfg(target_arch = "wasm32")]
+  #[cfg(feature = "additional-controls")]
+  enabled_features: Option<Box<[JsValue]>>,
+  #[cfg(feature = "additional-controls")]
+  has_feature_errors: bool,
+  #[cfg(feature = "additional-controls")]
+  disabled_features: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +220,46 @@ struct GenericRule<'a> {
 }
 
 impl<'a> JSONValidator<'a> {
+  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(feature = "additional-controls")]
+  /// New JSONValidation from CDDL AST and JSON value
+  pub fn new(cddl: &'a CDDL<'a>, json: Value, enabled_features: Option<&'a [&'a str]>) -> Self {
+    JSONValidator {
+      cddl,
+      json,
+      errors: Vec::default(),
+      cddl_location: String::new(),
+      json_location: String::new(),
+      occurrence: None,
+      group_entry_idx: None,
+      object_value: None,
+      is_member_key: false,
+      is_cut_present: false,
+      cut_value: None,
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
+      ctrl: None,
+      is_group_to_choice_enum: false,
+      is_multi_type_choice: false,
+      is_multi_group_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
+      entry_counts: None,
+      validated_keys: None,
+      values_to_validate: None,
+      valid_array_items: None,
+      array_errors: None,
+      is_colon_shortcut_present: false,
+      is_root: false,
+      enabled_features,
+      has_feature_errors: false,
+      disabled_features: None,
+    }
+  }
+
+  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(not(feature = "additional-controls"))]
   /// New JSONValidation from CDDL AST and JSON value
   pub fn new(cddl: &'a CDDL<'a>, json: Value) -> Self {
     JSONValidator {
@@ -204,18 +289,255 @@ impl<'a> JSONValidator<'a> {
       valid_array_items: None,
       array_errors: None,
       is_colon_shortcut_present: false,
+      is_root: false,
     }
   }
 
+  #[cfg(target_arch = "wasm32")]
+  #[cfg(feature = "additional-controls")]
+  /// New JSONValidation from CDDL AST and JSON value
+  pub fn new(cddl: &'a CDDL<'a>, json: Value, enabled_features: Option<Box<[JsValue]>>) -> Self {
+    JSONValidator {
+      cddl,
+      json,
+      errors: Vec::default(),
+      cddl_location: String::new(),
+      json_location: String::new(),
+      occurrence: None,
+      group_entry_idx: None,
+      object_value: None,
+      is_member_key: false,
+      is_cut_present: false,
+      cut_value: None,
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
+      ctrl: None,
+      is_group_to_choice_enum: false,
+      is_multi_type_choice: false,
+      is_multi_group_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
+      entry_counts: None,
+      validated_keys: None,
+      values_to_validate: None,
+      valid_array_items: None,
+      array_errors: None,
+      is_colon_shortcut_present: false,
+      is_root: false,
+      enabled_features,
+      has_feature_errors: false,
+      disabled_features: None,
+    }
+  }
+
+  #[cfg(target_arch = "wasm32")]
+  #[cfg(not(feature = "additional-controls"))]
+  /// New JSONValidation from CDDL AST and JSON value
+  pub fn new(cddl: &'a CDDL<'a>, json: Value) -> Self {
+    JSONValidator {
+      cddl,
+      json,
+      errors: Vec::default(),
+      cddl_location: String::new(),
+      json_location: String::new(),
+      occurrence: None,
+      group_entry_idx: None,
+      object_value: None,
+      is_member_key: false,
+      is_cut_present: false,
+      cut_value: None,
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
+      ctrl: None,
+      is_group_to_choice_enum: false,
+      is_multi_type_choice: false,
+      is_multi_group_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
+      entry_counts: None,
+      validated_keys: None,
+      values_to_validate: None,
+      valid_array_items: None,
+      array_errors: None,
+      is_colon_shortcut_present: false,
+      is_root: false,
+    }
+  }
+
+  fn validate_value_array(&mut self, value: &token::Value) -> visitor::Result<Error> {
+    if let Value::Array(a) = &self.json {
+      // Member keys are annotation only in an array context
+      if self.is_member_key {
+        return Ok(());
+      }
+
+      match validate_array_occurrence(
+        self.occurrence.as_ref().take(),
+        self.entry_counts.as_ref().map(|ec| &ec[..]),
+        a,
+      ) {
+        Ok((iter_items, allow_empty_array)) => {
+          if iter_items {
+            for (idx, v) in a.iter().enumerate() {
+              if let Some(indices) = &self.valid_array_items {
+                if self.is_multi_type_choice && indices.contains(&idx) {
+                  continue;
+                }
+              }
+
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
+              #[cfg(not(feature = "additional-controls"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone());
+
+              jv.generic_rules = self.generic_rules.clone();
+              jv.eval_generic_rule = self.eval_generic_rule;
+              jv.is_multi_type_choice = self.is_multi_type_choice;
+              jv.ctrl = self.ctrl.clone();
+              jv.json_location
+                .push_str(&format!("{}/{}", self.json_location, idx));
+
+              jv.visit_value(value)?;
+
+              if self.is_multi_type_choice && jv.errors.is_empty() {
+                if let Some(indices) = &mut self.valid_array_items {
+                  indices.push(idx);
+                } else {
+                  self.valid_array_items = Some(vec![idx]);
+                }
+                continue;
+              }
+
+              if let Some(errors) = &mut self.array_errors {
+                if let Some(error) = errors.get_mut(&idx) {
+                  error.append(&mut jv.errors);
+                } else {
+                  errors.insert(idx, jv.errors);
+                }
+              } else {
+                let mut errors = HashMap::new();
+                errors.insert(idx, jv.errors);
+                self.array_errors = Some(errors)
+              }
+            }
+          } else if let Some(idx) = self.group_entry_idx.take() {
+            if let Some(v) = a.get(idx) {
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
+              #[cfg(not(feature = "additional-controls"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone());
+
+              jv.generic_rules = self.generic_rules.clone();
+              jv.eval_generic_rule = self.eval_generic_rule;
+              jv.is_multi_type_choice = self.is_multi_type_choice;
+              jv.ctrl = self.ctrl.clone();
+              jv.json_location
+                .push_str(&format!("{}/{}", self.json_location, idx));
+
+              jv.visit_value(value)?;
+
+              self.errors.append(&mut jv.errors);
+            } else if !allow_empty_array {
+              self.add_error(format!("expected value {} at index {}", value, idx));
+            }
+          } else {
+            self.add_error(format!("expected value {}, got {}", value, self.json));
+          }
+        }
+        Err(errors) => {
+          for e in errors.into_iter() {
+            self.add_error(e);
+          }
+        }
+      }
+    }
+
+    Ok(())
+  }
+
+  fn validate_object_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error> {
+    if let Value::Object(o) = &self.json {
+      // Bareword member keys are converted to text string values
+      if let token::Value::TEXT(t) = value {
+        if self.is_cut_present {
+          self.cut_value = Some(t.clone());
+        }
+
+        if *t == "any" {
+          return Ok(());
+        }
+
+        // Retrieve the value from key unless optional/zero or more, in which
+        // case advance to next group entry
+        #[cfg(feature = "ast-span")]
+        if let Some(v) = o.get(t.as_ref()) {
+          self
+            .validated_keys
+            .get_or_insert(vec![t.to_string()])
+            .push(t.to_string());
+          self.object_value = Some(v.clone());
+          self.json_location.push_str(&format!("/{}", t));
+
+          return Ok(());
+        } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
+          &self.occurrence.take()
+        {
+          self.advance_to_next_entry = true;
+          return Ok(());
+        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
+          return Ok(());
+        } else {
+          self.add_error(format!("object missing key: \"{}\"", t))
+        }
+
+        // Retrieve the value from key unless optional/zero or more, in which
+        // case advance to next group entry
+        #[cfg(not(feature = "ast-span"))]
+        if let Some(v) = o.get(t.as_ref()) {
+          self
+            .validated_keys
+            .get_or_insert(vec![t.to_string()])
+            .push(t.to_string());
+          self.object_value = Some(v.clone());
+          self.json_location.push_str(&format!("/{}", t));
+
+          return Ok(());
+        } else if let Some(Occur::Optional) | Some(Occur::ZeroOrMore) = &self.occurrence.take() {
+          self.advance_to_next_entry = true;
+          return Ok(());
+        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
+          return Ok(());
+        } else {
+          self.add_error(format!("object missing key: \"{}\"", t))
+        }
+      } else {
+        self.add_error(format!(
+          "CDDL member key must be string data type. got {}",
+          value
+        ))
+      }
+    }
+
+    Ok(())
+  }
+}
+
+impl<'a> Validator<'a, Error> for JSONValidator<'a> {
   /// Validate
-  pub fn validate(&mut self) -> std::result::Result<(), Error> {
+  fn validate(&mut self) -> std::result::Result<(), Error> {
     for r in self.cddl.rules.iter() {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {
         if rule.generic_params.is_none() {
-          self
-            .visit_type_rule(rule)
-            .map_err(|e| Error::Validation(vec![e]))?;
+          self.is_root = true;
+          self.visit_type_rule(rule)?;
+          self.is_root = false;
           break;
         }
       }
@@ -241,8 +563,8 @@ impl<'a> JSONValidator<'a> {
   }
 }
 
-impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
-  fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<ValidationError> {
+impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
+  fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<Error> {
     if let Some(gp) = &tr.generic_params {
       if let Some(gr) = self
         .generic_rules
@@ -276,7 +598,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> visitor::Result<ValidationError> {
+  fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> visitor::Result<Error> {
     if let Some(gp) = &gr.generic_params {
       if let Some(gr) = self
         .generic_rules
@@ -310,7 +632,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<ValidationError> {
+  fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<Error> {
     if t.type_choices.len() > 1 {
       self.is_multi_type_choice = true;
     }
@@ -322,6 +644,23 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       if matches!(self.json, Value::Array(_)) {
         let error_count = self.errors.len();
         self.visit_type_choice(type_choice)?;
+
+        #[cfg(feature = "additional-controls")]
+        if self.errors.len() == error_count
+          && !self.has_feature_errors
+          && self.disabled_features.is_none()
+        {
+          // Disregard invalid type choice validation errors if one of the
+          // choices validates successfully
+          let type_choice_error_count = self.errors.len() - initial_error_count;
+          if type_choice_error_count > 0 {
+            for _ in 0..type_choice_error_count {
+              self.errors.pop();
+            }
+          }
+        }
+
+        #[cfg(not(feature = "additional-controls"))]
         if self.errors.len() == error_count {
           // Disregard invalid type choice validation errors if one of the
           // choices validates successfully
@@ -339,6 +678,24 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       let error_count = self.errors.len();
       self.visit_type_choice(type_choice)?;
 
+      #[cfg(feature = "additional-controls")]
+      if self.errors.len() == error_count
+        && !self.has_feature_errors
+        && self.disabled_features.is_none()
+      {
+        // Disregard invalid type choice validation errors if one of the
+        // choices validates successfully
+        let type_choice_error_count = self.errors.len() - initial_error_count;
+        if type_choice_error_count > 0 {
+          for _ in 0..type_choice_error_count {
+            self.errors.pop();
+          }
+        }
+
+        return Ok(());
+      }
+
+      #[cfg(not(feature = "additional-controls"))]
       if self.errors.len() == error_count {
         // Disregard invalid type choice validation errors if one of the
         // choices validates successfully
@@ -356,7 +713,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_group(&mut self, g: &Group<'a>) -> visitor::Result<ValidationError> {
+  fn visit_group(&mut self, g: &Group<'a>) -> visitor::Result<Error> {
     if g.group_choices.len() > 1 {
       self.is_multi_group_choice = true;
     }
@@ -388,7 +745,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               }
               return Ok(());
             }
-          } else if let Token::NE = t {
+          } else if let Token::NE | Token::DEFAULT = t {
             if !validate_entry_count(&entry_counts, len) {
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
@@ -433,7 +790,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<ValidationError> {
+  fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<Error> {
     if self.is_group_to_choice_enum {
       let initial_error_count = self.errors.len();
       for tc in type_choices_from_group_choice(self.cddl, gc).iter() {
@@ -467,7 +824,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     lower: &Type2,
     upper: &Type2,
     is_inclusive: bool,
-  ) -> visitor::Result<ValidationError> {
+  ) -> visitor::Result<Error> {
     if let Value::Array(a) = &self.json {
       match validate_array_occurrence(
         self.occurrence.as_ref().take(),
@@ -483,7 +840,13 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
                 }
               }
 
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
+              #[cfg(not(feature = "additional-controls"))]
               let mut jv = JSONValidator::new(self.cddl, v.clone());
+
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.ctrl = self.ctrl.clone();
@@ -516,7 +879,13 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+              let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
+              #[cfg(not(feature = "additional-controls"))]
               let mut jv = JSONValidator::new(self.cddl, v.clone());
+
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.ctrl = self.ctrl.clone();
@@ -775,98 +1144,143 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     target: &Type2<'a>,
     ctrl: &str,
     controller: &Type2<'a>,
-  ) -> visitor::Result<ValidationError> {
-    match lookup_control_from_str(ctrl) {
-      t @ Some(Token::EQ) => {
-        match target {
-          Type2::Typename { ident, .. } => {
-            if is_ident_string_data_type(self.cddl, ident)
-              || is_ident_numeric_data_type(self.cddl, ident)
-            {
-              return self.visit_type2(controller);
-            }
-          }
-          Type2::Array { group, .. } => {
-            if let Value::Array(_) = &self.json {
-              let mut entry_counts = Vec::new();
-              for gc in group.group_choices.iter() {
-                let count = entry_counts_from_group_choice(self.cddl, gc);
-                entry_counts.push(count);
+  ) -> visitor::Result<Error> {
+    if let Type2::Typename {
+      ident: target_ident,
+      ..
+    } = target
+    {
+      if let Type2::Typename {
+        ident: controller_ident,
+        ..
+      } = controller
+      {
+        if let Some(name) = self.eval_generic_rule {
+          if let Some(gr) = self
+            .generic_rules
+            .iter()
+            .cloned()
+            .find(|gr| gr.name == name)
+          {
+            for (idx, gp) in gr.params.iter().enumerate() {
+              if let Some(arg) = gr.args.get(idx) {
+                if *gp == target_ident.ident {
+                  let t2 = Type2::from(arg.clone());
+
+                  if *gp == controller_ident.ident {
+                    return self.visit_control_operator(&t2, ctrl, &t2);
+                  }
+
+                  return self.visit_control_operator(&arg.type2, ctrl, controller);
+                }
               }
-              self.entry_counts = Some(entry_counts);
-              self.visit_type2(controller)?;
-              self.entry_counts = None;
-              return Ok(());
             }
           }
-          Type2::Map { .. } => {
-            if let Value::Object(_) = &self.json {
-              self.ctrl = t;
-              self.is_ctrl_map_equality = true;
-              self.visit_type2(controller)?;
-              self.ctrl = None;
-              self.is_ctrl_map_equality = false;
-              return Ok(());
-            }
-          }
-          _ => self.add_error(format!(
-            "target for .eq operator must be a string, numerical, array or map data type, got {}",
-            target
-          )),
         }
-        Ok(())
       }
-      t @ Some(Token::NE) => {
-        match target {
-          Type2::Typename { ident, .. } => {
-            if is_ident_string_data_type(self.cddl, ident)
-              || is_ident_numeric_data_type(self.cddl, ident)
-            {
-              self.ctrl = t;
-              self.visit_type2(controller)?;
-              self.ctrl = None;
-              return Ok(());
+
+      if let Some(name) = self.eval_generic_rule {
+        if let Some(gr) = self
+          .generic_rules
+          .iter()
+          .cloned()
+          .find(|gr| gr.name == name)
+        {
+          for (idx, gp) in gr.params.iter().enumerate() {
+            if let Some(arg) = gr.args.get(idx) {
+              if *gp == target_ident.ident {
+                let t2 = Type2::from(arg.clone());
+                return self.visit_control_operator(&t2, ctrl, controller);
+              }
             }
           }
-          Type2::Array { .. } => {
-            if let Value::Array(_) = &self.json {
-              self.ctrl = t;
-              self.visit_type2(controller)?;
-              self.ctrl = None;
-              return Ok(());
-            }
-          }
-          Type2::Map { .. } => {
-            if let Value::Object(_) = &self.json {
-              self.ctrl = t;
-              self.is_ctrl_map_equality = true;
-              self.visit_type2(controller)?;
-              self.ctrl = None;
-              self.is_ctrl_map_equality = false;
-              return Ok(());
-            }
-          }
-          _ => self.add_error(format!(
-            "target for .ne operator must be a string, numerical, array or map data type, got {}",
-            target
-          )),
         }
-        Ok(())
       }
+    }
+
+    match lookup_control_from_str(ctrl) {
+      t @ Some(Token::EQ) => match target {
+        Type2::Typename { ident, .. } => {
+          if is_ident_string_data_type(self.cddl, ident)
+            || is_ident_numeric_data_type(self.cddl, ident)
+          {
+            return self.visit_type2(controller);
+          }
+        }
+        Type2::Array { group, .. } => {
+          if let Value::Array(_) = &self.json {
+            let mut entry_counts = Vec::new();
+            for gc in group.group_choices.iter() {
+              let count = entry_counts_from_group_choice(self.cddl, gc);
+              entry_counts.push(count);
+            }
+            self.entry_counts = Some(entry_counts);
+            self.visit_type2(controller)?;
+            self.entry_counts = None;
+            return Ok(());
+          }
+        }
+        Type2::Map { .. } => {
+          if let Value::Object(_) = &self.json {
+            self.ctrl = t;
+            self.is_ctrl_map_equality = true;
+            self.visit_type2(controller)?;
+            self.ctrl = None;
+            self.is_ctrl_map_equality = false;
+            return Ok(());
+          }
+        }
+        _ => self.add_error(format!(
+          "target for .eq operator must be a string, numerical, array or map data type, got {}",
+          target
+        )),
+      },
+      t @ Some(Token::NE) => match target {
+        Type2::Typename { ident, .. } => {
+          if is_ident_string_data_type(self.cddl, ident)
+            || is_ident_numeric_data_type(self.cddl, ident)
+          {
+            self.ctrl = t;
+            self.visit_type2(controller)?;
+            self.ctrl = None;
+            return Ok(());
+          }
+        }
+        Type2::Array { .. } => {
+          if let Value::Array(_) = &self.json {
+            self.ctrl = t;
+            self.visit_type2(controller)?;
+            self.ctrl = None;
+            return Ok(());
+          }
+        }
+        Type2::Map { .. } => {
+          if let Value::Object(_) = &self.json {
+            self.ctrl = t;
+            self.is_ctrl_map_equality = true;
+            self.visit_type2(controller)?;
+            self.ctrl = None;
+            self.is_ctrl_map_equality = false;
+            return Ok(());
+          }
+        }
+        _ => self.add_error(format!(
+          "target for .ne operator must be a string, numerical, array or map data type, got {}",
+          target
+        )),
+      },
       t @ Some(Token::LT) | t @ Some(Token::GT) | t @ Some(Token::GE) | t @ Some(Token::LE) => {
         match target {
           Type2::Typename { ident, .. } if is_ident_numeric_data_type(self.cddl, ident) => {
             self.ctrl = t;
             self.visit_type2(controller)?;
             self.ctrl = None;
-            Ok(())
           }
           _ => {
             self.add_error(format!(
               "target for .lt, .gt, .ge or .le operator must be a numerical data type, got {}",
               target
             ));
-            Ok(())
           }
         }
       }
@@ -878,14 +1292,12 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           self.ctrl = t;
           self.visit_type2(controller)?;
           self.ctrl = None;
-          Ok(())
         }
         _ => {
           self.add_error(format!(
             "target for .size must a string or uint data type, got {}",
             target
           ));
-          Ok(())
         }
       },
       t @ Some(Token::AND) => {
@@ -893,7 +1305,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         self.visit_type2(target)?;
         self.visit_type2(controller)?;
         self.ctrl = None;
-        Ok(())
       }
       t @ Some(Token::WITHIN) => {
         self.ctrl = t;
@@ -913,15 +1324,21 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
         }
 
         self.ctrl = None;
-
-        Ok(())
       }
       t @ Some(Token::DEFAULT) => {
         self.ctrl = t;
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
+          #[cfg(feature = "ast-span")]
           if let Some(Occur::Optional(_)) = self.occurrence.take() {
+            self.add_error(format!(
+              "expected default value {}, got {}",
+              controller, self.json
+            ));
+          }
+          #[cfg(not(feature = "ast-span"))]
+          if let Some(Occur::Optional) = self.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {}",
               controller, self.json
@@ -929,7 +1346,6 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           }
         }
         self.ctrl = None;
-        Ok(())
       }
       t @ Some(Token::REGEXP) | t @ Some(Token::PCRE) => {
         self.ctrl = t;
@@ -949,19 +1365,226 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           )),
         }
         self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      t @ Some(Token::CAT) => {
+        self.ctrl = t;
 
-        Ok(())
+        match cat_operation(self.cddl, target, controller, false) {
+          Ok(values) => {
+            let error_count = self.errors.len();
+
+            for v in values.iter() {
+              let cur_errors = self.errors.len();
+
+              self.visit_type2(v)?;
+
+              if self.errors.len() == cur_errors {
+                for _ in 0..self.errors.len() - error_count {
+                  self.errors.pop();
+                }
+
+                break;
+              }
+            }
+          }
+          Err(e) => self.add_error(e),
+        }
+
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      t @ Some(Token::DET) => {
+        self.ctrl = t;
+
+        match cat_operation(self.cddl, target, controller, true) {
+          Ok(values) => {
+            let error_count = self.errors.len();
+
+            for v in values.iter() {
+              let cur_errors = self.errors.len();
+
+              self.visit_type2(v)?;
+
+              if self.errors.len() == cur_errors {
+                for _ in 0..self.errors.len() - error_count {
+                  self.errors.pop();
+                }
+
+                break;
+              }
+            }
+          }
+          Err(e) => self.add_error(e),
+        }
+
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      t @ Some(Token::PLUS) => {
+        self.ctrl = t;
+
+        match plus_operation(self.cddl, target, controller) {
+          Ok(values) => {
+            let error_count = self.errors.len();
+            for v in values.iter() {
+              let cur_errors = self.errors.len();
+
+              self.visit_type2(v)?;
+              if self.errors.len() == cur_errors {
+                for _ in 0..self.errors.len() - error_count {
+                  self.errors.pop();
+                }
+
+                break;
+              }
+            }
+          }
+
+          Err(e) => self.add_error(e),
+        }
+
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      t @ Some(Token::ABNF) => {
+        self.ctrl = t;
+
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match self.json {
+              Value::String(_) | Value::Array(_) => {
+                if let Type2::ParenthesizedType { pt, .. } = controller {
+                  match abnf_from_complex_controller(self.cddl, pt) {
+                    Ok(values) => {
+                      let error_count = self.errors.len();
+                      for v in values.iter() {
+                        let cur_errors = self.errors.len();
+
+                        self.visit_type2(v)?;
+
+                        if self.errors.len() == cur_errors {
+                          for _ in 0..self.errors.len() - error_count {
+                            self.errors.pop();
+                          }
+
+                          break;
+                        }
+                      }
+                    }
+                    Err(e) => self.add_error(e),
+                  }
+                } else {
+                  self.visit_type2(controller)?
+                }
+              }
+              _ => self.add_error(format!(
+                ".abnf control can only be matched against a JSON string, got {}",
+                self.json,
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".abnf can only be matched against string data type, got {}",
+            target,
+          )),
+        }
+
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      #[cfg(not(target_arch = "wasm32"))]
+      t @ Some(Token::FEATURE) => {
+        self.ctrl = t;
+
+        if let Some(ef) = self.enabled_features {
+          let tv = text_value_from_type2(self.cddl, controller);
+          if let Some(Type2::TextValue { value, .. }) = tv {
+            if ef.contains(&&**value) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
+            }
+          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
+            let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
+            if ef.contains(&value) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
+            }
+          }
+        }
+
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      #[cfg(target_arch = "wasm32")]
+      t @ Some(Token::FEATURE) => {
+        self.ctrl = t;
+
+        if let Some(ef) = &self.enabled_features {
+          let tv = text_value_from_type2(self.cddl, controller);
+          if let Some(Type2::TextValue { value, .. }) = tv {
+            if ef.contains(&JsValue::from(value.as_ref())) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
+            }
+          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
+            let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
+            if ef.contains(&JsValue::from(value)) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
+            }
+          }
+        }
+
+        self.ctrl = None;
       }
       _ => {
         self.add_error(format!("unsupported control operator {}", ctrl));
-        Ok(())
       }
     }
+
+    Ok(())
   }
 
-  fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<ValidationError> {
+  fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error> {
     match t2 {
-      Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value)),
+      Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value.clone())),
       Type2::Map { group, .. } => match &self.json {
         Value::Object(o) => {
           let o = o.keys().cloned().collect::<Vec<_>>();
@@ -1002,7 +1625,14 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
                     }
                   }
 
+                  #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                  let mut jv =
+                    JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                  let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
+                  #[cfg(not(feature = "additional-controls"))]
                   let mut jv = JSONValidator::new(self.cddl, v.clone());
+
                   jv.generic_rules = self.generic_rules.clone();
                   jv.eval_generic_rule = self.eval_generic_rule;
                   jv.ctrl = self.ctrl.clone();
@@ -1035,7 +1665,14 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
                 }
               } else if let Some(idx) = self.group_entry_idx.take() {
                 if let Some(v) = a.get(idx) {
+                  #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                  let mut jv =
+                    JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                  let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
+                  #[cfg(not(feature = "additional-controls"))]
                   let mut jv = JSONValidator::new(self.cddl, v.clone());
+
                   jv.generic_rules = self.generic_rules.clone();
                   jv.eval_generic_rule = self.eval_generic_rule;
                   jv.ctrl = self.ctrl.clone();
@@ -1072,7 +1709,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           if group.group_choices.len() == 1
             && group.group_choices[0].group_entries.is_empty()
             && !a.is_empty()
-            && !matches!(self.ctrl, Some(Token::NE))
+            && !matches!(self.ctrl, Some(Token::NE) | Some(Token::DEFAULT))
           {
             self.add_error(format!("expected empty array, got {}", self.json));
             return Ok(());
@@ -1133,7 +1770,14 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               });
             }
 
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut jv =
+              JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
+            #[cfg(not(feature = "additional-controls"))]
             let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = Some(ident.ident);
             jv.is_group_to_choice_enum = true;
@@ -1189,7 +1833,14 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               });
             }
 
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut jv =
+              JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
+            #[cfg(not(feature = "additional-controls"))]
             let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = Some(ident.ident);
             jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1237,7 +1888,14 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               });
             }
 
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut jv =
+              JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+            let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
+            #[cfg(not(feature = "additional-controls"))]
             let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+
             jv.generic_rules = self.generic_rules.clone();
             jv.eval_generic_rule = Some(ident.ident);
             jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1260,7 +1918,10 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
         Ok(())
       }
+      #[cfg(feature = "ast-span")]
       Type2::Any(_) => Ok(()),
+      #[cfg(not(feature = "ast-span"))]
+      Type2::Any => Ok(()),
       _ => {
         self.add_error(format!(
           "unsupported data type for validating JSON, got {}",
@@ -1271,7 +1932,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     }
   }
 
-  fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<ValidationError> {
+  fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error> {
     if let Some(name) = self.eval_generic_rule {
       if let Some(gr) = self
         .generic_rules
@@ -1396,7 +2057,14 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
                   }
                 }
 
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut jv =
+                  JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
+                #[cfg(not(feature = "additional-controls"))]
                 let mut jv = JSONValidator::new(self.cddl, v.clone());
+
                 jv.generic_rules = self.generic_rules.clone();
                 jv.eval_generic_rule = self.eval_generic_rule;
                 jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1429,7 +2097,14 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               }
             } else if let Some(idx) = self.group_entry_idx.take() {
               if let Some(v) = a.get(idx) {
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut jv =
+                  JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
+                #[cfg(not(feature = "additional-controls"))]
                 let mut jv = JSONValidator::new(self.cddl, v.clone());
+
                 jv.generic_rules = self.generic_rules.clone();
                 jv.eval_generic_rule = self.eval_generic_rule;
                 jv.ctrl = self.ctrl.clone();
@@ -1458,8 +2133,37 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
       }
       Value::Object(o) => {
         if let Some(occur) = &self.occurrence {
+          #[cfg(feature = "ast-span")]
           if let Occur::ZeroOrMore(_) | Occur::OneOrMore(_) = occur {
             if let Occur::OneOrMore(_) = occur {
+              if o.is_empty() {
+                self.add_error(format!(
+                  "object cannot be empty, one or more entries with key type {} required",
+                  ident
+                ));
+                return Ok(());
+              }
+            }
+
+            if is_ident_string_data_type(self.cddl, ident) {
+              let values_to_validate = o
+                .iter()
+                .filter_map(|(k, v)| match &self.validated_keys {
+                  Some(keys) if !keys.contains(k) => Some(v.clone()),
+                  Some(_) => None,
+                  None => Some(v.clone()),
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+
+              return Ok(());
+            }
+          }
+
+          #[cfg(not(feature = "ast-span"))]
+          if let Occur::ZeroOrMore | Occur::OneOrMore = occur {
+            if let Occur::OneOrMore = occur {
               if o.is_empty() {
                 self.add_error(format!(
                   "object cannot be empty, one or more entries with key type {} required",
@@ -1497,7 +2201,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           return Ok(());
         }
 
-        self.visit_value(&token::Value::TEXT(ident.ident))
+        self.visit_value(&token::Value::TEXT(ident.ident.into()))
       }
       _ => {
         if let Some(cut_value) = self.cut_value.take() {
@@ -1516,7 +2220,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
   fn visit_value_member_key_entry(
     &mut self,
     entry: &ValueMemberKeyEntry<'a>,
-  ) -> visitor::Result<ValidationError> {
+  ) -> visitor::Result<Error> {
     if let Some(occur) = &entry.occur {
       self.visit_occurrence(occur)?;
     }
@@ -1538,7 +2242,13 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 
     if let Some(values) = &self.values_to_validate {
       for v in values.iter() {
+        #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+        let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+        #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+        let mut jv = JSONValidator::new(self.cddl, v.clone(), self.enabled_features);
+        #[cfg(not(feature = "additional-controls"))]
         let mut jv = JSONValidator::new(self.cddl, v.clone());
+
         jv.generic_rules = self.generic_rules.clone();
         jv.eval_generic_rule = self.eval_generic_rule;
         jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1559,7 +2269,13 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     }
 
     if let Some(v) = self.object_value.take() {
+      #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+      let mut jv = JSONValidator::new(self.cddl, v, self.enabled_features.clone());
+      #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+      let mut jv = JSONValidator::new(self.cddl, v, self.enabled_features);
+      #[cfg(not(feature = "additional-controls"))]
       let mut jv = JSONValidator::new(self.cddl, v);
+
       jv.generic_rules = self.generic_rules.clone();
       jv.eval_generic_rule = self.eval_generic_rule;
       jv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1586,15 +2302,53 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
   fn visit_type_groupname_entry(
     &mut self,
     entry: &TypeGroupnameEntry<'a>,
-  ) -> visitor::Result<ValidationError> {
+  ) -> visitor::Result<Error> {
     self.type_group_name_entry = Some(entry.name.ident);
+
+    if let Some(ga) = &entry.generic_args {
+      if let Some(rule) = rule_from_ident(self.cddl, &entry.name) {
+        if let Some(gr) = self
+          .generic_rules
+          .iter_mut()
+          .find(|gr| gr.name == entry.name.ident)
+        {
+          for arg in ga.args.iter() {
+            gr.args.push((*arg.arg).clone());
+          }
+        } else if let Some(params) = generic_params_from_rule(rule) {
+          self.generic_rules.push(GenericRule {
+            name: entry.name.ident,
+            params,
+            args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+          });
+        }
+
+        #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+        let mut jv =
+          JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features.clone());
+        #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+        let mut jv = JSONValidator::new(self.cddl, self.json.clone(), self.enabled_features);
+        #[cfg(not(feature = "additional-controls"))]
+        let mut jv = JSONValidator::new(self.cddl, self.json.clone());
+
+        jv.generic_rules = self.generic_rules.clone();
+        jv.eval_generic_rule = Some(entry.name.ident);
+        jv.is_multi_type_choice = self.is_multi_type_choice;
+        jv.visit_rule(rule)?;
+
+        self.errors.append(&mut jv.errors);
+
+        return Ok(());
+      }
+    }
+
     walk_type_groupname_entry(self, entry)?;
     self.type_group_name_entry = None;
 
     Ok(())
   }
 
-  fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<ValidationError> {
+  fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<Error> {
     match mk {
       MemberKey::Type1 { is_cut, .. } => {
         self.is_cut_present = *is_cut;
@@ -1612,16 +2366,43 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<ValidationError> {
-    let error: Option<String> = match &self.json {
-      Value::Number(n) => match value {
-        token::Value::INT(v) => match n.as_i64() {
+  fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error> {
+    // FIXME: If during traversal the type being validated is supposed to be a value,
+    // this fails
+    if let Value::Array(_) = &self.json {
+      return self.validate_value_array(value);
+    }
+
+    if let Value::Object(_) = &self.json {
+      return self.validate_object_value(value);
+    }
+
+    let error: Option<String> = match value {
+      token::Value::INT(v) => match &self.json {
+        Value::Number(n) => match n.as_i64() {
           Some(i) => match &self.ctrl {
-            Some(Token::NE) if i != *v as i64 => None,
+            Some(Token::NE) | Some(Token::DEFAULT) if i != *v as i64 => None,
             Some(Token::LT) if i < *v as i64 => None,
             Some(Token::LE) if i <= *v as i64 => None,
             Some(Token::GT) if i > *v as i64 => None,
             Some(Token::GE) if i >= *v as i64 => None,
+            #[cfg(feature = "additional-controls")]
+            Some(Token::PLUS) => {
+              if i == *v as i64 {
+                None
+              } else {
+                Some(format!("expected computed .plus value {}, got {}", v, n))
+              }
+            }
+            #[cfg(feature = "additional-controls")]
+            None | Some(Token::FEATURE) => {
+              if i == *v as i64 {
+                None
+              } else {
+                Some(format!("expected value {}, got {}", v, n))
+              }
+            }
+            #[cfg(not(feature = "additional-controls"))]
             None => {
               if i == *v as i64 {
                 None
@@ -1638,14 +2419,34 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           },
           None => Some(format!("{} cannot be represented as an i64", n)),
         },
-        token::Value::UINT(v) => match n.as_u64() {
+        _ => Some(format!("expected value {}, got {}", v, self.json)),
+      },
+      token::Value::UINT(v) => match &self.json {
+        Value::Number(n) => match n.as_u64() {
           Some(i) => match &self.ctrl {
-            Some(Token::NE) if i != *v as u64 => None,
+            Some(Token::NE) | Some(Token::DEFAULT) if i != *v as u64 => None,
             Some(Token::LT) if i < *v as u64 => None,
             Some(Token::LE) if i <= *v as u64 => None,
             Some(Token::GT) if i > *v as u64 => None,
             Some(Token::GE) if i >= *v as u64 => None,
             Some(Token::SIZE) if i < 256u64.pow(*v as u32) => None,
+            #[cfg(feature = "additional-controls")]
+            Some(Token::PLUS) => {
+              if i == *v as u64 {
+                None
+              } else {
+                Some(format!("expected computed .plus value {}, got {}", v, n))
+              }
+            }
+            #[cfg(feature = "additional-controls")]
+            None | Some(Token::FEATURE) => {
+              if i == *v as u64 {
+                None
+              } else {
+                Some(format!("expected value {}, got {}", v, n))
+              }
+            }
+            #[cfg(not(feature = "additional-controls"))]
             None => {
               if i == *v as u64 {
                 None
@@ -1662,13 +2463,43 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           },
           None => Some(format!("{} cannot be represented as a u64", n)),
         },
-        token::Value::FLOAT(v) => match n.as_f64() {
+        Value::String(s) => match &self.ctrl {
+          Some(Token::SIZE) => {
+            if s.len() == *v {
+              None
+            } else {
+              Some(format!("expected \"{}\" .size {}, got {}", s, v, s.len()))
+            }
+          }
+          _ => Some(format!("expected {}, got {}", v, s)),
+        },
+        _ => Some(format!("expected value {}, got {}", v, self.json)),
+      },
+      token::Value::FLOAT(v) => match &self.json {
+        Value::Number(n) => match n.as_f64() {
           Some(f) => match &self.ctrl {
-            Some(Token::NE) if (f - *v).abs() > std::f64::EPSILON => None,
+            Some(Token::NE) | Some(Token::DEFAULT) if (f - *v).abs() > std::f64::EPSILON => None,
             Some(Token::LT) if f < *v as f64 => None,
             Some(Token::LE) if f <= *v as f64 => None,
             Some(Token::GT) if f > *v as f64 => None,
             Some(Token::GE) if f >= *v as f64 => None,
+            #[cfg(feature = "additional-controls")]
+            Some(Token::PLUS) => {
+              if (f - *v).abs() < std::f64::EPSILON {
+                None
+              } else {
+                Some(format!("expected computed .plus value {}, got {}", v, n))
+              }
+            }
+            #[cfg(feature = "additional-controls")]
+            None | Some(Token::FEATURE) => {
+              if (f - *v).abs() < std::f64::EPSILON {
+                None
+              } else {
+                Some(format!("expected value {}, got {}", v, n))
+              }
+            }
+            #[cfg(not(feature = "additional-controls"))]
             None => {
               if (f - *v).abs() < std::f64::EPSILON {
                 None
@@ -1685,11 +2516,11 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
           },
           None => Some(format!("{} cannot be represented as an i64", n)),
         },
-        _ => Some(format!("expected {}, got {}", value, n)),
+        _ => Some(format!("expected value {}, got {}", v, self.json)),
       },
-      Value::String(s) => match value {
-        token::Value::TEXT(t) => match &self.ctrl {
-          Some(Token::NE) => {
+      token::Value::TEXT(t) => match &self.json {
+        Value::String(s) => match &self.ctrl {
+          Some(Token::NE) | Some(Token::DEFAULT) => {
             if s != t {
               None
             } else {
@@ -1700,17 +2531,13 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             let re = regex::Regex::new(
               &format_regex(
                 serde_json::from_str::<Value>(&format!("\"{}\"", t))
-                  .map_err(|e| ValidationError::from_validator(self, e.to_string()))?
+                  .map_err(Error::JSONParsing)?
                   .as_str()
-                  .ok_or_else(|| {
-                    ValidationError::from_validator(self, "malformed regex".to_string())
-                  })?,
+                  .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
               )
-              .ok_or_else(|| {
-                ValidationError::from_validator(self, "malformed regex".to_string())
-              })?,
+              .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
             )
-            .map_err(|e| ValidationError::from_validator(self, e.to_string()))?;
+            .map_err(|e| Error::from_validator(self, e.to_string()))?;
 
             if re.is_match(s) {
               None
@@ -1718,7 +2545,27 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
               Some(format!("expected \"{}\" to match regex \"{}\"", s, t))
             }
           }
+          #[cfg(feature = "additional-controls")]
+          Some(Token::ABNF) => validate_abnf(t, s)
+            .err()
+            .map(|e| format!("\"{}\" is not valid against abnf: {}", s, e)),
+
           _ => {
+            #[cfg(feature = "additional-controls")]
+            if s == t {
+              None
+            } else if let Some(Token::CAT) | Some(Token::DET) = &self.ctrl {
+              Some(format!(
+                "expected value to match concatenated string {}, got \"{}\"",
+                value, s
+              ))
+            } else if let Some(ctrl) = &self.ctrl {
+              Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
+            } else {
+              Some(format!("expected value {} got \"{}\"", value, s))
+            }
+
+            #[cfg(not(feature = "additional-controls"))]
             if s == t {
               None
             } else if let Some(ctrl) = &self.ctrl {
@@ -1728,141 +2575,20 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
             }
           }
         },
-        token::Value::UINT(u) => match &self.ctrl {
-          Some(Token::SIZE) => {
-            if s.len() == *u {
-              None
-            } else {
-              Some(format!("expected \"{}\" .size {}, got {}", s, u, s.len()))
-            }
-          }
-          _ => Some(format!("expected {}, got {}", u, s)),
-        },
-        token::Value::BYTE(token::ByteValue::UTF8(b)) if s.as_bytes() == b.as_ref() => None,
-        token::Value::BYTE(token::ByteValue::B16(b)) if s.as_bytes() == b.as_ref() => None,
-        token::Value::BYTE(token::ByteValue::B64(b)) if s.as_bytes() == b.as_ref() => None,
-        _ => Some(format!("expected {}, got \"{}\"", value, s)),
+        _ => Some(format!("expected value {}, got {}", t, self.json)),
       },
-      Value::Array(a) => {
-        // Member keys are annotation only in an array context
-        if self.is_member_key {
-          return Ok(());
-        }
-
-        match validate_array_occurrence(
-          self.occurrence.as_ref().take(),
-          self.entry_counts.as_ref().map(|ec| &ec[..]),
-          a,
-        ) {
-          Ok((iter_items, allow_empty_array)) => {
-            if iter_items {
-              for (idx, v) in a.iter().enumerate() {
-                if let Some(indices) = &self.valid_array_items {
-                  if self.is_multi_type_choice && indices.contains(&idx) {
-                    continue;
-                  }
-                }
-
-                let mut jv = JSONValidator::new(self.cddl, v.clone());
-                jv.generic_rules = self.generic_rules.clone();
-                jv.eval_generic_rule = self.eval_generic_rule;
-                jv.is_multi_type_choice = self.is_multi_type_choice;
-                jv.ctrl = self.ctrl.clone();
-                jv.json_location
-                  .push_str(&format!("{}/{}", self.json_location, idx));
-
-                jv.visit_value(value)?;
-
-                if self.is_multi_type_choice && jv.errors.is_empty() {
-                  if let Some(indices) = &mut self.valid_array_items {
-                    indices.push(idx);
-                  } else {
-                    self.valid_array_items = Some(vec![idx]);
-                  }
-                  continue;
-                }
-
-                if let Some(errors) = &mut self.array_errors {
-                  if let Some(error) = errors.get_mut(&idx) {
-                    error.append(&mut jv.errors);
-                  } else {
-                    errors.insert(idx, jv.errors);
-                  }
-                } else {
-                  let mut errors = HashMap::new();
-                  errors.insert(idx, jv.errors);
-                  self.array_errors = Some(errors)
-                }
-              }
-            } else if let Some(idx) = self.group_entry_idx.take() {
-              if let Some(v) = a.get(idx) {
-                let mut jv = JSONValidator::new(self.cddl, v.clone());
-                jv.generic_rules = self.generic_rules.clone();
-                jv.eval_generic_rule = self.eval_generic_rule;
-                jv.is_multi_type_choice = self.is_multi_type_choice;
-                jv.ctrl = self.ctrl.clone();
-                jv.json_location
-                  .push_str(&format!("{}/{}", self.json_location, idx));
-
-                jv.visit_value(value)?;
-
-                self.errors.append(&mut jv.errors);
-              } else if !allow_empty_array {
-                self.add_error(format!("expected value {} at index {}", value, idx));
-              }
-            } else {
-              self.add_error(format!("expected value {}, got {}", value, self.json));
-            }
-          }
-          Err(errors) => {
-            for e in errors.into_iter() {
-              self.add_error(e);
-            }
-          }
-        }
-
-        None
-      }
-      Value::Object(o) => {
-        // Bareword member keys are converted to text string values
-        if let token::Value::TEXT(t) = value {
-          if self.is_cut_present {
-            self.cut_value = Some(t);
-          }
-
-          if *t == "any" {
-            return Ok(());
-          }
-
-          // Retrieve the value from key unless optional/zero or more, in which
-          // case advance to next group entry
-          if let Some(v) = o.get(*t) {
-            self
-              .validated_keys
-              .get_or_insert(vec![t.to_string()])
-              .push(t.to_string());
-            self.object_value = Some(v.clone());
-            self.json_location.push_str(&format!("/{}", t));
-
-            None
-          } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
-            &self.occurrence.take()
-          {
-            self.advance_to_next_entry = true;
-            None
-          } else if let Some(Token::NE) = &self.ctrl {
-            None
-          } else {
-            Some(format!("object missing key: \"{}\"", t))
-          }
-        } else {
-          Some(format!(
-            "CDDL member key must be string data type. got {}",
-            value
-          ))
-        }
-      }
-      _ => Some(format!("expected {}, got {}", value, self.json)),
+      token::Value::BYTE(token::ByteValue::UTF8(b)) => match &self.json {
+        Value::String(s) if s.as_bytes() == b.as_ref() => None,
+        _ => Some(format!("expected byte value {:?}, got {}", b, self.json)),
+      },
+      token::Value::BYTE(token::ByteValue::B16(b)) => match &self.json {
+        Value::String(s) if s.as_bytes() == b.as_ref() => None,
+        _ => Some(format!("expected byte value {:?}, got {}", b, self.json)),
+      },
+      token::Value::BYTE(token::ByteValue::B64(b)) => match &self.json {
+        Value::String(s) if s.as_bytes() == b.as_ref() => None,
+        _ => Some(format!("expected byte value {:?}, got {}", b, self.json)),
+      },
     };
 
     if let Some(e) = error {
@@ -1872,7 +2598,7 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<ValidationError> {
+  fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<Error> {
     self.occurrence = Some(o.occur.clone());
 
     Ok(())
@@ -1880,20 +2606,69 @@ impl<'a> Visitor<'a, ValidationError> for JSONValidator<'a> {
 }
 
 #[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests {
-  use super::*;
+  #![allow(unused_imports)]
 
+  use super::*;
+  use indoc::indoc;
+
+  #[cfg(feature = "additional-controls")]
   #[test]
-  fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl = r#"serivceEndpoint = ~uri
-    "#;
-    let json = r#""test""#;
+  fn validate_plus() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        interval<BASE> = (
+          "test" => BASE .plus a
+        )
+    
+        rect = {
+          interval<X>
+        }
+        X = 0
+        a = 10
+      "#
+    );
+    let json = r#"{ "test": 10 }"#;
 
     let mut lexer = lexer_from_str(cddl);
-    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing)?;
+    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
     let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
-    let mut jv = JSONValidator::new(&cddl, json);
+    let cddl = cddl.unwrap();
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    jv.validate()?;
+
+    Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn validate_feature() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        v = JC<"v", 2>
+        JC<J, C> =  C .feature "cbor" / J .feature "json"
+      "#
+    );
+
+    let json = r#""v""#;
+
+    let mut lexer = lexer_from_str(cddl);
+    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
+
+    let cddl = cddl.unwrap();
+
+    let mut jv = JSONValidator::new(&cddl, json, Some(&["json"]));
     jv.validate()?;
 
     Ok(())

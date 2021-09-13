@@ -1,5 +1,7 @@
 #![cfg(feature = "std")]
+#![cfg(feature = "cbor")]
 #![cfg(not(target_arch = "wasm32"))]
+#![cfg(not(feature = "additional-controls"))]
 
 use cddl::{self, validator::validate_cbor_from_slice};
 use serde::{Deserialize, Serialize};

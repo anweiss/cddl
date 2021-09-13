@@ -115,6 +115,35 @@ pub enum Token<'a> {
   /// Proposed control extension to support Perl-Compatible Regular Expressions
   /// (PCREs). See https://tools.ietf.org/html/rfc8610#section-3.8.3.2s
   PCRE,
+  #[cfg(feature = "additional-controls")]
+  /// .cat control operator
+  /// Proposed control extension for string concatenation. See
+  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-2.1.
+  CAT,
+  #[cfg(feature = "additional-controls")]
+  /// .det control operator Proposed control extension for string concatenation
+  /// with dedenting. See
+  /// https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05#section-2.3.
+  DET,
+  #[cfg(feature = "additional-controls")]
+  /// .plus control operator
+  /// Proposed control extension for numeric addition. See
+  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-2.2.
+  PLUS,
+  #[cfg(feature = "additional-controls")]
+  /// .abnf control operator
+  /// Proposed control extension for embedded ABNF as UTF-8. See
+  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-3
+  ABNF,
+  #[cfg(feature = "additional-controls")]
+  /// .abnfb control operator
+  /// Proposed control extension for embedded ABNF as a sequence of bytes. See
+  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-3
+  ABNFB,
+  #[cfg(feature = "additional-controls")]
+  /// .feature control operator Proposed control extension for features. See
+  /// https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05#section-4
+  FEATURE,
 
   /// group to choice enumeration '&'
   GTOCHOICE,
@@ -328,7 +357,7 @@ pub enum Value<'a> {
   FLOAT(f64),
   /// Text value
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
-  TEXT(&'a str),
+  TEXT(Cow<'a, str>),
   /// Byte value
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   BYTE(ByteValue<'a>),
@@ -357,9 +386,9 @@ impl<'a> fmt::Display for Value<'a> {
   }
 }
 
-impl<'a> From<&'static str> for Value<'a> {
-  fn from(value: &'static str) -> Self {
-    Value::TEXT(value)
+impl<'a> From<&'a str> for Value<'a> {
+  fn from(value: &'a str) -> Self {
+    Value::TEXT(value.into())
   }
 }
 
@@ -478,6 +507,18 @@ impl<'a> fmt::Display for Token<'a> {
       Token::CBOR => write!(f, ".cbor"),
       Token::CBORSEQ => write!(f, ".cborseq"),
       Token::WITHIN => write!(f, ".within"),
+      #[cfg(feature = "additional-controls")]
+      Token::CAT => write!(f, ".cat"),
+      #[cfg(feature = "additional-controls")]
+      Token::DET => write!(f, ".det"),
+      #[cfg(feature = "additional-controls")]
+      Token::PLUS => write!(f, ".plus"),
+      #[cfg(feature = "additional-controls")]
+      Token::ABNF => write!(f, ".abnf"),
+      #[cfg(feature = "additional-controls")]
+      Token::ABNFB => write!(f, ".abnfb"),
+      #[cfg(feature = "additional-controls")]
+      Token::FEATURE => write!(f, ".feature"),
       Token::AND => write!(f, ".and"),
       Token::LT => write!(f, ".lt"),
       Token::LE => write!(f, ".le"),
@@ -556,6 +597,18 @@ pub fn lookup_control_from_str<'a>(ident: &str) -> Option<Token<'a>> {
     ".ne" => Some(Token::NE),
     ".default" => Some(Token::DEFAULT),
     ".pcre" => Some(Token::PCRE),
+    #[cfg(feature = "additional-controls")]
+    ".cat" => Some(Token::CAT),
+    #[cfg(feature = "additional-controls")]
+    ".det" => Some(Token::DET),
+    #[cfg(feature = "additional-controls")]
+    ".plus" => Some(Token::PLUS),
+    #[cfg(feature = "additional-controls")]
+    ".abnf" => Some(Token::ABNF),
+    #[cfg(feature = "additional-controls")]
+    ".abnfb" => Some(Token::ABNFB),
+    #[cfg(feature = "additional-controls")]
+    ".feature" => Some(Token::FEATURE),
     _ => None,
   }
 }
@@ -591,6 +644,18 @@ pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
     Token::NE => Some(".ne"),
     Token::DEFAULT => Some(".default"),
     Token::PCRE => Some(".pcre"),
+    #[cfg(feature = "additional-controls")]
+    Token::CAT => Some(".cat"),
+    #[cfg(feature = "additional-controls")]
+    Token::DET => Some(".det"),
+    #[cfg(feature = "additional-controls")]
+    Token::PLUS => Some(".plus"),
+    #[cfg(feature = "additional-controls")]
+    Token::ABNF => Some(".abnf"),
+    #[cfg(feature = "additional-controls")]
+    Token::ABNFB => Some(".abnfb"),
+    #[cfg(feature = "additional-controls")]
+    Token::FEATURE => Some(".feature"),
     _ => None,
   }
 }

@@ -7,7 +7,7 @@ use serde::Serialize;
 use alloc::string::String;
 
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ErrorMsg {
   short: String,
   extended: Option<String>,

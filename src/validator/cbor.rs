@@ -1,15 +1,23 @@
 #![cfg(feature = "std")]
+#![cfg(feature = "cbor")]
+#![cfg(not(feature = "lsp"))]
 
+use super::*;
 use crate::{
   ast::*,
   token::{self, Token},
   visitor::{self, *},
 };
+
+use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
+
 use chrono::{TimeZone, Utc};
 use serde_cbor::Value;
-use std::{collections::HashMap, convert::TryFrom, fmt};
 
-use super::*;
+#[cfg(feature = "additional-controls")]
+use crate::validator::control::{
+  abnf_from_complex_controller, cat_operation, plus_operation, validate_abnf,
+};
 
 /// cbor validation Result
 pub type Result = std::result::Result<(), Error>;
@@ -23,6 +31,8 @@ pub enum Error {
   CBORParsing(serde_cbor::Error),
   /// CDDL parsing error
   CDDLParsing(String),
+  /// UTF8 parsing error,
+  UTF8Parsing(std::str::Utf8Error),
 }
 
 impl fmt::Display for Error {
@@ -37,6 +47,7 @@ impl fmt::Display for Error {
       }
       Error::CBORParsing(error) => write!(f, "error parsing cbor: {}", error),
       Error::CDDLParsing(error) => write!(f, "error parsing CDDL: {}", error),
+      Error::UTF8Parsing(error) => write!(f, "error pasing utf8: {}", error),
     }
   }
 }
@@ -87,8 +98,8 @@ impl fmt::Display for ValidationError {
 
     write!(
       f,
-      "{} at cddl location \"{}\" and cbor location {}: {}",
-      error_str, self.cddl_location, self.cbor_location, self.reason
+      "{} at cbor location {}: {}",
+      error_str, self.cbor_location, self.reason
     )
   }
 }
@@ -99,9 +110,9 @@ impl std::error::Error for ValidationError {
   }
 }
 
-impl ValidationError {
+impl Error {
   fn from_validator(cv: &CBORValidator, reason: String) -> Self {
-    ValidationError {
+    Error::Validation(vec![ValidationError {
       cddl_location: cv.cddl_location.clone(),
       cbor_location: cv.cbor_location.clone(),
       reason,
@@ -109,7 +120,7 @@ impl ValidationError {
       is_group_to_choice_enum: cv.is_group_to_choice_enum,
       type_group_name_entry: cv.type_group_name_entry.map(|e| e.to_string()),
       is_multi_group_choice: cv.is_multi_group_choice,
-    }
+    }])
   }
 }
 
@@ -153,18 +164,32 @@ pub struct CBORValidator<'a> {
   // Whether or not to advance to the next group entry if member key validation
   // fails as detected during the current state of AST evaluation
   advance_to_next_entry: bool,
+  // Is validation checking for map quality
   is_ctrl_map_equality: bool,
   entry_counts: Option<Vec<EntryCount>>,
   // Collect map entry keys that have already been validated
   validated_keys: Option<Vec<Value>>,
   // Collect map entry values that have yet to be validated
   values_to_validate: Option<Vec<Value>>,
+  // Whether or not the validator is validating a map entry value
+  validating_value: bool,
   // Collect valid array indices when entries are type choices
   valid_array_items: Option<Vec<usize>>,
   // Collect invalid array item errors where the key is the index of the invalid
   // array item
   array_errors: Option<HashMap<usize, Vec<ValidationError>>>,
   is_colon_shortcut_present: bool,
+  is_root: bool,
+  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(feature = "additional-controls")]
+  enabled_features: Option<&'a [&'a str]>,
+  #[cfg(target_arch = "wasm32")]
+  #[cfg(feature = "additional-controls")]
+  enabled_features: Option<Box<[JsValue]>>,
+  #[cfg(feature = "additional-controls")]
+  has_feature_errors: bool,
+  #[cfg(feature = "additional-controls")]
+  disabled_features: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +200,47 @@ struct GenericRule<'a> {
 }
 
 impl<'a> CBORValidator<'a> {
+  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(feature = "additional-controls")]
+  /// New cborValidation from CDDL AST and cbor value
+  pub fn new(cddl: &'a CDDL<'a>, cbor: Value, enabled_features: Option<&'a [&'a str]>) -> Self {
+    CBORValidator {
+      cddl,
+      cbor,
+      errors: Vec::default(),
+      cddl_location: String::new(),
+      cbor_location: String::new(),
+      occurrence: None,
+      group_entry_idx: None,
+      object_value: None,
+      is_member_key: false,
+      is_cut_present: false,
+      cut_value: None,
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
+      ctrl: None,
+      is_group_to_choice_enum: false,
+      is_multi_type_choice: false,
+      is_multi_group_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
+      entry_counts: None,
+      validated_keys: None,
+      values_to_validate: None,
+      validating_value: false,
+      valid_array_items: None,
+      array_errors: None,
+      is_colon_shortcut_present: false,
+      is_root: false,
+      enabled_features,
+      has_feature_errors: false,
+      disabled_features: None,
+    }
+  }
+
+  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(not(feature = "additional-controls"))]
   /// New cborValidation from CDDL AST and cbor value
   pub fn new(cddl: &'a CDDL<'a>, cbor: Value) -> Self {
     CBORValidator {
@@ -201,9 +267,86 @@ impl<'a> CBORValidator<'a> {
       entry_counts: None,
       validated_keys: None,
       values_to_validate: None,
+      validating_value: false,
       valid_array_items: None,
       array_errors: None,
       is_colon_shortcut_present: false,
+      is_root: false,
+    }
+  }
+
+  #[cfg(target_arch = "wasm32")]
+  #[cfg(feature = "additional-controls")]
+  /// New cborValidation from CDDL AST and cbor value
+  pub fn new(cddl: &'a CDDL<'a>, cbor: Value, enabled_features: Option<Box<[JsValue]>>) -> Self {
+    CBORValidator {
+      cddl,
+      cbor,
+      errors: Vec::default(),
+      cddl_location: String::new(),
+      cbor_location: String::new(),
+      occurrence: None,
+      group_entry_idx: None,
+      object_value: None,
+      is_member_key: false,
+      is_cut_present: false,
+      cut_value: None,
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
+      ctrl: None,
+      is_group_to_choice_enum: false,
+      is_multi_type_choice: false,
+      is_multi_group_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
+      entry_counts: None,
+      validated_keys: None,
+      values_to_validate: None,
+      validating_value: false,
+      valid_array_items: None,
+      array_errors: None,
+      is_colon_shortcut_present: false,
+      is_root: false,
+      enabled_features,
+      has_feature_errors: false,
+      disabled_features: None,
+    }
+  }
+
+  #[cfg(target_arch = "wasm32")]
+  #[cfg(not(feature = "additional-controls"))]
+  /// New cborValidation from CDDL AST and cbor value
+  pub fn new(cddl: &'a CDDL<'a>, cbor: Value) -> Self {
+    CBORValidator {
+      cddl,
+      cbor,
+      errors: Vec::default(),
+      cddl_location: String::new(),
+      cbor_location: String::new(),
+      occurrence: None,
+      group_entry_idx: None,
+      object_value: None,
+      is_member_key: false,
+      is_cut_present: false,
+      cut_value: None,
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
+      ctrl: None,
+      is_group_to_choice_enum: false,
+      is_multi_type_choice: false,
+      is_multi_group_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
+      entry_counts: None,
+      validated_keys: None,
+      values_to_validate: None,
+      validating_value: false,
+      valid_array_items: None,
+      array_errors: None,
+      is_colon_shortcut_present: false,
+      is_root: false,
     }
   }
 
@@ -213,9 +356,9 @@ impl<'a> CBORValidator<'a> {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {
         if rule.generic_params.is_none() {
-          self
-            .visit_type_rule(rule)
-            .map_err(|e| Error::Validation(vec![e]))?;
+          self.is_root = true;
+          self.visit_type_rule(rule)?;
+          self.is_root = false;
           break;
         }
       }
@@ -241,8 +384,8 @@ impl<'a> CBORValidator<'a> {
   }
 }
 
-impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
-  fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<ValidationError> {
+impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
+  fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<Error> {
     if let Some(gp) = &tr.generic_params {
       if let Some(gr) = self
         .generic_rules
@@ -276,7 +419,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> visitor::Result<ValidationError> {
+  fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> visitor::Result<Error> {
     if let Some(gp) = &gr.generic_params {
       if let Some(gr) = self
         .generic_rules
@@ -310,7 +453,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<ValidationError> {
+  fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<Error> {
     if t.type_choices.len() > 1 {
       self.is_multi_type_choice = true;
     }
@@ -321,7 +464,25 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       // / integer ]), collect all errors and filter after the fact
       if matches!(self.cbor, Value::Array(_)) {
         let error_count = self.errors.len();
+
         self.visit_type_choice(type_choice)?;
+
+        #[cfg(feature = "additional-controls")]
+        if self.errors.len() == error_count
+          && !self.has_feature_errors
+          && self.disabled_features.is_none()
+        {
+          // Disregard invalid type choice validation errors if one of the
+          // choices validates successfully
+          let type_choice_error_count = self.errors.len() - initial_error_count;
+          if type_choice_error_count > 0 {
+            for _ in 0..type_choice_error_count {
+              self.errors.pop();
+            }
+          }
+        }
+
+        #[cfg(not(feature = "additional-controls"))]
         if self.errors.len() == error_count {
           // Disregard invalid type choice validation errors if one of the
           // choices validates successfully
@@ -339,6 +500,24 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       let error_count = self.errors.len();
       self.visit_type_choice(type_choice)?;
 
+      #[cfg(feature = "additional-controls")]
+      if self.errors.len() == error_count
+        && !self.has_feature_errors
+        && self.disabled_features.is_none()
+      {
+        // Disregard invalid type choice validation errors if one of the
+        // choices validates successfully
+        let type_choice_error_count = self.errors.len() - initial_error_count;
+        if type_choice_error_count > 0 {
+          for _ in 0..type_choice_error_count {
+            self.errors.pop();
+          }
+        }
+
+        return Ok(());
+      }
+
+      #[cfg(not(feature = "additional-controls"))]
       if self.errors.len() == error_count {
         // Disregard invalid type choice validation errors if one of the
         // choices validates successfully
@@ -356,7 +535,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_group(&mut self, g: &Group<'a>) -> visitor::Result<ValidationError> {
+  fn visit_group(&mut self, g: &Group<'a>) -> visitor::Result<Error> {
     if g.group_choices.len() > 1 {
       self.is_multi_group_choice = true;
     }
@@ -433,7 +612,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<ValidationError> {
+  fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<Error> {
     if self.is_group_to_choice_enum {
       let initial_error_count = self.errors.len();
       for tc in type_choices_from_group_choice(self.cddl, gc).iter() {
@@ -467,7 +646,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     lower: &Type2,
     upper: &Type2,
     is_inclusive: bool,
-  ) -> visitor::Result<ValidationError> {
+  ) -> visitor::Result<Error> {
     if let Value::Array(a) = &self.cbor {
       match validate_array_occurrence(
         self.occurrence.as_ref().take(),
@@ -483,7 +662,13 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                 }
               }
 
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+              let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+              #[cfg(not(feature = "additional-controls"))]
               let mut cv = CBORValidator::new(self.cddl, v.clone());
+
               cv.generic_rules = self.generic_rules.clone();
               cv.eval_generic_rule = self.eval_generic_rule;
               cv.ctrl = self.ctrl.clone();
@@ -516,7 +701,13 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             }
           } else if let Some(idx) = self.group_entry_idx.take() {
             if let Some(v) = a.get(idx) {
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+              let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+              #[cfg(not(feature = "additional-controls"))]
               let mut cv = CBORValidator::new(self.cddl, v.clone());
+
               cv.generic_rules = self.generic_rules.clone();
               cv.eval_generic_rule = self.eval_generic_rule;
               cv.is_multi_type_choice = self.is_multi_type_choice;
@@ -755,7 +946,60 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     target: &Type2<'a>,
     ctrl: &str,
     controller: &Type2<'a>,
-  ) -> visitor::Result<ValidationError> {
+  ) -> visitor::Result<Error> {
+    if let Type2::Typename {
+      ident: target_ident,
+      ..
+    } = target
+    {
+      if let Type2::Typename {
+        ident: controller_ident,
+        ..
+      } = controller
+      {
+        if let Some(name) = self.eval_generic_rule {
+          if let Some(gr) = self
+            .generic_rules
+            .iter()
+            .cloned()
+            .find(|gr| gr.name == name)
+          {
+            for (idx, gp) in gr.params.iter().enumerate() {
+              if let Some(arg) = gr.args.get(idx) {
+                if *gp == target_ident.ident {
+                  let t2 = Type2::from(arg.clone());
+
+                  if *gp == controller_ident.ident {
+                    return self.visit_control_operator(&t2, ctrl, &t2);
+                  }
+
+                  return self.visit_control_operator(&arg.type2, ctrl, controller);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if let Some(name) = self.eval_generic_rule {
+        if let Some(gr) = self
+          .generic_rules
+          .iter()
+          .cloned()
+          .find(|gr| gr.name == name)
+        {
+          for (idx, gp) in gr.params.iter().enumerate() {
+            if let Some(arg) = gr.args.get(idx) {
+              if *gp == target_ident.ident {
+                let t2 = Type2::from(arg.clone());
+                return self.visit_control_operator(&t2, ctrl, controller);
+              }
+            }
+          }
+        }
+      }
+    }
+
     match lookup_control_from_str(ctrl) {
       t @ Some(Token::EQ) => {
         match target {
@@ -902,7 +1146,15 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
+          #[cfg(feature = "ast-span")]
           if let Some(Occur::Optional(_)) = self.occurrence.take() {
+            self.add_error(format!(
+              "expected default value {}, got {:?}",
+              controller, self.cbor
+            ));
+          }
+          #[cfg(not(feature = "ast-span"))]
+          if let Some(Occur::Optional) = self.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {:?}",
               controller, self.cbor
@@ -979,6 +1231,274 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
         Ok(())
       }
+      #[cfg(feature = "additional-controls")]
+      t @ Some(Token::CAT) => {
+        self.ctrl = t;
+
+        match cat_operation(self.cddl, target, controller, false) {
+          Ok(values) => {
+            let error_count = self.errors.len();
+            for v in values.iter() {
+              let cur_errors = self.errors.len();
+
+              self.visit_type2(v)?;
+
+              if self.errors.len() == cur_errors {
+                for _ in 0..self.errors.len() - error_count {
+                  self.errors.pop();
+                }
+
+                break;
+              }
+            }
+          }
+          Err(e) => self.add_error(e),
+        }
+
+        self.ctrl = None;
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      t @ Some(Token::DET) => {
+        self.ctrl = t;
+
+        match cat_operation(self.cddl, target, controller, true) {
+          Ok(values) => {
+            let error_count = self.errors.len();
+
+            for v in values.iter() {
+              let cur_errors = self.errors.len();
+              self.visit_type2(v)?;
+
+              if self.errors.len() == cur_errors {
+                for _ in 0..self.errors.len() - error_count {
+                  self.errors.pop();
+                }
+
+                break;
+              }
+            }
+          }
+          Err(e) => self.add_error(e),
+        }
+
+        self.ctrl = None;
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      t @ Some(Token::PLUS) => {
+        self.ctrl = t;
+
+        match plus_operation(self.cddl, target, controller) {
+          Ok(values) => {
+            let error_count = self.errors.len();
+            for v in values.iter() {
+              let cur_errors = self.errors.len();
+
+              self.visit_type2(v)?;
+
+              self.visit_type2(v)?;
+              if self.errors.len() == cur_errors {
+                for _ in 0..self.errors.len() - error_count {
+                  self.errors.pop();
+                }
+
+                break;
+              }
+            }
+          }
+
+          Err(e) => self.add_error(e),
+        }
+
+        self.ctrl = None;
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      t @ Some(Token::ABNF) => {
+        self.ctrl = t;
+
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match self.cbor {
+              Value::Text(_) | Value::Array(_) => {
+                if let Type2::ParenthesizedType { pt, .. } = controller {
+                  match abnf_from_complex_controller(self.cddl, pt) {
+                    Ok(values) => {
+                      let error_count = self.errors.len();
+                      for v in values.iter() {
+                        let cur_errors = self.errors.len();
+
+                        self.visit_type2(v)?;
+
+                        if self.errors.len() == cur_errors {
+                          for _ in 0..self.errors.len() - error_count {
+                            self.errors.pop();
+                          }
+
+                          break;
+                        }
+                      }
+                    }
+                    Err(e) => self.add_error(e),
+                  }
+                } else {
+                  self.visit_type2(controller)?
+                }
+              }
+              _ => self.add_error(format!(
+                ".abnf control can only be matched against a cbor string, got {:?}",
+                self.cbor,
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".abnf can only be matched against string data type, got {}",
+            target,
+          )),
+        }
+
+        self.ctrl = None;
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      t @ Some(Token::ABNFB) => {
+        self.ctrl = t;
+
+        match target {
+          Type2::Typename { ident, .. } if is_ident_byte_string_data_type(self.cddl, ident) => {
+            match self.cbor {
+              Value::Bytes(_) | Value::Array(_) => {
+                if let Type2::ParenthesizedType { pt, .. } = controller {
+                  match abnf_from_complex_controller(self.cddl, pt) {
+                    Ok(values) => {
+                      let error_count = self.errors.len();
+                      for v in values.iter() {
+                        let cur_errors = self.errors.len();
+
+                        self.visit_type2(v)?;
+
+                        if self.errors.len() == cur_errors {
+                          for _ in 0..self.errors.len() - error_count {
+                            self.errors.pop();
+                          }
+
+                          break;
+                        }
+                      }
+                    }
+                    Err(e) => self.add_error(e),
+                  }
+                } else {
+                  self.visit_type2(controller)?
+                }
+              }
+              _ => self.add_error(format!(
+                ".abnfb control can only be matched against cbor bytes, got {:?}",
+                self.cbor,
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".abnfb can only be matched against byte string target data type, got {}",
+            target,
+          )),
+        }
+
+        self.ctrl = None;
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      #[cfg(not(target_arch = "wasm32"))]
+      t @ Some(Token::FEATURE) => {
+        self.ctrl = t;
+
+        if let Some(ef) = self.enabled_features {
+          let tv = text_value_from_type2(self.cddl, controller);
+          if let Some(Type2::TextValue { value, .. }) = tv {
+            if ef.contains(&&**value) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
+            }
+          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
+            let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
+            if ef.contains(&value) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
+            }
+          }
+        }
+
+        self.ctrl = None;
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      #[cfg(target_arch = "wasm32")]
+      t @ Some(Token::FEATURE) => {
+        self.ctrl = t;
+
+        if let Some(ef) = &self.enabled_features {
+          let tv = text_value_from_type2(self.cddl, controller);
+          if let Some(Type2::TextValue { value, .. }) = tv {
+            if ef.contains(&JsValue::from(value.as_ref())) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
+            }
+          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
+            let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
+            if ef.contains(&JsValue::from(value)) {
+              let err_count = self.errors.len();
+              self.visit_type2(target)?;
+              if self.errors.len() > err_count {
+                self.has_feature_errors = true;
+              }
+              self.ctrl = None;
+            } else {
+              self
+                .disabled_features
+                .get_or_insert(vec![value.to_string()])
+                .push(value.to_string());
+            }
+          }
+        }
+
+        self.ctrl = None;
+
+        Ok(())
+      }
       _ => {
         self.add_error(format!("unsupported control operator {}", ctrl));
         Ok(())
@@ -986,7 +1506,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     }
   }
 
-  fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<ValidationError> {
+  fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error> {
     if matches!(self.ctrl, Some(Token::CBOR)) {
       if let Value::Bytes(b) = &self.cbor {
         let value = serde_cbor::from_slice::<Value>(b);
@@ -994,7 +1514,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           Ok(value) => {
             let current_location = self.cbor_location.clone();
 
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut cv = CBORValidator::new(self.cddl, value, self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+            let mut cv = CBORValidator::new(self.cddl, value, self.enabled_features);
+
+            #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, value);
+
             cv.generic_rules = self.generic_rules.clone();
             cv.eval_generic_rule = self.eval_generic_rule;
             cv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1024,7 +1551,22 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           Ok(Value::Array(_)) => {
             let current_location = self.cbor_location.clone();
 
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut cv = CBORValidator::new(
+              self.cddl,
+              value.unwrap_or(Value::Null),
+              self.enabled_features.clone(),
+            );
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+            let mut cv = CBORValidator::new(
+              self.cddl,
+              value.unwrap_or(Value::Null),
+              self.enabled_features,
+            );
+
+            #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, value.unwrap_or(Value::Null));
+
             cv.generic_rules = self.generic_rules.clone();
             cv.eval_generic_rule = self.eval_generic_rule;
             cv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1054,14 +1596,21 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     }
 
     match t2 {
-      Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value)),
+      Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value.clone())),
       Type2::Map { group, .. } => match &self.cbor {
         Value::Map(m) => {
           if self.is_member_key {
             let current_location = self.cbor_location.clone();
 
             for (k, v) in m.iter() {
+              #[cfg(feature = "additional-controls")]
+              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+              let mut cv = CBORValidator::new(self.cddl, k.clone(), self.enabled_features.clone());
+              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+              let mut cv = CBORValidator::new(self.cddl, k.clone(), self.enabled_features);
+              #[cfg(not(feature = "additional-controls"))]
               let mut cv = CBORValidator::new(self.cddl, k.clone());
+
               cv.generic_rules = self.generic_rules.clone();
               cv.eval_generic_rule = self.eval_generic_rule;
               cv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1125,7 +1674,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                     }
                   }
 
+                  #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                  let mut cv =
+                    CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                  let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+                  #[cfg(not(feature = "additional-controls"))]
                   let mut cv = CBORValidator::new(self.cddl, v.clone());
+
                   cv.generic_rules = self.generic_rules.clone();
                   cv.eval_generic_rule = self.eval_generic_rule;
                   cv.ctrl = self.ctrl.clone();
@@ -1158,7 +1714,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                 }
               } else if let Some(idx) = self.group_entry_idx.take() {
                 if let Some(v) = a.get(idx) {
+                  #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                  let mut cv =
+                    CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                  let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+                  #[cfg(not(feature = "additional-controls"))]
                   let mut cv = CBORValidator::new(self.cddl, v.clone());
+
                   cv.generic_rules = self.generic_rules.clone();
                   cv.eval_generic_rule = self.eval_generic_rule;
                   cv.ctrl = self.ctrl.clone();
@@ -1198,7 +1761,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           if group.group_choices.len() == 1
             && group.group_choices[0].group_entries.is_empty()
             && !a.is_empty()
-            && !matches!(self.ctrl, Some(Token::NE))
+            && !matches!(self.ctrl, Some(Token::NE) | Some(Token::DEFAULT))
           {
             self.add_error(format!("expected empty array, got {:?}", self.cbor));
             return Ok(());
@@ -1243,7 +1806,13 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           self.entry_counts = Some(entry_counts);
 
           for (k, v) in m.iter() {
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut cv = CBORValidator::new(self.cddl, k.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+            let mut cv = CBORValidator::new(self.cddl, k.clone(), self.enabled_features);
+            #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, k.clone());
+
             cv.generic_rules = self.generic_rules.clone();
             cv.entry_counts = self.entry_counts.clone();
             cv.eval_generic_rule = self.eval_generic_rule;
@@ -1298,7 +1867,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               });
             }
 
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut cv =
+              CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+            let mut cv = CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features);
+            #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
+
             cv.generic_rules = self.generic_rules.clone();
             cv.eval_generic_rule = Some(ident.ident);
             cv.is_group_to_choice_enum = true;
@@ -1354,7 +1930,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               });
             }
 
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut cv =
+              CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+            let mut cv = CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features);
+            #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
+
             cv.generic_rules = self.generic_rules.clone();
             cv.eval_generic_rule = Some(ident.ident);
             cv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1402,7 +1985,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               });
             }
 
+            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+            let mut cv =
+              CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features.clone());
+            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+            let mut cv = CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features);
+            #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
+
             cv.generic_rules = self.generic_rules.clone();
             cv.eval_generic_rule = Some(ident.ident);
             cv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1443,7 +2033,17 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             return Ok(());
           }
 
+          #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+          let mut cv = CBORValidator::new(
+            self.cddl,
+            value.as_ref().clone(),
+            self.enabled_features.clone(),
+          );
+          #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+          let mut cv = CBORValidator::new(self.cddl, value.as_ref().clone(), self.enabled_features);
+          #[cfg(not(feature = "additional-controls"))]
           let mut cv = CBORValidator::new(self.cddl, value.as_ref().clone());
+
           cv.generic_rules = self.generic_rules.clone();
           cv.eval_generic_rule = self.eval_generic_rule;
           cv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1619,7 +2219,10 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           Ok(())
         }
       },
+      #[cfg(feature = "ast-span")]
       Type2::Any(_) => Ok(()),
+      #[cfg(not(feature = "ast-span"))]
+      Type2::Any => Ok(()),
       _ => {
         self.add_error(format!(
           "unsupported data type for validating cbor, got {}",
@@ -1630,7 +2233,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     }
   }
 
-  fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<ValidationError> {
+  fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error> {
     if let Some(name) = self.eval_generic_rule {
       if let Some(gr) = self
         .generic_rules
@@ -1761,7 +2364,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                   }
                 }
 
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut cv =
+                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+                #[cfg(not(feature = "additional-controls"))]
                 let mut cv = CBORValidator::new(self.cddl, v.clone());
+
                 cv.generic_rules = self.generic_rules.clone();
                 cv.ctrl = self.ctrl.clone();
                 cv.eval_generic_rule = self.eval_generic_rule;
@@ -1794,7 +2404,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               }
             } else if let Some(idx) = self.group_entry_idx.take() {
               if let Some(v) = a.get(idx) {
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut cv =
+                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+                #[cfg(not(feature = "additional-controls"))]
                 let mut cv = CBORValidator::new(self.cddl, v.clone());
+
                 cv.generic_rules = self.generic_rules.clone();
                 cv.eval_generic_rule = self.eval_generic_rule;
                 cv.is_multi_type_choice = self.is_multi_type_choice;
@@ -1823,8 +2440,220 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       }
       Value::Map(m) => {
         if let Some(occur) = &self.occurrence {
+          #[cfg(feature = "ast-span")]
           if let Occur::ZeroOrMore(_) | Occur::OneOrMore(_) = occur {
             if let Occur::OneOrMore(_) = occur {
+              if m.is_empty() {
+                self.add_error(format!(
+                  "map cannot be empty, one or more entries with key type {} required",
+                  ident
+                ));
+                return Ok(());
+              }
+            }
+
+            if is_ident_string_data_type(self.cddl, ident) {
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(k) {
+                      if matches!(k, Value::Text(_)) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if matches!(k, Value::Text(_)) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate.clone());
+              for e in errors.into_iter() {
+                self.add_error(e);
+              }
+
+              return Ok(());
+            }
+
+            if is_ident_integer_data_type(self.cddl, ident) {
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(k) {
+                      if matches!(k, Value::Integer(_)) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if matches!(k, Value::Integer(_)) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+              for e in errors.into_iter() {
+                self.add_error(e);
+              }
+
+              return Ok(());
+            }
+
+            if is_ident_bool_data_type(self.cddl, ident) {
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(k) {
+                      if matches!(k, Value::Bool(_)) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if matches!(k, Value::Bool(_)) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+              for e in errors.into_iter() {
+                self.add_error(e);
+              }
+
+              return Ok(());
+            }
+
+            if is_ident_byte_string_data_type(self.cddl, ident) {
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(k) {
+                      if matches!(k, Value::Bytes(_)) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if matches!(k, Value::Bytes(_)) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+              for e in errors.into_iter() {
+                self.add_error(e);
+              }
+
+              return Ok(());
+            }
+
+            if is_ident_null_data_type(self.cddl, ident) {
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(k) {
+                      if matches!(k, Value::Null) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if matches!(k, Value::Null) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+              for e in errors.into_iter() {
+                self.add_error(e);
+              }
+
+              return Ok(());
+            }
+
+            if is_ident_float_data_type(self.cddl, ident) {
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(k) {
+                      if matches!(k, Value::Float(_)) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if matches!(k, Value::Float(_)) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+              for e in errors.into_iter() {
+                self.add_error(e);
+              }
+
+              return Ok(());
+            }
+          }
+
+          #[cfg(not(feature = "ast-span"))]
+          if let Occur::ZeroOrMore | Occur::OneOrMore = occur {
+            if let Occur::OneOrMore = occur {
               if m.is_empty() {
                 self.add_error(format!(
                   "map cannot be empty, one or more entries with key type {} required",
@@ -2034,7 +2863,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           }
         }
 
-        if is_ident_string_data_type(self.cddl, ident) {
+        if is_ident_string_data_type(self.cddl, ident) && !self.validating_value {
           if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Text(_))) {
             self
               .validated_keys
@@ -2049,7 +2878,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           return Ok(());
         }
 
-        if is_ident_integer_data_type(self.cddl, ident) {
+        if is_ident_integer_data_type(self.cddl, ident) && !self.validating_value {
           if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Integer(_))) {
             self
               .validated_keys
@@ -2063,7 +2892,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           return Ok(());
         }
 
-        if is_ident_bool_data_type(self.cddl, ident) {
+        if is_ident_bool_data_type(self.cddl, ident) && !self.validating_value {
           if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Bool(_))) {
             self
               .validated_keys
@@ -2077,7 +2906,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           return Ok(());
         }
 
-        if is_ident_null_data_type(self.cddl, ident) {
+        if is_ident_null_data_type(self.cddl, ident) && !self.validating_value {
           if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
             self
               .validated_keys
@@ -2091,7 +2920,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           return Ok(());
         }
 
-        if is_ident_byte_string_data_type(self.cddl, ident) {
+        if is_ident_byte_string_data_type(self.cddl, ident) && !self.validating_value {
           if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Bytes(_))) {
             self
               .validated_keys
@@ -2105,7 +2934,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           return Ok(());
         }
 
-        if is_ident_float_data_type(self.cddl, ident) {
+        if is_ident_float_data_type(self.cddl, ident) && !self.validating_value {
           if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
             self
               .validated_keys
@@ -2130,7 +2959,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           return Ok(());
         }
 
-        self.visit_value(&token::Value::TEXT(ident.ident))
+        self.visit_value(&token::Value::TEXT(ident.ident.into()))
       }
       _ => {
         if let Some(cut_value) = self.cut_value.take() {
@@ -2149,7 +2978,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
   fn visit_value_member_key_entry(
     &mut self,
     entry: &ValueMemberKeyEntry<'a>,
-  ) -> visitor::Result<ValidationError> {
+  ) -> visitor::Result<Error> {
     if let Some(occur) = &entry.occur {
       self.visit_occurrence(occur)?;
     }
@@ -2171,13 +3000,20 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
 
     if let Some(values) = &self.values_to_validate {
       for v in values.iter() {
+        #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+        let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+        #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+        let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+        #[cfg(not(feature = "additional-controls"))]
         let mut cv = CBORValidator::new(self.cddl, v.clone());
+
         cv.generic_rules = self.generic_rules.clone();
         cv.eval_generic_rule = self.eval_generic_rule;
         cv.is_multi_type_choice = self.is_multi_type_choice;
         cv.is_multi_group_choice = self.is_multi_group_choice;
         cv.cbor_location.push_str(&self.cbor_location);
         cv.type_group_name_entry = self.type_group_name_entry;
+        cv.validating_value = true;
         cv.visit_type(&entry.entry_type)?;
 
         self.cbor_location = current_location.clone();
@@ -2192,7 +3028,13 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     }
 
     if let Some(v) = self.object_value.take() {
+      #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+      let mut cv = CBORValidator::new(self.cddl, v, self.enabled_features.clone());
+      #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+      let mut cv = CBORValidator::new(self.cddl, v, self.enabled_features);
+      #[cfg(not(feature = "additional-controls"))]
       let mut cv = CBORValidator::new(self.cddl, v);
+
       cv.generic_rules = self.generic_rules.clone();
       cv.eval_generic_rule = self.eval_generic_rule;
       cv.is_multi_type_choice = self.is_multi_type_choice;
@@ -2219,15 +3061,53 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
   fn visit_type_groupname_entry(
     &mut self,
     entry: &TypeGroupnameEntry<'a>,
-  ) -> visitor::Result<ValidationError> {
+  ) -> visitor::Result<Error> {
     self.type_group_name_entry = Some(entry.name.ident);
+
+    if let Some(ga) = &entry.generic_args {
+      if let Some(rule) = rule_from_ident(self.cddl, &entry.name) {
+        if let Some(gr) = self
+          .generic_rules
+          .iter_mut()
+          .find(|gr| gr.name == entry.name.ident)
+        {
+          for arg in ga.args.iter() {
+            gr.args.push((*arg.arg).clone());
+          }
+        } else if let Some(params) = generic_params_from_rule(rule) {
+          self.generic_rules.push(GenericRule {
+            name: entry.name.ident,
+            params,
+            args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+          });
+        }
+
+        #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+        let mut cv =
+          CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features.clone());
+        #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+        let mut cv = CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features);
+        #[cfg(not(feature = "additional-controls"))]
+        let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
+
+        cv.generic_rules = self.generic_rules.clone();
+        cv.eval_generic_rule = Some(entry.name.ident);
+        cv.is_multi_type_choice = self.is_multi_type_choice;
+        cv.visit_rule(rule)?;
+
+        self.errors.append(&mut cv.errors);
+
+        return Ok(());
+      }
+    }
+
     walk_type_groupname_entry(self, entry)?;
     self.type_group_name_entry = None;
 
     Ok(())
   }
 
-  fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<ValidationError> {
+  fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<Error> {
     match mk {
       MemberKey::Type1 { is_cut, .. } => {
         self.is_cut_present = *is_cut;
@@ -2245,15 +3125,32 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<ValidationError> {
+  fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error> {
     let error: Option<String> = match &self.cbor {
       Value::Integer(i) => match value {
         token::Value::INT(v) => match &self.ctrl {
-          Some(Token::NE) if *i != *v as i128 => None,
+          Some(Token::NE) | Some(Token::DEFAULT) if *i != *v as i128 => None,
           Some(Token::LT) if *i < *v as i128 => None,
           Some(Token::LE) if *i <= *v as i128 => None,
           Some(Token::GT) if *i > *v as i128 => None,
           Some(Token::GE) if *i >= *v as i128 => None,
+          #[cfg(feature = "additional-controls")]
+          Some(Token::PLUS) => {
+            if *i == *v as i128 {
+              None
+            } else {
+              Some(format!("expected computed .plus value {}, got {}", v, i))
+            }
+          }
+          #[cfg(feature = "additional-controls")]
+          None | Some(Token::FEATURE) => {
+            if *i == *v as i128 {
+              None
+            } else {
+              Some(format!("expected value {}, got {}", v, i))
+            }
+          }
+          #[cfg(not(feature = "additional-controls"))]
           None => {
             if *i == *v as i128 {
               None
@@ -2269,7 +3166,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           )),
         },
         token::Value::UINT(v) => match &self.ctrl {
-          Some(Token::NE) if *i != *v as i128 => None,
+          Some(Token::NE) | Some(Token::DEFAULT) if *i != *v as i128 => None,
           Some(Token::LT) if *i < *v as i128 => None,
           Some(Token::LE) if *i <= *v as i128 => None,
           Some(Token::GT) if *i > *v as i128 => None,
@@ -2286,6 +3183,23 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               Some(format!("expected uint .bits {}, got {}", v, i))
             }
           }
+          #[cfg(feature = "additional-controls")]
+          Some(Token::PLUS) => {
+            if *i == *v as i128 {
+              None
+            } else {
+              Some(format!("expected computed .plus value {}, got {}", v, i))
+            }
+          }
+          #[cfg(feature = "additional-controls")]
+          None | Some(Token::FEATURE) => {
+            if *i == *v as i128 {
+              None
+            } else {
+              Some(format!("expected value {}, got {}", v, i))
+            }
+          }
+          #[cfg(not(feature = "additional-controls"))]
           None => {
             if *i == *v as i128 {
               None
@@ -2305,11 +3219,28 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       },
       Value::Float(f) => match value {
         token::Value::FLOAT(v) => match &self.ctrl {
-          Some(Token::NE) if (f - *v).abs() > std::f64::EPSILON => None,
+          Some(Token::NE) | Some(Token::DEFAULT) if (f - *v).abs() > std::f64::EPSILON => None,
           Some(Token::LT) if *f < *v as f64 => None,
           Some(Token::LE) if *f <= *v as f64 => None,
           Some(Token::GT) if *f > *v as f64 => None,
           Some(Token::GE) if *f >= *v as f64 => None,
+          #[cfg(feature = "additional-controls")]
+          Some(Token::PLUS) => {
+            if (f - *v).abs() < std::f64::EPSILON {
+              None
+            } else {
+              Some(format!("expected computed .plus value {}, got {}", v, f))
+            }
+          }
+          #[cfg(feature = "additional-controls")]
+          None | Some(Token::FEATURE) => {
+            if (f - *v).abs() < std::f64::EPSILON {
+              None
+            } else {
+              Some(format!("expected value {}, got {}", v, f))
+            }
+          }
+          #[cfg(not(feature = "additional-controls"))]
           None => {
             if (f - *v).abs() < std::f64::EPSILON {
               None
@@ -2328,7 +3259,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
       },
       Value::Text(s) => match value {
         token::Value::TEXT(t) => match &self.ctrl {
-          Some(Token::NE) => {
+          Some(Token::NE) | Some(Token::DEFAULT) => {
             if s != t {
               None
             } else {
@@ -2336,28 +3267,45 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             }
           }
           Some(Token::REGEXP) | Some(Token::PCRE) => {
-            let re = regex::Regex::new(
-              &format_regex(
-                serde_json::from_str::<serde_json::Value>(&format!("\"{}\"", t))
-                  .map_err(|e| ValidationError::from_validator(self, e.to_string()))?
-                  .as_str()
-                  .ok_or_else(|| {
-                    ValidationError::from_validator(self, "malformed regex".to_string())
-                  })?,
+            if let Value::Text(t) =
+              serde_cbor::from_slice::<serde_cbor::Value>(format!("\"{}\"", t).as_bytes())
+                .map_err(Error::CBORParsing)?
+            {
+              let re = regex::Regex::new(
+                &format_regex(&t)
+                  .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
               )
-              .ok_or_else(|| {
-                ValidationError::from_validator(self, "malformed regex".to_string())
-              })?,
-            )
-            .map_err(|e| ValidationError::from_validator(self, e.to_string()))?;
+              .map_err(|e| Error::from_validator(self, e.to_string()))?;
 
-            if re.is_match(s) {
-              None
+              if re.is_match(s) {
+                None
+              } else {
+                Some(format!("expected \"{}\" to match regex \"{}\"", s, t))
+              }
             } else {
-              Some(format!("expected \"{}\" to match regex \"{}\"", s, t))
+              return Err(Error::from_validator(self, "malformed regex".to_string()));
             }
           }
+          #[cfg(feature = "additional-controls")]
+          Some(Token::ABNF) => validate_abnf(t, s)
+            .err()
+            .map(|e| format!("\"{}\" is not valid against abnf: {}", s, e)),
           _ => {
+            #[cfg(feature = "additional-controls")]
+            if s == t {
+              None
+            } else if let Some(Token::CAT) | Some(Token::DET) = &self.ctrl {
+              Some(format!(
+                "expected value to match concatenated string {}, got \"{}\"",
+                value, s
+              ))
+            } else if let Some(ctrl) = &self.ctrl {
+              Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
+            } else {
+              Some(format!("expected value {} got \"{}\"", value, s))
+            }
+
+            #[cfg(not(feature = "additional-controls"))]
             if s == t {
               None
             } else if let Some(ctrl) = &self.ctrl {
@@ -2437,6 +3385,25 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
             b
           )),
         },
+        #[cfg(feature = "additional-controls")]
+        token::Value::TEXT(t) => match &self.ctrl {
+          Some(Token::ABNFB) => {
+            validate_abnf(t, std::str::from_utf8(b).map_err(Error::UTF8Parsing)?)
+              .err()
+              .map(|e| {
+                format!(
+                  "cbor bytes \"{:?}\" are not valid against abnf {}: {}",
+                  b, t, e
+                )
+              })
+          }
+          _ => Some(format!(
+            "expected value {} {}, got {:?}",
+            self.ctrl.clone().unwrap(),
+            t,
+            b
+          )),
+        },
         _ => Some(format!("expected {}, got {:?}", value, b)),
       },
       Value::Array(a) => {
@@ -2459,7 +3426,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
                   }
                 }
 
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut cv =
+                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+                #[cfg(not(feature = "additional-controls"))]
                 let mut cv = CBORValidator::new(self.cddl, v.clone());
+
                 cv.generic_rules = self.generic_rules.clone();
                 cv.eval_generic_rule = self.eval_generic_rule;
                 cv.is_multi_type_choice = self.is_multi_type_choice;
@@ -2492,7 +3466,14 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
               }
             } else if let Some(idx) = self.group_entry_idx.take() {
               if let Some(v) = a.get(idx) {
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut cv =
+                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+                #[cfg(not(feature = "additional-controls"))]
                 let mut cv = CBORValidator::new(self.cddl, v.clone());
+
                 cv.generic_rules = self.generic_rules.clone();
                 cv.eval_generic_rule = self.eval_generic_rule;
                 cv.ctrl = self.ctrl.clone();
@@ -2524,7 +3505,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
           self.cut_value = Some(Type1::from(value.clone()));
         }
 
-        if let token::Value::TEXT("any") = value {
+        if let token::Value::TEXT(Cow::Borrowed("any")) = value {
           return Ok(());
         }
 
@@ -2532,6 +3513,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         // case advance to next group entry
         let k = token_value_into_cbor_value(value.clone());
 
+        #[cfg(feature = "ast-span")]
         if let Some(v) = o.get(&k) {
           self.validated_keys.get_or_insert(vec![k.clone()]).push(k);
           self.object_value = Some(v.clone());
@@ -2543,7 +3525,23 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
         {
           self.advance_to_next_entry = true;
           None
-        } else if let Some(Token::NE) = &self.ctrl {
+        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
+          None
+        } else {
+          Some(format!("object missing key: \"{}\"", value))
+        }
+
+        #[cfg(not(feature = "ast-span"))]
+        if let Some(v) = o.get(&k) {
+          self.validated_keys.get_or_insert(vec![k.clone()]).push(k);
+          self.object_value = Some(v.clone());
+          self.cbor_location.push_str(&format!("/{}", value));
+
+          None
+        } else if let Some(Occur::Optional) | Some(Occur::ZeroOrMore) = &self.occurrence.take() {
+          self.advance_to_next_entry = true;
+          None
+        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
           None
         } else {
           Some(format!("object missing key: \"{}\"", value))
@@ -2559,7 +3557,7 @@ impl<'a> Visitor<'a, ValidationError> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<ValidationError> {
+  fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<Error> {
     self.occurrence = Some(o.occur.clone());
 
     Ok(())
@@ -2582,9 +3580,12 @@ pub fn token_value_into_cbor_value(value: token::Value) -> serde_cbor::Value {
 }
 
 #[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests {
   use super::*;
+  use indoc::indoc;
 
+  #[cfg(not(feature = "additional-controls"))]
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cddl = r#"tcpflagbytes = bstr .bits flags
@@ -2607,6 +3608,62 @@ mod tests {
 
     let mut cv = CBORValidator::new(&cddl, cbor);
     cv.validate()?;
+
+    Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn validate_abnfb() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        oid = bytes .abnfb ("oid" .det cbor-tags-oid)
+        roid = bytes .abnfb ("roid" .det cbor-tags-oid)
+ 
+        cbor-tags-oid = '
+          oid = 1*arc
+          roid = *arc
+          arc = [nlsb] %x00-7f
+          nlsb = %x81-ff *%x80-ff
+        '
+      "#
+    );
+
+    let sha256_oid = "2.16.840.1.101.3.4.2.1";
+
+    let cbor = serde_cbor::Value::Bytes(sha256_oid.as_bytes().to_vec());
+
+    let mut lexer = lexer_from_str(cddl);
+    let cddl = cddl_from_str(&mut lexer, cddl, true)?;
+
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    cv.validate()?;
+
+    Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn validate_feature() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        v = JC<"v", 2>
+        JC<J, C> = J .feature "json" / C .feature "cbor"
+      "#
+    );
+
+    let mut lexer = lexer_from_str(cddl);
+    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let cbor = serde_cbor::Value::Integer(2);
+
+    let cddl = cddl.unwrap();
+
+    let mut jv = CBORValidator::new(&cddl, cbor, Some(&["cbor"]));
+    jv.validate()?;
 
     Ok(())
   }

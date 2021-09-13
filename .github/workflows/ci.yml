@@ -56,7 +56,7 @@ jobs:
   compilation-check:
     strategy:
       matrix:
-        rust_toolchain: [stable, beta, nightly]
+        rust_toolchain: [stable, beta]
         os: [ubuntu-latest, macOS-latest, windows-latest]
     name: Compilation check
     runs-on: ${{ matrix.os }}
@@ -83,17 +83,10 @@ jobs:
           command: check
           args: --all --bins --examples --tests --no-default-features
 
-      - name: Check compilation with all features
-        if: matrix.rust_toolchain == 'nightly'
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --all --bins --examples --tests --all-features
-
   wasm-compilation-check:
     strategy:
       matrix:
-        rust_toolchain: [stable, beta, nightly]
+        rust_toolchain: [stable, beta]
     name: Compilation check for wasm target
     runs-on: ubuntu-latest
     steps:
@@ -117,7 +110,7 @@ jobs:
   test-suite:
     strategy:
       matrix:
-        rust_toolchain: [stable, beta, nightly]
+        rust_toolchain: [stable, beta]
         os: [ubuntu-latest, macOS-latest, windows-latest]
     name: Test suite
     runs-on: ${{ matrix.os }}
@@ -141,7 +134,7 @@ jobs:
   style-linting:
     strategy:
       matrix:
-        rust_toolchain: [stable, beta]
+        rust_toolchain: [stable]
     name: Style linting
     runs-on: ubuntu-latest
     steps:
@@ -173,7 +166,7 @@ jobs:
   wasm-style-linting:
     strategy:
       matrix:
-        rust_toolchain: [stable, beta]
+        rust_toolchain: [stable]
     name: wasm style linting
     runs-on: ubuntu-latest
     steps:

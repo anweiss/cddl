@@ -2,7 +2,7 @@
 extern crate console_error_panic_hook;
 
 use super::token::{ByteValue, RangeValue, SocketPlug, Token, Value};
-use std::fmt;
+use std::{fmt, marker::PhantomData};
 
 #[cfg(feature = "std")]
 use std::borrow::Cow;
@@ -19,12 +19,15 @@ use alloc::{
 };
 
 /// Starting index, ending index and line number
+#[cfg(feature = "ast-span")]
 pub type Span = (usize, usize, usize);
 
+#[cfg(feature = "ast-comments")]
 #[derive(Default, Debug, PartialEq, Clone)]
 #[doc(hidden)]
 pub struct Comments<'a>(pub Vec<&'a str>);
 
+#[cfg(feature = "ast-comments")]
 impl<'a> Comments<'a> {
   fn any_non_newline(&self) -> bool {
     self.0.iter().any(|c| *c != "\n")
@@ -35,6 +38,7 @@ impl<'a> Comments<'a> {
   }
 }
 
+#[cfg(feature = "ast-comments")]
 impl<'a> fmt::Display for Comments<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if self.all_newline() {
@@ -67,6 +71,7 @@ pub struct CDDL<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   pub rules: Vec<Rule<'a>>,
 
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments: Option<Comments<'a>>,
@@ -79,13 +84,16 @@ impl<'a> fmt::Display for CDDL<'a> {
 
     let mut cddl_output = String::new();
 
+    #[cfg(feature = "ast-comments")]
     if let Some(comments) = &self.comments {
       cddl_output.push_str(&comments.to_string());
     }
 
     let mut previous_single_line_type = false;
+    #[cfg(feature = "ast-comments")]
     let mut previous_comments_after_rule = false;
 
+    #[cfg(feature = "ast-comments")]
     for (idx, rule) in self.rules.iter().enumerate() {
       if rule.has_comments_after_rule() {
         cddl_output.push_str(&rule.to_string());
@@ -101,6 +109,19 @@ impl<'a> fmt::Display for CDDL<'a> {
       } else {
         cddl_output.push_str(&format!("{}\n\n", rule.to_string().trim_end()));
         previous_comments_after_rule = false;
+      }
+    }
+
+    #[cfg(not(feature = "ast-comments"))]
+    for (idx, rule) in self.rules.iter().enumerate() {
+      if idx == self.rules.len() - 1 || rule.has_single_line_type() {
+        cddl_output.push_str(&format!("{}\n", rule.to_string().trim_end()));
+        previous_single_line_type = true;
+      } else if previous_single_line_type {
+        cddl_output.push_str(&format!("\n{}\n\n", rule.to_string().trim_end()));
+        previous_single_line_type = false;
+      } else {
+        cddl_output.push_str(&format!("{}\n\n", rule.to_string().trim_end()));
       }
     }
 
@@ -124,6 +145,7 @@ pub struct Identifier<'a> {
   /// Optional socket
   pub socket: Option<SocketPlug>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 }
 
@@ -156,6 +178,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
             return Identifier {
               ident,
               socket: Some(SocketPlug::GROUP),
+              #[cfg(feature = "ast-span")]
               span: (0, 0, 0),
             };
           }
@@ -164,6 +187,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
         return Identifier {
           ident,
           socket: Some(SocketPlug::TYPE),
+          #[cfg(feature = "ast-span")]
           span: (0, 0, 0),
         };
       }
@@ -172,6 +196,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
     Identifier {
       ident,
       socket: None,
+      #[cfg(feature = "ast-span")]
       span: (0, 0, 0),
     }
   }
@@ -204,8 +229,10 @@ pub enum Rule<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     rule: TypeRule<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_rule: Option<Comments<'a>>,
@@ -215,8 +242,10 @@ pub enum Rule<'a> {
     /// Group rule
     rule: Box<GroupRule<'a>>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_rule: Option<Comments<'a>>,
@@ -225,6 +254,7 @@ pub enum Rule<'a> {
 
 impl<'a> Rule<'a> {
   /// Return `Span` for `Rule`
+  #[cfg(feature = "ast-span")]
   pub fn span(&self) -> Span {
     match self {
       Rule::Type { span, .. } => *span,
@@ -232,6 +262,7 @@ impl<'a> Rule<'a> {
     }
   }
 
+  #[cfg(feature = "ast-comments")]
   fn has_comments_after_rule(&self) -> bool {
     matches!(self, Rule::Type {
       comments_after_rule: Some(comments),
@@ -279,6 +310,7 @@ impl<'a> fmt::Display for Rule<'a> {
     match self {
       Rule::Type {
         rule,
+        #[cfg(feature = "ast-comments")]
         comments_after_rule,
         ..
       } => {
@@ -286,6 +318,7 @@ impl<'a> fmt::Display for Rule<'a> {
 
         rule_str.push_str(&rule.to_string());
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_rule {
           if comments.any_non_newline() {
             if let Some(&"\n") = comments.0.first() {
@@ -300,6 +333,7 @@ impl<'a> fmt::Display for Rule<'a> {
       }
       Rule::Group {
         rule,
+        #[cfg(feature = "ast-comments")]
         comments_after_rule,
         ..
       } => {
@@ -307,6 +341,7 @@ impl<'a> fmt::Display for Rule<'a> {
 
         rule_str.push_str(&rule.to_string());
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_rule {
           if comments.any_non_newline() {
             if let Some(&"\n") = comments.0.first() {
@@ -360,9 +395,11 @@ pub struct TypeRule<'a> {
   /// Type value
   pub value: Type<'a>,
 
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_assignt: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_assignt: Option<Comments<'a>>,
@@ -376,6 +413,7 @@ impl<'a> fmt::Display for TypeRule<'a> {
       tr_output.push_str(&gp.to_string());
     }
 
+    #[cfg(feature = "ast-comments")]
     if let Some(comments) = &self.comments_before_assignt {
       tr_output.push_str(&comments.to_string());
     }
@@ -386,6 +424,7 @@ impl<'a> fmt::Display for TypeRule<'a> {
       tr_output.push_str(" = ");
     }
 
+    #[cfg(feature = "ast-comments")]
     if let Some(comments) = &self.comments_after_assignt {
       tr_output.push_str(&comments.to_string());
     }
@@ -414,9 +453,11 @@ pub struct GroupRule<'a> {
   /// Group entry
   pub entry: GroupEntry<'a>,
 
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_assigng: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_assigng: Option<Comments<'a>>,
@@ -430,6 +471,7 @@ impl<'a> fmt::Display for GroupRule<'a> {
       gr_output.push_str(&gp.to_string());
     }
 
+    #[cfg(feature = "ast-comments")]
     if let Some(comments) = &self.comments_before_assigng {
       gr_output.push_str(&comments.to_string());
     }
@@ -442,6 +484,7 @@ impl<'a> fmt::Display for GroupRule<'a> {
 
     gr_output.push_str(&self.entry.to_string());
 
+    #[cfg(feature = "ast-comments")]
     if let Some(comments) = &self.comments_after_assigng {
       gr_output.push_str(&comments.to_string());
     }
@@ -461,6 +504,7 @@ pub struct GenericParams<'a> {
   /// List of generic parameters
   pub params: Vec<GenericParam<'a>>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 }
 
@@ -468,6 +512,7 @@ impl<'a> Default for GenericParams<'a> {
   fn default() -> Self {
     GenericParams {
       params: Vec::new(),
+      #[cfg(feature = "ast-span")]
       span: (0, 0, 0),
     }
   }
@@ -480,9 +525,11 @@ pub struct GenericParam<'a> {
   /// Generic parameter
   pub param: Identifier<'a>,
 
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_ident: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_ident: Option<Comments<'a>>,
@@ -496,12 +543,14 @@ impl<'a> fmt::Display for GenericParams<'a> {
         gp.push_str(", ");
       }
 
+      #[cfg(feature = "ast-comments")]
       if let Some(comments) = &parm.comments_before_ident {
         gp.push_str(&comments.to_string());
       }
 
       gp.push_str(&parm.param.to_string());
 
+      #[cfg(feature = "ast-comments")]
       if let Some(comments) = &parm.comments_after_ident {
         gp.push_str(&comments.to_string());
       }
@@ -524,6 +573,7 @@ pub struct GenericArgs<'a> {
   /// Generic arguments
   pub args: Vec<GenericArg<'a>>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 }
 
@@ -532,6 +582,7 @@ impl<'a> GenericArgs<'a> {
   pub fn default() -> Self {
     GenericArgs {
       args: Vec::new(),
+      #[cfg(feature = "ast-span")]
       span: (0, 0, 0),
     }
   }
@@ -544,9 +595,11 @@ pub struct GenericArg<'a> {
   /// Generic argument
   pub arg: Box<Type1<'a>>,
 
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_type: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_type: Option<Comments<'a>>,
@@ -560,12 +613,14 @@ impl<'a> fmt::Display for GenericArgs<'a> {
         ga.push_str(", ");
       }
 
+      #[cfg(feature = "ast-comments")]
       if let Some(comments) = &arg.comments_before_type {
         ga.push_str(&comments.to_string());
       }
 
       ga.push_str(&arg.arg.to_string());
 
+      #[cfg(feature = "ast-comments")]
       if let Some(comments) = &arg.comments_after_type {
         ga.push_str(&comments.to_string());
       }
@@ -588,10 +643,12 @@ pub struct Type<'a> {
   /// Type choices
   pub type_choices: Vec<TypeChoice<'a>>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 }
 
 impl<'a> Type<'a> {
+  #[cfg(feature = "ast-comments")]
   #[doc(hidden)]
   pub fn comments_after_type(&mut self) -> Option<Comments<'a>> {
     if let Some(TypeChoice {
@@ -620,9 +677,11 @@ impl<'a> Type<'a> {
 pub struct TypeChoice<'a> {
   /// Type choice
   pub type1: Type1<'a>,
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_type: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_type: Option<Comments<'a>>,
@@ -636,6 +695,7 @@ impl<'a> fmt::Display for Type<'a> {
       if idx == 0 {
         type_str.push_str(&tc.type1.to_string());
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = &tc.comments_after_type {
           type_str.push_str(comments.to_string().trim_end());
         }
@@ -643,6 +703,7 @@ impl<'a> fmt::Display for Type<'a> {
         continue;
       }
 
+      #[cfg(feature = "ast-comments")]
       if let Some(comments) = &tc.comments_before_type {
         type_str.push_str(&comments.to_string());
       }
@@ -653,6 +714,7 @@ impl<'a> fmt::Display for Type<'a> {
         type_str.push_str(&format!(" / {}", tc.type1.to_string()));
       }
 
+      #[cfg(feature = "ast-comments")]
       if let Some(comments) = &tc.comments_after_type {
         type_str.push_str(&comments.to_string());
       }
@@ -666,6 +728,7 @@ impl<'a> Type<'a> {
   /// Used to delineate between grpent with `Type` and group entry with group
   /// name identifier `id`
   #[allow(clippy::type_complexity)]
+  #[cfg(feature = "ast-span")]
   pub fn groupname_entry(&self) -> Option<(Identifier<'a>, Option<GenericArgs<'a>>, Span)> {
     if self.type_choices.len() == 1 {
       if let Some(tc) = self.type_choices.first() {
@@ -677,6 +740,28 @@ impl<'a> Type<'a> {
           } = &tc.type1.type2
           {
             return Some((ident.clone(), generic_args.clone(), *span));
+          }
+        }
+      }
+    }
+
+    None
+  }
+
+  /// Used to delineate between grpent with `Type` and group entry with group
+  /// name identifier `id`
+  #[allow(clippy::type_complexity)]
+  #[cfg(not(feature = "ast-span"))]
+  pub fn groupname_entry(&self) -> Option<(Identifier<'a>, Option<GenericArgs<'a>>)> {
+    if self.type_choices.len() == 1 {
+      if let Some(tc) = self.type_choices.first() {
+        if tc.type1.operator.is_none() {
+          if let Type2::Typename {
+            ident,
+            generic_args,
+          } = &tc.type1.type2
+          {
+            return Some((ident.clone(), generic_args.clone()));
           }
         }
       }
@@ -699,8 +784,10 @@ pub struct Type1<'a> {
   /// Range or control operator over a second type
   pub operator: Option<Operator<'a>>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_type: Option<Comments<'a>>,
@@ -708,21 +795,52 @@ pub struct Type1<'a> {
 
 impl<'a> From<Value<'a>> for Type1<'a> {
   fn from(value: Value<'a>) -> Self {
+    #[cfg(feature = "ast-span")]
     let span = Span::default();
     let type2 = match value {
-      Value::TEXT(value) => Type2::TextValue { value, span },
-      Value::INT(value) => Type2::IntValue { value, span },
-      Value::FLOAT(value) => Type2::FloatValue { value, span },
-      Value::UINT(value) => Type2::UintValue { value, span },
-      Value::BYTE(ByteValue::B16(value)) => Type2::B16ByteString { value, span },
-      Value::BYTE(ByteValue::B64(value)) => Type2::B64ByteString { value, span },
-      Value::BYTE(ByteValue::UTF8(value)) => Type2::UTF8ByteString { value, span },
+      Value::TEXT(value) => Type2::TextValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      Value::INT(value) => Type2::IntValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      Value::FLOAT(value) => Type2::FloatValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      Value::UINT(value) => Type2::UintValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      Value::BYTE(ByteValue::B16(value)) => Type2::B16ByteString {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      Value::BYTE(ByteValue::B64(value)) => Type2::B64ByteString {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      Value::BYTE(ByteValue::UTF8(value)) => Type2::UTF8ByteString {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
     };
 
     Type1 {
       type2,
+      #[cfg(feature = "ast-span")]
       span,
       operator: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
     }
   }
@@ -737,9 +855,11 @@ pub struct Operator<'a> {
   /// Type bound by range or control operator
   pub type2: Type2<'a>,
 
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_operator: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_operator: Option<Comments<'a>>,
@@ -757,6 +877,7 @@ impl<'a> fmt::Display for Type1<'a> {
       }
     }
 
+    #[cfg(feature = "ast-comments")]
     if let Some(o) = &self.operator {
       if let Some(comments) = &o.comments_before_operator {
         t1_str.push_str(&comments.to_string());
@@ -779,6 +900,17 @@ impl<'a> fmt::Display for Type1<'a> {
       }
     }
 
+    #[cfg(not(feature = "ast-comments"))]
+    if let Some(o) = &self.operator {
+      t1_str.push_str(&o.operator.to_string());
+
+      if let Type2::Typename { .. } = self.type2 {
+        t1_str.push(' ');
+      }
+
+      t1_str.push_str(&o.type2.to_string());
+    }
+
     write!(f, "{}", t1_str)
   }
 }
@@ -797,6 +929,7 @@ pub enum RangeCtlOp<'a> {
     /// Is inclusive
     is_inclusive: bool,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
   /// Control operator
@@ -804,6 +937,7 @@ pub enum RangeCtlOp<'a> {
     /// Control identifier
     ctrl: &'a str,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 }
@@ -846,6 +980,7 @@ pub enum Type2<'a> {
     /// Value
     value: isize,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -854,6 +989,7 @@ pub enum Type2<'a> {
     /// Value
     value: usize,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -862,14 +998,16 @@ pub enum Type2<'a> {
     /// Value
     value: f64,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
   /// Text string value (enclosed by '"')
   TextValue {
     /// Value
-    value: &'a str,
+    value: Cow<'a, str>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -878,6 +1016,7 @@ pub enum Type2<'a> {
     /// Value
     value: Cow<'a, [u8]>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -886,6 +1025,7 @@ pub enum Type2<'a> {
     /// Value
     value: Cow<'a, [u8]>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -894,6 +1034,7 @@ pub enum Type2<'a> {
     /// Value
     value: Cow<'a, [u8]>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -904,6 +1045,7 @@ pub enum Type2<'a> {
     /// Generic arguments
     generic_args: Option<GenericArgs<'a>>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
@@ -912,11 +1054,14 @@ pub enum Type2<'a> {
     /// Type
     pt: Type<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_type: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_type: Option<Comments<'a>>,
@@ -927,11 +1072,14 @@ pub enum Type2<'a> {
     /// Group
     group: Group<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_group: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_group: Option<Comments<'a>>,
@@ -942,11 +1090,14 @@ pub enum Type2<'a> {
     /// Span
     group: Group<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_group: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_group: Option<Comments<'a>>,
@@ -959,8 +1110,10 @@ pub enum Type2<'a> {
     /// Generic arguments
     generic_args: Option<GenericArgs<'a>>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments: Option<Comments<'a>>,
@@ -971,14 +1124,18 @@ pub enum Type2<'a> {
     /// Group
     group: Group<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_group: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_group: Option<Comments<'a>>,
@@ -991,8 +1148,10 @@ pub enum Type2<'a> {
     /// Generic arguments
     generic_args: Option<GenericArgs<'a>>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments: Option<Comments<'a>>,
@@ -1006,11 +1165,14 @@ pub enum Type2<'a> {
     /// Type
     t: Type<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_type: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_type: Option<Comments<'a>>,
@@ -1023,11 +1185,17 @@ pub enum Type2<'a> {
     /// Constraint
     constraint: Option<usize>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
   /// Any data item
+  #[cfg(feature = "ast-span")]
   Any(Span),
+
+  /// Any data item
+  #[cfg(not(feature = "ast-span"))]
+  Any,
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -1061,13 +1229,16 @@ impl<'a> fmt::Display for Type2<'a> {
         write!(f, "{}", ident)
       }
       Type2::ParenthesizedType {
+        #[cfg(feature = "ast-comments")]
         comments_before_type,
         pt,
+        #[cfg(feature = "ast-comments")]
         comments_after_type,
         ..
       } => {
         let mut pt_str = String::from("(");
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_before_type {
           if comments.any_non_newline() {
             pt_str.push_str(&format!(" {}\t", comments));
@@ -1079,6 +1250,12 @@ impl<'a> fmt::Display for Type2<'a> {
           pt_str.push_str(&pt.to_string());
         }
 
+        #[cfg(not(feature = "ast-comments"))]
+        {
+          pt_str.push_str(&pt.to_string());
+        }
+
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_type {
           pt_str.push_str(&comments.to_string());
         }
@@ -1088,15 +1265,19 @@ impl<'a> fmt::Display for Type2<'a> {
         write!(f, "{}", pt_str)
       }
       Type2::Map {
+        #[cfg(feature = "ast-comments")]
         comments_before_group,
         group,
+        #[cfg(feature = "ast-comments")]
         comments_after_group,
         ..
       } => {
         let mut t2_str = String::from("{");
 
+        #[cfg(feature = "ast-comments")]
         let mut non_newline_comments_before_group = false;
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_before_group {
           if comments.any_non_newline() {
             non_newline_comments_before_group = true;
@@ -1109,10 +1290,17 @@ impl<'a> fmt::Display for Type2<'a> {
           t2_str.push_str(&group.to_string());
         }
 
+        #[cfg(not(feature = "ast-comments"))]
+        {
+          t2_str.push_str(&group.to_string());
+        }
+
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_group {
           t2_str.push_str(&comments.to_string());
         }
 
+        #[cfg(feature = "ast-comments")]
         if non_newline_comments_before_group
           && !group
             .group_choices
@@ -1122,20 +1310,29 @@ impl<'a> fmt::Display for Type2<'a> {
           t2_str.push('\n');
         }
 
+        #[cfg(not(feature = "ast-comments"))]
+        {
+          t2_str.push('\n');
+        }
+
         t2_str.push('}');
 
         write!(f, "{}", t2_str)
       }
       Type2::Array {
+        #[cfg(feature = "ast-comments")]
         comments_before_group,
         group,
+        #[cfg(feature = "ast-comments")]
         comments_after_group,
         ..
       } => {
         let mut t2_str = String::from("[");
 
+        #[cfg(feature = "ast-comments")]
         let mut non_newline_comments_before_group = false;
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_before_group {
           if comments.any_non_newline() {
             non_newline_comments_before_group = true;
@@ -1159,10 +1356,17 @@ impl<'a> fmt::Display for Type2<'a> {
           t2_str.push_str(&group.to_string());
         }
 
+        #[cfg(not(feature = "ast-comments"))]
+        {
+          t2_str.push_str(&group.to_string());
+        }
+
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_group {
           t2_str.push_str(&comments.to_string());
         }
 
+        #[cfg(feature = "ast-comments")]
         if non_newline_comments_before_group
           && !group
             .group_choices
@@ -1172,11 +1376,15 @@ impl<'a> fmt::Display for Type2<'a> {
           t2_str.push('\n');
         }
 
+        #[cfg(not(feature = "ast-comments"))]
+        t2_str.push('\n');
+
         t2_str.push(']');
 
         write!(f, "{}", t2_str)
       }
       Type2::Unwrap {
+        #[cfg(feature = "ast-comments")]
         comments,
         ident,
         generic_args,
@@ -1184,6 +1392,7 @@ impl<'a> fmt::Display for Type2<'a> {
       } => {
         let mut t2_str = String::new();
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments {
           t2_str.push_str(&comments.to_string());
         }
@@ -1197,26 +1406,32 @@ impl<'a> fmt::Display for Type2<'a> {
         write!(f, "{}", t2_str)
       }
       Type2::ChoiceFromInlineGroup {
+        #[cfg(feature = "ast-comments")]
         comments,
+        #[cfg(feature = "ast-comments")]
         comments_before_group,
         group,
+        #[cfg(feature = "ast-comments")]
         comments_after_group,
         ..
       } => {
         let mut t2_str = String::from("&");
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments {
           t2_str.push_str(&comments.to_string());
         }
 
         t2_str.push('(');
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_before_group {
           t2_str.push_str(&comments.to_string());
         }
 
         t2_str.push_str(&group.to_string());
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_group {
           t2_str.push_str(&comments.to_string());
         }
@@ -1230,6 +1445,7 @@ impl<'a> fmt::Display for Type2<'a> {
         write!(f, "{}", t2_str)
       }
       Type2::ChoiceFromGroup {
+        #[cfg(feature = "ast-comments")]
         comments,
         ident,
         generic_args,
@@ -1237,6 +1453,7 @@ impl<'a> fmt::Display for Type2<'a> {
       } => {
         let mut t2_str = String::from("&");
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments {
           t2_str.push_str(&comments.to_string());
         }
@@ -1251,8 +1468,10 @@ impl<'a> fmt::Display for Type2<'a> {
       }
       Type2::TaggedData {
         tag,
+        #[cfg(feature = "ast-comments")]
         comments_before_type,
         t,
+        #[cfg(feature = "ast-comments")]
         comments_after_type,
         ..
       } => {
@@ -1264,6 +1483,7 @@ impl<'a> fmt::Display for Type2<'a> {
 
         t2_str.push('(');
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_before_type {
           if comments.any_non_newline() {
             t2_str.push_str(&format!(" {}", comments));
@@ -1272,6 +1492,7 @@ impl<'a> fmt::Display for Type2<'a> {
 
         t2_str.push_str(&t.to_string());
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_type {
           if comments.any_non_newline() {
             t2_str.push_str(&format!(" {}", comments));
@@ -1289,13 +1510,17 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", mt)
       }
+      #[cfg(feature = "ast-span")]
       Type2::Any(_) => write!(f, "#"),
+      #[cfg(not(feature = "ast-span"))]
+      Type2::Any => write!(f, "#"),
     }
   }
 }
 
 impl<'a> From<RangeValue<'a>> for Type2<'a> {
   fn from(rv: RangeValue<'a>) -> Self {
+    #[cfg(feature = "ast-span")]
     let span = (0, 0, 0);
 
     match rv {
@@ -1303,14 +1528,125 @@ impl<'a> From<RangeValue<'a>> for Type2<'a> {
         ident: Identifier {
           ident: ident.0,
           socket: ident.1,
+          #[cfg(feature = "ast-span")]
           span,
         },
         generic_args: None,
+        #[cfg(feature = "ast-span")]
         span,
       },
-      RangeValue::INT(value) => Type2::IntValue { value, span },
-      RangeValue::UINT(value) => Type2::UintValue { value, span },
-      RangeValue::FLOAT(value) => Type2::FloatValue { value, span },
+      RangeValue::INT(value) => Type2::IntValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      RangeValue::UINT(value) => Type2::UintValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+      RangeValue::FLOAT(value) => Type2::FloatValue {
+        value,
+        #[cfg(feature = "ast-span")]
+        span,
+      },
+    }
+  }
+}
+
+impl<'a> From<Type1<'a>> for Type2<'a> {
+  fn from(type1: Type1<'a>) -> Self {
+    Type2::ParenthesizedType {
+      pt: Type {
+        type_choices: vec![TypeChoice {
+          type1,
+          #[cfg(feature = "ast-comments")]
+          comments_after_type: None,
+          #[cfg(feature = "ast-comments")]
+          comments_before_type: None,
+        }],
+        #[cfg(feature = "ast-span")]
+        span: Span::default(),
+      },
+      #[cfg(feature = "ast-comments")]
+      comments_after_type: None,
+      #[cfg(feature = "ast-comments")]
+      comments_before_type: None,
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    }
+  }
+}
+
+impl<'a> From<usize> for Type2<'a> {
+  fn from(value: usize) -> Self {
+    Type2::UintValue {
+      value,
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    }
+  }
+}
+
+impl<'a> From<isize> for Type2<'a> {
+  fn from(value: isize) -> Self {
+    Type2::IntValue {
+      value,
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    }
+  }
+}
+
+impl<'a> From<f64> for Type2<'a> {
+  fn from(value: f64) -> Self {
+    Type2::FloatValue {
+      value,
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    }
+  }
+}
+
+impl<'a> From<String> for Type2<'a> {
+  fn from(value: String) -> Self {
+    Type2::TextValue {
+      value: value.into(),
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    }
+  }
+}
+
+// Convenience method for testing
+impl<'a> From<&'a str> for Type2<'a> {
+  fn from(value: &'a str) -> Self {
+    Type2::UTF8ByteString {
+      value: value.as_bytes().into(),
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    }
+  }
+}
+
+impl<'a> From<ByteValue<'a>> for Type2<'a> {
+  fn from(value: ByteValue<'a>) -> Self {
+    match value {
+      ByteValue::UTF8(value) => Type2::UTF8ByteString {
+        value,
+        #[cfg(feature = "ast-span")]
+        span: Span::default(),
+      },
+      ByteValue::B16(value) => Type2::B16ByteString {
+        value,
+        #[cfg(feature = "ast-span")]
+        span: Span::default(),
+      },
+      ByteValue::B64(value) => Type2::B64ByteString {
+        value,
+        #[cfg(feature = "ast-span")]
+        span: Span::default(),
+      },
     }
   }
 }
@@ -1321,29 +1657,41 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
     Token::TDATE => Some(Type2::TaggedData {
       tag: Some(0),
       t: type_from_token(Token::TSTR),
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::TIME => Some(Type2::TaggedData {
       tag: Some(1),
       t: type_from_token(Token::NUMBER),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::BIGUINT => Some(Type2::TaggedData {
       tag: Some(2),
       t: type_from_token(Token::BSTR),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::BIGNINT => Some(Type2::TaggedData {
       tag: Some(3),
       t: type_from_token(Token::BSTR),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::DECFRAC => unimplemented!(),
@@ -1351,71 +1699,101 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
     Token::EB64URL => Some(Type2::TaggedData {
       tag: Some(21),
       t: type_from_token(Token::ANY),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::EB64LEGACY => Some(Type2::TaggedData {
       tag: Some(22),
       t: type_from_token(Token::ANY),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::EB16 => Some(Type2::TaggedData {
       tag: Some(23),
       t: type_from_token(Token::ANY),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::ENCODEDCBOR => Some(Type2::TaggedData {
       tag: Some(24),
       t: type_from_token(Token::BSTR),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::URI => Some(Type2::TaggedData {
       tag: Some(32),
       t: type_from_token(Token::TSTR),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::B64URL => Some(Type2::TaggedData {
       tag: Some(33),
       t: type_from_token(Token::TSTR),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::B64LEGACY => Some(Type2::TaggedData {
       tag: Some(34),
       t: type_from_token(Token::TSTR),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::REGEXP => Some(Type2::TaggedData {
       tag: Some(35),
       t: type_from_token(Token::TSTR),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::MIMEMESSAGE => Some(Type2::TaggedData {
       tag: Some(36),
       t: type_from_token(Token::TSTR),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     Token::CBORANY => Some(Type2::TaggedData {
       tag: Some(55799),
       t: type_from_token(Token::ANY),
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
     _ => None,
@@ -1427,18 +1805,24 @@ pub fn type_from_token(token: Token) -> Type {
   Type {
     type_choices: vec![TypeChoice {
       type1: Type1 {
+        #[cfg(feature = "ast-comments")]
         comments_after_type: None,
         operator: None,
+        #[cfg(feature = "ast-span")]
         span: Span::default(),
         type2: Type2::Typename {
           ident: Identifier::from(token),
           generic_args: None,
+          #[cfg(feature = "ast-span")]
           span: Span::default(),
         },
       },
+      #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-comments")]
       comments_before_type: None,
     }],
+    #[cfg(feature = "ast-span")]
     span: Span::default(),
   }
 }
@@ -1455,6 +1839,7 @@ pub struct Group<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   pub group_choices: Vec<GroupChoice<'a>>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 }
 
@@ -1465,10 +1850,16 @@ impl<'a> fmt::Display for Group<'a> {
     for (idx, gc) in self.group_choices.iter().enumerate() {
       let mut gc_str = gc.to_string();
 
+      #[cfg(feature = "ast-comments")]
       if self.group_choices.len() > 2
         && gc.group_entries.len() <= 3
         && !gc.has_entries_with_comments_before_comma()
       {
+        gc_str = gc_str.replace('\n', "");
+      }
+
+      #[cfg(not(feature = "ast-comments"))]
+      if self.group_choices.len() > 2 && gc.group_entries.len() <= 3 {
         gc_str = gc_str.replace('\n', "");
       }
 
@@ -1479,7 +1870,16 @@ impl<'a> fmt::Display for Group<'a> {
             gc_str.pop();
           }
 
+          #[cfg(feature = "ast-comments")]
           if self.group_choices.len() > 2 && gc.has_entries_with_comments_before_comma() {
+            gc_str = gc_str.replace('\n', "\n\t\t");
+            group_str.push_str(gc_str.trim());
+          } else {
+            group_str.push_str(gc_str.trim_start());
+          }
+
+          #[cfg(not(feature = "ast-comments"))]
+          if self.group_choices.len() > 2 {
             gc_str = gc_str.replace('\n', "\n\t\t");
             group_str.push_str(gc_str.trim());
           } else {
@@ -1498,7 +1898,13 @@ impl<'a> fmt::Display for Group<'a> {
 
       gc_str = gc_str.trim().to_string();
 
+      #[cfg(feature = "ast-comments")]
       if self.group_choices.len() > 2 && gc.has_entries_with_comments_before_comma() {
+        gc_str = gc_str.replace('\n', "\n\t\t");
+      }
+
+      #[cfg(not(feature = "ast-comments"))]
+      if self.group_choices.len() > 2 {
         gc_str = gc_str.replace('\n', "\n\t\t");
       }
 
@@ -1528,10 +1934,12 @@ pub struct GroupChoice<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   pub group_entries: Vec<(GroupEntry<'a>, OptionalComma<'a>)>,
   /// Span
+  #[cfg(feature = "ast-span")]
   pub span: Span,
 
   // No trailing comments since these will be captured by the S ["," S] matching
   // rule
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_grpchoice: Option<Comments<'a>>,
@@ -1546,11 +1954,14 @@ impl<'a> GroupChoice<'a> {
         .cloned()
         .map(|ge| (ge, OptionalComma::default()))
         .collect::<Vec<_>>(),
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-comments")]
       comments_before_grpchoice: None,
     }
   }
 
+  #[cfg(feature = "ast-comments")]
   fn has_entries_with_comments_before_comma(&self) -> bool {
     for ge in self.group_entries.iter() {
       if let GroupEntry::ValueMemberKey { ge: vmke, .. } = &ge.0 {
@@ -1578,6 +1989,7 @@ impl<'a> GroupChoice<'a> {
     false
   }
 
+  #[cfg(feature = "ast-comments")]
   fn has_entries_with_trailing_comments(&self) -> bool {
     self
       .group_entries
@@ -1596,6 +2008,7 @@ impl<'a> fmt::Display for GroupChoice<'a> {
         self.group_entries[0].0, self.group_entries[0].1
       ));
 
+      #[cfg(feature = "ast-comments")]
       if !self.group_entries[0].1.has_trailing_comments() {
         gc_str.push(' ');
       }
@@ -1603,14 +2016,17 @@ impl<'a> fmt::Display for GroupChoice<'a> {
       return write!(f, "{}", gc_str);
     }
 
+    #[cfg(feature = "ast-comments")]
     if let Some(comments) = &self.comments_before_grpchoice {
       gc_str.push_str(&comments.to_string());
     }
 
     // Keep track of group entries with comments written before commas for
     // proper formatting
+    #[cfg(feature = "ast-comments")]
     let mut entries_with_comment_before_comma: Vec<(usize, bool)> = Vec::new();
 
+    #[cfg(feature = "ast-comments")]
     for (idx, ge) in self.group_entries.iter().enumerate() {
       if let GroupEntry::ValueMemberKey {
         trailing_comments: Some(comments),
@@ -1639,11 +2055,13 @@ impl<'a> fmt::Display for GroupChoice<'a> {
       entries_with_comment_before_comma.push((idx, false));
     }
 
+    #[cfg(feature = "ast-comments")]
     let has_trailing_comments_after_comma = self
       .group_entries
       .iter()
       .any(|ge| ge.1.has_trailing_comments());
 
+    #[cfg(feature = "ast-comments")]
     if self.group_entries.len() > 3
       || (self.group_entries.len() <= 3 && has_trailing_comments_after_comma)
     {
@@ -1652,13 +2070,27 @@ impl<'a> fmt::Display for GroupChoice<'a> {
       gc_str.push(' ');
     }
 
+    #[cfg(not(feature = "ast-comments"))]
+    if self.group_entries.len() > 3 {
+      gc_str.push('\n');
+    } else {
+      gc_str.push(' ');
+    }
+
     for (idx, ge) in self.group_entries.iter().enumerate() {
+      #[cfg(feature = "ast-comments")]
       if self.group_entries.len() > 3
         || (self.group_entries.len() <= 3 && has_trailing_comments_after_comma)
       {
         gc_str.push('\t');
       }
 
+      #[cfg(not(feature = "ast-comments"))]
+      if self.group_entries.len() > 3 {
+        gc_str.push('\t');
+      }
+
+      #[cfg(feature = "ast-comments")]
       if entries_with_comment_before_comma.iter().any(|e| e.1) {
         if idx == 0 {
           if entries_with_comment_before_comma[idx].1 {
@@ -1689,13 +2121,36 @@ impl<'a> fmt::Display for GroupChoice<'a> {
         }
       }
 
+      #[cfg(not(feature = "ast-comments"))]
+      {
+        gc_str.push_str(&format!(
+          "{}{}",
+          ge.0.to_string().trim_end(),
+          ge.1.to_string().trim_end()
+        ));
+
+        // if idx != self.group_entries.len() - 1 {
+        //   gc_str.push_str(",");
+        // }
+
+        if self.group_entries.len() <= 3 {
+          gc_str.push(' ');
+        }
+      }
+
       if idx == self.group_entries.len() - 1 && self.group_entries.len() > 3 {
         gc_str.push('\n');
 
         break;
       }
 
+      #[cfg(feature = "ast-comments")]
       if self.group_entries.len() > 3 && entries_with_comment_before_comma.iter().all(|e| !e.1) {
+        gc_str.push('\n');
+      }
+
+      #[cfg(not(feature = "ast-comments"))]
+      if self.group_entries.len() > 3 {
         gc_str.push('\n');
       }
     }
@@ -1720,11 +2175,14 @@ pub enum GroupEntry<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     ge: Box<ValueMemberKeyEntry<'a>>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     leading_comments: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     trailing_comments: Option<Comments<'a>>,
@@ -1736,11 +2194,14 @@ pub enum GroupEntry<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     ge: TypeGroupnameEntry<'a>,
     /// span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     leading_comments: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     trailing_comments: Option<Comments<'a>>,
@@ -1753,11 +2214,14 @@ pub enum GroupEntry<'a> {
     /// Group
     group: Group<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_group: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_group: Option<Comments<'a>>,
@@ -1765,6 +2229,7 @@ pub enum GroupEntry<'a> {
 }
 
 impl<'a> GroupEntry<'a> {
+  #[cfg(feature = "ast-comments")]
   fn has_trailing_comments(&self) -> bool {
     matches!(self,
       GroupEntry::ValueMemberKey {
@@ -1786,9 +2251,13 @@ pub struct OptionalComma<'a> {
   /// Optional comma
   pub optional_comma: bool,
 
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub trailing_comments: Option<Comments<'a>>,
+
+  #[doc(hidden)]
+  pub _a: PhantomData<&'a ()>,
 }
 
 impl<'a> fmt::Display for OptionalComma<'a> {
@@ -1799,6 +2268,7 @@ impl<'a> fmt::Display for OptionalComma<'a> {
       optcomma_str.push(',');
     }
 
+    #[cfg(feature = "ast-comments")]
     if let Some(comments) = &self.trailing_comments {
       if comments.any_non_newline() {
         if let Some(comment) = comments.0.first() {
@@ -1826,6 +2296,7 @@ impl<'a> fmt::Display for OptionalComma<'a> {
 }
 
 impl<'a> OptionalComma<'a> {
+  #[cfg(feature = "ast-comments")]
   fn has_trailing_comments(&self) -> bool {
     if let Some(comments) = &self.trailing_comments {
       return comments.any_non_newline();
@@ -1840,18 +2311,22 @@ impl<'a> fmt::Display for GroupEntry<'a> {
     match self {
       GroupEntry::ValueMemberKey {
         ge,
+        #[cfg(feature = "ast-comments")]
         leading_comments,
+        #[cfg(feature = "ast-comments")]
         trailing_comments,
         ..
       } => {
         let mut ge_str = String::new();
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = leading_comments {
           ge_str.push_str(&comments.to_string());
         }
 
         ge_str.push_str(&ge.to_string());
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = trailing_comments {
           if comments.any_non_newline() {
             ge_str.push_str(&format!(" {}", comments));
@@ -1862,18 +2337,22 @@ impl<'a> fmt::Display for GroupEntry<'a> {
       }
       GroupEntry::TypeGroupname {
         ge,
+        #[cfg(feature = "ast-comments")]
         leading_comments,
+        #[cfg(feature = "ast-comments")]
         trailing_comments,
         ..
       } => {
         let mut ge_str = String::new();
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = leading_comments {
           ge_str.push_str(&comments.to_string());
         }
 
         ge_str.push_str(&ge.to_string());
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = trailing_comments {
           if comments.any_non_newline() {
             ge_str.push_str(&format!(" {}", comments));
@@ -1885,7 +2364,9 @@ impl<'a> fmt::Display for GroupEntry<'a> {
       GroupEntry::InlineGroup {
         occur,
         group,
+        #[cfg(feature = "ast-comments")]
         comments_before_group,
+        #[cfg(feature = "ast-comments")]
         comments_after_group,
         ..
       } => {
@@ -1894,6 +2375,7 @@ impl<'a> fmt::Display for GroupEntry<'a> {
         if let Some(o) = occur {
           ge_str.push_str(&format!("{} ", o.occur.to_string()));
 
+          #[cfg(feature = "ast-comments")]
           if let Some(comments) = &o.comments {
             ge_str.push_str(&comments.to_string());
           }
@@ -1901,8 +2383,10 @@ impl<'a> fmt::Display for GroupEntry<'a> {
 
         ge_str.push('(');
 
+        #[cfg(feature = "ast-comments")]
         let mut non_newline_comments_before_group = false;
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_before_group {
           if comments.any_non_newline() {
             non_newline_comments_before_group = true;
@@ -1923,10 +2407,17 @@ impl<'a> fmt::Display for GroupEntry<'a> {
           ge_str.push_str(&group.to_string());
         }
 
+        #[cfg(not(feature = "ast-comments"))]
+        {
+          ge_str.push_str(&group.to_string());
+        }
+
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_group {
           ge_str.push_str(&comments.to_string());
         }
 
+        #[cfg(feature = "ast-comments")]
         if non_newline_comments_before_group
           && !group
             .group_choices
@@ -1935,6 +2426,9 @@ impl<'a> fmt::Display for GroupEntry<'a> {
         {
           ge_str.push('\n');
         }
+
+        #[cfg(not(feature = "ast-comments"))]
+        ge_str.push('\n');
 
         ge_str.push(')');
 
@@ -1951,15 +2445,23 @@ pub struct Occurrence<'a> {
   /// Occurrence indicator
   pub occur: Occur,
 
+  #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments: Option<Comments<'a>>,
+
+  #[doc(hidden)]
+  pub _a: PhantomData<&'a ()>,
 }
 
 impl<'a> fmt::Display for Occurrence<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    #[cfg(feature = "ast-comments")]
     let mut occur_str = self.occur.to_string();
+    #[cfg(not(feature = "ast-comments"))]
+    let occur_str = self.occur.to_string();
 
+    #[cfg(feature = "ast-comments")]
     if let Some(comments) = &self.comments {
       occur_str.push_str(&comments.to_string());
     }
@@ -2052,14 +2554,18 @@ pub enum MemberKey<'a> {
     /// Is cut indicator present
     is_cut: bool,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_cut: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_cut: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_arrowmap: Option<Comments<'a>>,
@@ -2071,11 +2577,14 @@ pub enum MemberKey<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     ident: Identifier<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_colon: Option<Comments<'a>>,
@@ -2087,11 +2596,14 @@ pub enum MemberKey<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(borrow))]
     value: Value<'a>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_colon: Option<Comments<'a>>,
@@ -2101,7 +2613,9 @@ pub enum MemberKey<'a> {
   #[doc(hidden)]
   NonMemberKey {
     non_member_key: NonMemberKey<'a>,
+    #[cfg(feature = "ast-comments")]
     comments_before_type_or_group: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
     comments_after_type_or_group: Option<Comments<'a>>,
   },
 }
@@ -2118,14 +2632,18 @@ impl<'a> fmt::Display for MemberKey<'a> {
     match self {
       MemberKey::Type1 {
         t1,
+        #[cfg(feature = "ast-comments")]
         comments_before_cut,
         is_cut,
+        #[cfg(feature = "ast-comments")]
         comments_after_cut,
+        #[cfg(feature = "ast-comments")]
         comments_after_arrowmap,
         ..
       } => {
         let mut mk_str = format!("{} ", t1);
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_before_cut {
           if comments.any_non_newline() {
             mk_str.push_str(&comments.to_string());
@@ -2136,6 +2654,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
           mk_str.push_str("^ ");
         }
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_cut {
           if comments.any_non_newline() {
             mk_str.push_str(&comments.to_string());
@@ -2144,6 +2663,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
 
         mk_str.push_str("=>");
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_arrowmap {
           if comments.any_non_newline() {
             mk_str.push_str(&format!(" {}", comments));
@@ -2154,12 +2674,15 @@ impl<'a> fmt::Display for MemberKey<'a> {
       }
       MemberKey::Bareword {
         ident,
+        #[cfg(feature = "ast-comments")]
         comments,
+        #[cfg(feature = "ast-comments")]
         comments_after_colon,
         ..
       } => {
         let mut mk_str = format!("{}", ident);
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments {
           if comments.any_non_newline() {
             mk_str.push_str(&format!(" {}", comments));
@@ -2168,6 +2691,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
 
         mk_str.push(':');
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_colon {
           if comments.any_non_newline() {
             mk_str.push_str(&format!(" {}", comments));
@@ -2178,12 +2702,15 @@ impl<'a> fmt::Display for MemberKey<'a> {
       }
       MemberKey::Value {
         value,
+        #[cfg(feature = "ast-comments")]
         comments,
+        #[cfg(feature = "ast-comments")]
         comments_after_colon,
         ..
       } => {
         let mut mk_str = format!("{}", value);
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments {
           if comments.any_non_newline() {
             mk_str.push_str(&format!(" {}", comments));
@@ -2192,6 +2719,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
 
         mk_str.push(':');
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_colon {
           if comments.any_non_newline() {
             mk_str.push_str(&format!(" {}", comments));
@@ -2202,17 +2730,21 @@ impl<'a> fmt::Display for MemberKey<'a> {
       }
       MemberKey::NonMemberKey {
         non_member_key: NonMemberKey::Group(g),
+        #[cfg(feature = "ast-comments")]
         comments_before_type_or_group,
+        #[cfg(feature = "ast-comments")]
         comments_after_type_or_group,
       } => {
         let mut nmk_str = String::new();
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_before_type_or_group {
           nmk_str.push_str(&comments.to_string());
         }
 
         nmk_str.push_str(&g.to_string());
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_type_or_group {
           nmk_str.push_str(&comments.to_string());
         }
@@ -2221,17 +2753,21 @@ impl<'a> fmt::Display for MemberKey<'a> {
       }
       MemberKey::NonMemberKey {
         non_member_key: NonMemberKey::Type(t),
+        #[cfg(feature = "ast-comments")]
         comments_before_type_or_group,
+        #[cfg(feature = "ast-comments")]
         comments_after_type_or_group,
       } => {
         let mut nmk_str = String::new();
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_before_type_or_group {
           nmk_str.push_str(&comments.to_string());
         }
 
         nmk_str.push_str(&t.to_string());
 
+        #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_type_or_group {
           nmk_str.push_str(&comments.to_string());
         }
@@ -2259,23 +2795,42 @@ pub enum Occur {
     /// Upper bound
     upper: Option<usize>,
     /// Span
+    #[cfg(feature = "ast-span")]
     span: Span,
   },
 
   /// Occurrence indicator in the form *, allowing zero or more occurrences
+  #[cfg(feature = "ast-span")]
   ZeroOrMore(Span),
 
+  /// Occurrence indicator in the form *, allowing zero or more occurrences
+  #[cfg(not(feature = "ast-span"))]
+  ZeroOrMore,
+
   /// Occurrence indicator in the form +, allowing one or more occurrences
+  #[cfg(feature = "ast-span")]
   OneOrMore(Span),
 
+  #[cfg(not(feature = "ast-span"))]
+  /// Occurrence indicator in the form +, allowing one or more occurrences
+  OneOrMore,
+
   /// Occurrence indicator in the form ?, allowing an optional occurrence
+  #[cfg(feature = "ast-span")]
   Optional(Span),
+
+  /// Occurrence indicator in the form ?, allowing an optional occurrence
+  #[cfg(not(feature = "ast-span"))]
+  Optional,
 }
 
 impl fmt::Display for Occur {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
+      #[cfg(feature = "ast-span")]
       Occur::ZeroOrMore(_) => write!(f, "*"),
+      #[cfg(not(feature = "ast-span"))]
+      Occur::ZeroOrMore => write!(f, "*"),
       Occur::Exact { lower, upper, .. } => {
         if let Some(li) = lower {
           if let Some(ui) = upper {
@@ -2291,14 +2846,21 @@ impl fmt::Display for Occur {
 
         write!(f, "*")
       }
+      #[cfg(feature = "ast-span")]
       Occur::OneOrMore(_) => write!(f, "+"),
+      #[cfg(not(feature = "ast-span"))]
+      Occur::OneOrMore => write!(f, "+"),
+      #[cfg(feature = "ast-span")]
       Occur::Optional(_) => write!(f, "?"),
+      #[cfg(not(feature = "ast-span"))]
+      Occur::Optional => write!(f, "?"),
     }
   }
 }
 
 #[cfg(test)]
 #[allow(unused_imports)]
+#[cfg(feature = "ast-comments")]
 mod tests {
   use super::*;
   use pretty_assertions::assert_eq;
@@ -2314,6 +2876,7 @@ mod tests {
         },
         leading_comments: None,
         trailing_comments: None,
+        #[cfg(feature = "ast-span")]
         span: (0, 0, 0),
       }
       .to_string(),
@@ -2335,6 +2898,7 @@ mod tests {
                     ident: "key1".into(),
                     comments: None,
                     comments_after_colon: None,
+                    #[cfg(feature = "ast-span")]
                     span: (0, 0, 0),
                   }),
                   entry_type: Type {
@@ -2342,25 +2906,30 @@ mod tests {
                       type1: Type1 {
                         type2: Type2::TextValue {
                           value: "value1".into(),
+                          #[cfg(feature = "ast-span")]
                           span: (0, 0, 0),
                         },
                         operator: None,
                         comments_after_type: None,
+                        #[cfg(feature = "ast-span")]
                         span: (0, 0, 0),
                       },
                       comments_before_type: None,
                       comments_after_type: None,
                     }],
+                    #[cfg(feature = "ast-span")]
                     span: (0, 0, 0),
                   },
                 }),
                 leading_comments: None,
                 trailing_comments: None,
+                #[cfg(feature = "ast-span")]
                 span: (0, 0, 0),
               },
               OptionalComma {
                 optional_comma: true,
                 trailing_comments: None,
+                _a: PhantomData::default(),
               }
             ),
             (
@@ -2371,6 +2940,7 @@ mod tests {
                     ident: "key2".into(),
                     comments: None,
                     comments_after_colon: None,
+                    #[cfg(feature = "ast-span")]
                     span: (0, 0, 0),
                   }),
                   entry_type: Type {
@@ -2378,31 +2948,38 @@ mod tests {
                       type1: Type1 {
                         type2: Type2::TextValue {
                           value: "value2".into(),
+                          #[cfg(feature = "ast-span")]
                           span: (0, 0, 0),
                         },
                         operator: None,
                         comments_after_type: None,
+                        #[cfg(feature = "ast-span")]
                         span: (0, 0, 0),
                       },
                       comments_before_type: None,
                       comments_after_type: None,
                     }],
+                    #[cfg(feature = "ast-span")]
                     span: (0, 0, 0),
                   },
                 }),
                 leading_comments: None,
                 trailing_comments: None,
+                #[cfg(feature = "ast-span")]
                 span: (0, 0, 0),
               },
               OptionalComma {
                 optional_comma: true,
                 trailing_comments: None,
+                _a: PhantomData::default(),
               }
             ),
           ],
           comments_before_grpchoice: None,
+          #[cfg(feature = "ast-span")]
           span: (0, 0, 0),
         }],
+        #[cfg(feature = "ast-span")]
         span: (0, 0, 0),
       }
       .to_string(),

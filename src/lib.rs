@@ -3,7 +3,7 @@
 //! [![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl)
 //! [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl)
 //! [![Publish
-//! packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.8.7&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22)
+//! packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.9.0-beta.0&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22)
 //! [![Build and
 //! Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22)
 //!
@@ -88,7 +88,7 @@
 //! docker pull ghcr.io/anweiss/cddl-cli:latest
 //! ```
 //!
-//! ### Usage
+//! ### CLI usage
 //!
 //! Instructions for using the tool can be viewed by executing the `help`
 //! subcommand:
@@ -142,7 +142,7 @@
 //! https://cddl.anweiss.tech. This same codebase has been compiled for use in
 //! the browser via WebAssembly.
 //!
-//! ## Visual Studio Code Extension
+//! ## Visual Studio Code extension
 //!
 //! An extension for editing CDDL documents with Visual Studio Code has been
 //! published to the Marketplace
@@ -183,10 +183,40 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cddl = "0.8"
+//! cddl = "0.9"
 //! ```
 //!
 //! Both JSON and CBOR validation require `std`.
+//!
+//! ### Feature flags
+//!
+//! A few convenience features have been included to make the AST more concise
+//! and for enabling additional functionality. You can build with
+//! `default-features = false` for a `no_std` build and selectively enable any
+//! of the features below.
+//!
+//! **`--feature ast-span`**
+//!
+//! Add the `Span` type to the AST for keeping track of the position of the
+//! lexer and parser. Enabled by default.
+//!
+//! **`--feature ast-comments`**
+//!
+//! Include comment strings in the AST. Enabled by default.
+//!
+//! **`--feature json`**
+//!
+//! Enable JSON validation. Enabled by default.
+//!
+//! **`--feature cbor`**
+//!
+//! Enable CBOR validation. Enabled by default.
+//!
+//! **`--feature additional-controls`**
+//!
+//! Enable validation support for the additional control operators proposed in
+//! [https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05](https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05).
+//! Enabled by default.
 //!
 //! ### Parsing CDDL
 //!
@@ -214,6 +244,7 @@
 //!   "address": "1234 Lakeshore Dr"
 //! }"#;
 //!
+//! #[cfg(not(feature = "additional-controls"))]
 //! assert!(validate_json_from_str(cddl, json).is_ok())
 //! ```
 //!
@@ -348,6 +379,33 @@
 //! Ensure that your regex string is properly JSON escaped when using this
 //! control.
 //!
+//! If you've enabled the `additional-controls` feature, the table of controls
+//! below is also available for use:
+//!
+//! | Control operator | Supported                                                                                                                                         |
+//! | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+//! | `.plus`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `.cat`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `.det`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `.abnf`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `.abnfb`         | Ignored when validating JSON                                                                                                                      |
+//! | `.feature`       | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//!
+//! You can activate features during validation as follows:
+//!
+//! ```rust
+//! use cddl::validate_json_from_str;
+//!
+//! let cddl = r#"
+//!   v = JC<"v", 2>
+//!   JC<J, C> =  C .feature "cbor" / J .feature "json"
+//! "#;
+//!
+//! let json = r#""v""#;
+//!
+//! assert!(validate_json_from_str(cddl, json, Some(&["json"])).is_ok())
+//! ```
+//!
 //! #### Comparing with JSON schema and JSON schema language
 //!
 //! [CDDL](https://tools.ietf.org/html/rfc8610), [JSON
@@ -370,6 +428,7 @@
 //!
 //! let cbor = b"\xF4";
 //!
+//! #[cfg(not(feature = "additional-controls"))]
 //! assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
 //! ```
 //!
@@ -404,6 +463,34 @@
 //! | `mime-message = #6.36(tstr)`             | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 //! | `cbor-any = #6.55799(any)`               | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 //!
+//! If you've enabled the `additional-controls` feature, the table of controls
+//! below is also available for use:
+//!
+//! | Control operator | Supported                                                                                                                                         |
+//! | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+//! | `.plus`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `.cat`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `.det`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `.abnf`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `.abnfb`         | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//! | `.feature`       | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+//!
+//! You can activate features during validation by passing a slice of feature
+//! strings as follows:
+//!
+//! ```rust
+//! use cddl::validate_cbor_from_slice;
+//!
+//! let cddl = r#"
+//!   v = JC<"v", 2>
+//!   JC<J, C> =  C .feature "cbor" / J .feature "json"
+//! "#;
+//!
+//! let cbor = b"\x02";
+//!
+//! assert!(validate_cbor_from_slice(cddl, cbor, Some(&["cbor"])).is_ok())
+//! ```
+//!
 //! ## `no_std` support
 //!
 //! Only the lexer and parser can be used in a `no_std` context provided that a
@@ -412,7 +499,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cddl = { version = "0.8", default-features = false }
+//! cddl = { version = "0.9", default-features = false }
 //! ```
 //!
 //! Zero-copy parsing is implemented to the extent that is possible. Allocation
@@ -468,7 +555,6 @@ pub mod repl;
 pub mod token;
 /// Validators for JSON and CBOR data structures
 #[cfg(feature = "std")]
-#[cfg(not(target_arch = "wasm32"))]
 pub mod validator;
 
 /// CDDL AST visitor
@@ -476,12 +562,21 @@ pub mod visitor;
 
 #[doc(inline)]
 pub use self::{
-  lexer::{lexer_from_str, LexerError},
-  parser::{cddl_from_str, ParserError},
+  lexer::{lexer_from_str, Error as LexerError},
+  parser::{cddl_from_str, Error as ParserError},
   token::Token,
 };
 
 #[doc(inline)]
 #[cfg(feature = "std")]
+#[cfg(feature = "cbor")]
+#[cfg(not(feature = "lsp"))]
 #[cfg(not(target_arch = "wasm32"))]
-pub use self::validator::{validate_cbor_from_slice, validate_json_from_str};
+pub use self::validator::validate_cbor_from_slice;
+
+#[doc(inline)]
+#[cfg(feature = "std")]
+#[cfg(feature = "json")]
+#[cfg(not(feature = "lsp"))]
+#[cfg(not(target_arch = "wasm32"))]
+pub use self::validator::validate_json_from_str;
