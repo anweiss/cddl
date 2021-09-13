@@ -140,7 +140,7 @@ Simply add the dependency to `Cargo.toml`:
 
 ```toml
 [dependencies]
-cddl = "0.9"
+cddl = "0.9.0-beta.0"
 ```
 
 Both JSON and CBOR validation require `std`.
@@ -388,7 +388,7 @@ Only the lexer and parser can be used in a `no_std` context provided that a heap
 
 ```toml
 [dependencies]
-cddl = { version = "0.9", default-features = false }
+cddl = { version = "0.9.0-beta.0", default-features = false }
 ```
 
 Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling and diagnostics.
