@@ -2072,16 +2072,25 @@ where
           comments_after_type_or_group
         };
 
+        #[cfg(feature = "ast-span")]
         if let Some((ident, _, _)) = entry_type.groupname_entry() {
           if ident.socket.is_none()
             && token::lookup_ident(ident.ident)
               .in_standard_prelude()
               .is_none()
           {
-            #[cfg(feature = "ast-span")]
             self.visited_rule_idents.push((ident.ident, ident.span));
-            #[cfg(not(feature = "ast-span"))]
-            self.visited_rule_idents.push(name.ident);
+          }
+        }
+
+        #[cfg(not(feature = "ast-span"))]
+        if let Some((ident, _)) = entry_type.groupname_entry() {
+          if ident.socket.is_none()
+            && token::lookup_ident(ident.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            self.visited_rule_idents.push(ident.ident);
           }
         }
 
@@ -2141,16 +2150,25 @@ where
           span.1 = self.lexer_position.range.1;
         }
 
+        #[cfg(feature = "ast-span")]
         if let Some((ident, _, _)) = entry_type.groupname_entry() {
           if ident.socket.is_none()
             && token::lookup_ident(ident.ident)
               .in_standard_prelude()
               .is_none()
           {
-            #[cfg(feature = "ast-span")]
             self.visited_rule_idents.push((ident.ident, ident.span));
-            #[cfg(not(feature = "ast-span"))]
-            self.visited_rule_idents.push(name.ident);
+          }
+        }
+
+        #[cfg(not(feature = "ast-span"))]
+        if let Some((ident, _)) = entry_type.groupname_entry() {
+          if ident.socket.is_none()
+            && token::lookup_ident(ident.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            self.visited_rule_idents.push(ident.ident);
           }
         }
 
@@ -2256,16 +2274,25 @@ where
           });
         }
 
+        #[cfg(feature = "ast-span")]
         if let Some((ident, _, _)) = entry_type.groupname_entry() {
           if ident.socket.is_none()
             && token::lookup_ident(ident.ident)
               .in_standard_prelude()
               .is_none()
           {
-            #[cfg(feature = "ast-span")]
             self.visited_rule_idents.push((ident.ident, ident.span));
-            #[cfg(not(feature = "ast-span"))]
-            self.visited_rule_idents.push(name.ident);
+          }
+        }
+
+        #[cfg(not(feature = "ast-span"))]
+        if let Some((ident, _)) = entry_type.groupname_entry() {
+          if ident.socket.is_none()
+            && token::lookup_ident(ident.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            self.visited_rule_idents.push(ident.ident);
           }
         }
 
