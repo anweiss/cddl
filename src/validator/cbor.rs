@@ -2477,7 +2477,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
                 })
                 .collect::<Vec<_>>();
 
-              self.values_to_validate = Some(values_to_validate.clone());
+              self.values_to_validate = Some(values_to_validate);
               for e in errors.into_iter() {
                 self.add_error(e);
               }
