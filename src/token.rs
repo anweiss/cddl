@@ -699,6 +699,7 @@ pub fn lookup_ident(ident: &str) -> Token {
     "number" => Token::NUMBER,
     "biguint" => Token::BIGUINT,
     "bignint" => Token::BIGNINT,
+    "bigint" => Token::BIGINT,
     "integer" => Token::INTEGER,
     "unsigned" => Token::UNSIGNED,
     "decfrac" => Token::DECFRAC,
