@@ -98,8 +98,8 @@ impl fmt::Display for ValidationError {
 
     write!(
       f,
-      "{} at cddl location \"{}\" and cbor location {}: {}",
-      error_str, self.cddl_location, self.cbor_location, self.reason
+      "{} at cbor location {}: {}",
+      error_str, self.cbor_location, self.reason
     )
   }
 }

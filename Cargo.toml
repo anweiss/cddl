@@ -53,7 +53,7 @@ wee_alloc = { version = "0.4.5", optional = true }
 wasm-bindgen-test = "0.3.25"
 
 [features]
-default = ["std", "ast-span", "ast-comments", "json", "cbor", "additional-controls"]
+default = ["std", "ast-span", "ast-comments", "json", "cbor"]
 std = ["base16/alloc", "base64/alloc", "serde_json", "serde_cbor", "serde", "chrono", "wasm-bindgen", "clap", "crossterm", "uriparse", "base64-url", "regex-syntax"]
 lsp = ["std"]
 additional-controls = []

@@ -114,15 +114,15 @@ impl fmt::Display for ValidationError {
     if self.json_location.is_empty() {
       return write!(
         f,
-        "{} at cddl location \"{}\" and at the root of the JSON document: {}",
-        error_str, self.cddl_location, self.reason
+        "{} at the root of the JSON document: {}",
+        error_str, self.reason
       );
     }
 
     write!(
       f,
-      "{} at cddl location \"{}\" and JSON location {}: {}",
-      error_str, self.cddl_location, self.json_location, self.reason
+      "{} at JSON location {}: {}",
+      error_str, self.json_location, self.reason
     )
   }
 }

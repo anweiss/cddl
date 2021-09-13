@@ -52,8 +52,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         .help("CBOR binary files to validate")
         .required_unless_one(&["json", "stdin"]),
     )
-    // .arg_from_usage("--json [FILE]... 'JSON files to validate'")
-    // .arg_from_usage("--cbor [FILE]... 'CBOR binary files to validate'")
     .arg(
       Arg::with_name("stdin")
         .long("stdin")
@@ -65,17 +63,35 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   #[cfg(not(feature = "additional-controls"))]
   let validate_subcommand = SubCommand::with_name("validate")
-    .about("Validate JSON or CBOR against CDDL definition")
+    .about("Validate JSON and/or CBOR against a CDDL definition")
+    .usage("cddl validate --cddl <CDDL> --json <FILE>... --cbor <FILE>...\n    cat hello.json | cddl validate --stdin")
     .arg_from_usage("-c --cddl <CDDL> 'CDDL input file'")
-    .arg_from_usage("--json [FILE]... 'JSON files to validate'")
-    .arg_from_usage("--cbor [FILE]... 'CBOR binary files to validate'")
+    .arg(
+      Arg::with_name("json")
+        .long("json")
+        .takes_value(true)
+        .multiple(true)
+        .empty_values(false)
+        .help("JSON files to validate")
+        .required_unless_one(&["cbor", "stdin"])
+    )
+    .arg(
+      Arg::with_name("cbor")
+        .long("cbor")
+        .takes_value(true)
+        .multiple(true)
+        .empty_values(false)
+        .help("CBOR binary files to validate")
+        .required_unless_one(&["json", "stdin"]),
+    )
     .arg(
       Arg::with_name("stdin")
         .long("stdin")
         .takes_value(false)
         .help("JSON or CBOR input from stdin")
-        .conflicts_with_all(&["json", "cbor"]),
-    );
+        .long_help("files read from stdin which are encoded as valid utf-8\nwill be implied as JSON whereas invalid utf-8 encoded\ninput is implied as CBOR")
+    )
+    .setting(AppSettings::DeriveDisplayOrder);
 
   let app = App::new("cddl")
                     .version(crate_version!())
@@ -200,7 +216,7 @@ fn main() -> Result<(), Box<dyn Error>> {
               info!("Validation of {:?} is successful", p);
             }
             Err(e) => {
-              error!("Validation of {:?} failed: {}", p, e);
+              error!("Validation of {:?} failed: {}", p, e.to_string().trim_end());
             }
           }
         }
@@ -228,7 +244,7 @@ fn main() -> Result<(), Box<dyn Error>> {
               info!("Validation of {:?} is successful", p);
             }
             Err(e) => {
-              error!("Validation of {:?} failed: {}", p, e);
+              error!("Validation of {:?} failed: {}", p, e.to_string().trim_end());
             }
           }
         }
@@ -253,7 +269,7 @@ fn main() -> Result<(), Box<dyn Error>> {
               info!("Validation from stdin is successful");
             }
             Err(e) => {
-              error!("Validation from stdin failed: {}", e);
+              error!("Validation from stdin failed: {}", e.to_string().trim_end());
             }
           }
         } else {
@@ -267,7 +283,7 @@ fn main() -> Result<(), Box<dyn Error>> {
               info!("Validation from stdin is successful");
             }
             Err(e) => {
-              error!("Validation from stdin failed: {}", e);
+              error!("Validation from stdin failed: {}", e.to_string().trim_end());
             }
           }
         }
