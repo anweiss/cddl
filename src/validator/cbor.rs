@@ -164,12 +164,15 @@ pub struct CBORValidator<'a> {
   // Whether or not to advance to the next group entry if member key validation
   // fails as detected during the current state of AST evaluation
   advance_to_next_entry: bool,
+  // Is validation checking for map quality
   is_ctrl_map_equality: bool,
   entry_counts: Option<Vec<EntryCount>>,
   // Collect map entry keys that have already been validated
   validated_keys: Option<Vec<Value>>,
   // Collect map entry values that have yet to be validated
   values_to_validate: Option<Vec<Value>>,
+  // Whether or not the validator is validating a map entry value
+  validating_value: bool,
   // Collect valid array indices when entries are type choices
   valid_array_items: Option<Vec<usize>>,
   // Collect invalid array item errors where the key is the index of the invalid
@@ -225,6 +228,7 @@ impl<'a> CBORValidator<'a> {
       entry_counts: None,
       validated_keys: None,
       values_to_validate: None,
+      validating_value: false,
       valid_array_items: None,
       array_errors: None,
       is_colon_shortcut_present: false,
@@ -263,6 +267,7 @@ impl<'a> CBORValidator<'a> {
       entry_counts: None,
       validated_keys: None,
       values_to_validate: None,
+      validating_value: false,
       valid_array_items: None,
       array_errors: None,
       is_colon_shortcut_present: false,
@@ -298,6 +303,7 @@ impl<'a> CBORValidator<'a> {
       entry_counts: None,
       validated_keys: None,
       values_to_validate: None,
+      validating_value: false,
       valid_array_items: None,
       array_errors: None,
       is_colon_shortcut_present: false,
@@ -336,6 +342,7 @@ impl<'a> CBORValidator<'a> {
       entry_counts: None,
       validated_keys: None,
       values_to_validate: None,
+      validating_value: false,
       valid_array_items: None,
       array_errors: None,
       is_colon_shortcut_present: false,
@@ -2470,7 +2477,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
                 })
                 .collect::<Vec<_>>();
 
-              self.values_to_validate = Some(values_to_validate);
+              self.values_to_validate = Some(values_to_validate.clone());
               for e in errors.into_iter() {
                 self.add_error(e);
               }
@@ -2856,7 +2863,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           }
         }
 
-        if is_ident_string_data_type(self.cddl, ident) {
+        if is_ident_string_data_type(self.cddl, ident) && !self.validating_value {
           if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Text(_))) {
             self
               .validated_keys
@@ -2871,7 +2878,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           return Ok(());
         }
 
-        if is_ident_integer_data_type(self.cddl, ident) {
+        if is_ident_integer_data_type(self.cddl, ident) && !self.validating_value {
           if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Integer(_))) {
             self
               .validated_keys
@@ -2885,7 +2892,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           return Ok(());
         }
 
-        if is_ident_bool_data_type(self.cddl, ident) {
+        if is_ident_bool_data_type(self.cddl, ident) && !self.validating_value {
           if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Bool(_))) {
             self
               .validated_keys
@@ -2899,7 +2906,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           return Ok(());
         }
 
-        if is_ident_null_data_type(self.cddl, ident) {
+        if is_ident_null_data_type(self.cddl, ident) && !self.validating_value {
           if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
             self
               .validated_keys
@@ -2913,7 +2920,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           return Ok(());
         }
 
-        if is_ident_byte_string_data_type(self.cddl, ident) {
+        if is_ident_byte_string_data_type(self.cddl, ident) && !self.validating_value {
           if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Bytes(_))) {
             self
               .validated_keys
@@ -2927,7 +2934,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           return Ok(());
         }
 
-        if is_ident_float_data_type(self.cddl, ident) {
+        if is_ident_float_data_type(self.cddl, ident) && !self.validating_value {
           if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
             self
               .validated_keys
@@ -3006,6 +3013,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
         cv.is_multi_group_choice = self.is_multi_group_choice;
         cv.cbor_location.push_str(&self.cbor_location);
         cv.type_group_name_entry = self.type_group_name_entry;
+        cv.validating_value = true;
         cv.visit_type(&entry.entry_type)?;
 
         self.cbor_location = current_location.clone();
