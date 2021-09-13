@@ -104,9 +104,51 @@ jobs:
           cd ../cddl-languageserver
           npm publish --access=public --dry-run
 
+  website-build-check:
+    name: Build website
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          target: wasm32-unknown-unknown
+
+      - name: Install wasmpack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install node
+        uses: actions/setup-node@v1
+        with:
+          node-version: '16'
+
+      - name: Build wasm
+        run: |
+          wasm-pack build --release
+
+      - name: Build web
+        run: |
+          cd www
+          npm install
+          npm run build
+
   draft-release:
     name: Draft Release
-    needs: [compilation-check, cargo-publish-dry-run, wasm-compilation-check]
+    needs:
+      [
+        compilation-check,
+        cargo-publish-dry-run,
+        wasm-compilation-check,
+        website-build-check,
+      ]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
