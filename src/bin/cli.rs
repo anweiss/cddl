@@ -60,7 +60,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         .takes_value(false)
         .help("JSON or CBOR input from stdin")
         .long_help("files read from stdin which are encoded as valid utf-8\nwill be implied as JSON whereas invalid utf-8 encoded\ninput is implied as CBOR")
-        
     )
     .setting(AppSettings::DeriveDisplayOrder);
 
