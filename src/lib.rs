@@ -112,13 +112,13 @@
 //! You can validate JSON documents:
 //!
 //! ```sh
-//! cddl validate --cddl <FILE.cddl> [FILE.json]...
+//! cddl validate --cddl <FILE.cddl> --json [FILE.json]...
 //! ```
 //!
 //! You can validate CBOR files:
 //!
 //! ```sh
-//! cddl validate --cddl <FILE.cddl> [FILE.cbor]...
+//! cddl validate --cddl <FILE.cddl> --cbor [FILE.cbor]...
 //! ```
 //!
 //! It also supports validating files from STDIN (if it detects the input as
