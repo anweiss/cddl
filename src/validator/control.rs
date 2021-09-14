@@ -861,6 +861,7 @@ mod tests {
       )?,
       vec![Type2::TextValue {
         value: "foo\n  bar\n  baz\n".into(),
+        #[cfg(feature = "ast-span")]
         span: Span::default(),
       }],
     );
@@ -891,12 +892,14 @@ mod tests {
         &Type2::Typename {
           ident: "b".into(),
           generic_args: None,
+          #[cfg(feature = "ast-span")]
           span: Span::default(),
         },
         true,
       )?,
       vec![Type2::TextValue {
         value: "foo\nbar\nbaz\n".into(),
+        #[cfg(feature = "ast-span")]
         span: Span::default(),
       }]
     );

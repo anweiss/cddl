@@ -76,13 +76,13 @@ docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> he
 You can validate JSON documents:
 
 ```sh
-cddl validate --cddl <FILE.cddl> [FILE.json]...
+cddl validate --cddl <FILE.cddl> --json [FILE.json]...
 ```
 
 You can validate CBOR files:
 
 ```sh
-cddl validate --cddl <FILE.cddl> [FILE.cbor]...
+cddl validate --cddl <FILE.cddl> --cbor [FILE.cbor]...
 ```
 
 It also supports validating files from STDIN (if it detects the input as valid UTF-8, it will attempt to validate the input as JSON, otherwise it will treat it as CBOR):

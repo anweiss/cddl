@@ -1,168 +1,308 @@
 ; Shelley Types
 
-block = [
-	header
-	, transaction_bodies: [ * transaction_body ] ; 19
-	, transaction_witness_sets: [ * transaction_witness_set ] ; 20
-	, transaction_metadata_set: { * transaction_index => transaction_metadata }
-]
+block =
+  [ header
+  , transaction_bodies         : [* transaction_body]
+  , transaction_witness_sets   : [* transaction_witness_set]
+  , transaction_metadata_set   :
+      { * transaction_index => transaction_metadata }
+  ]; Valid blocks must also satisfy the following two constraints:
+   ; 1) the length of transaction_bodies and transaction_witness_sets
+   ;    must be the same
+   ; 2) every transaction_index must be strictly smaller than the
+   ;    length of transaction_bodies
 
-transaction = [ transaction_body, transaction_witness_set, [ ? transaction_metadata ] ]
+transaction =
+  [ transaction_body
+  , transaction_witness_set
+  , transaction_metadata / null
+  ]
 
 transaction_index = uint
 
-header = ( header_body, body_signature: $kes_signature )
+header =
+  [ header_body
+  , body_signature : $kes_signature
+  ]
 
-header_body = (
-	prev_hash: $hash
-	, issuer_vkey: $vkey
-	, vrf_vkey: $vrf_vkey
-	, slot: uint
-	, nonce_vrf: $vrf_cert
-	, leader_vrf: $vrf_cert
-	, size: uint
-	, block_number: uint
-	, block_body_hash: $hash ; merkle triple root
-	, operational_cert
-	, protocol_version
-)
+header_body =
+  [ block_number     : uint
+  , slot             : uint
+  , prev_hash        : $hash32 / null
+  , issuer_vkey      : $vkey
+  , vrf_vkey         : $vrf_vkey
+  , nonce_vrf        : $vrf_cert
+  , leader_vrf       : $vrf_cert
+  , block_body_size  : uint
+  , block_body_hash  : $hash32 ; merkle triple root
+  , operational_cert
+  , protocol_version
+  ]
 
-operational_cert = (
-	hot_vkey: $kes_vkey,
-	cold_vkey: $vkey,
-	sequence_number: uint,
-	kes_period: uint,
-	sigma: $signature
-)
+operational_cert =
+  ( hot_vkey        : $kes_vkey
+  , sequence_number : uint
+  , kes_period      : uint
+  , sigma           : $signature
+  )
 
-protocol_version = ( uint, uint )
+protocol_version = (uint, uint)
 
-; Do we want to use a Map here? Is it actually cheaper?
-; Do we want to add extension points here?
-transaction_body = {
-	0: finite_set<transaction_input>
-	, 1: [ * transaction_output ]
-	, 2: coin ; fee
-	, 3: uint ; ttl
-	, 4: [ * delegation_certificate ]
-	, ? 5: withdrawals
-	, ? 6: full_update
-	, ? 7: metadata_hash
-}
+transaction_body =
+  { 0 : set<transaction_input>
+  , 1 : [* transaction_output]
+  , 2 : coin ; fee
+  , 3 : uint ; ttl
+  , ? 4 : [* certificate]
+  , ? 5 : withdrawals
+  , ? 6 : update
+  , ? 7 : metadata_hash
+  }
 
-; Is it okay to have this as a group? Is it valid CBOR?! Does it need to be?
-transaction_input = [ transaction_id: $hash, index: uint ]
+transaction_input = [ transaction_id : $hash32
+                    , index : uint
+                    ]
 
-transaction_output = [ address, amount: uint ]
+transaction_output = [address, amount : coin]
 
-address = (
-	0, keyhash, keyhash ; base address
-	// 1, keyhash, scripthash ; base address
-	// 2, scripthash, keyhash ; base address
-	// 3, scripthash, scripthash ; base address
-	// 4, keyhash, pointer ; pointer address
-	// 5, scripthash, pointer ; pointer address
-	// 6, keyhash ; enterprise address (null staking reference)
-	// 7, scripthash ; enterprise address (null staking reference)
-	// 8, keyhash ; bootstrap address
-)
+; address = bytes
+; reward_account = bytes
 
-delegation_certificate = [
-	0, keyhash ; stake key registration
-	// 1, scripthash ; stake script registration
-	// 2, keyhash ; stake key de-registration
-	// 3, scripthash ; stake script de-registration
-	// 4 ; stake key delegation
-		, keyhash ; delegating key
-		, keyhash ; key delegated to
-	// 5 ; stake script delegation
-		, scripthash ; delegating script
-		, keyhash ; key delegated to
-	// 6, pool_params ; stake pool registration
-	// 7, keyhash, epoch ; stake pool retirement
-	// 8 ; genesis key delegation
-		, genesishash ; delegating key
-		, keyhash ; key delegated to
-	// 9, move_instantaneous_reward ; move instantaneous rewards
-]
+; address format:
+; [ 8 bit header | payload ];
+;
+; shelley payment addresses:
+; bit 7: 0
+; bit 6: base/other
+; bit 5: pointer/enterprise [for base: stake cred is keyhash/scripthash]
+; bit 4: payment cred is keyhash/scripthash
+; bits 3-0: network id
+;
+; reward addresses:
+; bits 7-5: 111
+; bit 4: credential is keyhash/scripthash
+; bits 3-0: network id
+;
+; byron addresses:
+; bits 7-4: 1000
 
-move_instantaneous_reward = { * [ credential ] => coin }
+; 0000: base address: keyhash28,keyhash28
+; 0001: base address: scripthash28,keyhash28
+; 0010: base address: keyhash28,scripthash28
+; 0011: base address: scripthash28,scripthash28
+; 0100: pointer address: keyhash28, 3 variable length uint
+; 0101: pointer address: scripthash28, 3 variable length uint
+; 0110: enterprise address: keyhash28
+; 0111: enterprise address: scripthash28
+; 1000: byron address
+; 1110: reward account: keyhash28
+; 1111: reward account: scripthash28
+; 1001 - 1101: future formats
 
-pointer = ( uint, uint, uint )
+certificate =
+  [ stake_registration
+  // stake_deregistration
+  // stake_delegation
+  // pool_registration
+  // pool_retirement
+  // genesis_key_delegation
+  // move_instantaneous_rewards_cert
+  ]
 
-credential = ( 0, keyhash // 1, scripthash )
+stake_registration = (0, stake_credential)
+stake_deregistration = (1, stake_credential)
+stake_delegation = (2, stake_credential, pool_keyhash)
+pool_registration = (3, pool_params)
+pool_retirement = (4, pool_keyhash, epoch)
+genesis_key_delegation = (5, genesishash, genesis_delegate_hash, vrf_keyhash)
+move_instantaneous_rewards_cert = (6, move_instantaneous_reward)
 
-pool_params = (
-	keyhash ; operator
-	, $vrf_keyhash ; vrf keyhash
-	, coin ; pledge
-	, coin ; cost
-	, unit_interval ; margin
-	, [ credential ]
-	, finite_set<keyhash> ; pool owners
-)
+move_instantaneous_reward = [ 0 / 1, { * stake_credential => coin } ]
+; The first field determines where the funds are drawn from.
+; 0 denotes the reserves, 1 denotes the treasury.
 
-withdrawals = { * [ credential ] => coin }
+stake_credential =
+  [  0, addr_keyhash
+  // 1, scripthash
+  ]
 
-full_update = [ protocol_param_update_votes, application_version_update_votes, [ ? epoch ] ]
+pool_params = ( operator:       pool_keyhash
+              , vrf_keyhash:    vrf_keyhash
+              , pledge:         coin
+              , cost:           coin
+              , margin:         unit_interval
+              , reward_account: reward_account
+              , pool_owners:    set<addr_keyhash>
+              , relays:         [* relay]
+              , pool_metadata:  pool_metadata / null
+              )
 
-protocol_param_update_votes = { * genesishash => protocol_param_update }
+port = uint .le 65535
+ipv4 = bytes .size 4
+ipv6 = bytes .size 16
+dns_name = tstr .size (0..64)
 
-protocol_param_update = {
-	? 0: uint ; minfee A
-	, ? 1: uint ; minfee B
-	, ? 2: uint ; max block body size
-	, ? 3: uint ; max transaction size
-	, ? 4: uint ; max block header size
-	, ? 5: coin ; key deposit
-	, ? 6: unit_interval ; key deposit min refund
-	, ? 7: rational ; key deposit decay rate
-	, ? 8: coin ; pool deposit
-	, ? 9: unit_interval ; pool deposit min refund
-	, ? 10: rational ; pool deposit decay rate
-	, ? 11: epoch ; maximum epoch
-	, ? 12: uint ; n_optimal. desired number of stake pools
-	, ? 13: rational ; pool pledge influence
-	, ? 14: unit_interval ; expansion rate
-	, ? 15: unit_interval ; treasury growth rate
-	, ? 16: unit_interval ; active slot coefficient
-	, ? 17: unit_interval ; d. decentralization constant
-	, ? 18: $nonce ; extra entropy
-	, ? 19: [ protocol_version ] ; protocol version
-}
+single_host_addr = ( 0
+                   , port / null
+                   , ipv4 / null
+                   , ipv6 / null
+                   )
+single_host_name = ( 1
+                   , port / null
+                   , dns_name ; An A or AAAA DNS record
+                   )
+multi_host_name = ( 2
+                   , dns_name ; A SRV DNS record
+                   )
+relay =
+  [  single_host_addr
+  // single_host_name
+  // multi_host_name
+  ]
 
-application_version_update_votes = { * genesishash => application_version_update }
+pool_metadata = [url, metadata_hash]
+url = tstr .size (0..64)
 
-application_version_update = { * application_name => [ uint, application_metadata ] }
+withdrawals = { * reward_account => coin }
 
-application_metadata = { * system_tag => installerhash }
+update = [ proposed_protocol_parameter_updates
+         , epoch
+         ]
 
-application_name = tstr .size 64
-system_tag = tstr .size 64
+proposed_protocol_parameter_updates =
+  { * genesishash => protocol_param_update }
 
-transaction_witness_set = { ? 0: [ * pubkey_witness ], ? 1: [ * script ] }
+protocol_param_update =
+  { ? 0:  uint               ; minfee A
+  , ? 1:  uint               ; minfee B
+  , ? 2:  uint               ; max block body size
+  , ? 3:  uint               ; max transaction size
+  , ? 4:  uint               ; max block header size
+  , ? 5:  coin               ; key deposit
+  , ? 6:  coin               ; pool deposit
+  , ? 7: epoch               ; maximum epoch
+  , ? 8: uint                ; n_opt: desired number of stake pools
+  , ? 9: rational            ; pool pledge influence
+  , ? 10: unit_interval      ; expansion rate
+  , ? 11: unit_interval      ; treasury growth rate
+  , ? 12: unit_interval      ; d. decentralization constant
+  , ? 13: $nonce             ; extra entropy
+  , ? 14: [protocol_version] ; protocol version
+  , ? 15: coin               ; min utxo value
+  }
 
-transaction_metadatum = { * transaction_metadatum => transaction_metadatum }
-	/ [ * transaction_metadatum ]
-	/ int
-	/ bytes .size 64
-	/ text .size 64
+transaction_witness_set =
+  { ?0 => [* vkeywitness ]
+  , ?1 => [* multisig_script ]
+  , ?2 => [* bootstrap_witness ]
+  ; In the future, new kinds of witnesses can be added like this:
+  ; , ?3 => [* monetary_policy_script ]
+  ; , ?4 => [* plutus_script ]
+  }
 
-transaction_metadadum_label = uint
+transaction_metadatum =
+    { * transaction_metadatum => transaction_metadatum }
+  / [ * transaction_metadatum ]
+  / int
+  / bytes .size (0..64)
+  / text .size (0..64)
 
-transaction_metadata = { * transaction_metadadum_label => transaction_metadatum }
+transaction_metadatum_label = uint
+
+transaction_metadata =
+  { * transaction_metadatum_label => transaction_metadatum }
 
 vkeywitness = [ $vkey, $signature ]
 
-unit_interval = rational
+bootstrap_witness =
+  [ public_key : $vkey
+  , signature  : $signature
+  , chain_code : bytes .size 32
+  , attributes : bytes
+  ]
 
-; rational =  #6.30( TODO use the cbor tag
-rational = [ numerator: uint, denominator: uint ] ;)
+multisig_script =
+  [ multisig_pubkey
+  // multisig_all
+  // multisig_any
+  // multisig_n_of_k
+  ]
+
+multisig_pubkey = (0, addr_keyhash)
+multisig_all = (1, [ * multisig_script ])
+multisig_any = (2, [ * multisig_script ])
+multisig_n_of_k = (3, n: uint, [ * multisig_script ])
 
 coin = uint
 epoch = uint
-keyhash = $hash
-scripthash = $hash
-genesishash = $hash
-installerhash = $hash
-metadata_hash = $hash
+
+addr_keyhash          = $hash28
+scripthash            = $hash28
+genesis_delegate_hash = $hash28
+pool_keyhash          = $hash28
+genesishash           = $hash28
+
+vrf_keyhash           = $hash32
+metadata_hash         = $hash32
+
+$nonce /= [ 0 // 1, bytes .size 32 ]
+
+finite_set<a> = [* a ]
+
+$hash28 /= bytes .size 28
+$hash32 /= bytes .size 32
+
+$vkey /= bytes .size 32
+
+$vrf_vkey /= bytes .size 32
+$vrf_cert /= [bytes, bytes .size 80]
+
+$kes_vkey /= bytes .size 32
+$kes_signature /= bytes .size 448
+signkeyKES = bytes .size 64
+
+$signature /= bytes .size 64
+
+$hash28 /= bytes .size 8
+$hash32 /= bytes .size 10
+
+$vkey /= bytes .size 8
+
+$vrf_vkey /= bytes .size 8
+$vrf_cert /= [bytes, bytes .size 10]
+
+$kes_vkey /= bytes .size 8
+$kes_signature /= bytes .size 32
+
+$signature /= bytes .size 16
+
+set<a> = [a]
+  ; real set is [* a]
+
+unit_interval = #6.30([1, 2])
+  ; real unit_interval is: #6.30([uint, uint])
+  ; but this produces numbers outside the unit interval
+  ; and can also produce a zero in the denominator
+
+rational =  #6.30(
+   [ numerator   : 1
+   , denominator : 2
+   ])
+  ; real rational is: #6.30([uint, uint])
+  ; but this produces numbers outside the unit interval
+  ; and can also produce a zero in the denominator
+
+
+address =
+  h'001000000000000000000000000000000000000000000000000000000011000000000000000000000000000000000000000000000000000000' /
+  h'102000000000000000000000000000000000000000000000000000000022000000000000000000000000000000000000000000000000000000' /
+  h'203000000000000000000000000000000000000000000000000000000033000000000000000000000000000000000000000000000000000000' /
+  h'304000000000000000000000000000000000000000000000000000000044000000000000000000000000000000000000000000000000000000' /
+  h'405000000000000000000000000000000000000000000000000000000087680203' /
+  h'506000000000000000000000000000000000000000000000000000000087680203' /
+  h'6070000000000000000000000000000000000000000000000000000000' /
+  h'7080000000000000000000000000000000000000000000000000000000'
+
+reward_account =
+  h'E090000000000000000000000000000000000000000000000000000000' /
+  h'F0A0000000000000000000000000000000000000000000000000000000'

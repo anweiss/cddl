@@ -24,7 +24,7 @@ fn verify_cddl() -> Result<()> {
         message<t, v> = {type: 2, value: v}
         color = &colors
         colors = ( red: "red" )
-        thing = ( int / float )
+        test = ( int / float )
       "#
   );
 
@@ -546,9 +546,9 @@ fn verify_cddl() -> Result<()> {
             Rule::Type {
               rule: TypeRule {
                 name: Identifier {
-                  ident: "thing".into(),
+                  ident: "test".into(),
                   socket: None,
-                  span: (187, 192, 9),
+                  span: (187, 191, 9),
                 },
                 generic_params: None,
                 is_type_choice_alternate: false,
@@ -564,14 +564,14 @@ fn verify_cddl() -> Result<()> {
                                   ident: Identifier {
                                     ident: "int".into(),
                                     socket: None,
-                                    span: (197, 200, 9),
+                                    span: (196, 199, 9),
                                   },
                                   generic_args: None,
-                                  span: (197, 200, 9),
+                                  span: (196, 199, 9),
                                 },
                                 operator: None,
                                 comments_after_type: None,
-                                span: (197, 200, 9),
+                                span: (196, 199, 9),
                               },
                               comments_before_type: None,
                               comments_after_type: None,
@@ -582,40 +582,40 @@ fn verify_cddl() -> Result<()> {
                                   ident: Identifier {
                                     ident: "float".into(),
                                     socket: None,
-                                    span: (203, 208, 9),
+                                    span: (202, 207, 9),
                                   },
                                   generic_args: None,
-                                  span: (203, 208, 9),
+                                  span: (202, 207, 9),
                                 },
                                 operator: None,
                                 comments_after_type: None,
-                                span: (203, 208, 9),
+                                span: (202, 207, 9),
                               },
                               comments_before_type: None,
                               comments_after_type: None,
                             },
                           ],
-                          span: (197, 208, 9),
+                          span: (196, 207, 9),
                         },
                         comments_before_type: None,
                         comments_after_type: None,
-                        span: (195, 210, 9),
+                        span: (194, 209, 9),
                       },
                       operator: None,
                       comments_after_type: None,
-                      span: (195, 211, 9),
+                      span: (194, 210, 9),
                     },
                     comments_before_type: None,
                     comments_after_type: None,
                   }],
 
-                  span: (195, 211, 9),
+                  span: (194, 210, 9),
                 },
                 comments_before_assignt: None,
                 comments_after_assignt: None,
               },
               comments_after_rule: None,
-              span: (187, 211, 9),
+              span: (187, 210, 9),
             },
           ],
           comments: None,

@@ -54,6 +54,11 @@ where
   parser_position: Position,
   /// Vec of collected parsing errors
   pub errors: Vec<Error>,
+  #[cfg(feature = "ast-span")]
+  visited_rule_idents: Vec<(&'a str, Span)>,
+  #[cfg(not(feature = "ast-span"))]
+  visited_rule_idents: Vec<&'a str>,
+  current_rule_generic_param_idents: Option<Vec<&'a str>>,
 }
 
 /// Parsing error types
@@ -116,6 +121,8 @@ where
       peek_lexer_position: Position::default(),
       #[cfg(feature = "ast-span")]
       parser_position: Position::default(),
+      visited_rule_idents: Vec::default(),
+      current_rule_generic_param_idents: None,
     };
 
     p.next_token()?;
@@ -372,6 +379,36 @@ where
       }
     }
 
+    #[cfg(feature = "ast-span")]
+    for (rule, span) in self.visited_rule_idents.iter() {
+      if !c.rules.iter().any(|r| r.name() == *rule) {
+        self.errors.push(Error::PARSER {
+          position: Position {
+            column: 0,
+            index: span.0,
+            line: span.2,
+            range: (span.0, span.1),
+          },
+          msg: ErrorMsg {
+            short: format!("missing definition for rule {}", rule),
+            extended: None,
+          },
+        })
+      }
+    }
+
+    #[cfg(not(feature = "ast-span"))]
+    for rule in self.visited_rule_idents.iter() {
+      if !c.rules.iter().any(|r| r.name() == *rule) {
+        self.errors.push(Error::PARSER {
+          msg: ErrorMsg {
+            short: format!("missing definition for rule {}", rule),
+            extended: None,
+          },
+        })
+      }
+    }
+
     // TODO: implement second pass over parenthesized type rules whose contents
     // are Type2::Typename, and if the identifier refers to another group rule
     // per the match rules in Appendix C, refactor rule into a group rule:
@@ -433,7 +470,16 @@ where
     let gp = if self.peek_token_is(&Token::LANGLEBRACKET) {
       self.next_token()?;
 
-      Some(self.parse_genericparm()?)
+      let params = self.parse_genericparm()?;
+      let mut param_list = Vec::default();
+
+      for param in params.params.iter() {
+        param_list.push(param.param.ident);
+      }
+
+      self.current_rule_generic_param_idents = Some(param_list);
+
+      Some(params)
     } else {
       None
     };
@@ -532,6 +578,8 @@ where
             begin_rule_line,
           );
 
+          self.current_rule_generic_param_idents = None;
+
           Ok(Rule::Group {
             rule: Box::from(GroupRule {
               name: ident,
@@ -570,6 +618,8 @@ where
 
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
+
+          self.current_rule_generic_param_idents = None;
 
           Ok(Rule::Type {
             rule: TypeRule {
@@ -647,6 +697,8 @@ where
                           end_rule_range = self.parser_position.range.1;
                         }
 
+                        self.current_rule_generic_param_idents = None;
+
                         return Ok(Rule::Type {
                           rule: TypeRule {
                             name: ident,
@@ -671,6 +723,8 @@ where
             }
           }
         }
+
+        self.current_rule_generic_param_idents = None;
 
         Ok(Rule::Group {
           rule: Box::from(GroupRule {
@@ -735,6 +789,8 @@ where
           self.parser_position.range.1,
           begin_rule_line,
         );
+
+        self.current_rule_generic_param_idents = None;
 
         Ok(Rule::Type {
           rule: TypeRule {
@@ -1835,6 +1891,7 @@ where
         && !self.peek_token_is(&Token::COLON)
         && !self.peek_token_is(&Token::ARROWMAP)
         && !self.cur_token_is(Token::EOF)
+        && !matches!(self.cur_token, Token::IDENT(_))
       {
         #[cfg(feature = "ast-span")]
         {
@@ -1977,6 +2034,20 @@ where
 
         #[cfg(feature = "ast-span")]
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
+          if name.socket.is_none()
+            && token::lookup_ident(name.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == name.ident) {
+                self.visited_rule_idents.push((name.ident, name.span));
+              }
+            } else {
+              self.visited_rule_idents.push((name.ident, name.span));
+            }
+          }
+
           return Ok(GroupEntry::TypeGroupname {
             ge: TypeGroupnameEntry {
               occur,
@@ -1993,6 +2064,20 @@ where
 
         #[cfg(not(feature = "ast-span"))]
         if let Some((name, generic_args)) = entry_type.groupname_entry() {
+          if name.socket.is_none()
+            && token::lookup_ident(name.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == name.ident) {
+                self.visited_rule_idents.push(name.ident);
+              }
+            } else {
+              self.visited_rule_idents.push(name.ident);
+            }
+          }
+
           return Ok(GroupEntry::TypeGroupname {
             ge: TypeGroupnameEntry {
               occur,
@@ -2019,6 +2104,40 @@ where
         } else {
           comments_after_type_or_group
         };
+
+        #[cfg(feature = "ast-span")]
+        if let Some((ident, _, _)) = entry_type.groupname_entry() {
+          if ident.socket.is_none()
+            && token::lookup_ident(ident.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == ident.ident) {
+                self.visited_rule_idents.push((ident.ident, ident.span));
+              }
+            } else {
+              self.visited_rule_idents.push((ident.ident, ident.span));
+            }
+          }
+        }
+
+        #[cfg(not(feature = "ast-span"))]
+        if let Some((ident, _)) = entry_type.groupname_entry() {
+          if ident.socket.is_none()
+            && token::lookup_ident(ident.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == ident.ident) {
+                self.visited_rule_idents.push(ident.ident);
+              }
+            } else {
+              self.visited_rule_idents.push(ident.ident);
+            }
+          }
+        }
 
         Ok(GroupEntry::ValueMemberKey {
           ge: Box::from(ValueMemberKeyEntry {
@@ -2076,6 +2195,40 @@ where
           span.1 = self.lexer_position.range.1;
         }
 
+        #[cfg(feature = "ast-span")]
+        if let Some((ident, _, _)) = entry_type.groupname_entry() {
+          if ident.socket.is_none()
+            && token::lookup_ident(ident.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == ident.ident) {
+                self.visited_rule_idents.push((ident.ident, ident.span));
+              }
+            } else {
+              self.visited_rule_idents.push((ident.ident, ident.span));
+            }
+          }
+        }
+
+        #[cfg(not(feature = "ast-span"))]
+        if let Some((ident, _)) = entry_type.groupname_entry() {
+          if ident.socket.is_none()
+            && token::lookup_ident(ident.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == ident.ident) {
+                self.visited_rule_idents.push(ident.ident);
+              }
+            } else {
+              self.visited_rule_idents.push(ident.ident);
+            }
+          }
+        }
+
         Ok(GroupEntry::ValueMemberKey {
           ge: Box::from(ValueMemberKeyEntry {
             occur,
@@ -2125,6 +2278,20 @@ where
             self.next_token()?;
           }
 
+          if name.socket.is_none()
+            && token::lookup_ident(name.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == name.ident) {
+                self.visited_rule_idents.push((name.ident, name.span));
+              }
+            } else {
+              self.visited_rule_idents.push((name.ident, name.span));
+            }
+          }
+
           return Ok(GroupEntry::TypeGroupname {
             ge: TypeGroupnameEntry {
               occur,
@@ -2149,6 +2316,20 @@ where
             self.next_token()?;
           }
 
+          if name.socket.is_none()
+            && token::lookup_ident(name.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == name.ident) {
+                self.visited_rule_idents.push(name.ident);
+              }
+            } else {
+              self.visited_rule_idents.push(name.ident);
+            }
+          }
+
           return Ok(GroupEntry::TypeGroupname {
             ge: TypeGroupnameEntry {
               occur,
@@ -2160,6 +2341,40 @@ where
             #[cfg(feature = "ast-comments")]
             trailing_comments,
           });
+        }
+
+        #[cfg(feature = "ast-span")]
+        if let Some((ident, _, _)) = entry_type.groupname_entry() {
+          if ident.socket.is_none()
+            && token::lookup_ident(ident.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == ident.ident) {
+                self.visited_rule_idents.push((ident.ident, ident.span));
+              }
+            } else {
+              self.visited_rule_idents.push((ident.ident, ident.span));
+            }
+          }
+        }
+
+        #[cfg(not(feature = "ast-span"))]
+        if let Some((ident, _)) = entry_type.groupname_entry() {
+          if ident.socket.is_none()
+            && token::lookup_ident(ident.ident)
+              .in_standard_prelude()
+              .is_none()
+          {
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == ident.ident) {
+                self.visited_rule_idents.push(ident.ident);
+              }
+            } else {
+              self.visited_rule_idents.push(ident.ident);
+            }
+          }
         }
 
         Ok(GroupEntry::ValueMemberKey {

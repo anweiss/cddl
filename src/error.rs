@@ -9,8 +9,8 @@ use alloc::string::String;
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct ErrorMsg {
-  short: String,
-  extended: Option<String>,
+  pub short: String,
+  pub extended: Option<String>,
 }
 
 impl fmt::Display for ErrorMsg {
