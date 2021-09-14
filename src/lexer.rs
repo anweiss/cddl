@@ -62,7 +62,8 @@ impl Default for Position {
 /// Lexer error
 #[derive(Debug)]
 pub struct Error {
-  error_type: LexerErrorType,
+  /// Error type
+  pub error_type: LexerErrorType,
   input: String,
   position: Position,
 }
