@@ -560,6 +560,8 @@ pub mod validator;
 /// CDDL AST visitor
 pub mod visitor;
 
+mod parser_tests;
+
 #[doc(inline)]
 pub use self::{
   lexer::{lexer_from_str, Error as LexerError},
