@@ -58,6 +58,7 @@ where
   visited_rule_idents: Vec<(&'a str, Span)>,
   #[cfg(not(feature = "ast-span"))]
   visited_rule_idents: Vec<&'a str>,
+  current_rule_generic_param_idents: Option<Vec<&'a str>>,
 }
 
 /// Parsing error types
@@ -121,6 +122,7 @@ where
       #[cfg(feature = "ast-span")]
       parser_position: Position::default(),
       visited_rule_idents: Vec::default(),
+      current_rule_generic_param_idents: None,
     };
 
     p.next_token()?;
@@ -468,7 +470,16 @@ where
     let gp = if self.peek_token_is(&Token::LANGLEBRACKET) {
       self.next_token()?;
 
-      Some(self.parse_genericparm()?)
+      let params = self.parse_genericparm()?;
+      let mut param_list = Vec::default();
+
+      for param in params.params.iter() {
+        param_list.push(param.param.ident);
+      }
+
+      self.current_rule_generic_param_idents = Some(param_list);
+
+      Some(params)
     } else {
       None
     };
@@ -567,6 +578,8 @@ where
             begin_rule_line,
           );
 
+          self.current_rule_generic_param_idents = None;
+
           Ok(Rule::Group {
             rule: Box::from(GroupRule {
               name: ident,
@@ -605,6 +618,8 @@ where
 
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
+
+          self.current_rule_generic_param_idents = None;
 
           Ok(Rule::Type {
             rule: TypeRule {
@@ -682,6 +697,8 @@ where
                           end_rule_range = self.parser_position.range.1;
                         }
 
+                        self.current_rule_generic_param_idents = None;
+
                         return Ok(Rule::Type {
                           rule: TypeRule {
                             name: ident,
@@ -706,6 +723,8 @@ where
             }
           }
         }
+
+        self.current_rule_generic_param_idents = None;
 
         Ok(Rule::Group {
           rule: Box::from(GroupRule {
@@ -770,6 +789,8 @@ where
           self.parser_position.range.1,
           begin_rule_line,
         );
+
+        self.current_rule_generic_param_idents = None;
 
         Ok(Rule::Type {
           rule: TypeRule {
@@ -2018,7 +2039,13 @@ where
               .in_standard_prelude()
               .is_none()
           {
-            self.visited_rule_idents.push((name.ident, name.span));
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == name.ident) {
+                self.visited_rule_idents.push((name.ident, name.span));
+              }
+            } else {
+              self.visited_rule_idents.push((name.ident, name.span));
+            }
           }
 
           return Ok(GroupEntry::TypeGroupname {
@@ -2042,7 +2069,13 @@ where
               .in_standard_prelude()
               .is_none()
           {
-            self.visited_rule_idents.push(name.ident);
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == name.ident) {
+                self.visited_rule_idents.push((name.ident, name.span));
+              }
+            } else {
+              self.visited_rule_idents.push((name.ident, name.span));
+            }
           }
 
           return Ok(GroupEntry::TypeGroupname {
@@ -2079,7 +2112,13 @@ where
               .in_standard_prelude()
               .is_none()
           {
-            self.visited_rule_idents.push((ident.ident, ident.span));
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == ident.ident) {
+                self.visited_rule_idents.push((ident.ident, ident.span));
+              }
+            } else {
+              self.visited_rule_idents.push((ident.ident, ident.span));
+            }
           }
         }
 
@@ -2090,7 +2129,13 @@ where
               .in_standard_prelude()
               .is_none()
           {
-            self.visited_rule_idents.push(ident.ident);
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == ident.ident) {
+                self.visited_rule_idents.push((ident.ident, ident.span));
+              }
+            } else {
+              self.visited_rule_idents.push((ident.ident, ident.span));
+            }
           }
         }
 
@@ -2157,7 +2202,13 @@ where
               .in_standard_prelude()
               .is_none()
           {
-            self.visited_rule_idents.push((ident.ident, ident.span));
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == ident.ident) {
+                self.visited_rule_idents.push((ident.ident, ident.span));
+              }
+            } else {
+              self.visited_rule_idents.push((ident.ident, ident.span));
+            }
           }
         }
 
@@ -2168,7 +2219,13 @@ where
               .in_standard_prelude()
               .is_none()
           {
-            self.visited_rule_idents.push(ident.ident);
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == ident.ident) {
+                self.visited_rule_idents.push((ident.ident, ident.span));
+              }
+            } else {
+              self.visited_rule_idents.push((ident.ident, ident.span));
+            }
           }
         }
 
@@ -2226,7 +2283,13 @@ where
               .in_standard_prelude()
               .is_none()
           {
-            self.visited_rule_idents.push((name.ident, name.span));
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == name.ident) {
+                self.visited_rule_idents.push((name.ident, name.span));
+              }
+            } else {
+              self.visited_rule_idents.push((name.ident, name.span));
+            }
           }
 
           return Ok(GroupEntry::TypeGroupname {
@@ -2258,7 +2321,13 @@ where
               .in_standard_prelude()
               .is_none()
           {
-            self.visited_rule_idents.push(name.ident);
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == name.ident) {
+                self.visited_rule_idents.push((name.ident, name.span));
+              }
+            } else {
+              self.visited_rule_idents.push((name.ident, name.span));
+            }
           }
 
           return Ok(GroupEntry::TypeGroupname {
@@ -2281,7 +2350,13 @@ where
               .in_standard_prelude()
               .is_none()
           {
-            self.visited_rule_idents.push((ident.ident, ident.span));
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == ident.ident) {
+                self.visited_rule_idents.push((ident.ident, ident.span));
+              }
+            } else {
+              self.visited_rule_idents.push((ident.ident, ident.span));
+            }
           }
         }
 
@@ -2292,7 +2367,13 @@ where
               .in_standard_prelude()
               .is_none()
           {
-            self.visited_rule_idents.push(ident.ident);
+            if let Some(params) = &self.current_rule_generic_param_idents {
+              if !params.iter().any(|&p| p == ident.ident) {
+                self.visited_rule_idents.push((ident.ident, ident.span));
+              }
+            } else {
+              self.visited_rule_idents.push((ident.ident, ident.span));
+            }
           }
         }
 
