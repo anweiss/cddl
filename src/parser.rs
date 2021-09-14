@@ -2071,10 +2071,10 @@ where
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
               if !params.iter().any(|&p| p == name.ident) {
-                self.visited_rule_idents.push((name.ident, name.span));
+                self.visited_rule_idents.push(name.ident);
               }
             } else {
-              self.visited_rule_idents.push((name.ident, name.span));
+              self.visited_rule_idents.push(name.ident);
             }
           }
 
@@ -2131,10 +2131,10 @@ where
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
               if !params.iter().any(|&p| p == ident.ident) {
-                self.visited_rule_idents.push((ident.ident, ident.span));
+                self.visited_rule_idents.push(ident.ident);
               }
             } else {
-              self.visited_rule_idents.push((ident.ident, ident.span));
+              self.visited_rule_idents.push(ident.ident);
             }
           }
         }
@@ -2221,10 +2221,10 @@ where
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
               if !params.iter().any(|&p| p == ident.ident) {
-                self.visited_rule_idents.push((ident.ident, ident.span));
+                self.visited_rule_idents.push(ident.ident);
               }
             } else {
-              self.visited_rule_idents.push((ident.ident, ident.span));
+              self.visited_rule_idents.push(ident.ident);
             }
           }
         }
@@ -2323,10 +2323,10 @@ where
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
               if !params.iter().any(|&p| p == name.ident) {
-                self.visited_rule_idents.push((name.ident, name.span));
+                self.visited_rule_idents.push(name.ident);
               }
             } else {
-              self.visited_rule_idents.push((name.ident, name.span));
+              self.visited_rule_idents.push(name.ident);
             }
           }
 
@@ -2369,10 +2369,10 @@ where
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
               if !params.iter().any(|&p| p == ident.ident) {
-                self.visited_rule_idents.push((ident.ident, ident.span));
+                self.visited_rule_idents.push(ident.ident);
               }
             } else {
-              self.visited_rule_idents.push((ident.ident, ident.span));
+              self.visited_rule_idents.push(ident.ident);
             }
           }
         }
