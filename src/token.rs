@@ -113,36 +113,37 @@ pub enum Token<'a> {
   DEFAULT,
   /// .pcre control operator
   /// Proposed control extension to support Perl-Compatible Regular Expressions
-  /// (PCREs). See https://tools.ietf.org/html/rfc8610#section-3.8.3.2s
+  /// (PCREs). See <https://tools.ietf.org/html/rfc8610#section-3.8.3.2s>
   PCRE,
   #[cfg(feature = "additional-controls")]
   /// .cat control operator
   /// Proposed control extension for string concatenation. See
-  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-2.1.
+  /// <https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-2.1>.
   CAT,
   #[cfg(feature = "additional-controls")]
-  /// .det control operator Proposed control extension for string concatenation
-  /// with dedenting. See
-  /// https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05#section-2.3.
+  /// .det control operator
+  /// Proposed control extension for string concatenation with dedenting. See
+  /// <https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05#section-2.3>.
   DET,
   #[cfg(feature = "additional-controls")]
   /// .plus control operator
   /// Proposed control extension for numeric addition. See
-  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-2.2.
+  /// <https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-2.2>.
   PLUS,
   #[cfg(feature = "additional-controls")]
   /// .abnf control operator
   /// Proposed control extension for embedded ABNF as UTF-8. See
-  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-3
+  /// <https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-3>
   ABNF,
   #[cfg(feature = "additional-controls")]
   /// .abnfb control operator
   /// Proposed control extension for embedded ABNF as a sequence of bytes. See
-  /// https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-3
+  /// <https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-3>
   ABNFB,
   #[cfg(feature = "additional-controls")]
-  /// .feature control operator Proposed control extension for features. See
-  /// https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05#section-4
+  /// .feature control operator
+  /// Proposed control extension for features. See
+  /// <https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05#section-4>
   FEATURE,
 
   /// group to choice enumeration '&'

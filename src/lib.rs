@@ -16,7 +16,8 @@
 //! A Rust implementation of the Concise data definition language (CDDL). CDDL
 //! is an IETF standard that "proposes a notational convention to express CBOR
 //! and JSON data structures." As of 2019-06-12, it is published as RFC 8610
-//! (Proposed Standard) at https://tools.ietf.org/html/rfc8610.
+//! (Proposed Standard) at
+//! [https://tools.ietf.org/html/rfc8610](https://tools.ietf.org/html/rfc8610).
 //!
 //! This crate includes a handwritten parser and lexer for CDDL, and its
 //! development has been heavily inspired by the techniques outlined in Thorsten
@@ -139,8 +140,8 @@
 //! ## Website
 //!
 //! You can also find a simple RFC 8610 conformance tool at
-//! https://cddl.anweiss.tech. This same codebase has been compiled for use in
-//! the browser via WebAssembly.
+//! [https://cddl.anweiss.tech](https://cddl.anweiss.tech). This same codebase
+//! has been compiled for use in the browser via WebAssembly.
 //!
 //! ## Visual Studio Code extension
 //!
@@ -560,10 +561,12 @@ pub mod validator;
 /// CDDL AST visitor
 pub mod visitor;
 
+mod parser_tests;
+
 #[doc(inline)]
 pub use self::{
-  lexer::{lexer_from_str, Error as LexerError},
-  parser::{cddl_from_str, Error as ParserError},
+  lexer::lexer_from_str,
+  parser::{cddl_from_str, Error},
   token::Token,
 };
 

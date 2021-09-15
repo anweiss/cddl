@@ -788,7 +788,7 @@ pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
-/// Validate array length and [non]homogeneity based on a given optional
+/// Validate array length and \[non\]homogeneity based on a given optional
 /// occurrence indicator. The first bool in the returned tuple indicates whether
 /// or not a subsequent validation of the array's elements shouch be homogenous.
 /// The second bool in the returned tuple indicates whether or not an empty
@@ -996,7 +996,7 @@ pub struct EntryCount {
 }
 
 /// Regex needs to be formatted in a certain way so it can be parsed. See
-/// https://github.com/anweiss/cddl/issues/67
+/// <https://github.com/anweiss/cddl/issues/67>
 pub fn format_regex(input: &str) -> Option<String> {
   let mut formatted_regex = String::from(input);
   let mut unescape = Vec::new();
