@@ -4,6 +4,7 @@
 #![cfg(not(feature = "additional-controls"))]
 
 use cddl::{self, validator::validate_cbor_from_slice};
+use ciborium;
 use serde::{Deserialize, Serialize};
 
 #[rustfmt::skip] // allow arbitrary indents for readability
@@ -165,7 +166,8 @@ fn validate_cbor_homogenous_array() {
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap_err();
   let cddl_input = r#"thing = [? int]"#; // zero or one
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY).unwrap();
-  let cbor_bytes = serde_cbor::to_vec(&[42]).unwrap();
+  let mut cbor_bytes = Vec::new();
+  ciborium::ser::into_writer(&[42], &mut cbor_bytes).unwrap();
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
 
@@ -198,25 +200,30 @@ fn validate_cbor_array_record() {
   let cddl_input = r#"thing = [a: tstr, b: int]"#;
 
   let input = PersonTuple("Alice".to_string(), 42);
-  let cbor_bytes = serde_cbor::to_vec(&input).unwrap();
+  let mut cbor_bytes = Vec::new();
+  ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
 
   let input = BackwardsTuple(43, "Carol".to_string());
-  let cbor_bytes = serde_cbor::to_vec(&input).unwrap();
+  let mut cbor_bytes = Vec::new();
+  ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
 
   let input = LongTuple("David".to_string(), 44, 45);
-  let cbor_bytes = serde_cbor::to_vec(&input).unwrap();
+  let mut cbor_bytes = Vec::new();
+  ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
 
   let input = ShortTuple("Eve".to_string());
-  let cbor_bytes = serde_cbor::to_vec(&input).unwrap();
+  let mut cbor_bytes = Vec::new();
+  ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap_err();
 
   let cddl_input = r#"thing = [a: tstr, b: uint, c: float32, d: bool]"#;
 
   let input = KitchenSink("xyz".to_string(), 17, 9.9, false);
-  let cbor_bytes = serde_cbor::to_vec(&input).unwrap();
+  let mut cbor_bytes = Vec::new();
+  ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
 
   // FIXME: there isn't any way at present to serialize a struct
@@ -234,7 +241,8 @@ fn validate_cbor_map() {
     name: "Bob".to_string(),
     age: 43,
   };
-  let cbor_bytes = serde_cbor::to_vec(&input).unwrap();
+  let mut cbor_bytes = Vec::new();
+  ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
   let cddl_input = r#"thing = {name: tstr, age: int}"#;
   validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
   let cddl_input = r#"thing = {name: tstr, ? age: int}"#;

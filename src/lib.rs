@@ -6,6 +6,8 @@
 //! packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.9.0-beta.0&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22)
 //! [![Build and
 //! Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22)
+//! [![Active
+//! Development](https://img.shields.io/badge/Maintenance%20Level-Actively%20Developed-brightgreen.svg)](https://gist.github.com/cheerfulstoic/d107229326a01ff0f333a1d3476e068d)
 //!
 //! > This crate was originally developed as a personal learning exercise for
 //! > getting acquainted with Rust and parsing in general. There are likely more
@@ -532,8 +534,8 @@ extern crate core as std;
 #[cfg(feature = "std")]
 extern crate serde_json;
 
-#[cfg(feature = "std")]
-extern crate serde_cbor;
+// #[cfg(feature = "std")]
+// extern crate serde_cbor;
 
 #[cfg(feature = "std")]
 extern crate uriparse;

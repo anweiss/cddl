@@ -1,5 +1,4 @@
 #![cfg(feature = "std")]
-#![cfg(not(feature = "additional-controls"))]
 #![cfg(not(target_arch = "wasm32"))]
 
 use cddl::{validate_cbor_from_slice, validate_json_from_str};
@@ -92,7 +91,11 @@ fn validate_did_cbor_examples() -> Result<(), Box<dyn Error>> {
           let mut f = File::open(file.path())?;
           let mut data = Vec::new();
           f.read_to_end(&mut data)?;
+          #[cfg(feature = "additional-controls")]
+          let r = validate_cbor_from_slice(&cddl, &data, None);
+          #[cfg(not(feature = "additional-controls"))]
           let r = validate_cbor_from_slice(&cddl, &data);
+
           println!("assert ok {:?}", file.path());
           if let Err(e) = &r {
             println!("error validating {:?}\n", file.path());

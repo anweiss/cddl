@@ -12,7 +12,8 @@ use crate::{
 use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
 
 use chrono::{TimeZone, Utc};
-use serde_cbor::Value;
+use ciborium::value::Value;
+use serde_json;
 
 #[cfg(feature = "additional-controls")]
 use crate::validator::control::{
@@ -20,22 +21,24 @@ use crate::validator::control::{
 };
 
 /// cbor validation Result
-pub type Result = std::result::Result<(), Error>;
+pub type Result<T> = std::result::Result<(), Error<T>>;
 
 /// cbor validation error
 #[derive(Debug)]
-pub enum Error {
+pub enum Error<T: std::fmt::Debug> {
   /// Zero or more validation errors
   Validation(Vec<ValidationError>),
   /// cbor parsing error
-  CBORParsing(serde_cbor::Error),
+  CBORParsing(ciborium::de::Error<T>),
+  /// json parsing error. Used only for parsing regex controller strings
+  JSONParsing(serde_json::Error),
   /// CDDL parsing error
   CDDLParsing(String),
   /// UTF8 parsing error,
   UTF8Parsing(std::str::Utf8Error),
 }
 
-impl fmt::Display for Error {
+impl<T: std::fmt::Debug> fmt::Display for Error<T> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Error::Validation(errors) => {
@@ -46,13 +49,14 @@ impl fmt::Display for Error {
         write!(f, "{}", error_str)
       }
       Error::CBORParsing(error) => write!(f, "error parsing cbor: {}", error),
+      Error::JSONParsing(error) => write!(f, "error parsing json string: {}", error),
       Error::CDDLParsing(error) => write!(f, "error parsing CDDL: {}", error),
       Error::UTF8Parsing(error) => write!(f, "error pasing utf8: {}", error),
     }
   }
 }
 
-impl std::error::Error for Error {
+impl<T: std::fmt::Debug + 'static> std::error::Error for Error<T> {
   fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
     match self {
       Error::CBORParsing(error) => Some(error),
@@ -110,7 +114,7 @@ impl std::error::Error for ValidationError {
   }
 }
 
-impl Error {
+impl<T: std::fmt::Debug> Error<T> {
   fn from_validator(cv: &CBORValidator, reason: String) -> Self {
     Error::Validation(vec![ValidationError {
       cddl_location: cv.cddl_location.clone(),
@@ -351,7 +355,10 @@ impl<'a> CBORValidator<'a> {
   }
 
   /// Validate
-  pub fn validate(&mut self) -> std::result::Result<(), Error> {
+  pub fn validate<T: std::fmt::Debug + 'static>(&mut self) -> std::result::Result<(), Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
     for r in self.cddl.rules.iter() {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {
@@ -384,8 +391,11 @@ impl<'a> CBORValidator<'a> {
   }
 }
 
-impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
-  fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<Error> {
+impl<'a, T: std::fmt::Debug + 'static> Visitor<'a, Error<T>> for CBORValidator<'a>
+where
+  cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+{
+  fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<Error<T>> {
     if let Some(gp) = &tr.generic_params {
       if let Some(gr) = self
         .generic_rules
@@ -419,7 +429,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> visitor::Result<Error> {
+  fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> visitor::Result<Error<T>> {
     if let Some(gp) = &gr.generic_params {
       if let Some(gr) = self
         .generic_rules
@@ -453,7 +463,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<Error> {
+  fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<Error<T>> {
     if t.type_choices.len() > 1 {
       self.is_multi_type_choice = true;
     }
@@ -535,7 +545,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_group(&mut self, g: &Group<'a>) -> visitor::Result<Error> {
+  fn visit_group(&mut self, g: &Group<'a>) -> visitor::Result<Error<T>> {
     if g.group_choices.len() > 1 {
       self.is_multi_group_choice = true;
     }
@@ -612,7 +622,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<Error> {
+  fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<Error<T>> {
     if self.is_group_to_choice_enum {
       let initial_error_count = self.errors.len();
       for tc in type_choices_from_group_choice(self.cddl, gc).iter() {
@@ -646,7 +656,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
     lower: &Type2,
     upper: &Type2,
     is_inclusive: bool,
-  ) -> visitor::Result<Error> {
+  ) -> visitor::Result<Error<T>> {
     if let Value::Array(a) = &self.cbor {
       match validate_array_occurrence(
         self.occurrence.as_ref().take(),
@@ -756,12 +766,12 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           match &self.cbor {
             Value::Integer(i) => {
               if is_inclusive {
-                if *i < *l as i128 || *i > *u as i128 {
+                if i128::from(*i) < *l as i128 || i128::from(*i) > *u as i128 {
                   self.add_error(error_str);
                 } else {
                   return Ok(());
                 }
-              } else if *i <= *l as i128 || *i >= *u as i128 {
+              } else if i128::from(*i) <= *l as i128 || i128::from(*i) >= *u as i128 {
                 self.add_error(error_str);
                 return Ok(());
               } else {
@@ -790,12 +800,12 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           match &self.cbor {
             Value::Integer(i) => {
               if is_inclusive {
-                if *i < *l as i128 || *i > *u as i128 {
+                if i128::from(*i) < *l as i128 || i128::from(*i) > *u as i128 {
                   self.add_error(error_str);
                 } else {
                   return Ok(());
                 }
-              } else if *i <= *l as i128 || *i >= *u as i128 {
+              } else if i128::from(*i) <= *l as i128 || i128::from(*i) >= *u as i128 {
                 self.add_error(error_str);
                 return Ok(());
               } else {
@@ -833,12 +843,12 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           match &self.cbor {
             Value::Integer(i) => {
               if is_inclusive {
-                if *i < *l as i128 || *i > *u as i128 {
+                if i128::from(*i) < *l as i128 || i128::from(*i) > *u as i128 {
                   self.add_error(error_str);
                 } else {
                   return Ok(());
                 }
-              } else if *i <= *l as i128 || *i >= *u as i128 {
+              } else if i128::from(*i) <= *l as i128 || i128::from(*i) >= *u as i128 {
                 self.add_error(error_str);
                 return Ok(());
               } else {
@@ -902,12 +912,12 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           match &self.cbor {
             Value::Float(f) => {
               if is_inclusive {
-                if *f < *l as f64 || *f > *u as f64 {
+                if f64::from(*f) < *l || f64::from(*f) > *u {
                   self.add_error(error_str);
                 } else {
                   return Ok(());
                 }
-              } else if *f <= *l as f64 || *f >= *u as f64 {
+              } else if f64::from(*f) <= *l || f64::from(*f) >= *u {
                 self.add_error(error_str);
                 return Ok(());
               } else {
@@ -946,7 +956,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
     target: &Type2<'a>,
     ctrl: &str,
     controller: &Type2<'a>,
-  ) -> visitor::Result<Error> {
+  ) -> visitor::Result<Error<T>> {
     if let Type2::Typename {
       ident: target_ident,
       ..
@@ -1215,7 +1225,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
           {
             match &self.cbor {
               Value::Bytes(_) | Value::Array(_) => self.visit_type2(controller)?,
-              Value::Integer(i) if *i >= 0 => self.visit_type2(controller)?,
+              Value::Integer(i) if i128::from(*i) >= 0i128 => self.visit_type2(controller)?,
               _ => self.add_error(format!(
                 "{} control can only be matched against a CBOR byte string or uint, got {:?}",
                 ctrl, self.cbor,
@@ -1506,10 +1516,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
     }
   }
 
-  fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error> {
+  fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error<T>> {
     if matches!(self.ctrl, Some(Token::CBOR)) {
       if let Value::Bytes(b) = &self.cbor {
-        let value = serde_cbor::from_slice::<Value>(b);
+        let value = ciborium::de::from_reader(&b[..]);
         match value {
           Ok(value) => {
             let current_location = self.cbor_location.clone();
@@ -1546,7 +1556,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
       return Ok(());
     } else if matches!(self.ctrl, Some(Token::CBORSEQ)) {
       if let Value::Bytes(b) = &self.cbor {
-        let value = serde_cbor::from_slice::<Value>(b);
+        let value = ciborium::de::from_reader(&b[..]);
         match value {
           Ok(Value::Array(_)) => {
             let current_location = self.cbor_location.clone();
@@ -1635,7 +1645,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
             return Ok(());
           }
 
-          let m = m.keys().cloned().collect::<Vec<_>>();
+          let m = m.iter().map(|entry| entry.0.clone()).collect::<Vec<_>>();
 
           self.visit_group(group)?;
 
@@ -2075,7 +2085,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
         Value::Integer(i) => {
           match mt {
             0u8 => match constraint {
-              Some(c) if *i == *c as i128 && *i >= 0i128 => return Ok(()),
+              Some(c) if i128::from(*i) == *c as i128 && i128::from(*i) >= 0i128 => return Ok(()),
               Some(c) => {
                 self.add_error(format!(
                   "expected uint data type with constraint {} (#{}.{}), got {:?}",
@@ -2084,7 +2094,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
                 return Ok(());
               }
               _ => {
-                if i.is_negative() {
+                if i128::from(*i).is_negative() {
                   self.add_error(format!(
                     "expected uint data type (#{}), got {:?}",
                     mt, self.cbor
@@ -2094,7 +2104,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
               }
             },
             1u8 => match constraint {
-              Some(c) if *i == 0i128 - *c as i128 => return Ok(()),
+              Some(c) if i128::from(*i) == 0i128 - *c as i128 => return Ok(()),
               Some(c) => {
                 self.add_error(format!(
                   "expected nint type with constraint {} (#{}.{}), got {:?}",
@@ -2103,7 +2113,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
                 return Ok(());
               }
               _ => {
-                if *i >= 0i128 {
+                if i128::from(*i) >= 0i128 {
                   self.add_error(format!(
                     "expected nint data type (#{}), got {:?}",
                     mt, self.cbor
@@ -2233,7 +2243,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
     }
   }
 
-  fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error> {
+  fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error<T>> {
     if let Some(name) = self.eval_generic_rule {
       if let Some(gr) = self
         .generic_rules
@@ -2280,7 +2290,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
       }
       Value::Integer(i) => {
         if is_ident_uint_data_type(self.cddl, ident) {
-          if i.is_negative() {
+          if i128::from(*i).is_negative() {
             self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
           }
 
@@ -2288,10 +2298,12 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
         } else if is_ident_integer_data_type(self.cddl, ident) {
           Ok(())
         } else if is_ident_time_data_type(self.cddl, ident) {
-          if let chrono::LocalResult::None = Utc.timestamp_millis_opt((i * 1000) as i64) {
+          if let chrono::LocalResult::None =
+            Utc.timestamp_millis_opt((i128::from(*i) * 1000) as i64)
+          {
             let i = *i;
             self.add_error(format!(
-              "expected time data type, invalid UNIX timestamp {}",
+              "expected time data type, invalid UNIX timestamp {:?}",
               i,
             ));
           }
@@ -2306,10 +2318,12 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
         if is_ident_float_data_type(self.cddl, ident) {
           Ok(())
         } else if is_ident_time_data_type(self.cddl, ident) {
-          if let chrono::LocalResult::None = Utc.timestamp_millis_opt((f * 1000f64) as i64) {
+          if let chrono::LocalResult::None =
+            Utc.timestamp_millis_opt((f64::from(*f) * 1000f64) as i64)
+          {
             let f = *f;
             self.add_error(format!(
-              "expected time data type, invalid UNIX timestamp {}",
+              "expected time data type, invalid UNIX timestamp {:?}",
               f,
             ));
           }
@@ -2978,7 +2992,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
   fn visit_value_member_key_entry(
     &mut self,
     entry: &ValueMemberKeyEntry<'a>,
-  ) -> visitor::Result<Error> {
+  ) -> visitor::Result<Error<T>> {
     if let Some(occur) = &entry.occur {
       self.visit_occurrence(occur)?;
     }
@@ -3061,7 +3075,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
   fn visit_type_groupname_entry(
     &mut self,
     entry: &TypeGroupnameEntry<'a>,
-  ) -> visitor::Result<Error> {
+  ) -> visitor::Result<Error<T>> {
     self.type_group_name_entry = Some(entry.name.ident);
 
     if let Some(ga) = &entry.generic_args {
@@ -3107,7 +3121,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<Error> {
+  fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<Error<T>> {
     match mk {
       MemberKey::Type1 { is_cut, .. } => {
         self.is_cut_present = *is_cut;
@@ -3125,137 +3139,141 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error> {
+  fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error<T>> {
     let error: Option<String> = match &self.cbor {
       Value::Integer(i) => match value {
         token::Value::INT(v) => match &self.ctrl {
-          Some(Token::NE) | Some(Token::DEFAULT) if *i != *v as i128 => None,
-          Some(Token::LT) if *i < *v as i128 => None,
-          Some(Token::LE) if *i <= *v as i128 => None,
-          Some(Token::GT) if *i > *v as i128 => None,
-          Some(Token::GE) if *i >= *v as i128 => None,
+          Some(Token::NE) | Some(Token::DEFAULT) if i128::from(*i) != *v as i128 => None,
+          Some(Token::LT) if i128::from(*i) < *v as i128 => None,
+          Some(Token::LE) if i128::from(*i) <= *v as i128 => None,
+          Some(Token::GT) if i128::from(*i) > *v as i128 => None,
+          Some(Token::GE) if i128::from(*i) >= *v as i128 => None,
           #[cfg(feature = "additional-controls")]
           Some(Token::PLUS) => {
-            if *i == *v as i128 {
+            if i128::from(*i) == *v as i128 {
               None
             } else {
-              Some(format!("expected computed .plus value {}, got {}", v, i))
+              Some(format!("expected computed .plus value {}, got {:?}", v, i))
             }
           }
           #[cfg(feature = "additional-controls")]
           None | Some(Token::FEATURE) => {
-            if *i == *v as i128 {
+            if i128::from(*i) == *v as i128 {
               None
             } else {
-              Some(format!("expected value {}, got {}", v, i))
+              Some(format!("expected value {}, got {:?}", v, i))
             }
           }
           #[cfg(not(feature = "additional-controls"))]
           None => {
-            if *i == *v as i128 {
+            if i128::from(*i) == *v as i128 {
               None
             } else {
-              Some(format!("expected value {}, got {}", v, i))
+              Some(format!("expected value {}, got {:?}", v, i))
             }
           }
           _ => Some(format!(
-            "expected value {} {}, got {}",
+            "expected value {} {}, got {:?}",
             self.ctrl.clone().unwrap(),
             v,
             i
           )),
         },
         token::Value::UINT(v) => match &self.ctrl {
-          Some(Token::NE) | Some(Token::DEFAULT) if *i != *v as i128 => None,
-          Some(Token::LT) if *i < *v as i128 => None,
-          Some(Token::LE) if *i <= *v as i128 => None,
-          Some(Token::GT) if *i > *v as i128 => None,
-          Some(Token::GE) if *i >= *v as i128 => None,
-          Some(Token::SIZE) if *i < 256i128.pow(*v as u32) => None,
+          Some(Token::NE) | Some(Token::DEFAULT) if i128::from(*i) != *v as i128 => None,
+          Some(Token::LT) if i128::from(*i) < *v as i128 => None,
+          Some(Token::LE) if i128::from(*i) <= *v as i128 => None,
+          Some(Token::GT) if i128::from(*i) > *v as i128 => None,
+          Some(Token::GE) if i128::from(*i) >= *v as i128 => None,
+          Some(Token::SIZE) if i128::from(*i) < 256i128.pow(*v as u32) => None,
           Some(Token::BITS) => {
             if let Some(sv) = 1u32.checked_shl(*v as u32) {
-              if (i & sv as i128) != 0 {
+              if (i128::from(*i) & sv as i128) != 0 {
                 None
               } else {
-                Some(format!("expected uint .bits {}, got {}", v, i))
+                Some(format!("expected uint .bits {}, got {:?}", v, i))
               }
             } else {
-              Some(format!("expected uint .bits {}, got {}", v, i))
+              Some(format!("expected uint .bits {}, got {:?}", v, i))
             }
           }
           #[cfg(feature = "additional-controls")]
           Some(Token::PLUS) => {
-            if *i == *v as i128 {
+            if i128::from(*i) == *v as i128 {
               None
             } else {
-              Some(format!("expected computed .plus value {}, got {}", v, i))
+              Some(format!("expected computed .plus value {}, got {:?}", v, i))
             }
           }
           #[cfg(feature = "additional-controls")]
           None | Some(Token::FEATURE) => {
-            if *i == *v as i128 {
+            if i128::from(*i) == *v as i128 {
               None
             } else {
-              Some(format!("expected value {}, got {}", v, i))
+              Some(format!("expected value {}, got {:?}", v, i))
             }
           }
           #[cfg(not(feature = "additional-controls"))]
           None => {
-            if *i == *v as i128 {
+            if i128::from(*i) == *v as i128 {
               None
             } else {
-              Some(format!("expected value {}, got {}", v, i))
+              Some(format!("expected value {}, got {:?}", v, i))
             }
           }
           _ => Some(format!(
-            "expected value {} {}, got {}",
+            "expected value {} {}, got {:?}",
             self.ctrl.clone().unwrap(),
             v,
             i
           )),
         },
 
-        _ => Some(format!("expected {}, got {}", value, i)),
+        _ => Some(format!("expected {}, got {:?}", value, i)),
       },
       Value::Float(f) => match value {
         token::Value::FLOAT(v) => match &self.ctrl {
-          Some(Token::NE) | Some(Token::DEFAULT) if (f - *v).abs() > std::f64::EPSILON => None,
-          Some(Token::LT) if *f < *v as f64 => None,
-          Some(Token::LE) if *f <= *v as f64 => None,
-          Some(Token::GT) if *f > *v as f64 => None,
-          Some(Token::GE) if *f >= *v as f64 => None,
+          Some(Token::NE) | Some(Token::DEFAULT)
+            if (f64::from(*f) - *v).abs() > std::f64::EPSILON =>
+          {
+            None
+          }
+          Some(Token::LT) if f64::from(*f) < *v as f64 => None,
+          Some(Token::LE) if f64::from(*f) <= *v as f64 => None,
+          Some(Token::GT) if f64::from(*f) > *v as f64 => None,
+          Some(Token::GE) if f64::from(*f) >= *v as f64 => None,
           #[cfg(feature = "additional-controls")]
           Some(Token::PLUS) => {
-            if (f - *v).abs() < std::f64::EPSILON {
+            if (f64::from(*f) - *v).abs() < std::f64::EPSILON {
               None
             } else {
-              Some(format!("expected computed .plus value {}, got {}", v, f))
+              Some(format!("expected computed .plus value {}, got {:?}", v, f))
             }
           }
           #[cfg(feature = "additional-controls")]
           None | Some(Token::FEATURE) => {
-            if (f - *v).abs() < std::f64::EPSILON {
+            if (f64::from(*f) - *v).abs() < std::f64::EPSILON {
               None
             } else {
-              Some(format!("expected value {}, got {}", v, f))
+              Some(format!("expected value {}, got {:?}", v, f))
             }
           }
           #[cfg(not(feature = "additional-controls"))]
           None => {
-            if (f - *v).abs() < std::f64::EPSILON {
+            if (f64::from(*f) - *v).abs() < std::f64::EPSILON {
               None
             } else {
-              Some(format!("expected value {}, got {}", v, f))
+              Some(format!("expected value {}, got {:?}", v, f))
             }
           }
           _ => Some(format!(
-            "expected value {} {}, got {}",
+            "expected value {} {}, got {:?}",
             self.ctrl.clone().unwrap(),
             v,
             f
           )),
         },
-        _ => Some(format!("expected {}, got {}", value, f)),
+        _ => Some(format!("expected {}, got {:?}", value, f)),
       },
       Value::Text(s) => match value {
         token::Value::TEXT(t) => match &self.ctrl {
@@ -3267,23 +3285,23 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
             }
           }
           Some(Token::REGEXP) | Some(Token::PCRE) => {
-            if let Value::Text(t) =
-              serde_cbor::from_slice::<serde_cbor::Value>(format!("\"{}\"", t).as_bytes())
-                .map_err(Error::CBORParsing)?
-            {
-              let re = regex::Regex::new(
-                &format_regex(&t)
+            let re = regex::Regex::new(
+              &format_regex(
+                // Text strings must be JSON escaped per
+                // https://datatracker.ietf.org/doc/html/rfc8610#section-3.1
+                serde_json::from_str::<serde_json::Value>(&format!("\"{}\"", t))
+                  .map_err(Error::JSONParsing)?
+                  .as_str()
                   .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
               )
-              .map_err(|e| Error::from_validator(self, e.to_string()))?;
+              .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
+            )
+            .map_err(|e| Error::from_validator(self, e.to_string()))?;
 
-              if re.is_match(s) {
-                None
-              } else {
-                Some(format!("expected \"{}\" to match regex \"{}\"", s, t))
-              }
+            if re.is_match(s) {
+              None
             } else {
-              return Err(Error::from_validator(self, "malformed regex".to_string()));
+              Some(format!("expected \"{}\" to match regex \"{}\"", s, t))
             }
           }
           #[cfg(feature = "additional-controls")]
@@ -3514,7 +3532,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
         let k = token_value_into_cbor_value(value.clone());
 
         #[cfg(feature = "ast-span")]
-        if let Some(v) = o.get(&k) {
+        if let Some(v) = o
+          .iter()
+          .find_map(|entry| if entry.0 == k { Some(&entry.1) } else { None })
+        {
           self.validated_keys.get_or_insert(vec![k.clone()]).push(k);
           self.object_value = Some(v.clone());
           self.cbor_location.push_str(&format!("/{}", value));
@@ -3532,7 +3553,10 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
         }
 
         #[cfg(not(feature = "ast-span"))]
-        if let Some(v) = o.get(&k) {
+        if let Some(v) = o
+          .iter()
+          .find_map(|entry| if entry.0 == k { Some(&entry.1) } else { None })
+        {
           self.validated_keys.get_or_insert(vec![k.clone()]).push(k);
           self.object_value = Some(v.clone());
           self.cbor_location.push_str(&format!("/{}", value));
@@ -3557,7 +3581,7 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
     Ok(())
   }
 
-  fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<Error> {
+  fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<Error<T>> {
     self.occurrence = Some(o.occur.clone());
 
     Ok(())
@@ -3565,15 +3589,15 @@ impl<'a> Visitor<'a, Error> for CBORValidator<'a> {
 }
 
 /// Converts a CDDL value type to serde_cbor::Value
-pub fn token_value_into_cbor_value(value: token::Value) -> serde_cbor::Value {
+pub fn token_value_into_cbor_value(value: token::Value) -> ciborium::value::Value {
   match value {
-    token::Value::UINT(i) => serde_cbor::Value::Integer(i as i128),
-    token::Value::INT(i) => serde_cbor::Value::Integer(i as i128),
-    token::Value::FLOAT(f) => serde_cbor::Value::Float(f),
-    token::Value::TEXT(t) => serde_cbor::Value::Text(t.to_string()),
+    token::Value::UINT(i) => ciborium::value::Value::Integer(i.into()),
+    token::Value::INT(i) => ciborium::value::Value::Integer(i.into()),
+    token::Value::FLOAT(f) => ciborium::value::Value::Float(f.into()),
+    token::Value::TEXT(t) => ciborium::value::Value::Text(t.to_string()),
     token::Value::BYTE(b) => match b {
       ByteValue::UTF8(b) | ByteValue::B16(b) | ByteValue::B64(b) => {
-        serde_cbor::Value::Bytes(b.into_owned())
+        ciborium::value::Value::Bytes(b.into_owned())
       }
     },
   }
@@ -3588,20 +3612,24 @@ mod tests {
   #[cfg(not(feature = "additional-controls"))]
   #[test]
   fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let cddl = r#"tcpflagbytes = bstr .bits flags
-    flags = &(
-      fin: 8,
-      syn: 9,
-      rst: 10,
-      psh: 11,
-      ack: 12,
-      urg: 13,
-      ece: 14,
-      cwr: 15,
-      ns: 0,
-    ) / (4..7) ; data offset bits"#;
+    let cddl = indoc!(
+      r#"
+        tcpflagbytes = bstr .bits flags
+        flags = &(
+          fin: 8,
+          syn: 9,
+          rst: 10,
+          psh: 11,
+          ack: 12,
+          urg: 13,
+          ece: 14,
+          cwr: 15,
+          ns: 0,
+        ) / (4..7) ; data offset bits
+      "#
+    );
 
-    let cbor = serde_cbor::Value::Bytes(vec![0x90, 0x6d]);
+    let cbor = ciborium::value::Value::Bytes(vec![0x90, 0x6d]);
 
     let mut lexer = lexer_from_str(cddl);
     let cddl = cddl_from_str(&mut lexer, cddl, true)?;
@@ -3631,7 +3659,7 @@ mod tests {
 
     let sha256_oid = "2.16.840.1.101.3.4.2.1";
 
-    let cbor = serde_cbor::Value::Bytes(sha256_oid.as_bytes().to_vec());
+    let cbor = ciborium::value::Value::Bytes(sha256_oid.as_bytes().to_vec());
 
     let mut lexer = lexer_from_str(cddl);
     let cddl = cddl_from_str(&mut lexer, cddl, true)?;
@@ -3658,7 +3686,7 @@ mod tests {
       println!("{}", e);
     }
 
-    let cbor = serde_cbor::Value::Integer(2);
+    let cbor = ciborium::value::Value::Integer(2.into());
 
     let cddl = cddl.unwrap();
 
