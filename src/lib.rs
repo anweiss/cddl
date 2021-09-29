@@ -559,6 +559,9 @@ pub mod token;
 #[cfg(feature = "std")]
 pub mod validator;
 
+#[cfg(feature = "std")]
+pub mod faker;
+
 /// CDDL AST visitor
 pub mod visitor;
 
