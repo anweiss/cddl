@@ -37,6 +37,7 @@ pub struct Faker<'a> {
   pub cddl: &'a CDDL<'a>,
   pub faked_json: Option<serde_json::Value>,
   pub map_entries: Option<HashMap<String, (Option<Occur>, Type<'a>)>>,
+  pub array_entries: Option<Vec<(Option<Occur>, Type<'a>)>>,
 }
 
 impl<'a> Faker<'a> {
@@ -45,41 +46,43 @@ impl<'a> Faker<'a> {
       cddl,
       faked_json: None,
       map_entries: None,
+      array_entries: None,
     }
   }
 }
 
 impl<'a> Visitor<'a, Error> for Faker<'a> {
+  fn visit_type_groupname_entry(
+    &mut self,
+    entry: &TypeGroupnameEntry<'a>,
+  ) -> visitor::Result<Error> {
+    if let Some(entries) = self.array_entries.as_mut() {
+      entries.push((
+        entry.occur.clone().map(|o| o.occur),
+        Type::from(&entry.name),
+      ));
+    }
+
+    Ok(())
+  }
+
   fn visit_value_member_key_entry(
     &mut self,
     entry: &ValueMemberKeyEntry<'a>,
   ) -> visitor::Result<Error> {
-    let occur = entry.occur.clone().map(|o| o.occur);
+    if let Some(entries) = self.map_entries.as_mut() {
+      let occur = entry.occur.clone().map(|o| o.occur);
 
-    if let Some(mk) = &entry.member_key {
-      match mk {
-        MemberKey::Bareword { ident, .. } => {
-          let mut map_entries = HashMap::new();
-          map_entries.insert(
-            ident.ident.to_string(),
-            (occur.clone(), entry.entry_type.clone()),
-          );
-
-          self
-            .map_entries
-            .get_or_insert(map_entries)
-            .insert(ident.ident.to_string(), (occur, entry.entry_type.clone()));
+      if let Some(mk) = &entry.member_key {
+        match mk {
+          MemberKey::Bareword { ident, .. } => {
+            entries.insert(ident.ident.to_string(), (occur, entry.entry_type.clone()));
+          }
+          MemberKey::Value { value, .. } => {
+            entries.insert(value.to_string(), (occur.clone(), entry.entry_type.clone()));
+          }
+          _ => return Ok(()),
         }
-        MemberKey::Value { value, .. } => {
-          let mut map_entries = HashMap::new();
-          map_entries.insert(value.to_string(), (occur.clone(), entry.entry_type.clone()));
-
-          self
-            .map_entries
-            .get_or_insert(map_entries)
-            .insert(value.to_string(), (occur, entry.entry_type.clone()));
-        }
-        _ => return Ok(()),
       }
     }
 
@@ -105,36 +108,122 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
         }
       }
       Type2::Array { group, .. } => {
-        let mut f = Faker::new(self.cddl);
-        f.faked_json = Some(Value::Array(Vec::new()));
-        f.visit_group(group)?;
+        self.faked_json = Some(Value::Array(Vec::new()));
+        self.array_entries = Some(Vec::new());
+        self.visit_group(group)?;
 
-        self.faked_json = f.faked_json;
-      }
-      Type2::Map { group, .. } => {
-        let mut f = Faker::new(self.cddl);
-        f.faked_json = Some(Value::Object(Map::new()));
-        f.visit_group(group)?;
+        if let Some(array_entries) = &self.array_entries {
+          if let Some(Value::Array(array)) = self.faked_json.as_mut() {
+            for (occur, entry) in array_entries.iter() {
+              if let Some(occur) = occur {
+                match occur {
+                  Occur::Optional(_) => {
+                    if FFaker.fake::<bool>() {
+                      let mut entry_f = Faker::new(self.cddl);
+                      entry_f.visit_type(entry)?;
 
-        if let Some(map_entries) = f.map_entries {
-          let mut entries = Map::new();
-          for (k, (occur, v)) in map_entries.iter() {
-            let generate = if let Some(Occur::Optional(_)) = occur {
-              FFaker.fake::<bool>()
-            } else {
-              true
-            };
+                      if let Some(value) = entry_f.faked_json {
+                        array.push(value);
+                      }
 
-            if generate {
-              let mut entry_f = Faker::new(self.cddl);
-              entry_f.visit_type(v)?;
+                      continue;
+                    }
+                  }
+                  Occur::ZeroOrMore(_) => {
+                    let lower = (0..2).fake::<usize>();
+                    let upper = (0..5).fake::<usize>();
 
-              if let Some(value) = entry_f.faked_json {
-                entries.insert(k.to_string(), value);
+                    // If the random lower >= random upper, the random array
+                    // will be empty.
+                    for _ in lower..upper {
+                      let mut entry_f = Faker::new(self.cddl);
+                      entry_f.visit_type(entry)?;
+
+                      if let Some(value) = entry_f.faked_json {
+                        array.push(value);
+                      }
+                    }
+
+                    // Break due to ambiguity
+                    break;
+                  }
+                  Occur::OneOrMore(_) => {
+                    for _ in 0..(1..5).fake::<usize>() {
+                      let mut entry_f = Faker::new(self.cddl);
+                      entry_f.visit_type(entry)?;
+
+                      if let Some(value) = entry_f.faked_json {
+                        array.push(value);
+                      }
+                    }
+
+                    // Break due to ambiguity
+                    break;
+                  }
+                  Occur::Exact { lower, upper, .. } => {
+                    if let Some(lower) = lower {
+                      if let Some(upper) = upper {
+                        for _ in *lower..*upper {
+                          let mut entry_f = Faker::new(self.cddl);
+                          entry_f.visit_type(entry)?;
+
+                          if let Some(value) = entry_f.faked_json {
+                            array.push(value);
+                          }
+                        }
+                      } else {
+                        for _ in *lower..(lower + (0..5).fake::<usize>()) {
+                          let mut entry_f = Faker::new(self.cddl);
+                          entry_f.visit_type(entry)?;
+
+                          if let Some(value) = entry_f.faked_json {
+                            array.push(value);
+                          }
+                        }
+                      }
+                    } else if let Some(upper) = upper {
+                      for _ in 0..(upper - (0..=*upper).fake::<usize>()) {
+                        let mut entry_f = Faker::new(self.cddl);
+                        entry_f.visit_type(entry)?;
+
+                        if let Some(value) = entry_f.faked_json {
+                          array.push(value);
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
-          self.faked_json = Some(Value::Object(entries));
+        }
+
+        self.array_entries = None;
+      }
+      Type2::Map { group, .. } => {
+        self.faked_json = Some(Value::Object(Map::default()));
+        self.map_entries = Some(HashMap::new());
+        self.visit_group(group)?;
+
+        if let Some(map_entries) = &self.map_entries {
+          if let Some(Value::Object(map)) = self.faked_json.as_mut() {
+            for (k, (occur, v)) in map_entries.iter() {
+              let generate = if let Some(Occur::Optional(_)) = occur {
+                FFaker.fake::<bool>()
+              } else {
+                true
+              };
+
+              if generate {
+                let mut entry_f = Faker::new(self.cddl);
+                entry_f.visit_type(v)?;
+
+                if let Some(value) = entry_f.faked_json {
+                  map.insert(k.to_string(), value);
+                }
+              }
+            }
+          }
         }
 
         self.map_entries = None;
@@ -150,11 +239,13 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
       Token::TSTR => {
         let value = FFaker.fake::<String>();
 
-        if let Some(Value::Array(array)) = self.faked_json.as_mut() {
-          array.push(value.into());
-        } else {
-          self.faked_json = Some(value.into());
-        }
+        // if let Some(Value::Array(array)) = self.faked_json.as_mut() {
+        //   array.push(value.into());
+        // } else {
+        //   self.faked_json = Some(value.into());
+        // }
+
+        self.faked_json = Some(value.into());
       }
       _ => {
         self.faked_json = Some(ident.ident.into());
@@ -194,7 +285,7 @@ mod tests {
   fn test_faker() -> Result<()> {
     let cddl = indoc!(
       r#"
-        a = { 1: { a: { a: [ + tstr ] } } }
+        a = { a: { a: [ *2 tstr ] } }
       "#
     );
 

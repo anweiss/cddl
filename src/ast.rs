@@ -20,7 +20,8 @@ use alloc::{
 
 /// Starting index, ending index and line number
 #[cfg(feature = "ast-span")]
-pub type Span = (usize, usize, usize);
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub struct Span(pub usize, pub usize, pub usize);
 
 #[cfg(feature = "ast-comments")]
 #[derive(Default, Debug, PartialEq, Clone)]
@@ -179,7 +180,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
               ident,
               socket: Some(SocketPlug::GROUP),
               #[cfg(feature = "ast-span")]
-              span: (0, 0, 0),
+              span: Span::default(),
             };
           }
         }
@@ -188,7 +189,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
           ident,
           socket: Some(SocketPlug::TYPE),
           #[cfg(feature = "ast-span")]
-          span: (0, 0, 0),
+          span: Span::default(),
         };
       }
     }
@@ -197,7 +198,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
       ident,
       socket: None,
       #[cfg(feature = "ast-span")]
-      span: (0, 0, 0),
+      span: Span::default(),
     }
   }
 }
@@ -513,7 +514,7 @@ impl<'a> Default for GenericParams<'a> {
     GenericParams {
       params: Vec::new(),
       #[cfg(feature = "ast-span")]
-      span: (0, 0, 0),
+      span: Span::default(),
     }
   }
 }
@@ -583,7 +584,7 @@ impl<'a> GenericArgs<'a> {
     GenericArgs {
       args: Vec::new(),
       #[cfg(feature = "ast-span")]
-      span: (0, 0, 0),
+      span: Span::default(),
     }
   }
 }
@@ -667,6 +668,28 @@ impl<'a> Type<'a> {
     }
 
     None
+  }
+}
+
+impl<'a> From<&Identifier<'a>> for Type<'a> {
+  fn from(ident: &Identifier<'a>) -> Self {
+    Type {
+      type_choices: vec![TypeChoice {
+        type1: Type1 {
+          type2: Type2::Typename {
+            ident: ident.clone(),
+            generic_args: None,
+            span: ident.span,
+          },
+          operator: None,
+          span: ident.span,
+          comments_after_type: None,
+        },
+        comments_before_type: None,
+        comments_after_type: None,
+      }],
+      span: ident.span,
+    }
   }
 }
 
@@ -1521,7 +1544,7 @@ impl<'a> fmt::Display for Type2<'a> {
 impl<'a> From<RangeValue<'a>> for Type2<'a> {
   fn from(rv: RangeValue<'a>) -> Self {
     #[cfg(feature = "ast-span")]
-    let span = (0, 0, 0);
+    let span = Span::default();
 
     match rv {
       RangeValue::IDENT(ident) => Type2::Typename {
@@ -2877,7 +2900,7 @@ mod tests {
         leading_comments: None,
         trailing_comments: None,
         #[cfg(feature = "ast-span")]
-        span: (0, 0, 0),
+        span: Span::default(),
       }
       .to_string(),
       "entry1".to_string()
@@ -2899,7 +2922,7 @@ mod tests {
                     comments: None,
                     comments_after_colon: None,
                     #[cfg(feature = "ast-span")]
-                    span: (0, 0, 0),
+                    span: Span::default(),
                   }),
                   entry_type: Type {
                     type_choices: vec![TypeChoice {
@@ -2907,24 +2930,24 @@ mod tests {
                         type2: Type2::TextValue {
                           value: "value1".into(),
                           #[cfg(feature = "ast-span")]
-                          span: (0, 0, 0),
+                          span: Span::default(),
                         },
                         operator: None,
                         comments_after_type: None,
                         #[cfg(feature = "ast-span")]
-                        span: (0, 0, 0),
+                        span: Span::default(),
                       },
                       comments_before_type: None,
                       comments_after_type: None,
                     }],
                     #[cfg(feature = "ast-span")]
-                    span: (0, 0, 0),
+                    span: Span::default(),
                   },
                 }),
                 leading_comments: None,
                 trailing_comments: None,
                 #[cfg(feature = "ast-span")]
-                span: (0, 0, 0),
+                span: Span::default(),
               },
               OptionalComma {
                 optional_comma: true,
@@ -2941,7 +2964,7 @@ mod tests {
                     comments: None,
                     comments_after_colon: None,
                     #[cfg(feature = "ast-span")]
-                    span: (0, 0, 0),
+                    span: Span::default(),
                   }),
                   entry_type: Type {
                     type_choices: vec![TypeChoice {
@@ -2949,24 +2972,24 @@ mod tests {
                         type2: Type2::TextValue {
                           value: "value2".into(),
                           #[cfg(feature = "ast-span")]
-                          span: (0, 0, 0),
+                          span: Span::default(),
                         },
                         operator: None,
                         comments_after_type: None,
                         #[cfg(feature = "ast-span")]
-                        span: (0, 0, 0),
+                        span: Span::default(),
                       },
                       comments_before_type: None,
                       comments_after_type: None,
                     }],
                     #[cfg(feature = "ast-span")]
-                    span: (0, 0, 0),
+                    span: Span::default(),
                   },
                 }),
                 leading_comments: None,
                 trailing_comments: None,
                 #[cfg(feature = "ast-span")]
-                span: (0, 0, 0),
+                span: Span::default(),
               },
               OptionalComma {
                 optional_comma: true,
@@ -2977,10 +3000,10 @@ mod tests {
           ],
           comments_before_grpchoice: None,
           #[cfg(feature = "ast-span")]
-          span: (0, 0, 0),
+          span: Span::default(),
         }],
         #[cfg(feature = "ast-span")]
-        span: (0, 0, 0),
+        span: Span::default(),
       }
       .to_string(),
       " key1: \"value1\", key2: \"value2\", ".to_string()

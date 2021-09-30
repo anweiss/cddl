@@ -573,7 +573,7 @@ where
           self.advance_newline()?;
 
           #[cfg(feature = "ast-span")]
-          let span = (
+          let span = Span(
             begin_rule_range,
             self.parser_position.range.1,
             begin_rule_line,
@@ -604,7 +604,7 @@ where
           let t = self.parse_type(None)?;
 
           #[cfg(feature = "ast-span")]
-          let span = (
+          let span = Span(
             begin_rule_range,
             self.parser_position.range.1,
             begin_rule_line,
@@ -686,7 +686,7 @@ where
                           #[cfg(feature = "ast-comments")]
                           comments_after_type: comments_after_group.clone(),
                           #[cfg(feature = "ast-span")]
-                          span: (
+                          span: Span(
                             begin_pt_range,
                             self.parser_position.range.1,
                             begin_rule_line,
@@ -714,7 +714,7 @@ where
                           #[cfg(feature = "ast-comments")]
                           comments_after_rule,
                           #[cfg(feature = "ast-span")]
-                          span: (begin_rule_range, end_rule_range, begin_rule_line),
+                          span: Span(begin_rule_range, end_rule_range, begin_rule_line),
                         });
                       }
                     }
@@ -741,7 +741,7 @@ where
           #[cfg(feature = "ast-comments")]
           comments_after_rule,
           #[cfg(feature = "ast-span")]
-          span: (begin_rule_range, end_rule_range, begin_rule_line),
+          span: Span(begin_rule_range, end_rule_range, begin_rule_line),
         })
       }
       _ => {
@@ -782,7 +782,7 @@ where
         }
 
         #[cfg(feature = "ast-span")]
-        let span = (
+        let span = Span(
           begin_rule_range,
           self.parser_position.range.1,
           begin_rule_line,
@@ -903,7 +903,7 @@ where
     #[cfg(feature = "ast-span")]
     {
       let end_range = self.lexer_position.range.1;
-      generic_params.span = (begin_range, end_range, self.lexer_position.line);
+      generic_params.span = Span(begin_range, end_range, self.lexer_position.line);
     }
 
     Ok(generic_params)
@@ -973,7 +973,7 @@ where
 
     #[cfg(feature = "ast-span")]
     {
-      generic_args.span = (
+      generic_args.span = Span(
         begin_generic_arg_range,
         self.parser_position.range.1,
         begin_generic_arg_line,
@@ -1003,7 +1003,7 @@ where
     let mut t = Type {
       type_choices: Vec::new(),
       #[cfg(feature = "ast-span")]
-      span: (begin_type_range, 0, self.parser_position.line),
+      span: Span(begin_type_range, 0, self.parser_position.line),
     };
 
     #[cfg(feature = "ast-comments")]
@@ -1102,7 +1102,7 @@ where
     };
 
     #[cfg(feature = "ast-span")]
-    let mut span = (
+    let mut span = Span(
       begin_type1_range,
       self.lexer_position.range.1,
       begin_type1_line,
@@ -1142,7 +1142,7 @@ where
 
     #[cfg(feature = "ast-span")]
     {
-      span = (
+      span = Span(
         begin_type1_range,
         self.parser_position.range.1,
         begin_type1_line,
@@ -1204,7 +1204,7 @@ where
         }
 
         #[cfg(feature = "ast-span")]
-        let span = (
+        let span = Span(
           self.parser_position.range.0,
           self.parser_position.range.1,
           self.parser_position.line,
@@ -1291,7 +1291,7 @@ where
             ident,
             generic_args: Some(ga),
             #[cfg(feature = "ast-span")]
-            span: (begin_type2_range, end_type2_range, begin_type2_line),
+            span: Span(begin_type2_range, end_type2_range, begin_type2_line),
           });
         }
 
@@ -1305,7 +1305,7 @@ where
           ident: self.identifier_from_ident_token(*ident),
           generic_args: None,
           #[cfg(feature = "ast-span")]
-          span: (
+          span: Span(
             self.parser_position.range.0,
             self.parser_position.range.1,
             self.parser_position.line,
@@ -1348,7 +1348,7 @@ where
           comments_after_type,
           pt,
           #[cfg(feature = "ast-span")]
-          span: (
+          span: Span(
             self.parser_position.range.0,
             self.parser_position.range.1,
             self.parser_position.line,
@@ -1380,7 +1380,7 @@ where
         };
 
         #[cfg(feature = "ast-span")]
-        let span = (
+        let span = Span(
           begin_type2_range,
           self.lexer_position.range.1,
           begin_type2_line,
@@ -1430,7 +1430,7 @@ where
         };
 
         #[cfg(feature = "ast-span")]
-        let span = (
+        let span = Span(
           begin_type2_range,
           self.lexer_position.range.1,
           begin_type2_line,
@@ -1479,7 +1479,7 @@ where
               ident,
               generic_args: Some(self.parse_genericargs()?),
               #[cfg(feature = "ast-span")]
-              span: (0, 0, 0),
+              span: Span(0, 0, 0),
             });
           }
 
@@ -1489,7 +1489,7 @@ where
             ident,
             generic_args: None,
             #[cfg(feature = "ast-span")]
-            span: (0, 0, 0),
+            span: Span(0, 0, 0),
           });
         }
 
@@ -1542,7 +1542,7 @@ where
               #[cfg(feature = "ast-comments")]
               comments_after_group,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_type2_range,
                 self.parser_position.range.1,
                 begin_type2_line,
@@ -1562,7 +1562,7 @@ where
                 ident,
                 generic_args,
                 #[cfg(feature = "ast-span")]
-                span: (
+                span: Span(
                   begin_type2_range,
                   self.parser_position.range.1,
                   begin_type2_line,
@@ -1581,7 +1581,7 @@ where
               ident,
               generic_args: None,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_type2_range,
                 self.parser_position.range.1,
                 begin_type2_line,
@@ -1659,7 +1659,7 @@ where
               #[cfg(feature = "ast-comments")]
               comments_after_type,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_type2_range,
                 self.parser_position.range.1,
                 begin_type2_line,
@@ -1671,14 +1671,14 @@ where
             mt,
             constraint,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_type2_range,
               self.lexer_position.range.1,
               begin_type2_line,
             ),
           }),
           #[cfg(feature = "ast-span")]
-          _ => Ok(Type2::Any((
+          _ => Ok(Type2::Any(Span(
             begin_type2_range,
             self.lexer_position.range.1,
             begin_type2_line,
@@ -1706,7 +1706,7 @@ where
               ident,
               generic_args: None,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 self.parser_position.range.0,
                 self.parser_position.range.1,
                 self.parser_position.line,
@@ -1777,7 +1777,7 @@ where
     let mut group = Group {
       group_choices: Vec::new(),
       #[cfg(feature = "ast-span")]
-      span: (begin_group_range, 0, self.lexer_position.line),
+      span: Span(begin_group_range, 0, self.lexer_position.line),
     };
 
     group.group_choices.push(self.parse_grpchoice()?);
@@ -1813,7 +1813,7 @@ where
       #[cfg(feature = "ast-comments")]
       comments_before_grpchoice: None,
       #[cfg(feature = "ast-span")]
-      span: (self.lexer_position.range.0, 0, self.lexer_position.line),
+      span: Span(self.lexer_position.range.0, 0, self.lexer_position.line),
     };
 
     if let Token::GCHOICE = &self.cur_token {
@@ -1962,7 +1962,7 @@ where
       let group = self.parse_group()?;
 
       #[cfg(feature = "ast-span")]
-      let mut span = (
+      let mut span = Span(
         begin_grpent_range,
         self.parser_position.range.1,
         begin_grpent_line,
@@ -2007,7 +2007,7 @@ where
     }
 
     #[cfg(feature = "ast-span")]
-    let mut span = (
+    let mut span = Span(
       begin_grpent_range,
       self.parser_position.range.1,
       begin_grpent_line,
@@ -2426,7 +2426,7 @@ where
     let ident = self.identifier_from_ident_token((ident.0, ident.1));
     #[cfg(feature = "ast-span")]
     {
-      ident.span = (begin_memberkey_range, end_t1_range, begin_memberkey_line);
+      ident.span = Span(begin_memberkey_range, end_t1_range, begin_memberkey_line);
     }
 
     self.next_token()?;
@@ -2474,13 +2474,13 @@ where
             ident,
             generic_args: None,
             #[cfg(feature = "ast-span")]
-            span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+            span: Span(begin_memberkey_range, end_t1_range, begin_memberkey_line),
           },
           operator: None,
           #[cfg(feature = "ast-comments")]
           comments_after_type: None,
           #[cfg(feature = "ast-span")]
-          span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+          span: Span(begin_memberkey_range, end_t1_range, begin_memberkey_line),
         }),
         #[cfg(feature = "ast-comments")]
         comments_before_cut,
@@ -2490,7 +2490,7 @@ where
         #[cfg(feature = "ast-comments")]
         comments_after_arrowmap,
         #[cfg(feature = "ast-span")]
-        span: (
+        span: Span(
           begin_memberkey_range,
           end_memberkey_range,
           begin_memberkey_line,
@@ -2522,13 +2522,13 @@ where
             ident,
             generic_args: None,
             #[cfg(feature = "ast-span")]
-            span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+            span: Span(begin_memberkey_range, end_t1_range, begin_memberkey_line),
           },
           operator: None,
           #[cfg(feature = "ast-comments")]
           comments_after_type: None,
           #[cfg(feature = "ast-span")]
-          span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+          span: Span(begin_memberkey_range, end_t1_range, begin_memberkey_line),
         }),
         #[cfg(feature = "ast-comments")]
         comments_before_cut,
@@ -2538,7 +2538,7 @@ where
         #[cfg(feature = "ast-comments")]
         comments_after_arrowmap,
         #[cfg(feature = "ast-span")]
-        span: (
+        span: Span(
           begin_memberkey_range,
           end_memberkey_range,
           begin_memberkey_line,
@@ -2565,7 +2565,7 @@ where
         #[cfg(feature = "ast-comments")]
         comments_after_colon,
         #[cfg(feature = "ast-span")]
-        span: (
+        span: Span(
           begin_memberkey_range,
           self.parser_position.range.1,
           begin_memberkey_line,
@@ -2667,7 +2667,7 @@ where
             #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: memberkey_comments,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_memberkey_range,
               end_memberkey_range,
               begin_memberkey_line,
@@ -2707,7 +2707,7 @@ where
             #[cfg(feature = "ast-comments")]
             comments_after_colon: memberkey_comments,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_memberkey_range,
               self.parser_position.range.1,
               begin_memberkey_line,
@@ -2874,7 +2874,7 @@ where
                 #[cfg(feature = "ast-comments")]
                 comments_after_type: comments_after_type_or_group,
                 #[cfg(feature = "ast-span")]
-                span: (
+                span: Span(
                   begin_memberkey_range,
                   closing_parend_index,
                   begin_memberkey_line,
@@ -2884,7 +2884,7 @@ where
               comments_after_type: comments_before_cut.clone(),
               operator: None,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_memberkey_range,
                 closing_parend_index,
                 begin_memberkey_line,
@@ -2898,7 +2898,7 @@ where
             #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: None,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_memberkey_range,
               end_memberkey_range,
               begin_memberkey_line,
@@ -2930,7 +2930,7 @@ where
                 #[cfg(feature = "ast-comments")]
                 comments_after_type: comments_after_type_or_group,
                 #[cfg(feature = "ast-span")]
-                span: (
+                span: Span(
                   begin_memberkey_range,
                   closing_parend_index,
                   begin_memberkey_line,
@@ -2940,7 +2940,7 @@ where
               comments_after_type: comments_before_cut.clone(),
               operator: None,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_memberkey_range,
                 closing_parend_index,
                 begin_memberkey_line,
@@ -2954,7 +2954,7 @@ where
             #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: memberkey_comments,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_memberkey_range,
               self.lexer_position.range.0,
               begin_memberkey_line,
@@ -2965,7 +2965,7 @@ where
             non_member_key: NonMemberKey::Type(Type {
               type_choices: t.type_choices,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_memberkey_range,
                 self.parser_position.range.1,
                 begin_memberkey_line,
@@ -3025,7 +3025,7 @@ where
             #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: memberkey_comments,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_memberkey_range,
               end_memberkey_range,
               begin_memberkey_line,
@@ -3056,7 +3056,7 @@ where
             #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: memberkey_comments,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_memberkey_range,
               self.parser_position.range.1,
               begin_memberkey_line,
@@ -3073,7 +3073,7 @@ where
                 type1: t1,
               }],
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_memberkey_range,
                 self.parser_position.range.1,
                 begin_memberkey_line,
@@ -3118,7 +3118,7 @@ where
 
         Ok(Some(Occurrence {
           #[cfg(feature = "ast-span")]
-          occur: Occur::Optional((
+          occur: Occur::Optional(Span(
             self.parser_position.range.0,
             self.parser_position.range.1,
             self.parser_position.line,
@@ -3145,7 +3145,7 @@ where
 
         Ok(Some(Occurrence {
           #[cfg(feature = "ast-span")]
-          occur: Occur::OneOrMore((
+          occur: Occur::OneOrMore(Span(
             self.parser_position.range.0,
             self.parser_position.range.1,
             self.parser_position.line,
@@ -3169,7 +3169,7 @@ where
             lower: None,
             upper: Some(*u),
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               self.parser_position.range.0,
               self.parser_position.range.1,
               self.parser_position.line,
@@ -3179,7 +3179,7 @@ where
           #[cfg(feature = "ast-span")]
           {
             self.parser_position.range = self.lexer_position.range;
-            Occur::ZeroOrMore((
+            Occur::ZeroOrMore(Span(
               self.parser_position.range.0,
               self.parser_position.range.1,
               self.parser_position.line,
@@ -3263,7 +3263,7 @@ where
             lower,
             upper,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_occur_range,
               self.parser_position.range.1,
               begin_occur_line,
@@ -3303,7 +3303,7 @@ where
       ident: ident.0,
       socket: ident.1,
       #[cfg(feature = "ast-span")]
-      span: (
+      span: Span(
         self.lexer_position.range.0,
         self.lexer_position.range.1,
         self.lexer_position.line,
