@@ -2632,10 +2632,12 @@ pub enum MemberKey<'a> {
     comments_after_colon: Option<Comments<'a>>,
   },
 
+  // Used while parsing a parenthesized type that is not followed by a cut nor
+  // an arrow map
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
-  NonMemberKey {
-    non_member_key: NonMemberKey<'a>,
+  ParenthesizedType {
+    non_member_key: ParenthesizedType<'a>,
     #[cfg(feature = "ast-comments")]
     comments_before_type_or_group: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
@@ -2645,7 +2647,7 @@ pub enum MemberKey<'a> {
 
 #[derive(Debug, Clone, PartialEq)]
 #[doc(hidden)]
-pub enum NonMemberKey<'a> {
+pub enum ParenthesizedType<'a> {
   Group(Group<'a>),
   Type(Type<'a>),
 }
@@ -2751,8 +2753,8 @@ impl<'a> fmt::Display for MemberKey<'a> {
 
         write!(f, "{}", mk_str)
       }
-      MemberKey::NonMemberKey {
-        non_member_key: NonMemberKey::Group(g),
+      MemberKey::ParenthesizedType {
+        non_member_key: ParenthesizedType::Group(g),
         #[cfg(feature = "ast-comments")]
         comments_before_type_or_group,
         #[cfg(feature = "ast-comments")]
@@ -2774,8 +2776,8 @@ impl<'a> fmt::Display for MemberKey<'a> {
 
         write!(f, "{}", nmk_str)
       }
-      MemberKey::NonMemberKey {
-        non_member_key: NonMemberKey::Type(t),
+      MemberKey::ParenthesizedType {
+        non_member_key: ParenthesizedType::Type(t),
         #[cfg(feature = "ast-comments")]
         comments_before_type_or_group,
         #[cfg(feature = "ast-comments")]

@@ -1,6 +1,11 @@
 #![cfg(feature = "std")]
 
-use crate::{ast::*, token::ByteValue, token::Value};
+use crate::{
+  ast::*,
+  token::Value,
+  token::{lookup_control_from_str, ByteValue},
+  Token,
+};
 use std::error::Error;
 
 /// Visitor result
@@ -67,7 +72,7 @@ pub trait Visitor<'a, E: Error> {
   fn visit_control_operator(
     &mut self,
     target: &Type2<'a>,
-    _ctrl: &str,
+    _ctrl: &Token<'a>,
     controller: &Type2<'a>,
   ) -> Result<E> {
     walk_control_operator(self, target, controller)
@@ -133,7 +138,7 @@ pub trait Visitor<'a, E: Error> {
   }
 
   /// Visit nonmemberkey
-  fn visit_nonmemberkey(&mut self, nmk: &NonMemberKey<'a>) -> Result<E> {
+  fn visit_nonmemberkey(&mut self, nmk: &ParenthesizedType<'a>) -> Result<E> {
     walk_nonmemberkey(self, nmk)
   }
 }
@@ -213,7 +218,13 @@ where
     RangeCtlOp::RangeOp { is_inclusive, .. } => {
       visitor.visit_range(&target.type2, &o.type2, *is_inclusive)
     }
-    RangeCtlOp::CtlOp { ctrl, .. } => visitor.visit_control_operator(&target.type2, ctrl, &o.type2),
+    RangeCtlOp::CtlOp { ctrl, .. } => {
+      if let Some(token) = lookup_control_from_str(ctrl) {
+        visitor.visit_control_operator(&target.type2, &token, &o.type2)
+      } else {
+        Ok(())
+      }
+    }
   }
 }
 
@@ -401,7 +412,9 @@ where
     MemberKey::Type1 { t1, .. } => visitor.visit_type1(t1),
     MemberKey::Bareword { ident, .. } => visitor.visit_identifier(ident),
     MemberKey::Value { value, .. } => visitor.visit_value(value),
-    MemberKey::NonMemberKey { non_member_key, .. } => visitor.visit_nonmemberkey(non_member_key),
+    MemberKey::ParenthesizedType { non_member_key, .. } => {
+      visitor.visit_nonmemberkey(non_member_key)
+    }
   }
 }
 
@@ -428,13 +441,13 @@ where
 }
 
 /// Walk nonmemberkey
-pub fn walk_nonmemberkey<'a, E, V>(visitor: &mut V, nmk: &NonMemberKey<'a>) -> Result<E>
+pub fn walk_nonmemberkey<'a, E, V>(visitor: &mut V, nmk: &ParenthesizedType<'a>) -> Result<E>
 where
   E: Error,
   V: Visitor<'a, E> + ?Sized,
 {
   match nmk {
-    NonMemberKey::Group(group) => visitor.visit_group(group),
-    NonMemberKey::Type(t) => visitor.visit_type(t),
+    ParenthesizedType::Group(group) => visitor.visit_group(group),
+    ParenthesizedType::Type(t) => visitor.visit_type(t),
   }
 }
