@@ -1,6 +1,5 @@
 use crate::{
   ast::*,
-  cddl_from_str, lexer_from_str,
   token::{lookup_ident, Token},
   validator::*,
   visitor::{self, *},
@@ -12,6 +11,12 @@ use displaydoc::Display;
 use fake::{faker::name::raw::*, locales::EN, Fake, Faker as FFaker};
 use rand::{self, seq::SliceRandom};
 use serde_json::{self, Map, Value};
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{cddl_from_str, lexer_from_str};
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 
 /// Result type from fake data generation
 pub type Result<T> = std::result::Result<T, Error>;
@@ -537,6 +542,7 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
   }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Generate fake JSON from a given CDDL document string
 pub fn fake_json_from_cddl_str(cddl_str: &str) -> Result<String> {
   let mut lexer = lexer_from_str(cddl_str);
@@ -557,7 +563,59 @@ pub fn fake_json_from_cddl_str(cddl_str: &str) -> Result<String> {
   Err(Error::MissingTypeRules)
 }
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+/// Generate fake JSON from a given CDDL document string
+pub fn fake_json_from_cddl_str(cddl_str: &str) -> std::result::Result<JsValue, JsValue> {
+  use crate::{
+    error::ParserError,
+    lexer::Lexer,
+    parser::{self, Parser},
+  };
+
+  let mut l = Lexer::new(cddl_str);
+  let mut p = Parser::new((&mut l).iter(), cddl_str).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      JsValue::from_serde(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
+  let mut faker = Faker::new(&c);
+
+  for rule in faker.cddl.rules.iter() {
+    if let Rule::Type { rule, .. } = rule {
+      faker
+        .visit_type_rule(rule)
+        .map_err(|e| JsValue::from(e.to_string()))?;
+      break;
+    }
+  }
+
+  if let Some(faked_json) = faker.faked_json {
+    return Ok(faked_json.to_string().into());
+  }
+
+  Err(Error::MissingTypeRules.to_string().into())
+}
+
 #[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests {
   use super::*;
 

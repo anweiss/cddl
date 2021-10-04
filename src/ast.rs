@@ -20,6 +20,7 @@ use alloc::{
 
 /// Starting index, ending index and line number
 #[cfg(feature = "ast-span")]
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub struct Span(pub usize, pub usize, pub usize);
 

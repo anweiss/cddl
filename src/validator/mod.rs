@@ -28,24 +28,16 @@ use serde::de::Deserialize;
 
 #[cfg(target_arch = "wasm32")]
 use crate::{
-  error::ErrorMsg,
-  lexer::{Lexer, Position},
+  error::ParserError,
+  lexer::Lexer,
   parser::{self, Parser},
 };
-#[cfg(target_arch = "wasm32")]
-use serde::Serialize;
+
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{cddl_from_str, lexer_from_str};
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Serialize)]
-struct ParserError {
-  position: Position,
-  msg: ErrorMsg,
-}
 
 trait Validator<'a, E: Error>: Visitor<'a, E> {
   fn validate(&mut self) -> std::result::Result<(), E>;
