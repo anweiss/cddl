@@ -59,7 +59,7 @@ jobs:
   wasm-compilation-check:
     strategy:
       matrix:
-        rust_toolchain: [stable, beta]
+        rust_toolchain: [stable]
     name: Compilation check for wasm target
     runs-on: ubuntu-latest
     steps:
@@ -83,7 +83,7 @@ jobs:
   test-suite:
     strategy:
       matrix:
-        rust_toolchain: [stable, beta]
+        rust_toolchain: [stable]
         os: [ubuntu-latest, macOS-latest, windows-latest]
     name: Test suite
     runs-on: ${{ matrix.os }}
