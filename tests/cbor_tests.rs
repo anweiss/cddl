@@ -228,9 +228,10 @@ fn validate_cbor_array_record() {
 
   // FIXME: there isn't any way at present to serialize a struct
   // into a CBOR array. See https://github.com/pyfisch/cbor/issues/107
-  //let input = PersonStruct{name: "Bob".to_string(), age: 43};
-  //let cbor_bytes = serde_cbor::to_vec(&input).unwrap();
-  //validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
+  // let input = PersonStruct{name: "Bob".to_string(), age: 43};
+  // let mut cbor_bytes = Vec::new();
+  // ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
+  // validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
 
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123).unwrap_err();
 }

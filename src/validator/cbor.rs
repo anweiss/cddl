@@ -3588,7 +3588,7 @@ where
   }
 }
 
-/// Converts a CDDL value type to serde_cbor::Value
+/// Converts a CDDL value type to ciborium::value::Value
 pub fn token_value_into_cbor_value(value: token::Value) -> ciborium::value::Value {
   match value {
     token::Value::UINT(i) => ciborium::value::Value::Integer(i.into()),

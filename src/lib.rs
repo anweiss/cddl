@@ -186,7 +186,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cddl = "0.9"
+//! cddl = "0.9.0-beta.0"
 //! ```
 //!
 //! Both JSON and CBOR validation require `std`.
@@ -247,7 +247,6 @@
 //!   "address": "1234 Lakeshore Dr"
 //! }"#;
 //!
-//! #[cfg(not(feature = "additional-controls"))]
 //! assert!(validate_json_from_str(cddl, json).is_ok())
 //! ```
 //!
@@ -255,7 +254,7 @@
 //! specifically, the [serde_json](https://crates.io/crates/serde_json) crate,
 //! for parsing and validating JSON. Serde was chosen due to its maturity in the
 //! ecosystem and its support for serializing and deserializing CBOR via the
-//! [serde_cbor](https://crates.io/crates/serde_cbor) crate.
+//! [ciborium](https://crates.io/crates/ciborium) crate.
 //!
 //! As outlined in [Appendix E.](https://tools.ietf.org/html/rfc8610#appendix-E)
 //! of the standard, only the JSON data model subset of CBOR can be used for
@@ -431,14 +430,13 @@
 //!
 //! let cbor = b"\xF4";
 //!
-//! #[cfg(not(feature = "additional-controls"))]
 //! assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
 //! ```
 //!
 //! This crate also uses [Serde](https://serde.rs/) and
-//! [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data
+//! [ciborium](https://crates.io/crates/ciborium) for validating CBOR data
 //! structures. CBOR validation is done via the loosely typed
-//! [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html)
+//! [`ciborium::value::Value`](https://github.com/enarx/ciborium/blob/main/ciborium/src/value/mod.rs#L22)
 //! enum. In addition to all of the same features implemented by the JSON
 //! validator, this crate also supports validating CBOR tags (e.g.
 //! `#6.32(tstr)`), CBOR major types (e.g. `#1.2`), table types (e.g. `{ [ +
@@ -502,7 +500,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cddl = { version = "0.9", default-features = false }
+//! cddl = { version = "0.9.0-beta.0", default-features = false }
 //! ```
 //!
 //! Zero-copy parsing is implemented to the extent that is possible. Allocation
@@ -533,9 +531,6 @@ extern crate core as std;
 
 #[cfg(feature = "std")]
 extern crate serde_json;
-
-// #[cfg(feature = "std")]
-// extern crate serde_cbor;
 
 #[cfg(feature = "std")]
 extern crate uriparse;

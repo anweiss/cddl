@@ -165,8 +165,6 @@ pub fn validate_cbor_from_slice(
 ) -> cbor::Result<std::io::Error> {
   let mut lexer = lexer_from_str(cddl);
   let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(cbor::Error::CDDLParsing)?;
-  // let cbor =
-  //   serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice).map_err(cbor::Error::CBORParsing)?;
 
   let cbor: ciborium::value::Value = ciborium::de::from_reader(cbor_slice).unwrap();
 
@@ -264,8 +262,8 @@ pub fn validate_cbor_from_slice(
     );
   }
 
-  let cbor = serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice)
-    .map_err(|e| JsValue::from(e.to_string()))?;
+  let cbor: ciborium::value::Value =
+    ciborium::de::from_reader(cbor_slice).map_err(|e| JsValue::from(e.to_string()))?;
 
   let mut cv = CBORValidator::new(&c, cbor);
   cv.validate()
