@@ -307,6 +307,7 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
             for (occur, entry) in array_entries.iter() {
               if let Some(occur) = occur {
                 match occur {
+                  #[cfg(feature = "ast-span")]
                   Occur::Optional(_) => {
                     if FFaker.fake::<bool>() {
                       let mut entry_f = Faker::new(self.cddl);
@@ -319,6 +320,20 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
                       continue;
                     }
                   }
+                  #[cfg(not(feature = "ast-span"))]
+                  Occur::Optional => {
+                    if FFaker.fake::<bool>() {
+                      let mut entry_f = Faker::new(self.cddl);
+                      entry_f.visit_type(entry)?;
+
+                      if let Some(value) = entry_f.faked_json {
+                        array.push(value);
+                      }
+
+                      continue;
+                    }
+                  }
+                  #[cfg(feature = "ast-span")]
                   Occur::ZeroOrMore(_) => {
                     let lower = (0..2).fake::<usize>();
                     let upper = (0..5).fake::<usize>();
@@ -337,7 +352,41 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
                     // Break due to ambiguity
                     break;
                   }
+                  #[cfg(not(feature = "ast-span"))]
+                  Occur::ZeroOrMore => {
+                    let lower = (0..2).fake::<usize>();
+                    let upper = (0..5).fake::<usize>();
+
+                    // If the random lower >= random upper, the random array
+                    // will be empty.
+                    for _ in lower..upper {
+                      let mut entry_f = Faker::new(self.cddl);
+                      entry_f.visit_type(entry)?;
+
+                      if let Some(value) = entry_f.faked_json {
+                        array.push(value);
+                      }
+                    }
+
+                    // Break due to ambiguity
+                    break;
+                  }
+                  #[cfg(feature = "ast-span")]
                   Occur::OneOrMore(_) => {
+                    for _ in 0..(1..5).fake::<usize>() {
+                      let mut entry_f = Faker::new(self.cddl);
+                      entry_f.visit_type(entry)?;
+
+                      if let Some(value) = entry_f.faked_json {
+                        array.push(value);
+                      }
+                    }
+
+                    // Break due to ambiguity
+                    break;
+                  }
+                  #[cfg(not(feature = "ast-span"))]
+                  Occur::OneOrMore => {
                     for _ in 0..(1..5).fake::<usize>() {
                       let mut entry_f = Faker::new(self.cddl);
                       entry_f.visit_type(entry)?;
@@ -405,7 +454,14 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
         if let Entries::Map(map_entries) = &mut self.entries {
           if let Some(Value::Object(map)) = self.faked_json.as_mut() {
             for (k, (occur, v)) in map_entries.iter() {
+              #[cfg(feature = "ast-span")]
               let generate = if let Some(Occur::Optional(_)) = occur {
+                FFaker.fake::<bool>()
+              } else {
+                true
+              };
+              #[cfg(not(feature = "ast-span"))]
+              let generate = if let Some(Occur::Optional) = occur {
                 FFaker.fake::<bool>()
               } else {
                 true

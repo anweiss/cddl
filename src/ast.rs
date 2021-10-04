@@ -691,15 +691,21 @@ impl<'a> From<&Identifier<'a>> for Type<'a> {
           type2: Type2::Typename {
             ident: ident.clone(),
             generic_args: None,
+            #[cfg(feature = "ast-span")]
             span: ident.span,
           },
           operator: None,
+          #[cfg(feature = "ast-span")]
           span: ident.span,
+          #[cfg(feature = "ast-comments")]
           comments_after_type: None,
         },
+        #[cfg(feature = "ast-comments")]
         comments_before_type: None,
+        #[cfg(feature = "ast-comments")]
         comments_after_type: None,
       }],
+      #[cfg(feature = "ast-span")]
       span: ident.span,
     }
   }
