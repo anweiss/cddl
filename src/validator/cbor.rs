@@ -196,13 +196,6 @@ pub struct CBORValidator<'a> {
   disabled_features: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug)]
-struct GenericRule<'a> {
-  name: &'a str,
-  params: Vec<&'a str>,
-  args: Vec<Type1<'a>>,
-}
-
 impl<'a> CBORValidator<'a> {
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
@@ -954,7 +947,7 @@ where
   fn visit_control_operator(
     &mut self,
     target: &Type2<'a>,
-    ctrl: &str,
+    ctrl: &Token<'a>,
     controller: &Type2<'a>,
   ) -> visitor::Result<Error<T>> {
     if let Type2::Typename {
@@ -1010,8 +1003,8 @@ where
       }
     }
 
-    match lookup_control_from_str(ctrl) {
-      t @ Some(Token::EQ) => {
+    match ctrl {
+      Token::EQ => {
         match target {
           Type2::Typename { ident, .. } => {
             if is_ident_string_data_type(self.cddl, ident)
@@ -1035,7 +1028,7 @@ where
           }
           Type2::Map { .. } => {
             if let Value::Map(_) = &self.cbor {
-              self.ctrl = t;
+              self.ctrl = Some(ctrl.clone());
               self.is_ctrl_map_equality = true;
               self.visit_type2(controller)?;
               self.ctrl = None;
@@ -1050,13 +1043,13 @@ where
         }
         Ok(())
       }
-      t @ Some(Token::NE) => {
+      Token::NE => {
         match target {
           Type2::Typename { ident, .. } => {
             if is_ident_string_data_type(self.cddl, ident)
               || is_ident_numeric_data_type(self.cddl, ident)
             {
-              self.ctrl = t;
+              self.ctrl = Some(ctrl.clone());
               self.visit_type2(controller)?;
               self.ctrl = None;
               return Ok(());
@@ -1064,7 +1057,7 @@ where
           }
           Type2::Array { .. } => {
             if let Value::Array(_) = &self.cbor {
-              self.ctrl = t;
+              self.ctrl = Some(ctrl.clone());
               self.visit_type2(controller)?;
               self.ctrl = None;
               return Ok(());
@@ -1072,7 +1065,7 @@ where
           }
           Type2::Map { .. } => {
             if let Value::Map(_) = &self.cbor {
-              self.ctrl = t;
+              self.ctrl = Some(ctrl.clone());
               self.is_ctrl_map_equality = true;
               self.visit_type2(controller)?;
               self.ctrl = None;
@@ -1087,30 +1080,28 @@ where
         }
         Ok(())
       }
-      t @ Some(Token::LT) | t @ Some(Token::GT) | t @ Some(Token::GE) | t @ Some(Token::LE) => {
-        match target {
-          Type2::Typename { ident, .. } if is_ident_numeric_data_type(self.cddl, ident) => {
-            self.ctrl = t;
-            self.visit_type2(controller)?;
-            self.ctrl = None;
-            Ok(())
-          }
-          _ => {
-            self.add_error(format!(
-              "target for .lt, .gt, .ge or .le operator must be a numerical data type, got {}",
-              target
-            ));
-            Ok(())
-          }
+      Token::LT | Token::GT | Token::GE | Token::LE => match target {
+        Type2::Typename { ident, .. } if is_ident_numeric_data_type(self.cddl, ident) => {
+          self.ctrl = Some(ctrl.clone());
+          self.visit_type2(controller)?;
+          self.ctrl = None;
+          Ok(())
         }
-      }
-      t @ Some(Token::SIZE) => match target {
+        _ => {
+          self.add_error(format!(
+            "target for .lt, .gt, .ge or .le operator must be a numerical data type, got {}",
+            target
+          ));
+          Ok(())
+        }
+      },
+      Token::SIZE => match target {
         Type2::Typename { ident, .. }
           if is_ident_string_data_type(self.cddl, ident)
             || is_ident_uint_data_type(self.cddl, ident)
             || is_ident_byte_string_data_type(self.cddl, ident) =>
         {
-          self.ctrl = t;
+          self.ctrl = Some(ctrl.clone());
           self.visit_type2(controller)?;
           self.ctrl = None;
           Ok(())
@@ -1123,15 +1114,15 @@ where
           Ok(())
         }
       },
-      t @ Some(Token::AND) => {
-        self.ctrl = t;
+      Token::AND => {
+        self.ctrl = Some(ctrl.clone());
         self.visit_type2(target)?;
         self.visit_type2(controller)?;
         self.ctrl = None;
         Ok(())
       }
-      t @ Some(Token::WITHIN) => {
-        self.ctrl = t;
+      Token::WITHIN => {
+        self.ctrl = Some(ctrl.clone());
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         let no_errors = self.errors.len() == error_count;
@@ -1151,8 +1142,8 @@ where
 
         Ok(())
       }
-      t @ Some(Token::DEFAULT) => {
-        self.ctrl = t;
+      Token::DEFAULT => {
+        self.ctrl = Some(ctrl.clone());
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
@@ -1174,8 +1165,8 @@ where
         self.ctrl = None;
         Ok(())
       }
-      t @ Some(Token::REGEXP) | t @ Some(Token::PCRE) => {
-        self.ctrl = t;
+      Token::REGEXP | Token::PCRE => {
+        self.ctrl = Some(ctrl.clone());
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
             match self.cbor {
@@ -1195,8 +1186,8 @@ where
 
         Ok(())
       }
-      t @ Some(Token::CBOR) | t @ Some(Token::CBORSEQ) => {
-        self.ctrl = t;
+      Token::CBOR | Token::CBORSEQ => {
+        self.ctrl = Some(ctrl.clone());
         match target {
           Type2::Typename { ident, .. } if is_ident_byte_string_data_type(self.cddl, ident) => {
             match &self.cbor {
@@ -1216,8 +1207,8 @@ where
 
         Ok(())
       }
-      t @ Some(Token::BITS) => {
-        self.ctrl = t;
+      Token::BITS => {
+        self.ctrl = Some(ctrl.clone());
         match target {
           Type2::Typename { ident, .. }
             if is_ident_byte_string_data_type(self.cddl, ident)
@@ -1242,8 +1233,8 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::CAT) => {
-        self.ctrl = t;
+      Token::CAT => {
+        self.ctrl = Some(ctrl.clone());
 
         match cat_operation(self.cddl, target, controller, false) {
           Ok(values) => {
@@ -1270,8 +1261,8 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::DET) => {
-        self.ctrl = t;
+      Token::DET => {
+        self.ctrl = Some(ctrl.clone());
 
         match cat_operation(self.cddl, target, controller, true) {
           Ok(values) => {
@@ -1298,8 +1289,8 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::PLUS) => {
-        self.ctrl = t;
+      Token::PLUS => {
+        self.ctrl = Some(ctrl.clone());
 
         match plus_operation(self.cddl, target, controller) {
           Ok(values) => {
@@ -1328,8 +1319,8 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::ABNF) => {
-        self.ctrl = t;
+      Token::ABNF => {
+        self.ctrl = Some(ctrl.clone());
 
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
@@ -1376,8 +1367,8 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::ABNFB) => {
-        self.ctrl = t;
+      Token::ABNFB => {
+        self.ctrl = Some(ctrl.clone());
 
         match target {
           Type2::Typename { ident, .. } if is_ident_byte_string_data_type(self.cddl, ident) => {
@@ -1425,8 +1416,8 @@ where
       }
       #[cfg(feature = "additional-controls")]
       #[cfg(not(target_arch = "wasm32"))]
-      t @ Some(Token::FEATURE) => {
-        self.ctrl = t;
+      Token::FEATURE => {
+        self.ctrl = Some(ctrl.clone());
 
         if let Some(ef) = self.enabled_features {
           let tv = text_value_from_type2(self.cddl, controller);

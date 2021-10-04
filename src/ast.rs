@@ -633,6 +633,17 @@ impl<'a> fmt::Display for GenericArgs<'a> {
   }
 }
 
+/// A generic rule that has undergone monomorphization
+#[derive(Clone, Debug)]
+pub struct GenericRule<'a> {
+  /// Name
+  pub name: &'a str,
+  /// Parameters
+  pub params: Vec<&'a str>,
+  /// Arguments
+  pub args: Vec<Type1<'a>>,
+}
+
 /// Type choices
 ///
 /// ```abnf

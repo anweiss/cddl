@@ -559,6 +559,7 @@ pub mod token;
 #[cfg(feature = "std")]
 pub mod validator;
 
+/// Generate fake JSON data from CDDL
 #[cfg(feature = "std")]
 pub mod faker;
 

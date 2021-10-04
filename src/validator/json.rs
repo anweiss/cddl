@@ -212,13 +212,6 @@ pub struct JSONValidator<'a> {
   disabled_features: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug)]
-struct GenericRule<'a> {
-  name: &'a str,
-  params: Vec<&'a str>,
-  args: Vec<Type1<'a>>,
-}
-
 impl<'a> JSONValidator<'a> {
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
@@ -1142,7 +1135,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
   fn visit_control_operator(
     &mut self,
     target: &Type2<'a>,
-    ctrl: &str,
+    ctrl: &Token<'a>,
     controller: &Type2<'a>,
   ) -> visitor::Result<Error> {
     if let Type2::Typename {
@@ -1198,8 +1191,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       }
     }
 
-    match lookup_control_from_str(ctrl) {
-      t @ Some(Token::EQ) => match target {
+    match ctrl {
+      Token::EQ => match target {
         Type2::Typename { ident, .. } => {
           if is_ident_string_data_type(self.cddl, ident)
             || is_ident_numeric_data_type(self.cddl, ident)
@@ -1222,7 +1215,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
         Type2::Map { .. } => {
           if let Value::Object(_) = &self.json {
-            self.ctrl = t;
+            self.ctrl = Some(ctrl.clone());
             self.is_ctrl_map_equality = true;
             self.visit_type2(controller)?;
             self.ctrl = None;
@@ -1235,12 +1228,12 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           target
         )),
       },
-      t @ Some(Token::NE) => match target {
+      Token::NE => match target {
         Type2::Typename { ident, .. } => {
           if is_ident_string_data_type(self.cddl, ident)
             || is_ident_numeric_data_type(self.cddl, ident)
           {
-            self.ctrl = t;
+            self.ctrl = Some(ctrl.clone());
             self.visit_type2(controller)?;
             self.ctrl = None;
             return Ok(());
@@ -1248,7 +1241,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
         Type2::Array { .. } => {
           if let Value::Array(_) = &self.json {
-            self.ctrl = t;
+            self.ctrl = Some(ctrl.clone());
             self.visit_type2(controller)?;
             self.ctrl = None;
             return Ok(());
@@ -1256,7 +1249,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
         Type2::Map { .. } => {
           if let Value::Object(_) = &self.json {
-            self.ctrl = t;
+            self.ctrl = Some(ctrl.clone());
             self.is_ctrl_map_equality = true;
             self.visit_type2(controller)?;
             self.ctrl = None;
@@ -1269,27 +1262,25 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           target
         )),
       },
-      t @ Some(Token::LT) | t @ Some(Token::GT) | t @ Some(Token::GE) | t @ Some(Token::LE) => {
-        match target {
-          Type2::Typename { ident, .. } if is_ident_numeric_data_type(self.cddl, ident) => {
-            self.ctrl = t;
-            self.visit_type2(controller)?;
-            self.ctrl = None;
-          }
-          _ => {
-            self.add_error(format!(
-              "target for .lt, .gt, .ge or .le operator must be a numerical data type, got {}",
-              target
-            ));
-          }
+      Token::LT | Token::GT | Token::GE | Token::LE => match target {
+        Type2::Typename { ident, .. } if is_ident_numeric_data_type(self.cddl, ident) => {
+          self.ctrl = Some(ctrl.clone());
+          self.visit_type2(controller)?;
+          self.ctrl = None;
         }
-      }
-      t @ Some(Token::SIZE) => match target {
+        _ => {
+          self.add_error(format!(
+            "target for .lt, .gt, .ge or .le operator must be a numerical data type, got {}",
+            target
+          ));
+        }
+      },
+      Token::SIZE => match target {
         Type2::Typename { ident, .. }
           if is_ident_string_data_type(self.cddl, ident)
             || is_ident_uint_data_type(self.cddl, ident) =>
         {
-          self.ctrl = t;
+          self.ctrl = Some(ctrl.clone());
           self.visit_type2(controller)?;
           self.ctrl = None;
         }
@@ -1300,14 +1291,14 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           ));
         }
       },
-      t @ Some(Token::AND) => {
-        self.ctrl = t;
+      Token::AND => {
+        self.ctrl = Some(ctrl.clone());
         self.visit_type2(target)?;
         self.visit_type2(controller)?;
         self.ctrl = None;
       }
-      t @ Some(Token::WITHIN) => {
-        self.ctrl = t;
+      Token::WITHIN => {
+        self.ctrl = Some(ctrl.clone());
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         let no_errors = self.errors.len() == error_count;
@@ -1325,8 +1316,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         self.ctrl = None;
       }
-      t @ Some(Token::DEFAULT) => {
-        self.ctrl = t;
+      Token::DEFAULT => {
+        self.ctrl = Some(ctrl.clone());
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
@@ -1347,8 +1338,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
         self.ctrl = None;
       }
-      t @ Some(Token::REGEXP) | t @ Some(Token::PCRE) => {
-        self.ctrl = t;
+      Token::REGEXP | Token::PCRE => {
+        self.ctrl = Some(ctrl.clone());
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
             match self.json {
@@ -1367,8 +1358,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         self.ctrl = None;
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::CAT) => {
-        self.ctrl = t;
+      Token::CAT => {
+        self.ctrl = Some(ctrl.clone());
 
         match cat_operation(self.cddl, target, controller, false) {
           Ok(values) => {
@@ -1394,8 +1385,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         self.ctrl = None;
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::DET) => {
-        self.ctrl = t;
+      Token::DET => {
+        self.ctrl = Some(ctrl.clone());
 
         match cat_operation(self.cddl, target, controller, true) {
           Ok(values) => {
@@ -1421,8 +1412,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         self.ctrl = None;
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::PLUS) => {
-        self.ctrl = t;
+      Token::PLUS => {
+        self.ctrl = Some(ctrl.clone());
 
         match plus_operation(self.cddl, target, controller) {
           Ok(values) => {
@@ -1447,8 +1438,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         self.ctrl = None;
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::ABNF) => {
-        self.ctrl = t;
+      Token::ABNF => {
+        self.ctrl = Some(ctrl.clone());
 
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
@@ -1494,8 +1485,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       }
       #[cfg(feature = "additional-controls")]
       #[cfg(not(target_arch = "wasm32"))]
-      t @ Some(Token::FEATURE) => {
-        self.ctrl = t;
+      Token::FEATURE => {
+        self.ctrl = Some(ctrl.clone());
 
         if let Some(ef) = self.enabled_features {
           let tv = text_value_from_type2(self.cddl, controller);
