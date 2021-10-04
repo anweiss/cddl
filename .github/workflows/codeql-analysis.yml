@@ -99,10 +99,6 @@ jobs:
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build wasm for Node.js
-        run: |
-          wasm-pack build --target nodejs --scope anweiss --release
-
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v1
         with:
