@@ -26,7 +26,7 @@ lexical-core = "0.7.6"
 regex = { version = "1.5.4", default-features = false, features = ["std"] }
 regex-syntax = { version = "0.6.25", optional = true }
 serde = { version = "1.0.127", optional = true, features = ["derive"] }
-serde_cbor = { version = "0.11.1", optional = true, default-features = false, features = ["std", "tags"] }
+ciborium = { git = "https://github.com/enarx/ciborium", branch = "main", optional = true }
 serde_json = { version = "1.0.66", optional = true, default-features = false }
 uriparse = { version = "0.6.3", optional = true }
 base64-url = { version = "1.4.10", optional = true }
@@ -54,7 +54,7 @@ wasm-bindgen-test = "0.3.25"
 
 [features]
 default = ["std", "ast-span", "ast-comments", "json", "cbor", "additional-controls"]
-std = ["base16/alloc", "base64/alloc", "serde_json", "serde_cbor", "serde", "chrono", "wasm-bindgen", "clap", "crossterm", "uriparse", "base64-url", "regex-syntax"]
+std = ["base16/alloc", "base64/alloc", "serde_json", "ciborium", "serde", "chrono", "wasm-bindgen", "clap", "crossterm", "uriparse", "base64-url", "regex-syntax"]
 lsp = ["std"]
 additional-controls = []
 ast-span = []

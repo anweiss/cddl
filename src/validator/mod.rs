@@ -20,6 +20,8 @@ use std::error::Error;
 
 #[cfg(feature = "cbor")]
 use cbor::CBORValidator;
+#[cfg(feature = "cbor")]
+use ciborium;
 #[cfg(feature = "json")]
 use json::JSONValidator;
 use serde::de::Deserialize;
@@ -49,11 +51,6 @@ trait Validator<'a, E: Error>: Visitor<'a, E> {
   fn validate(&mut self) -> std::result::Result<(), E>;
   fn add_error(&mut self, reason: String);
 }
-
-trait Validatable {}
-
-impl Validatable for serde_cbor::Value {}
-impl Validatable for serde_json::Value {}
 
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(feature = "json")]
@@ -165,11 +162,11 @@ pub fn validate_cbor_from_slice(
   cddl: &str,
   cbor_slice: &[u8],
   enabled_features: Option<&[&str]>,
-) -> cbor::Result {
+) -> cbor::Result<std::io::Error> {
   let mut lexer = lexer_from_str(cddl);
   let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(cbor::Error::CDDLParsing)?;
-  let cbor =
-    serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice).map_err(cbor::Error::CBORParsing)?;
+
+  let cbor: ciborium::value::Value = ciborium::de::from_reader(cbor_slice).unwrap();
 
   let mut cv = CBORValidator::new(&cddl, cbor, enabled_features);
   cv.validate()
@@ -179,11 +176,11 @@ pub fn validate_cbor_from_slice(
 #[cfg(feature = "cbor")]
 #[cfg(not(feature = "additional-controls"))]
 /// Validate CBOR slice from a given CDDL document string
-pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result {
+pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result<std::io::Error> {
   let mut lexer = lexer_from_str(cddl);
   let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(cbor::Error::CDDLParsing)?;
-  let cbor =
-    serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice).map_err(cbor::Error::CBORParsing)?;
+  let cbor: ciborium::value::Value =
+    ciborium::de::from_reader(cbor_slice).map_err(cbor::Error::CBORParsing)?;
 
   let mut cv = CBORValidator::new(&cddl, cbor);
   cv.validate()
@@ -223,8 +220,8 @@ pub fn validate_cbor_from_slice(
     );
   }
 
-  let cbor = serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice)
-    .map_err(|e| JsValue::from(e.to_string()))?;
+  let cbor: ciborium::value::Value =
+    ciborium::de::from_reader(cbor_slice).map_err(|e| JsValue::from(e.to_string()))?;
 
   let mut cv = CBORValidator::new(&c, cbor, enabled_features);
   cv.validate()
@@ -265,8 +262,8 @@ pub fn validate_cbor_from_slice(
     );
   }
 
-  let cbor = serde_cbor::from_slice::<serde_cbor::Value>(cbor_slice)
-    .map_err(|e| JsValue::from(e.to_string()))?;
+  let cbor: ciborium::value::Value =
+    ciborium::de::from_reader(cbor_slice).map_err(|e| JsValue::from(e.to_string()))?;
 
   let mut cv = CBORValidator::new(&c, cbor);
   cv.validate()

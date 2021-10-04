@@ -2530,6 +2530,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           Some(Token::REGEXP) | Some(Token::PCRE) => {
             let re = regex::Regex::new(
               &format_regex(
+                // Text strings must be JSON escaped per
+                // https://datatracker.ietf.org/doc/html/rfc8610#section-3.1
                 serde_json::from_str::<Value>(&format!("\"{}\"", t))
                   .map_err(Error::JSONParsing)?
                   .as_str()

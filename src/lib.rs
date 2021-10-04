@@ -6,6 +6,8 @@
 //! packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.9.0-beta.0&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22)
 //! [![Build and
 //! Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22)
+//! [![Active
+//! Development](https://img.shields.io/badge/Maintenance%20Level-Actively%20Developed-brightgreen.svg)](https://gist.github.com/cheerfulstoic/d107229326a01ff0f333a1d3476e068d)
 //!
 //! > This crate was originally developed as a personal learning exercise for
 //! > getting acquainted with Rust and parsing in general. There are likely more
@@ -28,7 +30,7 @@
 //!
 //! This crate supports validation of both CBOR and JSON data structures. An
 //! extremely basic REPL is included as well. This crate's minimum supported
-//! Rust version (MSRV) is 1.46.0.
+//! Rust version (MSRV) is 1.51.0.
 //!
 //! Also bundled into this repository is a basic language server implementation
 //! and extension for Visual Studio Code for editing CDDL. The implementation is
@@ -184,7 +186,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cddl = "0.9"
+//! cddl = "0.9.0-beta.0"
 //! ```
 //!
 //! Both JSON and CBOR validation require `std`.
@@ -253,7 +255,7 @@
 //! specifically, the [serde_json](https://crates.io/crates/serde_json) crate,
 //! for parsing and validating JSON. Serde was chosen due to its maturity in the
 //! ecosystem and its support for serializing and deserializing CBOR via the
-//! [serde_cbor](https://crates.io/crates/serde_cbor) crate.
+//! [ciborium](https://crates.io/crates/ciborium) crate.
 //!
 //! As outlined in [Appendix E.](https://tools.ietf.org/html/rfc8610#appendix-E)
 //! of the standard, only the JSON data model subset of CBOR can be used for
@@ -404,6 +406,7 @@
 //!
 //! let json = r#""v""#;
 //!
+//! #[cfg(feature = "additional-controls")]
 //! assert!(validate_json_from_str(cddl, json, Some(&["json"])).is_ok())
 //! ```
 //!
@@ -434,9 +437,9 @@
 //! ```
 //!
 //! This crate also uses [Serde](https://serde.rs/) and
-//! [serde_cbor](https://crates.io/crates/serde_cbor) for validating CBOR data
+//! [ciborium](https://crates.io/crates/ciborium) for validating CBOR data
 //! structures. CBOR validation is done via the loosely typed
-//! [`serde_cbor::Value`](https://docs.rs/serde_cbor/0.10.1/serde_cbor/enum.Value.html)
+//! [`ciborium::value::Value`](https://github.com/enarx/ciborium/blob/main/ciborium/src/value/mod.rs#L22)
 //! enum. In addition to all of the same features implemented by the JSON
 //! validator, this crate also supports validating CBOR tags (e.g.
 //! `#6.32(tstr)`), CBOR major types (e.g. `#1.2`), table types (e.g. `{ [ +
@@ -489,6 +492,7 @@
 //!
 //! let cbor = b"\x02";
 //!
+//! #[cfg(feature = "additional-controls")]
 //! assert!(validate_cbor_from_slice(cddl, cbor, Some(&["cbor"])).is_ok())
 //! ```
 //!
@@ -500,7 +504,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cddl = { version = "0.9", default-features = false }
+//! cddl = { version = "0.9.0-beta.0", default-features = false }
 //! ```
 //!
 //! Zero-copy parsing is implemented to the extent that is possible. Allocation
@@ -531,9 +535,6 @@ extern crate core as std;
 
 #[cfg(feature = "std")]
 extern crate serde_json;
-
-#[cfg(feature = "std")]
-extern crate serde_cbor;
 
 #[cfg(feature = "std")]
 extern crate uriparse;
