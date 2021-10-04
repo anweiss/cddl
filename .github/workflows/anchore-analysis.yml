@@ -9,9 +9,17 @@ name: Anchore Container Scan
 on:
   push:
     branches: [main]
+    paths:
+      - Dockerfile
+      - '.dockerignore'
+      - '.github/workflows/anchore-analysis.yml'
   pull_request:
     # The branches below must be a subset of the branches above
     branches: [main]
+    paths:
+      - Dockerfile
+      - '.dockerignore'
+      - '.github/workflows/anchore-analysis.yml'
   schedule:
     - cron: '0 2 * * 4'
 
