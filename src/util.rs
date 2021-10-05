@@ -1,5 +1,11 @@
 use crate::{ast::*, token::*};
 
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
+#[cfg(feature = "std")]
+use regex_syntax;
+
 /// Find non-choice alternate rule from a given identifier
 pub fn rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a Rule<'a>> {
   cddl.rules.iter().find_map(|r| match r {
@@ -604,6 +610,7 @@ pub struct EntryCount {
 
 /// Regex needs to be formatted in a certain way so it can be parsed. See
 /// <https://github.com/anweiss/cddl/issues/67>
+#[cfg(feature = "std")]
 pub fn format_regex(input: &str) -> Option<String> {
   let mut formatted_regex = String::from(input);
   let mut unescape = Vec::new();
