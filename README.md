@@ -19,7 +19,7 @@ Also bundled into this repository is a basic language server implementation and 
 - [x] Validate CBOR data structures
 - [x] Validate JSON documents
 - [x] Basic REPL
-- [ ] Generate dummy JSON from conformant CDDL
+- [x] Generate dummy JSON from conformant CDDL
 - [x] As close to zero-copy as possible
 - [x] Compile WebAssembly target for browser and Node.js
 - [x] `no_std` support (lexing and parsing only)

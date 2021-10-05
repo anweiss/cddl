@@ -1,7 +1,7 @@
 use crate::{
   ast::*,
   token::{lookup_ident, Token},
-  validator::*,
+  util::*,
   visitor::{self, *},
 };
 
@@ -66,6 +66,41 @@ impl<'a> Faker<'a> {
       eval_generic_rule: None,
       is_group_to_choice_enum: false,
     }
+  }
+
+  fn process_generic_args(
+    &mut self,
+    ident: &Identifier<'a>,
+    generic_args: &GenericArgs<'a>,
+  ) -> visitor::Result<Error> {
+    if let Some(rule) = rule_from_ident(self.cddl, ident) {
+      if let Some(gr) = self
+        .generic_rules
+        .iter_mut()
+        .find(|gr| gr.name == ident.ident)
+      {
+        for arg in generic_args.args.iter() {
+          gr.args.push((*arg.arg).clone());
+        }
+      } else if let Some(params) = generic_params_from_rule(rule) {
+        self.generic_rules.push(GenericRule {
+          name: ident.ident,
+          params,
+          args: generic_args
+            .args
+            .iter()
+            .cloned()
+            .map(|arg| *arg.arg)
+            .collect(),
+        });
+      }
+
+      self.eval_generic_rule = Some(ident.ident);
+
+      return self.visit_rule(rule);
+    }
+
+    Ok(())
   }
 }
 
@@ -188,7 +223,7 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
             for (idx, gp) in gr.params.iter().enumerate() {
               if let Some(arg) = gr.args.get(idx) {
                 if *gp == target_ident.ident {
-                  let t2 = Type2::from(arg.clone());
+                  let t2 = Type2::from((*arg).clone());
 
                   if *gp == controller_ident.ident {
                     return self.visit_control_operator(&t2, ctrl, &t2);
@@ -212,7 +247,7 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
           for (idx, gp) in gr.params.iter().enumerate() {
             if let Some(arg) = gr.args.get(idx) {
               if *gp == target_ident.ident {
-                let t2 = Type2::from(arg.clone());
+                let t2 = Type2::from((*arg).clone());
                 return self.visit_control_operator(&t2, ctrl, controller);
               }
             }
@@ -233,6 +268,115 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
         }
         _ => return Ok(()),
       },
+      _ => return Ok(()),
+    }
+
+    Ok(())
+  }
+
+  fn visit_range(
+    &mut self,
+    lower: &Type2<'a>,
+    upper: &Type2<'a>,
+    is_inclusive: bool,
+  ) -> visitor::Result<Error> {
+    match lower {
+      Type2::IntValue { value: lower_v, .. } => match upper {
+        Type2::IntValue { value: upper, .. } => {
+          if is_inclusive {
+            self.faked_json = Some((*lower_v..=*upper).fake::<isize>().into());
+          } else {
+            self.faked_json = Some((*lower_v..*upper).fake::<isize>().into());
+          }
+        }
+        Type2::UintValue { value: upper, .. } => {
+          if is_inclusive {
+            self.faked_json = Some((*lower_v..=*upper as isize).fake::<isize>().into());
+          } else {
+            self.faked_json = Some((*lower_v..*upper as isize).fake::<isize>().into());
+          }
+        }
+        Type2::Typename {
+          ident,
+          generic_args,
+          ..
+        } => {
+          if let Some(ga) = generic_args {
+            return self.process_generic_args(ident, ga);
+          }
+
+          if let Some(t2) = numeric_range_bound_from_ident(self.cddl, ident) {
+            return self.visit_range(lower, t2, is_inclusive);
+          }
+        }
+        _ => return Ok(()),
+      },
+      Type2::UintValue { value: lower_v, .. } => match upper {
+        Type2::IntValue { value: upper, .. } => {
+          if is_inclusive {
+            self.faked_json = Some((*lower_v..=*upper as usize).fake::<usize>().into());
+          } else {
+            self.faked_json = Some((*lower_v..*upper as usize).fake::<usize>().into());
+          }
+        }
+        Type2::UintValue { value: upper, .. } => {
+          if is_inclusive {
+            self.faked_json = Some((*lower_v..=*upper).fake::<usize>().into());
+          } else {
+            self.faked_json = Some((*lower_v..*upper).fake::<usize>().into());
+          }
+        }
+        Type2::Typename {
+          ident,
+          generic_args,
+          ..
+        } => {
+          if let Some(ga) = generic_args {
+            return self.process_generic_args(ident, ga);
+          }
+
+          if let Some(t2) = numeric_range_bound_from_ident(self.cddl, ident) {
+            return self.visit_range(lower, t2, is_inclusive);
+          }
+        }
+        _ => return Ok(()),
+      },
+      Type2::FloatValue { value: lower_v, .. } => match upper {
+        Type2::FloatValue { value: upper, .. } => {
+          if is_inclusive {
+            self.faked_json = Some((*lower_v..=*upper).fake::<f64>().into());
+          } else {
+            self.faked_json = Some((*lower_v..*upper).fake::<f64>().into());
+          }
+        }
+        Type2::Typename {
+          ident,
+          generic_args,
+          ..
+        } => {
+          if let Some(ga) = generic_args {
+            return self.process_generic_args(ident, ga);
+          }
+
+          if let Some(t2) = numeric_range_bound_from_ident(self.cddl, ident) {
+            return self.visit_range(lower, t2, is_inclusive);
+          }
+        }
+        _ => return Ok(()),
+      },
+      Type2::Typename {
+        ident,
+        generic_args,
+        ..
+      } => {
+        if let Some(ga) = generic_args {
+          return self.process_generic_args(ident, ga);
+        }
+
+        if let Some(t2) = numeric_range_bound_from_ident(self.cddl, ident) {
+          return self.visit_range(t2, upper, is_inclusive);
+        }
+      }
       _ => return Ok(()),
     }
 
@@ -311,6 +455,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
                   Occur::Optional(_) => {
                     if FFaker.fake::<bool>() {
                       let mut entry_f = Faker::new(self.cddl);
+                      entry_f.eval_generic_rule = self.eval_generic_rule;
+                      entry_f.generic_rules = self.generic_rules.clone();
+                      entry_f.ctrl = self.ctrl.clone();
                       entry_f.visit_type(entry)?;
 
                       if let Some(value) = entry_f.faked_json {
@@ -324,6 +471,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
                   Occur::Optional => {
                     if FFaker.fake::<bool>() {
                       let mut entry_f = Faker::new(self.cddl);
+                      entry_f.eval_generic_rule = self.eval_generic_rule;
+                      entry_f.generic_rules = self.generic_rules.clone();
+                      entry_f.ctrl = self.ctrl.clone();
                       entry_f.visit_type(entry)?;
 
                       if let Some(value) = entry_f.faked_json {
@@ -342,6 +492,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
                     // will be empty.
                     for _ in lower..upper {
                       let mut entry_f = Faker::new(self.cddl);
+                      entry_f.eval_generic_rule = self.eval_generic_rule;
+                      entry_f.generic_rules = self.generic_rules.clone();
+                      entry_f.ctrl = self.ctrl.clone();
                       entry_f.visit_type(entry)?;
 
                       if let Some(value) = entry_f.faked_json {
@@ -361,6 +514,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
                     // will be empty.
                     for _ in lower..upper {
                       let mut entry_f = Faker::new(self.cddl);
+                      entry_f.eval_generic_rule = self.eval_generic_rule;
+                      entry_f.generic_rules = self.generic_rules.clone();
+                      entry_f.ctrl = self.ctrl.clone();
                       entry_f.visit_type(entry)?;
 
                       if let Some(value) = entry_f.faked_json {
@@ -375,6 +531,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
                   Occur::OneOrMore(_) => {
                     for _ in 0..(1..5).fake::<usize>() {
                       let mut entry_f = Faker::new(self.cddl);
+                      entry_f.eval_generic_rule = self.eval_generic_rule;
+                      entry_f.generic_rules = self.generic_rules.clone();
+                      entry_f.ctrl = self.ctrl.clone();
                       entry_f.visit_type(entry)?;
 
                       if let Some(value) = entry_f.faked_json {
@@ -389,6 +548,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
                   Occur::OneOrMore => {
                     for _ in 0..(1..5).fake::<usize>() {
                       let mut entry_f = Faker::new(self.cddl);
+                      entry_f.eval_generic_rule = self.eval_generic_rule;
+                      entry_f.generic_rules = self.generic_rules.clone();
+                      entry_f.ctrl = self.ctrl.clone();
                       entry_f.visit_type(entry)?;
 
                       if let Some(value) = entry_f.faked_json {
@@ -404,6 +566,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
                       if let Some(upper) = upper {
                         for _ in *lower..*upper {
                           let mut entry_f = Faker::new(self.cddl);
+                          entry_f.eval_generic_rule = self.eval_generic_rule;
+                          entry_f.generic_rules = self.generic_rules.clone();
+                          entry_f.ctrl = self.ctrl.clone();
                           entry_f.visit_type(entry)?;
 
                           if let Some(value) = entry_f.faked_json {
@@ -413,6 +578,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
                       } else {
                         for _ in *lower..(lower + (0..5).fake::<usize>()) {
                           let mut entry_f = Faker::new(self.cddl);
+                          entry_f.eval_generic_rule = self.eval_generic_rule;
+                          entry_f.generic_rules = self.generic_rules.clone();
+                          entry_f.ctrl = self.ctrl.clone();
                           entry_f.visit_type(entry)?;
 
                           if let Some(value) = entry_f.faked_json {
@@ -423,6 +591,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
                     } else if let Some(upper) = upper {
                       for _ in 0..(upper - (0..=*upper).fake::<usize>()) {
                         let mut entry_f = Faker::new(self.cddl);
+                        entry_f.eval_generic_rule = self.eval_generic_rule;
+                        entry_f.generic_rules = self.generic_rules.clone();
+                        entry_f.ctrl = self.ctrl.clone();
                         entry_f.visit_type(entry)?;
 
                         if let Some(value) = entry_f.faked_json {
@@ -434,6 +605,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
                 }
               } else {
                 let mut entry_f = Faker::new(self.cddl);
+                entry_f.eval_generic_rule = self.eval_generic_rule;
+                entry_f.generic_rules = self.generic_rules.clone();
+                entry_f.ctrl = self.ctrl.clone();
                 entry_f.visit_type(entry)?;
 
                 if let Some(value) = entry_f.faked_json {
@@ -469,6 +643,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
 
               if generate {
                 let mut entry_f = Faker::new(self.cddl);
+                entry_f.eval_generic_rule = self.eval_generic_rule;
+                entry_f.generic_rules = self.generic_rules.clone();
+                entry_f.ctrl = self.ctrl.clone();
                 entry_f.visit_type(v)?;
 
                 if let Some(value) = entry_f.faked_json {
@@ -487,27 +664,7 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
         ..
       } => {
         if let Some(ga) = generic_args {
-          if let Some(rule) = rule_from_ident(self.cddl, ident) {
-            if let Some(gr) = self
-              .generic_rules
-              .iter_mut()
-              .find(|gr| gr.name == ident.ident)
-            {
-              for arg in ga.args.iter() {
-                gr.args.push((*arg.arg).clone());
-              }
-            } else if let Some(params) = generic_params_from_rule(rule) {
-              self.generic_rules.push(GenericRule {
-                name: ident.ident,
-                params,
-                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
-              });
-            }
-
-            self.eval_generic_rule = Some(ident.ident);
-
-            return self.visit_rule(rule);
-          }
+          return self.process_generic_args(ident, ga);
         }
 
         return self.visit_identifier(ident);
@@ -518,28 +675,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
         ..
       } => {
         if let Some(ga) = generic_args {
-          if let Some(rule) = rule_from_ident(self.cddl, ident) {
-            if let Some(gr) = self
-              .generic_rules
-              .iter_mut()
-              .find(|gr| gr.name == ident.ident)
-            {
-              for arg in ga.args.iter() {
-                gr.args.push((*arg.arg).clone());
-              }
-            } else if let Some(params) = generic_params_from_rule(rule) {
-              self.generic_rules.push(GenericRule {
-                name: ident.ident,
-                params,
-                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
-              });
-            }
+          self.is_group_to_choice_enum = true;
 
-            self.eval_generic_rule = Some(ident.ident);
-            self.is_group_to_choice_enum = true;
-
-            return self.visit_rule(rule);
-          }
+          return self.process_generic_args(ident, ga);
         }
 
         self.is_group_to_choice_enum = true;
@@ -681,10 +819,9 @@ mod tests {
   fn test_faker() -> Result<()> {
     let cddl = indoc!(
       r#"
-        a = b / d
-        b = { c }
-        c = ( a: tstr )
-        d = [ + tstr ]
+        messages = message<"reboot", "now"> / message<"sleep", a .. 5>
+        message<t, v> = {type: t, value: v}
+        a = 1 / 2 / 3
       "#
     );
 

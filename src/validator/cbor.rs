@@ -2,10 +2,11 @@
 #![cfg(feature = "cbor")]
 #![cfg(not(feature = "lsp"))]
 
-use super::*;
 use crate::{
   ast::*,
   token::{self, Token},
+  util::*,
+  validator::*,
   visitor::{self, *},
 };
 
@@ -1636,6 +1637,7 @@ where
             return Ok(());
           }
 
+          #[allow(clippy::needless_collect)]
           let m = m.iter().map(|entry| entry.0.clone()).collect::<Vec<_>>();
 
           self.visit_group(group)?;

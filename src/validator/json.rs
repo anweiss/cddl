@@ -2,10 +2,11 @@
 #![cfg(feature = "json")]
 #![cfg(not(feature = "lsp"))]
 
-use super::*;
 use crate::{
   ast::*,
-  token::{self, Token},
+  token::{self, lookup_ident, Token},
+  util::*,
+  validator::*,
   visitor::{self, *},
 };
 
@@ -15,7 +16,7 @@ use chrono::{TimeZone, Utc};
 use serde_json::Value;
 
 #[cfg(feature = "additional-controls")]
-use control::{abnf_from_complex_controller, cat_operation, plus_operation, validate_abnf};
+use super::control::{abnf_from_complex_controller, cat_operation, plus_operation, validate_abnf};
 
 /// JSON validation Result
 pub type Result = std::result::Result<(), Error>;
@@ -1578,6 +1579,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value.clone())),
       Type2::Map { group, .. } => match &self.json {
         Value::Object(o) => {
+          #[allow(clippy::needless_collect)]
           let o = o.keys().cloned().collect::<Vec<_>>();
 
           self.visit_group(group)?;
@@ -2604,6 +2606,9 @@ mod tests {
   #![allow(unused_imports)]
 
   use super::*;
+
+  use crate::{cddl_from_str, lexer_from_str, validator::json};
+
   use indoc::indoc;
 
   #[cfg(feature = "additional-controls")]

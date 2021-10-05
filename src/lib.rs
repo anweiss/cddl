@@ -555,6 +555,8 @@ pub mod parser;
 pub mod repl;
 /// CDDL tokens for lexing
 pub mod token;
+/// CDDL helper functions
+pub mod util;
 /// Validators for JSON and CBOR data structures
 #[cfg(feature = "std")]
 pub mod validator;
