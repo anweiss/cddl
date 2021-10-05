@@ -533,15 +533,6 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate core as std;
 
-#[cfg(feature = "std")]
-extern crate serde_json;
-
-#[cfg(feature = "std")]
-extern crate uriparse;
-
-#[cfg(feature = "std")]
-extern crate base64_url;
-
 /// Abstract syntax tree representing a CDDL definition
 pub mod ast;
 /// Static error messages
