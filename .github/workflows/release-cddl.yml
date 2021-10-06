@@ -9,40 +9,7 @@ on:
 
 jobs:
   compilation-check:
-    name: Build and test binaries
-    strategy:
-      matrix:
-        rust_toolchain: [stable]
-        os: [ubuntu-latest, macOS-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v2
-
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.rust_toolchain }}
-          override: true
-
-      - name: Check compilation with default features
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --all --bins --examples --tests
-
-      - name: Check compilation with no features
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --all --bins --examples --tests --no-default-features
-
-      - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.os }}
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all
+    uses: anweiss/cddl/.github/workflows/compilation-check.yml@main
 
   cargo-publish-dry-run:
     name: Cargo publish dry run
