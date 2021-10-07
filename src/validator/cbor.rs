@@ -743,8 +743,8 @@ where
     }
 
     match lower {
-      Type2::IntValue { value: l, .. } => match upper {
-        Type2::IntValue { value: u, .. } => {
+      Type2::IntValue(IntValue { value: l, .. }) => match upper {
+        Type2::IntValue(IntValue { value: u, .. }) => {
           let error_str = if is_inclusive {
             format!(
               "expected integer to be in range {} <= value <= {}, got {:?}",
@@ -778,7 +778,7 @@ where
             }
           }
         }
-        Type2::UintValue { value: u, .. } => {
+        Type2::UintValue(UintValue { value: u, .. }) => {
           let error_str = if is_inclusive {
             format!(
               "expected integer to be in range {} <= value <= {}, got {:?}",
@@ -820,8 +820,8 @@ where
           return Ok(());
         }
       },
-      Type2::UintValue { value: l, .. } => match upper {
-        Type2::UintValue { value: u, .. } => {
+      Type2::UintValue(UintValue { value: l, .. }) => match upper {
+        Type2::UintValue(UintValue { value: u, .. }) => {
           let error_str = if is_inclusive {
             format!(
               "expected uint to be in range {} <= value <= {}, got {:?}",
@@ -889,8 +889,8 @@ where
           return Ok(());
         }
       },
-      Type2::FloatValue { value: l, .. } => match upper {
-        Type2::FloatValue { value: u, .. } => {
+      Type2::FloatValue(FloatValue { value: l, .. }) => match upper {
+        Type2::FloatValue(FloatValue { value: u, .. }) => {
           let error_str = if is_inclusive {
             format!(
               "expected float to be in range {} <= value <= {}, got {:?}",
@@ -951,15 +951,15 @@ where
     ctrl: &Token<'a>,
     controller: &Type2<'a>,
   ) -> visitor::Result<Error<T>> {
-    if let Type2::Typename {
+    if let Type2::Typename(Typename {
       ident: target_ident,
       ..
-    } = target
+    }) = target
     {
-      if let Type2::Typename {
+      if let Type2::Typename(Typename {
         ident: controller_ident,
         ..
-      } = controller
+      }) = controller
       {
         if let Some(name) = self.eval_generic_rule {
           if let Some(gr) = self
@@ -1007,14 +1007,14 @@ where
     match ctrl {
       Token::EQ => {
         match target {
-          Type2::Typename { ident, .. } => {
+          Type2::Typename(Typename { ident, .. }) => {
             if is_ident_string_data_type(self.cddl, ident)
               || is_ident_numeric_data_type(self.cddl, ident)
             {
               return self.visit_type2(controller);
             }
           }
-          Type2::Array { group, .. } => {
+          Type2::Array(Array { group, .. }) => {
             if let Value::Array(_) = &self.cbor {
               let mut entry_counts = Vec::new();
               for gc in group.group_choices.iter() {
@@ -1027,7 +1027,7 @@ where
               return Ok(());
             }
           }
-          Type2::Map { .. } => {
+          Type2::Map(Map { .. }) => {
             if let Value::Map(_) = &self.cbor {
               self.ctrl = Some(ctrl.clone());
               self.is_ctrl_map_equality = true;
@@ -1046,7 +1046,7 @@ where
       }
       Token::NE => {
         match target {
-          Type2::Typename { ident, .. } => {
+          Type2::Typename(Typename { ident, .. }) => {
             if is_ident_string_data_type(self.cddl, ident)
               || is_ident_numeric_data_type(self.cddl, ident)
             {
@@ -1056,7 +1056,7 @@ where
               return Ok(());
             }
           }
-          Type2::Array { .. } => {
+          Type2::Array(Array { .. }) => {
             if let Value::Array(_) = &self.cbor {
               self.ctrl = Some(ctrl.clone());
               self.visit_type2(controller)?;
@@ -1064,7 +1064,7 @@ where
               return Ok(());
             }
           }
-          Type2::Map { .. } => {
+          Type2::Map(Map { .. }) => {
             if let Value::Map(_) = &self.cbor {
               self.ctrl = Some(ctrl.clone());
               self.is_ctrl_map_equality = true;
@@ -1082,7 +1082,7 @@ where
         Ok(())
       }
       Token::LT | Token::GT | Token::GE | Token::LE => match target {
-        Type2::Typename { ident, .. } if is_ident_numeric_data_type(self.cddl, ident) => {
+        Type2::Typename(Typename { ident, .. }) if is_ident_numeric_data_type(self.cddl, ident) => {
           self.ctrl = Some(ctrl.clone());
           self.visit_type2(controller)?;
           self.ctrl = None;
@@ -1097,7 +1097,7 @@ where
         }
       },
       Token::SIZE => match target {
-        Type2::Typename { ident, .. }
+        Type2::Typename(Typename { ident, .. })
           if is_ident_string_data_type(self.cddl, ident)
             || is_ident_uint_data_type(self.cddl, ident)
             || is_ident_byte_string_data_type(self.cddl, ident) =>
@@ -1169,7 +1169,9 @@ where
       Token::REGEXP | Token::PCRE => {
         self.ctrl = Some(ctrl.clone());
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename(Typename { ident, .. })
+            if is_ident_string_data_type(self.cddl, ident) =>
+          {
             match self.cbor {
               Value::Text(_) | Value::Array(_) => self.visit_type2(controller)?,
               _ => self.add_error(format!(
@@ -1190,7 +1192,9 @@ where
       Token::CBOR | Token::CBORSEQ => {
         self.ctrl = Some(ctrl.clone());
         match target {
-          Type2::Typename { ident, .. } if is_ident_byte_string_data_type(self.cddl, ident) => {
+          Type2::Typename(Typename { ident, .. })
+            if is_ident_byte_string_data_type(self.cddl, ident) =>
+          {
             match &self.cbor {
               Value::Bytes(_) | Value::Array(_) => self.visit_type2(controller)?,
               _ => self.add_error(format!(
@@ -1211,7 +1215,7 @@ where
       Token::BITS => {
         self.ctrl = Some(ctrl.clone());
         match target {
-          Type2::Typename { ident, .. }
+          Type2::Typename(Typename { ident, .. })
             if is_ident_byte_string_data_type(self.cddl, ident)
               || is_ident_uint_data_type(self.cddl, ident) =>
           {
@@ -1324,10 +1328,12 @@ where
         self.ctrl = Some(ctrl.clone());
 
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename(Typename { ident, .. })
+            if is_ident_string_data_type(self.cddl, ident) =>
+          {
             match self.cbor {
               Value::Text(_) | Value::Array(_) => {
-                if let Type2::ParenthesizedType { pt, .. } = controller {
+                if let Type2::ParenthesizedType(ParenthesizedType { pt, .. }) = controller {
                   match abnf_from_complex_controller(self.cddl, pt) {
                     Ok(values) => {
                       let error_count = self.errors.len();
@@ -1372,10 +1378,12 @@ where
         self.ctrl = Some(ctrl.clone());
 
         match target {
-          Type2::Typename { ident, .. } if is_ident_byte_string_data_type(self.cddl, ident) => {
+          Type2::Typename(Typename { ident, .. })
+            if is_ident_byte_string_data_type(self.cddl, ident) =>
+          {
             match self.cbor {
               Value::Bytes(_) | Value::Array(_) => {
-                if let Type2::ParenthesizedType { pt, .. } = controller {
+                if let Type2::ParenthesizedType(ParenthesizedType { pt, .. }) = controller {
                   match abnf_from_complex_controller(self.cddl, pt) {
                     Ok(values) => {
                       let error_count = self.errors.len();
@@ -1422,7 +1430,7 @@ where
 
         if let Some(ef) = self.enabled_features {
           let tv = text_value_from_type2(self.cddl, controller);
-          if let Some(Type2::TextValue { value, .. }) = tv {
+          if let Some(Type2::TextValue(TextValue { value, .. })) = tv {
             if ef.contains(&&**value) {
               let err_count = self.errors.len();
               self.visit_type2(target)?;
@@ -1436,7 +1444,7 @@ where
                 .get_or_insert(vec![value.to_string()])
                 .push(value.to_string());
             }
-          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
+          } else if let Some(Type2::UTF8ByteString(Utf8ByteString { value, .. })) = tv {
             let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
             if ef.contains(&value) {
               let err_count = self.errors.len();
@@ -1465,7 +1473,7 @@ where
 
         if let Some(ef) = &self.enabled_features {
           let tv = text_value_from_type2(self.cddl, controller);
-          if let Some(Type2::TextValue { value, .. }) = tv {
+          if let Some(Type2::TextValue(TextValue { value, .. })) = tv {
             if ef.contains(&JsValue::from(value.as_ref())) {
               let err_count = self.errors.len();
               self.visit_type2(target)?;
@@ -1479,7 +1487,7 @@ where
                 .get_or_insert(vec![value.to_string()])
                 .push(value.to_string());
             }
-          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
+          } else if let Some(Type2::UTF8ByteString(Utf8ByteString { value, .. })) = tv {
             let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
             if ef.contains(&JsValue::from(value)) {
               let err_count = self.errors.len();
@@ -1598,8 +1606,10 @@ where
     }
 
     match t2 {
-      Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value.clone())),
-      Type2::Map { group, .. } => match &self.cbor {
+      Type2::TextValue(TextValue { value, .. }) => {
+        self.visit_value(&token::Value::TEXT(value.clone()))
+      }
+      Type2::Map(Map { group, .. }) => match &self.cbor {
         Value::Map(m) => {
           if self.is_member_key {
             let current_location = self.cbor_location.clone();
@@ -1759,7 +1769,7 @@ where
           Ok(())
         }
       },
-      Type2::Array { group, .. } => match &self.cbor {
+      Type2::Array(Array { group, .. }) => match &self.cbor {
         Value::Array(a) => {
           if group.group_choices.len() == 1
             && group.group_choices[0].group_entries.is_empty()
@@ -1847,11 +1857,11 @@ where
           Ok(())
         }
       },
-      Type2::ChoiceFromGroup {
+      Type2::ChoiceFromGroup(ChoiceFromGroup {
         ident,
         generic_args,
         ..
-      } => {
+      }) => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.cddl, ident) {
             if let Some(gr) = self
@@ -1904,17 +1914,17 @@ where
 
         Ok(())
       }
-      Type2::ChoiceFromInlineGroup { group, .. } => {
+      Type2::ChoiceFromInlineGroup(ChoiceFromInlineGroup { group, .. }) => {
         self.is_group_to_choice_enum = true;
         self.visit_group(group)?;
         self.is_group_to_choice_enum = false;
         Ok(())
       }
-      Type2::Typename {
+      Type2::Typename(Typename {
         ident,
         generic_args,
         ..
-      } => {
+      }) => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.cddl, ident) {
             if let Some(gr) = self
@@ -1954,19 +1964,21 @@ where
 
         self.visit_identifier(ident)
       }
-      Type2::IntValue { value, .. } => self.visit_value(&token::Value::INT(*value)),
-      Type2::UintValue { value, .. } => self.visit_value(&token::Value::UINT(*value)),
-      Type2::FloatValue { value, .. } => self.visit_value(&token::Value::FLOAT(*value)),
-      Type2::ParenthesizedType { pt, .. } => self.visit_type(pt),
-      Type2::Unwrap {
+      Type2::IntValue(IntValue { value, .. }) => self.visit_value(&token::Value::INT(*value)),
+      Type2::UintValue(UintValue { value, .. }) => self.visit_value(&token::Value::UINT(*value)),
+      Type2::FloatValue(FloatValue { value, .. }) => self.visit_value(&token::Value::FLOAT(*value)),
+      Type2::ParenthesizedType(ParenthesizedType { pt, .. }) => self.visit_type(pt),
+      Type2::Unwrap(Unwrap {
         ident,
         generic_args,
         ..
-      } => {
+      }) => {
         // Per
         // https://github.com/w3c/did-spec-registries/pull/138#issuecomment-719739215,
         // strip tag and validate underlying type
-        if let Some(Type2::TaggedData { t, .. }) = tag_from_token(&lookup_ident(ident.ident)) {
+        if let Some(Type2::TaggedData(TaggedData { t, .. })) =
+          tag_from_token(&lookup_ident(ident.ident))
+        {
           return self.visit_type(&t);
         }
 
@@ -2018,7 +2030,7 @@ where
 
         Ok(())
       }
-      Type2::TaggedData { tag, t, .. } => match &self.cbor {
+      Type2::TaggedData(TaggedData { tag, t, .. }) => match &self.cbor {
         Value::Tag(actual_tag, value) => {
           if let Some(tag) = tag {
             if *tag as u64 != *actual_tag {
@@ -2074,7 +2086,7 @@ where
           Ok(())
         }
       },
-      Type2::DataMajorType { mt, constraint, .. } => match &self.cbor {
+      Type2::DataMajorType(DataMajorType { mt, constraint, .. }) => match &self.cbor {
         Value::Integer(i) => {
           match mt {
             0u8 => match constraint {
@@ -3116,7 +3128,7 @@ where
 
   fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<Error<T>> {
     match mk {
-      MemberKey::Type1 { is_cut, .. } => {
+      MemberKey::Type1(Type1MemberKey { is_cut, .. }) => {
         self.is_cut_present = *is_cut;
         walk_memberkey(self, mk)?;
         self.is_cut_present = false;

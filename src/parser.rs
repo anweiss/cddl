@@ -679,19 +679,20 @@ where
                     // TODO: Replace with box pattern destructuring once supported in stable
                     if let GroupEntry::ValueMemberKey { ge, .. } = &group_entry.0 {
                       if ge.occur.is_none() && ge.member_key.is_none() {
-                        let value = self.parse_type(Some(Type2::ParenthesizedType {
-                          #[cfg(feature = "ast-comments")]
-                          comments_before_type: comments_before_group.clone(),
-                          pt: ge.entry_type.clone(),
-                          #[cfg(feature = "ast-comments")]
-                          comments_after_type: comments_after_group.clone(),
-                          #[cfg(feature = "ast-span")]
-                          span: Span(
-                            begin_pt_range,
-                            self.parser_position.range.1,
-                            begin_rule_line,
-                          ),
-                        }))?;
+                        let value =
+                          self.parse_type(Some(Type2::ParenthesizedType(ParenthesizedType {
+                            #[cfg(feature = "ast-comments")]
+                            comments_before_type: comments_before_group.clone(),
+                            pt: ge.entry_type.clone(),
+                            #[cfg(feature = "ast-comments")]
+                            comments_after_type: comments_after_group.clone(),
+                            #[cfg(feature = "ast-span")]
+                            span: Span(
+                              begin_pt_range,
+                              self.parser_position.range.1,
+                              begin_rule_line,
+                            ),
+                          })))?;
 
                         #[cfg(feature = "ast-span")]
                         {
@@ -992,13 +993,14 @@ where
     }
 
     #[cfg(feature = "ast-span")]
-    let begin_type_range = if let Some(Type2::ParenthesizedType { span, .. }) = parenthesized_type {
-      self.parser_position.line = span.2;
+    let begin_type_range =
+      if let Some(Type2::ParenthesizedType(ParenthesizedType { span, .. })) = parenthesized_type {
+        self.parser_position.line = span.2;
 
-      span.0
-    } else {
-      self.parser_position.range.0
-    };
+        span.0
+      } else {
+        self.parser_position.range.0
+      };
 
     let mut t = Type {
       type_choices: Vec::new(),
@@ -1072,7 +1074,7 @@ where
     #[cfg(feature = "ast-span")]
     let mut begin_type1_range = self.lexer_position.range.0;
 
-    let t2_1 = if let Some(Type2::ParenthesizedType {
+    let t2_1 = if let Some(Type2::ParenthesizedType(ParenthesizedType {
       #[cfg(feature = "ast-comments")]
       comments_before_type,
       pt,
@@ -1080,7 +1082,7 @@ where
       comments_after_type,
       #[cfg(feature = "ast-span")]
       span,
-    }) = parenthesized_type
+    })) = parenthesized_type
     {
       #[cfg(feature = "ast-span")]
       {
@@ -1088,7 +1090,7 @@ where
         begin_type1_range = span.0;
       }
 
-      Type2::ParenthesizedType {
+      Type2::ParenthesizedType(ParenthesizedType {
         #[cfg(feature = "ast-comments")]
         comments_before_type,
         pt,
@@ -1096,7 +1098,7 @@ where
         comments_after_type,
         #[cfg(feature = "ast-span")]
         span,
-      }
+      })
     } else {
       self.parse_type2()?
     };
@@ -1211,64 +1213,68 @@ where
         );
 
         match value {
-          token::Value::TEXT(t) => Ok(Type2::TextValue {
+          token::Value::TEXT(t) => Ok(Type2::TextValue(TextValue {
             value: t.clone(),
             #[cfg(feature = "ast-span")]
             span,
-          }),
-          token::Value::INT(i) => Ok(Type2::IntValue {
+          })),
+          token::Value::INT(i) => Ok(Type2::IntValue(IntValue {
             value: *i,
             #[cfg(feature = "ast-span")]
             span,
-          }),
-          token::Value::UINT(ui) => Ok(Type2::UintValue {
+          })),
+          token::Value::UINT(ui) => Ok(Type2::UintValue(UintValue {
             value: *ui,
             #[cfg(feature = "ast-span")]
             span,
-          }),
-          token::Value::FLOAT(f) => Ok(Type2::FloatValue {
+          })),
+          token::Value::FLOAT(f) => Ok(Type2::FloatValue(FloatValue {
             value: *f,
             #[cfg(feature = "ast-span")]
             span,
-          }),
+          })),
           token::Value::BYTE(token::ByteValue::UTF8(Cow::Borrowed(utf8))) => {
-            Ok(Type2::UTF8ByteString {
+            Ok(Type2::UTF8ByteString(Utf8ByteString {
               value: Cow::Borrowed(utf8),
               #[cfg(feature = "ast-span")]
               span,
-            })
+            }))
           }
           token::Value::BYTE(token::ByteValue::UTF8(Cow::Owned(utf8))) => {
-            Ok(Type2::UTF8ByteString {
+            Ok(Type2::UTF8ByteString(Utf8ByteString {
               value: Cow::Owned(utf8.to_owned()),
               #[cfg(feature = "ast-span")]
               span,
-            })
+            }))
           }
           token::Value::BYTE(token::ByteValue::B16(Cow::Borrowed(b16))) => {
-            Ok(Type2::B16ByteString {
+            Ok(Type2::B16ByteString(B16ByteString {
               value: Cow::Borrowed(b16),
               #[cfg(feature = "ast-span")]
               span,
-            })
+            }))
           }
-          token::Value::BYTE(token::ByteValue::B16(Cow::Owned(b16))) => Ok(Type2::B16ByteString {
-            value: Cow::Owned(b16.to_owned()),
-            #[cfg(feature = "ast-span")]
-            span,
-          }),
+          token::Value::BYTE(token::ByteValue::B16(Cow::Owned(b16))) => {
+            Ok(Type2::B16ByteString(B16ByteString {
+              value: Cow::Owned(b16.to_owned()),
+              #[cfg(feature = "ast-span")]
+              span,
+            }))
+          }
           token::Value::BYTE(token::ByteValue::B64(Cow::Borrowed(b64))) => {
-            Ok(Type2::B64ByteString {
+            Ok(Type2::B64ByteString(B64ByteString {
               value: Cow::Borrowed(b64),
               #[cfg(feature = "ast-span")]
               span,
-            })
+            }))
           }
-          token::Value::BYTE(token::ByteValue::B64(Cow::Owned(b64))) => Ok(Type2::B64ByteString {
-            value: Cow::Owned(b64.to_owned()),
-            #[cfg(feature = "ast-span")]
-            span,
-          }),
+          token::Value::BYTE(token::ByteValue::B64(Cow::Owned(b64))) => {
+            Ok(Type2::B64ByteString(B64ByteString {
+              value: Cow::Owned(b64.to_owned()),
+              #[cfg(feature = "ast-span")]
+              span,
+            }))
+          }
         }
       }
 
@@ -1287,12 +1293,12 @@ where
           #[cfg(feature = "ast-span")]
           let end_type2_range = self.parser_position.range.1;
 
-          return Ok(Type2::Typename {
+          return Ok(Type2::Typename(Typename {
             ident,
             generic_args: Some(ga),
             #[cfg(feature = "ast-span")]
             span: Span(begin_type2_range, end_type2_range, begin_type2_line),
-          });
+          }));
         }
 
         #[cfg(feature = "ast-span")]
@@ -1301,7 +1307,7 @@ where
           self.parser_position.line = self.lexer_position.line;
         }
 
-        Ok(Type2::Typename {
+        Ok(Type2::Typename(Typename {
           ident: self.identifier_from_ident_token(*ident),
           generic_args: None,
           #[cfg(feature = "ast-span")]
@@ -1310,7 +1316,7 @@ where
             self.parser_position.range.1,
             self.parser_position.line,
           ),
-        })
+        }))
       }
 
       // ( type )
@@ -1341,7 +1347,7 @@ where
         #[cfg(not(feature = "ast-comments"))]
         self.advance_newline()?;
 
-        Ok(Type2::ParenthesizedType {
+        Ok(Type2::ParenthesizedType(ParenthesizedType {
           #[cfg(feature = "ast-comments")]
           comments_before_type,
           #[cfg(feature = "ast-comments")]
@@ -1353,7 +1359,7 @@ where
             self.parser_position.range.1,
             self.parser_position.line,
           ),
-        })
+        }))
       }
 
       // { group }
@@ -1391,7 +1397,7 @@ where
         #[cfg(not(feature = "ast-comments"))]
         self.advance_newline()?;
 
-        Ok(Type2::Map {
+        Ok(Type2::Map(Map {
           #[cfg(feature = "ast-comments")]
           comments_before_group,
           group,
@@ -1399,7 +1405,7 @@ where
           span,
           #[cfg(feature = "ast-comments")]
           comments_after_group,
-        })
+        }))
       }
 
       // [ group ]
@@ -1441,7 +1447,7 @@ where
         #[cfg(not(feature = "ast-comments"))]
         self.advance_newline()?;
 
-        Ok(Type2::Array {
+        Ok(Type2::Array(Array {
           #[cfg(feature = "ast-comments")]
           comments_before_group,
           group,
@@ -1449,7 +1455,7 @@ where
           comments_after_group,
           #[cfg(feature = "ast-span")]
           span,
-        })
+        }))
       }
 
       // ~ typename [genericarg]
@@ -1473,24 +1479,24 @@ where
           if self.peek_token_is(&Token::LANGLEBRACKET) {
             self.next_token()?;
 
-            return Ok(Type2::Unwrap {
+            return Ok(Type2::Unwrap(Unwrap {
               #[cfg(feature = "ast-comments")]
               comments,
               ident,
               generic_args: Some(self.parse_genericargs()?),
               #[cfg(feature = "ast-span")]
               span: Span(0, 0, 0),
-            });
+            }));
           }
 
-          return Ok(Type2::Unwrap {
+          return Ok(Type2::Unwrap(Unwrap {
             #[cfg(feature = "ast-comments")]
             comments,
             ident,
             generic_args: None,
             #[cfg(feature = "ast-span")]
             span: Span(0, 0, 0),
-          });
+          }));
         }
 
         self.errors.push(Error::PARSER {
@@ -1533,7 +1539,7 @@ where
             #[cfg(not(feature = "ast-comments"))]
             self.advance_newline()?;
 
-            Ok(Type2::ChoiceFromInlineGroup {
+            Ok(Type2::ChoiceFromInlineGroup(ChoiceFromInlineGroup {
               #[cfg(feature = "ast-comments")]
               comments,
               #[cfg(feature = "ast-comments")]
@@ -1547,7 +1553,7 @@ where
                 self.parser_position.range.1,
                 begin_type2_line,
               ),
-            })
+            }))
           }
           Token::IDENT(ident) => {
             let ident = self.identifier_from_ident_token(*ident);
@@ -1556,7 +1562,7 @@ where
 
               let generic_args = Some(self.parse_genericargs()?);
 
-              return Ok(Type2::ChoiceFromGroup {
+              return Ok(Type2::ChoiceFromGroup(ChoiceFromGroup {
                 #[cfg(feature = "ast-comments")]
                 comments,
                 ident,
@@ -1567,7 +1573,7 @@ where
                   self.parser_position.range.1,
                   begin_type2_line,
                 ),
-              });
+              }));
             }
 
             #[cfg(feature = "ast-span")]
@@ -1575,7 +1581,7 @@ where
               self.parser_position.range.1 = self.lexer_position.range.1;
             }
 
-            Ok(Type2::ChoiceFromGroup {
+            Ok(Type2::ChoiceFromGroup(ChoiceFromGroup {
               #[cfg(feature = "ast-comments")]
               comments,
               ident,
@@ -1586,7 +1592,7 @@ where
                 self.parser_position.range.1,
                 begin_type2_line,
               ),
-            })
+            }))
           }
           _ => {
             self.errors.push(Error::PARSER {
@@ -1651,7 +1657,7 @@ where
               return Err(Error::INCREMENTAL);
             }
 
-            Ok(Type2::TaggedData {
+            Ok(Type2::TaggedData(TaggedData {
               tag,
               #[cfg(feature = "ast-comments")]
               comments_before_type,
@@ -1664,10 +1670,10 @@ where
                 self.parser_position.range.1,
                 begin_type2_line,
               ),
-            })
+            }))
           }
           // Tagged data of a major type
-          (Some(mt), constraint) => Ok(Type2::DataMajorType {
+          (Some(mt), constraint) => Ok(Type2::DataMajorType(DataMajorType {
             mt,
             constraint,
             #[cfg(feature = "ast-span")]
@@ -1676,7 +1682,7 @@ where
               self.lexer_position.range.1,
               begin_type2_line,
             ),
-          }),
+          })),
           #[cfg(feature = "ast-span")]
           _ => Ok(Type2::Any(Span(
             begin_type2_range,
@@ -1702,7 +1708,7 @@ where
               self.parser_position.line = self.lexer_position.line;
             }
 
-            Ok(Type2::Typename {
+            Ok(Type2::Typename(Typename {
               ident,
               generic_args: None,
               #[cfg(feature = "ast-span")]
@@ -1711,7 +1717,7 @@ where
                 self.parser_position.range.1,
                 self.parser_position.line,
               ),
-            })
+            }))
           }
           None => {
             #[cfg(feature = "ast-span")]
@@ -2014,26 +2020,25 @@ where
     );
 
     match member_key {
-      Some(MemberKey::ParenthesizedType {
+      Some(MemberKey::Parenthesized(ParenthesizedMemberKey {
         #[cfg(feature = "ast-comments")]
-          non_member_key: ParenthesizedType::Type(mut entry_type),
+          non_member_key: ParenthesizedTypeOrGroup::Type(entry_type),
         #[cfg(not(feature = "ast-comments"))]
-          non_member_key: ParenthesizedType::Type(entry_type),
+          non_member_key: ParenthesizedTypeOrGroup::Type(entry_type),
         #[cfg(feature = "ast-comments")]
         comments_before_type_or_group,
-        #[cfg(feature = "ast-comments")]
-        comments_after_type_or_group,
-      }) => {
+        ..
+      })) => {
         #[cfg(feature = "ast-span")]
         if let Token::COMMA = &self.cur_token {
           span.1 = self.lexer_position.range.1;
         }
 
         #[cfg(feature = "ast-comments")]
-        let trailing_comments = entry_type.comments_after_type();
+        let trailing_comments = entry_type.comments_after_type;
 
         #[cfg(feature = "ast-span")]
-        if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
+        if let Some((name, generic_args, _)) = entry_type.pt.groupname_entry() {
           if name.socket.is_none()
             && token::lookup_ident(name.ident)
               .in_standard_prelude()
@@ -2063,7 +2068,7 @@ where
         }
 
         #[cfg(not(feature = "ast-span"))]
-        if let Some((name, generic_args)) = entry_type.groupname_entry() {
+        if let Some((name, generic_args)) = entry_type.pt.groupname_entry() {
           if name.socket.is_none()
             && token::lookup_ident(name.ident)
               .in_standard_prelude()
@@ -2098,15 +2103,8 @@ where
           self.next_token()?;
         }
 
-        #[cfg(feature = "ast-comments")]
-        let trailing_comments = if let Some(comments) = entry_type.comments_after_type() {
-          Some(comments)
-        } else {
-          comments_after_type_or_group
-        };
-
         #[cfg(feature = "ast-span")]
-        if let Some((ident, _, _)) = entry_type.groupname_entry() {
+        if let Some((ident, _, _)) = entry_type.pt.groupname_entry() {
           if ident.socket.is_none()
             && token::lookup_ident(ident.ident)
               .in_standard_prelude()
@@ -2123,7 +2121,7 @@ where
         }
 
         #[cfg(not(feature = "ast-span"))]
-        if let Some((ident, _)) = entry_type.groupname_entry() {
+        if let Some((ident, _)) = entry_type.pt.groupname_entry() {
           if ident.socket.is_none()
             && token::lookup_ident(ident.ident)
               .in_standard_prelude()
@@ -2143,7 +2141,7 @@ where
           ge: Box::from(ValueMemberKeyEntry {
             occur,
             member_key: None,
-            entry_type,
+            entry_type: entry_type.pt,
           }),
           #[cfg(feature = "ast-comments")]
           leading_comments: comments_before_type_or_group,
@@ -2153,13 +2151,13 @@ where
           span,
         })
       }
-      Some(MemberKey::ParenthesizedType {
-        non_member_key: ParenthesizedType::Group(group),
+      Some(MemberKey::Parenthesized(ParenthesizedMemberKey {
+        non_member_key: ParenthesizedTypeOrGroup::Group(group),
         #[cfg(feature = "ast-comments")]
         comments_before_type_or_group,
         #[cfg(feature = "ast-comments")]
         comments_after_type_or_group,
-      }) => {
+      })) => {
         #[cfg(feature = "ast-span")]
         if let Token::COMMA = &self.cur_token {
           span.1 = self.lexer_position.range.1;
@@ -2468,14 +2466,14 @@ where
       #[cfg(not(feature = "ast-comments"))]
       self.advance_newline()?;
 
-      let t1 = MemberKey::Type1 {
+      let t1 = MemberKey::Type1(Type1MemberKey {
         t1: Box::from(Type1 {
-          type2: Type2::Typename {
+          type2: Type2::Typename(Typename {
             ident,
             generic_args: None,
             #[cfg(feature = "ast-span")]
             span: Span(begin_memberkey_range, end_t1_range, begin_memberkey_line),
-          },
+          }),
           operator: None,
           #[cfg(feature = "ast-comments")]
           comments_after_type: None,
@@ -2495,7 +2493,7 @@ where
           end_memberkey_range,
           begin_memberkey_line,
         ),
-      };
+      });
 
       self.next_token()?;
 
@@ -2516,14 +2514,14 @@ where
       #[cfg(not(feature = "ast-comments"))]
       self.advance_newline()?;
 
-      let t1 = MemberKey::Type1 {
+      let t1 = MemberKey::Type1(Type1MemberKey {
         t1: Box::from(Type1 {
-          type2: Type2::Typename {
+          type2: Type2::Typename(Typename {
             ident,
             generic_args: None,
             #[cfg(feature = "ast-span")]
             span: Span(begin_memberkey_range, end_t1_range, begin_memberkey_line),
-          },
+          }),
           operator: None,
           #[cfg(feature = "ast-comments")]
           comments_after_type: None,
@@ -2543,7 +2541,7 @@ where
           end_memberkey_range,
           begin_memberkey_line,
         ),
-      };
+      });
 
       self.next_token()?;
 
@@ -2558,7 +2556,7 @@ where
       #[cfg(not(feature = "ast-comments"))]
       self.advance_newline()?;
 
-      Some(MemberKey::Bareword {
+      Some(MemberKey::Bareword(BarewordMemberKey {
         ident,
         #[cfg(feature = "ast-comments")]
         comments: comments_before_cut,
@@ -2570,7 +2568,7 @@ where
           self.parser_position.range.1,
           begin_memberkey_line,
         ),
-      })
+      }))
     };
 
     Ok(mk)
@@ -2657,7 +2655,7 @@ where
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
 
-          Some(MemberKey::Type1 {
+          Some(MemberKey::Type1(Type1MemberKey {
             t1: Box::from(t1),
             #[cfg(feature = "ast-comments")]
             comments_before_cut,
@@ -2672,7 +2670,7 @@ where
               end_memberkey_range,
               begin_memberkey_line,
             ),
-          })
+          }))
         } else {
           #[cfg(feature = "ast-comments")]
           let comments = self.collect_comments()?;
@@ -2700,7 +2698,7 @@ where
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
 
-          Some(MemberKey::Value {
+          Some(MemberKey::Value(ValueMemberKey {
             value,
             #[cfg(feature = "ast-comments")]
             comments,
@@ -2712,7 +2710,7 @@ where
               self.parser_position.range.1,
               begin_memberkey_line,
             ),
-          })
+          }))
         };
 
         if let Token::COLON = &self.cur_token {
@@ -2817,13 +2815,13 @@ where
             Err(e) => return Err(e),
           };
 
-          return Ok(Some(MemberKey::ParenthesizedType {
-            non_member_key: ParenthesizedType::Group(group),
+          return Ok(Some(MemberKey::Parenthesized(ParenthesizedMemberKey {
+            non_member_key: ParenthesizedTypeOrGroup::Group(group),
             #[cfg(feature = "ast-comments")]
             comments_before_type_or_group,
             #[cfg(feature = "ast-comments")]
             comments_after_type_or_group,
-          }));
+          })));
         }
 
         // Parse tokens vec as type
@@ -2865,9 +2863,9 @@ where
           #[cfg(feature = "ast-span")]
           let end_memberkey_range = self.lexer_position.range.1;
 
-          let t1 = Some(MemberKey::Type1 {
+          let t1 = Some(MemberKey::Type1(Type1MemberKey {
             t1: Box::from(Type1 {
-              type2: Type2::ParenthesizedType {
+              type2: Type2::ParenthesizedType(ParenthesizedType {
                 pt: t,
                 #[cfg(feature = "ast-comments")]
                 comments_before_type: comments_before_type_or_group,
@@ -2879,7 +2877,7 @@ where
                   closing_parend_index,
                   begin_memberkey_line,
                 ),
-              },
+              }),
               #[cfg(feature = "ast-comments")]
               comments_after_type: comments_before_cut.clone(),
               operator: None,
@@ -2903,7 +2901,7 @@ where
               end_memberkey_range,
               begin_memberkey_line,
             ),
-          });
+          }));
 
           return Ok(t1);
         }
@@ -2921,9 +2919,9 @@ where
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
 
-          Some(MemberKey::Type1 {
+          Some(MemberKey::Type1(Type1MemberKey {
             t1: Box::from(Type1 {
-              type2: Type2::ParenthesizedType {
+              type2: Type2::ParenthesizedType(ParenthesizedType {
                 pt: t,
                 #[cfg(feature = "ast-comments")]
                 comments_before_type: comments_before_type_or_group,
@@ -2935,7 +2933,7 @@ where
                   closing_parend_index,
                   begin_memberkey_line,
                 ),
-              },
+              }),
               #[cfg(feature = "ast-comments")]
               comments_after_type: comments_before_cut.clone(),
               operator: None,
@@ -2959,23 +2957,27 @@ where
               self.lexer_position.range.0,
               begin_memberkey_line,
             ),
-          })
+          }))
         } else {
-          Some(MemberKey::ParenthesizedType {
-            non_member_key: ParenthesizedType::Type(Type {
-              type_choices: t.type_choices,
+          Some(MemberKey::Parenthesized(ParenthesizedMemberKey {
+            non_member_key: ParenthesizedTypeOrGroup::Type(ParenthesizedType {
+              pt: t,
               #[cfg(feature = "ast-span")]
               span: Span(
                 begin_memberkey_range,
                 self.parser_position.range.1,
                 begin_memberkey_line,
               ),
+              #[cfg(feature = "ast-comments")]
+              comments_before_type: comments_before_type_or_group.clone(),
+              #[cfg(feature = "ast-comments")]
+              comments_after_type: comments_after_type_or_group.clone(),
             }),
             #[cfg(feature = "ast-comments")]
-            comments_before_type_or_group,
-            #[cfg(feature = "ast-comments")]
             comments_after_type_or_group,
-          })
+            #[cfg(feature = "ast-comments")]
+            comments_before_type_or_group,
+          }))
         };
 
         Ok(t1)
@@ -3015,7 +3017,7 @@ where
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
 
-          return Ok(Some(MemberKey::Type1 {
+          return Ok(Some(MemberKey::Type1(Type1MemberKey {
             t1: Box::from(t1),
             #[cfg(feature = "ast-comments")]
             comments_before_cut,
@@ -3030,7 +3032,7 @@ where
               end_memberkey_range,
               begin_memberkey_line,
             ),
-          }));
+          })));
         }
 
         let t1 = if let Token::ARROWMAP = &self.cur_token {
@@ -3046,7 +3048,7 @@ where
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
 
-          Some(MemberKey::Type1 {
+          Some(MemberKey::Type1(Type1MemberKey {
             t1: Box::from(t1),
             #[cfg(feature = "ast-comments")]
             comments_before_cut,
@@ -3061,17 +3063,29 @@ where
               self.parser_position.range.1,
               begin_memberkey_line,
             ),
-          })
+          }))
         } else {
-          Some(MemberKey::ParenthesizedType {
-            non_member_key: ParenthesizedType::Type(Type {
-              type_choices: vec![TypeChoice {
-                #[cfg(feature = "ast-comments")]
-                comments_before_type: None,
-                #[cfg(feature = "ast-comments")]
-                comments_after_type: None,
-                type1: t1,
-              }],
+          Some(MemberKey::Parenthesized(ParenthesizedMemberKey {
+            non_member_key: ParenthesizedTypeOrGroup::Type(ParenthesizedType {
+              pt: Type {
+                type_choices: vec![TypeChoice {
+                  #[cfg(feature = "ast-comments")]
+                  comments_before_type: None,
+                  #[cfg(feature = "ast-comments")]
+                  comments_after_type: None,
+                  type1: t1,
+                }],
+                #[cfg(feature = "ast-span")]
+                span: Span(
+                  begin_memberkey_range,
+                  self.parser_position.range.1,
+                  begin_memberkey_line,
+                ),
+              },
+              #[cfg(feature = "ast-comments")]
+              comments_before_type: None,
+              #[cfg(feature = "ast-comments")]
+              comments_after_type: None,
               #[cfg(feature = "ast-span")]
               span: Span(
                 begin_memberkey_range,
@@ -3083,7 +3097,7 @@ where
             comments_before_type_or_group: None,
             #[cfg(feature = "ast-comments")]
             comments_after_type_or_group: comments_before_cut,
-          })
+          }))
         };
 
         Ok(t1)

@@ -23,14 +23,16 @@ pub fn text_value_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&
         if tc.type1.operator.is_none() {
           match &tc.type1.type2 {
             Type2::TextValue { .. } | Type2::UTF8ByteString { .. } => Some(&tc.type1.type2),
-            Type2::Typename { ident, .. } => text_value_from_ident(cddl, ident),
-            Type2::ParenthesizedType { pt, .. } => pt.type_choices.iter().find_map(|tc| {
-              if tc.type1.operator.is_none() {
-                text_value_from_type2(cddl, &tc.type1.type2)
-              } else {
-                None
-              }
-            }),
+            Type2::Typename(Typename { ident, .. }) => text_value_from_ident(cddl, ident),
+            Type2::ParenthesizedType(ParenthesizedType { pt, .. }) => {
+              pt.type_choices.iter().find_map(|tc| {
+                if tc.type1.operator.is_none() {
+                  text_value_from_type2(cddl, &tc.type1.type2)
+                } else {
+                  None
+                }
+              })
+            }
             _ => None,
           }
         } else {
@@ -45,9 +47,9 @@ pub fn text_value_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&
 /// Find text values from a given Type2
 pub fn text_value_from_type2<'a>(cddl: &'a CDDL, t2: &'a Type2<'a>) -> Option<&'a Type2<'a>> {
   match t2 {
-    Type2::TextValue { .. } | Type2::UTF8ByteString { .. } => Some(t2),
-    Type2::Typename { ident, .. } => text_value_from_ident(cddl, ident),
-    Type2::Array { group, .. } => group.group_choices.iter().find_map(|gc| {
+    Type2::TextValue(_) | Type2::UTF8ByteString(_) => Some(t2),
+    Type2::Typename(Typename { ident, .. }) => text_value_from_ident(cddl, ident),
+    Type2::Array(Array { group, .. }) => group.group_choices.iter().find_map(|gc| {
       if gc.group_entries.len() == 2 {
         if let Some(ge) = gc.group_entries.first() {
           if let GroupEntry::ValueMemberKey { ge, .. } = &ge.0 {
@@ -72,13 +74,15 @@ pub fn text_value_from_type2<'a>(cddl: &'a CDDL, t2: &'a Type2<'a>) -> Option<&'
         None
       }
     }),
-    Type2::ParenthesizedType { pt, .. } => pt.type_choices.iter().find_map(|tc| {
-      if tc.type1.operator.is_none() {
-        text_value_from_type2(cddl, &tc.type1.type2)
-      } else {
-        None
-      }
-    }),
+    Type2::ParenthesizedType(ParenthesizedType { pt, .. }) => {
+      pt.type_choices.iter().find_map(|tc| {
+        if tc.type1.operator.is_none() {
+          text_value_from_type2(cddl, &tc.type1.type2)
+        } else {
+          None
+        }
+      })
+    }
     _ => None,
   }
 }
@@ -106,11 +110,11 @@ pub fn unwrap_rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<
       if type_choices.iter().any(match_fn) {
         Some(r)
       } else if let Some(ident) = type_choices.iter().find_map(|tc| {
-        if let Type2::Typename {
+        if let Type2::Typename(Typename {
           ident,
           generic_args: None,
           ..
-        } = &tc.type1.type2
+        }) = &tc.type1.type2
         {
           Some(ident)
         } else {
@@ -161,7 +165,7 @@ pub fn numeric_range_bound_from_ident<'a>(
           Type2::IntValue { .. } | Type2::UintValue { .. } | Type2::FloatValue { .. } => {
             Some(type2)
           }
-          Type2::Typename { ident, .. } => numeric_range_bound_from_ident(cddl, ident),
+          Type2::Typename(Typename { ident, .. }) => numeric_range_bound_from_ident(cddl, ident),
           _ => None,
         },
         _ => None,
@@ -257,7 +261,7 @@ pub fn is_ident_null_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_null_data_type(cddl, ident)
       } else {
         false
@@ -275,7 +279,7 @@ pub fn is_ident_bool_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_bool_data_type(cddl, ident)
       } else {
         false
@@ -301,7 +305,7 @@ pub fn ident_matches_bool_value(cddl: &CDDL, ident: &Identifier, value: bool) ->
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         ident_matches_bool_value(cddl, ident, value)
       } else {
         false
@@ -319,7 +323,7 @@ pub fn is_ident_uri_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_uri_data_type(cddl, ident)
       } else {
         false
@@ -337,7 +341,7 @@ pub fn is_ident_b64url_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_b64url_data_type(cddl, ident)
       } else {
         false
@@ -355,7 +359,7 @@ pub fn is_ident_tdate_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_tdate_data_type(cddl, ident)
       } else {
         false
@@ -373,7 +377,7 @@ pub fn is_ident_time_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_time_data_type(cddl, ident)
       } else {
         false
@@ -403,7 +407,7 @@ pub fn is_ident_numeric_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_numeric_data_type(cddl, ident)
       } else {
         false
@@ -421,7 +425,7 @@ pub fn is_ident_uint_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_uint_data_type(cddl, ident)
       } else {
         false
@@ -439,7 +443,7 @@ pub fn is_ident_nint_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_nint_data_type(cddl, ident)
       } else {
         false
@@ -459,7 +463,7 @@ pub fn is_ident_integer_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_integer_data_type(cddl, ident)
       } else {
         false
@@ -483,7 +487,7 @@ pub fn is_ident_float_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_float_data_type(cddl, ident)
       } else {
         false
@@ -501,7 +505,7 @@ pub fn is_ident_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_string_data_type(cddl, ident)
       } else {
         false
@@ -519,7 +523,7 @@ pub fn is_ident_any_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_any_type(cddl, ident)
       } else {
         false
@@ -537,7 +541,7 @@ pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 
   cddl.rules.iter().any(|r| match r {
     Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+      if let Type2::Typename(Typename { ident, .. }) = &tc.type1.type2 {
         is_ident_byte_string_data_type(cddl, ident)
       } else {
         false

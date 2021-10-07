@@ -140,7 +140,7 @@ impl<'a> fmt::Display for CDDL<'a> {
 /// DIGIT = %x30-39
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Identifier<'a> {
   /// Identifier
   pub ident: &'a str,
@@ -180,8 +180,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
             return Identifier {
               ident,
               socket: Some(SocketPlug::GROUP),
-              #[cfg(feature = "ast-span")]
-              span: Span::default(),
+              ..Default::default()
             };
           }
         }
@@ -189,8 +188,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
         return Identifier {
           ident,
           socket: Some(SocketPlug::TYPE),
-          #[cfg(feature = "ast-span")]
-          span: Span::default(),
+          ..Default::default()
         };
       }
     }
@@ -198,8 +196,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
     Identifier {
       ident,
       socket: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
+      ..Default::default()
     }
   }
 }
@@ -385,7 +382,7 @@ impl<'a> Rule<'a> {
 /// typename [genericparm] S assignt S type
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct TypeRule<'a> {
   /// Type name identifier
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
@@ -501,7 +498,7 @@ impl<'a> fmt::Display for GroupRule<'a> {
 /// genericparm =  "<" S id S *("," S id S ) ">"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct GenericParams<'a> {
   /// List of generic parameters
   pub params: Vec<GenericParam<'a>>,
@@ -510,19 +507,9 @@ pub struct GenericParams<'a> {
   pub span: Span,
 }
 
-impl<'a> Default for GenericParams<'a> {
-  fn default() -> Self {
-    GenericParams {
-      params: Vec::new(),
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }
-  }
-}
-
 /// Generic parameter
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct GenericParam<'a> {
   /// Generic parameter
   pub param: Identifier<'a>,
@@ -570,7 +557,7 @@ impl<'a> fmt::Display for GenericParams<'a> {
 /// genericarg = "<" S type1 S *("," S type1 S )  ">"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct GenericArgs<'a> {
   /// Generic arguments
   pub args: Vec<GenericArg<'a>>,
@@ -579,20 +566,9 @@ pub struct GenericArgs<'a> {
   pub span: Span,
 }
 
-impl<'a> GenericArgs<'a> {
-  /// Default `GenericArg`
-  pub fn default() -> Self {
-    GenericArgs {
-      args: Vec::new(),
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }
-  }
-}
-
 /// Generic argument
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct GenericArg<'a> {
   /// Generic argument
   pub arg: Box<Type1<'a>>,
@@ -635,7 +611,7 @@ impl<'a> fmt::Display for GenericArgs<'a> {
 }
 
 /// A generic rule that has undergone monomorphization
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct GenericRule<'a> {
   /// Name
   pub name: &'a str,
@@ -651,7 +627,7 @@ pub struct GenericRule<'a> {
 /// type = type1 *(S "/" S  type1)
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Type<'a> {
   /// Type choices
   pub type_choices: Vec<TypeChoice<'a>>,
@@ -688,12 +664,12 @@ impl<'a> From<&Identifier<'a>> for Type<'a> {
     Type {
       type_choices: vec![TypeChoice {
         type1: Type1 {
-          type2: Type2::Typename {
+          type2: Type2::Typename(Typename {
             ident: ident.clone(),
             generic_args: None,
             #[cfg(feature = "ast-span")]
             span: ident.span,
-          },
+          }),
           operator: None,
           #[cfg(feature = "ast-span")]
           span: ident.span,
@@ -713,7 +689,7 @@ impl<'a> From<&Identifier<'a>> for Type<'a> {
 
 /// Type choice
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 
 pub struct TypeChoice<'a> {
   /// Type choice
@@ -774,11 +750,11 @@ impl<'a> Type<'a> {
     if self.type_choices.len() == 1 {
       if let Some(tc) = self.type_choices.first() {
         if tc.type1.operator.is_none() {
-          if let Type2::Typename {
+          if let Type2::Typename(Typename {
             ident,
             generic_args,
             span,
-          } = &tc.type1.type2
+          }) = &tc.type1.type2
           {
             return Some((ident.clone(), generic_args.clone(), *span));
           }
@@ -797,10 +773,10 @@ impl<'a> Type<'a> {
     if self.type_choices.len() == 1 {
       if let Some(tc) = self.type_choices.first() {
         if tc.type1.operator.is_none() {
-          if let Type2::Typename {
+          if let Type2::Typename(Typename {
             ident,
             generic_args,
-          } = &tc.type1.type2
+          }) = &tc.type1.type2
           {
             return Some((ident.clone(), generic_args.clone()));
           }
@@ -818,7 +794,7 @@ impl<'a> Type<'a> {
 /// type1 = type2 [S (rangeop / ctlop) S type2]
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Type1<'a> {
   /// Type
   pub type2: Type2<'a>,
@@ -839,41 +815,41 @@ impl<'a> From<Value<'a>> for Type1<'a> {
     #[cfg(feature = "ast-span")]
     let span = Span::default();
     let type2 = match value {
-      Value::TEXT(value) => Type2::TextValue {
+      Value::TEXT(value) => Type2::TextValue(TextValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
-      },
-      Value::INT(value) => Type2::IntValue {
+      }),
+      Value::INT(value) => Type2::IntValue(IntValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
-      },
-      Value::FLOAT(value) => Type2::FloatValue {
+      }),
+      Value::FLOAT(value) => Type2::FloatValue(FloatValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
-      },
-      Value::UINT(value) => Type2::UintValue {
+      }),
+      Value::UINT(value) => Type2::UintValue(UintValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
-      },
-      Value::BYTE(ByteValue::B16(value)) => Type2::B16ByteString {
+      }),
+      Value::BYTE(ByteValue::B16(value)) => Type2::B16ByteString(B16ByteString {
         value,
         #[cfg(feature = "ast-span")]
         span,
-      },
-      Value::BYTE(ByteValue::B64(value)) => Type2::B64ByteString {
+      }),
+      Value::BYTE(ByteValue::B64(value)) => Type2::B64ByteString(B64ByteString {
         value,
         #[cfg(feature = "ast-span")]
         span,
-      },
-      Value::BYTE(ByteValue::UTF8(value)) => Type2::UTF8ByteString {
+      }),
+      Value::BYTE(ByteValue::UTF8(value)) => Type2::UTF8ByteString(Utf8ByteString {
         value,
         #[cfg(feature = "ast-span")]
         span,
-      },
+      }),
     };
 
     Type1 {
@@ -1017,218 +993,53 @@ impl<'a> fmt::Display for RangeCtlOp<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type2<'a> {
   /// Integer value
-  IntValue {
-    /// Value
-    value: isize,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-  },
+  IntValue(IntValue),
 
   /// Unsigned integer value
-  UintValue {
-    /// Value
-    value: usize,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-  },
+  UintValue(UintValue),
 
   /// Float value
-  FloatValue {
-    /// Value
-    value: f64,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-  },
+  FloatValue(FloatValue),
 
   /// Text string value (enclosed by '"')
-  TextValue {
-    /// Value
-    value: Cow<'a, str>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-  },
+  TextValue(TextValue<'a>),
 
   /// UTF-8 encoded byte string (enclosed by '')
-  UTF8ByteString {
-    /// Value
-    value: Cow<'a, [u8]>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-  },
+  UTF8ByteString(Utf8ByteString<'a>),
 
   /// Base 16 encoded prefixed byte string
-  B16ByteString {
-    /// Value
-    value: Cow<'a, [u8]>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-  },
+  B16ByteString(B16ByteString<'a>),
 
   /// Base 64 encoded (URL safe) prefixed byte string
-  B64ByteString {
-    /// Value
-    value: Cow<'a, [u8]>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-  },
+  B64ByteString(B64ByteString<'a>),
 
   /// Type name identifier with optional generic arguments
-  Typename {
-    /// Identifier
-    ident: Identifier<'a>,
-    /// Generic arguments
-    generic_args: Option<GenericArgs<'a>>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-  },
+  Typename(Typename<'a>),
 
   /// Parenthesized type expression (for operator precedence)
-  ParenthesizedType {
-    /// Type
-    pt: Type<'a>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_before_type: Option<Comments<'a>>,
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_after_type: Option<Comments<'a>>,
-  },
+  ParenthesizedType(ParenthesizedType<'a>),
 
   /// Map expression
-  Map {
-    /// Group
-    group: Group<'a>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_before_group: Option<Comments<'a>>,
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_after_group: Option<Comments<'a>>,
-  },
+  Map(Map<'a>),
 
   /// Array expression
-  Array {
-    /// Span
-    group: Group<'a>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_before_group: Option<Comments<'a>>,
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_after_group: Option<Comments<'a>>,
-  },
+  Array(Array<'a>),
 
   /// Unwrapped group
-  Unwrap {
-    /// Identifier
-    ident: Identifier<'a>,
-    /// Generic arguments
-    generic_args: Option<GenericArgs<'a>>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments: Option<Comments<'a>>,
-  },
+  Unwrap(Unwrap<'a>),
 
   /// Enumeration expression over an inline group
-  ChoiceFromInlineGroup {
-    /// Group
-    group: Group<'a>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments: Option<Comments<'a>>,
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_before_group: Option<Comments<'a>>,
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_after_group: Option<Comments<'a>>,
-  },
+  ChoiceFromInlineGroup(ChoiceFromInlineGroup<'a>),
 
   /// Enumeration expression over previously defined group
-  ChoiceFromGroup {
-    /// Identifier
-    ident: Identifier<'a>,
-    /// Generic arguments
-    generic_args: Option<GenericArgs<'a>>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments: Option<Comments<'a>>,
-  },
+  ChoiceFromGroup(ChoiceFromGroup<'a>),
 
   /// Tagged data item where the first element is an optional tag and the second
   /// is the type of the tagged value
-  TaggedData {
-    /// Tag
-    tag: Option<usize>,
-    /// Type
-    t: Type<'a>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_before_type: Option<Comments<'a>>,
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_after_type: Option<Comments<'a>>,
-  },
+  TaggedData(TaggedData<'a>),
 
   /// Data item of a major type with optional data constraint
-  DataMajorType {
-    /// Major type
-    mt: u8,
-    /// Constraint
-    constraint: Option<usize>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-  },
+  DataMajorType(DataMajorType),
 
   /// Any data item
   #[cfg(feature = "ast-span")]
@@ -1239,44 +1050,311 @@ pub enum Type2<'a> {
   Any,
 }
 
+#[cfg(feature = "ast-span")]
+impl<'a> Default for Type2<'a> {
+  fn default() -> Self {
+    Type2::Any(Span::default())
+  }
+}
+
+#[cfg(not(feature = "ast-span"))]
+impl<'a> Default for Type2<'a> {
+  fn default() -> Self {
+    Type2::Any
+  }
+}
+
+/// Int value
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct IntValue {
+  /// Value
+  pub value: isize,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+}
+
+/// Uint value
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct UintValue {
+  /// Value
+  pub value: usize,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+}
+
+/// Float value
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct FloatValue {
+  /// Value
+  pub value: f64,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+}
+
+/// Text value
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct TextValue<'a> {
+  /// Value
+  pub value: Cow<'a, str>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+}
+
+/// Utf8 byte string
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Utf8ByteString<'a> {
+  /// Value
+  pub value: Cow<'a, [u8]>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+}
+
+/// Base16 byte string
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct B16ByteString<'a> {
+  /// Value
+  pub value: Cow<'a, [u8]>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+}
+
+/// Base64 byte string
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct B64ByteString<'a> {
+  /// Value
+  pub value: Cow<'a, [u8]>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+}
+
+/// Type name
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Typename<'a> {
+  /// Identifier
+  pub ident: Identifier<'a>,
+  /// Generic arguments
+  pub generic_args: Option<GenericArgs<'a>>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+}
+
+#[doc(hidden)]
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParenthesizedTypeOrGroup<'a> {
+  Group(Group<'a>),
+  Type(ParenthesizedType<'a>),
+}
+
+/// Parenthesized type
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ParenthesizedType<'a> {
+  /// Type
+  pub pt: Type<'a>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_type: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_type: Option<Comments<'a>>,
+}
+
+/// Map
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Map<'a> {
+  /// Group
+  pub group: Group<'a>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_group: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_group: Option<Comments<'a>>,
+}
+
+/// Array
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Array<'a> {
+  /// Group
+  pub group: Group<'a>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_group: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_group: Option<Comments<'a>>,
+}
+
+/// Unwrap
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Unwrap<'a> {
+  /// Identifier
+  pub ident: Identifier<'a>,
+  /// Generic arguments
+  pub generic_args: Option<GenericArgs<'a>>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments: Option<Comments<'a>>,
+}
+
+/// Choice from inline group
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ChoiceFromInlineGroup<'a> {
+  /// Group
+  pub group: Group<'a>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_group: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_group: Option<Comments<'a>>,
+}
+
+/// Choice from group
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ChoiceFromGroup<'a> {
+  /// Identifier
+  pub ident: Identifier<'a>,
+  /// Generic arguments
+  pub generic_args: Option<GenericArgs<'a>>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments: Option<Comments<'a>>,
+}
+
+/// Tagged data
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct TaggedData<'a> {
+  /// Tag
+  pub tag: Option<usize>,
+  /// Type
+  pub t: Type<'a>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_type: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_type: Option<Comments<'a>>,
+}
+
+/// Major data type
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct DataMajorType {
+  /// Major type
+  pub mt: u8,
+  /// Constraint
+  pub constraint: Option<usize>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+}
+
 #[allow(clippy::cognitive_complexity)]
 impl<'a> fmt::Display for Type2<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      Type2::IntValue { value, .. } => write!(f, "{}", value),
-      Type2::UintValue { value, .. } => write!(f, "{}", value),
-      Type2::FloatValue { value, .. } => write!(f, "{}", value),
-      Type2::TextValue { value, .. } => write!(f, "\"{}\"", value),
-      Type2::UTF8ByteString { value, .. } => write!(
+      Type2::IntValue(IntValue { value, .. }) => write!(f, "{}", value),
+      Type2::UintValue(UintValue { value, .. }) => write!(f, "{}", value),
+      Type2::FloatValue(FloatValue { value, .. }) => write!(f, "{}", value),
+      Type2::TextValue(TextValue { value, .. }) => write!(f, "\"{}\"", value),
+      Type2::UTF8ByteString(Utf8ByteString { value, .. }) => write!(
         f,
         "'{}'",
         std::str::from_utf8(value).map_err(|_| fmt::Error)?
       ),
-      Type2::B16ByteString { value, .. } => {
+      Type2::B16ByteString(B16ByteString { value, .. }) => {
         write!(f, "{}", std::str::from_utf8(value).map_err(|_| fmt::Error)?)
       }
-      Type2::B64ByteString { value, .. } => {
+      Type2::B64ByteString(B64ByteString { value, .. }) => {
         write!(f, "{}", std::str::from_utf8(value).map_err(|_| fmt::Error)?)
       }
-      Type2::Typename {
+      Type2::Typename(Typename {
         ident,
         generic_args,
         ..
-      } => {
+      }) => {
         if let Some(args) = generic_args {
           return write!(f, "{}{}", ident, args);
         }
 
         write!(f, "{}", ident)
       }
-      Type2::ParenthesizedType {
+      Type2::ParenthesizedType(ParenthesizedType {
         #[cfg(feature = "ast-comments")]
         comments_before_type,
         pt,
         #[cfg(feature = "ast-comments")]
         comments_after_type,
         ..
-      } => {
+      }) => {
         let mut pt_str = String::from("(");
 
         #[cfg(feature = "ast-comments")]
@@ -1305,14 +1383,14 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", pt_str)
       }
-      Type2::Map {
+      Type2::Map(Map {
         #[cfg(feature = "ast-comments")]
         comments_before_group,
         group,
         #[cfg(feature = "ast-comments")]
         comments_after_group,
         ..
-      } => {
+      }) => {
         let mut t2_str = String::from("{");
 
         #[cfg(feature = "ast-comments")]
@@ -1360,14 +1438,14 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", t2_str)
       }
-      Type2::Array {
+      Type2::Array(Array {
         #[cfg(feature = "ast-comments")]
         comments_before_group,
         group,
         #[cfg(feature = "ast-comments")]
         comments_after_group,
         ..
-      } => {
+      }) => {
         let mut t2_str = String::from("[");
 
         #[cfg(feature = "ast-comments")]
@@ -1424,13 +1502,13 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", t2_str)
       }
-      Type2::Unwrap {
+      Type2::Unwrap(Unwrap {
         #[cfg(feature = "ast-comments")]
         comments,
         ident,
         generic_args,
         ..
-      } => {
+      }) => {
         let mut t2_str = String::new();
 
         #[cfg(feature = "ast-comments")]
@@ -1446,7 +1524,7 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", t2_str)
       }
-      Type2::ChoiceFromInlineGroup {
+      Type2::ChoiceFromInlineGroup(ChoiceFromInlineGroup {
         #[cfg(feature = "ast-comments")]
         comments,
         #[cfg(feature = "ast-comments")]
@@ -1455,7 +1533,7 @@ impl<'a> fmt::Display for Type2<'a> {
         #[cfg(feature = "ast-comments")]
         comments_after_group,
         ..
-      } => {
+      }) => {
         let mut t2_str = String::from("&");
 
         #[cfg(feature = "ast-comments")]
@@ -1485,13 +1563,13 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", t2_str)
       }
-      Type2::ChoiceFromGroup {
+      Type2::ChoiceFromGroup(ChoiceFromGroup {
         #[cfg(feature = "ast-comments")]
         comments,
         ident,
         generic_args,
         ..
-      } => {
+      }) => {
         let mut t2_str = String::from("&");
 
         #[cfg(feature = "ast-comments")]
@@ -1507,7 +1585,7 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", t2_str)
       }
-      Type2::TaggedData {
+      Type2::TaggedData(TaggedData {
         tag,
         #[cfg(feature = "ast-comments")]
         comments_before_type,
@@ -1515,7 +1593,7 @@ impl<'a> fmt::Display for Type2<'a> {
         #[cfg(feature = "ast-comments")]
         comments_after_type,
         ..
-      } => {
+      }) => {
         let mut t2_str = String::from("#6");
 
         if let Some(tag_uint) = tag {
@@ -1544,7 +1622,7 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", t2_str)
       }
-      Type2::DataMajorType { mt, constraint, .. } => {
+      Type2::DataMajorType(DataMajorType { mt, constraint, .. }) => {
         if let Some(c) = constraint {
           return write!(f, "{}.{}", mt, c);
         }
@@ -1565,7 +1643,7 @@ impl<'a> From<RangeValue<'a>> for Type2<'a> {
     let span = Span::default();
 
     match rv {
-      RangeValue::IDENT(ident) => Type2::Typename {
+      RangeValue::IDENT(ident) => Type2::Typename(Typename {
         ident: Identifier {
           ident: ident.0,
           socket: ident.1,
@@ -1575,268 +1653,271 @@ impl<'a> From<RangeValue<'a>> for Type2<'a> {
         generic_args: None,
         #[cfg(feature = "ast-span")]
         span,
-      },
-      RangeValue::INT(value) => Type2::IntValue {
+      }),
+      RangeValue::INT(value) => Type2::IntValue(IntValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
-      },
-      RangeValue::UINT(value) => Type2::UintValue {
+      }),
+      RangeValue::UINT(value) => Type2::UintValue(UintValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
-      },
-      RangeValue::FLOAT(value) => Type2::FloatValue {
+      }),
+      RangeValue::FLOAT(value) => Type2::FloatValue(FloatValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
-      },
+      }),
     }
   }
 }
 
 impl<'a> From<Type1<'a>> for Type2<'a> {
   fn from(type1: Type1<'a>) -> Self {
-    Type2::ParenthesizedType {
+    Type2::ParenthesizedType(ParenthesizedType {
       pt: Type {
         type_choices: vec![TypeChoice {
           type1,
-          #[cfg(feature = "ast-comments")]
-          comments_after_type: None,
-          #[cfg(feature = "ast-comments")]
-          comments_before_type: None,
+          ..Default::default()
         }],
         #[cfg(feature = "ast-span")]
         span: Span::default(),
       },
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }
+      ..Default::default()
+    })
   }
 }
 
 impl<'a> From<usize> for Type2<'a> {
   fn from(value: usize) -> Self {
-    Type2::UintValue {
+    Type2::UintValue(UintValue {
       value,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }
+      ..Default::default()
+    })
   }
 }
 
 impl<'a> From<isize> for Type2<'a> {
   fn from(value: isize) -> Self {
-    Type2::IntValue {
+    Type2::IntValue(IntValue {
       value,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }
+      ..Default::default()
+    })
   }
 }
 
 impl<'a> From<f64> for Type2<'a> {
   fn from(value: f64) -> Self {
-    Type2::FloatValue {
+    Type2::FloatValue(FloatValue {
       value,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }
+      ..Default::default()
+    })
   }
 }
 
 impl<'a> From<String> for Type2<'a> {
   fn from(value: String) -> Self {
-    Type2::TextValue {
+    Type2::TextValue(TextValue {
       value: value.into(),
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }
+      ..Default::default()
+    })
   }
 }
 
 // Convenience method for testing
 impl<'a> From<&'a str> for Type2<'a> {
   fn from(value: &'a str) -> Self {
-    Type2::UTF8ByteString {
+    Type2::UTF8ByteString(Utf8ByteString {
       value: value.as_bytes().into(),
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }
+      ..Default::default()
+    })
   }
 }
 
 impl<'a> From<ByteValue<'a>> for Type2<'a> {
   fn from(value: ByteValue<'a>) -> Self {
     match value {
-      ByteValue::UTF8(value) => Type2::UTF8ByteString {
+      ByteValue::UTF8(value) => Type2::UTF8ByteString(Utf8ByteString {
         value,
-        #[cfg(feature = "ast-span")]
-        span: Span::default(),
-      },
-      ByteValue::B16(value) => Type2::B16ByteString {
+        ..Default::default()
+      }),
+      ByteValue::B16(value) => Type2::B16ByteString(B16ByteString {
         value,
-        #[cfg(feature = "ast-span")]
-        span: Span::default(),
-      },
-      ByteValue::B64(value) => Type2::B64ByteString {
+        ..Default::default()
+      }),
+      ByteValue::B64(value) => Type2::B64ByteString(B64ByteString {
         value,
-        #[cfg(feature = "ast-span")]
-        span: Span::default(),
-      },
+        ..Default::default()
+      }),
     }
+  }
+}
+
+fn decfrac_type<'a>() -> Type<'a> {
+  Type {
+    type_choices: vec![TypeChoice {
+      type1: Type1 {
+        type2: Type2::Array(Array {
+          group: Group {
+            group_choices: vec![GroupChoice {
+              group_entries: vec![
+                (
+                  GroupEntry::ValueMemberKey {
+                    ge: Box::from(ValueMemberKeyEntry {
+                      member_key: Some(MemberKey::Bareword(BarewordMemberKey {
+                        ident: "e10".into(),
+                        ..Default::default()
+                      })),
+                      entry_type: Type {
+                        type_choices: vec![TypeChoice {
+                          type1: Type1 {
+                            type2: Type2::Typename(Typename {
+                              ident: Token::INT.into(),
+                              ..Default::default()
+                            }),
+                            ..Default::default()
+                          },
+                          ..Default::default()
+                        }],
+                        ..Default::default()
+                      },
+                      occur: None,
+                    }),
+                    #[cfg(feature = "ast-comments")]
+                    leading_comments: None,
+                    #[cfg(feature = "ast-span")]
+                    span: Span::default(),
+                    #[cfg(feature = "ast-comments")]
+                    trailing_comments: None,
+                  },
+                  OptionalComma::default(),
+                ),
+                (
+                  GroupEntry::ValueMemberKey {
+                    ge: Box::from(ValueMemberKeyEntry {
+                      member_key: Some(MemberKey::Bareword(BarewordMemberKey {
+                        ident: "m".into(),
+                        ..Default::default()
+                      })),
+                      entry_type: Type {
+                        type_choices: vec![TypeChoice {
+                          type1: Type1 {
+                            type2: Type2::Typename(Typename {
+                              ident: Token::INTEGER.into(),
+                              ..Default::default()
+                            }),
+                            ..Default::default()
+                          },
+                          ..Default::default()
+                        }],
+                        ..Default::default()
+                      },
+                      ..Default::default()
+                    }),
+                    #[cfg(feature = "ast-comments")]
+                    leading_comments: None,
+                    #[cfg(feature = "ast-span")]
+                    span: Span::default(),
+                    #[cfg(feature = "ast-comments")]
+                    trailing_comments: None,
+                  },
+                  OptionalComma::default(),
+                ),
+              ],
+              ..Default::default()
+            }],
+            ..Default::default()
+          },
+          ..Default::default()
+        }),
+        ..Default::default()
+      },
+      ..Default::default()
+    }],
+    ..Default::default()
   }
 }
 
 /// Retrieve `Type2` from token if it is a tag type in the standard prelude
 pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
   match token {
-    Token::TDATE => Some(Type2::TaggedData {
+    Token::TDATE => Some(Type2::TaggedData(TaggedData {
       tag: Some(0),
       t: type_from_token(Token::TSTR),
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::TIME => Some(Type2::TaggedData {
+      ..Default::default()
+    })),
+    Token::TIME => Some(Type2::TaggedData(TaggedData {
       tag: Some(1),
       t: type_from_token(Token::NUMBER),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::BIGUINT => Some(Type2::TaggedData {
+      ..Default::default()
+    })),
+    Token::BIGUINT => Some(Type2::TaggedData(TaggedData {
       tag: Some(2),
       t: type_from_token(Token::BSTR),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::BIGNINT => Some(Type2::TaggedData {
+      ..Default::default()
+    })),
+    Token::BIGNINT => Some(Type2::TaggedData(TaggedData {
       tag: Some(3),
       t: type_from_token(Token::BSTR),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::DECFRAC => unimplemented!(),
+      ..Default::default()
+    })),
+    Token::DECFRAC => Some(Type2::TaggedData(TaggedData {
+      tag: Some(4),
+      t: decfrac_type(),
+      ..Default::default()
+    })),
     Token::BIGFLOAT => unimplemented!(),
-    Token::EB64URL => Some(Type2::TaggedData {
+    Token::EB64URL => Some(Type2::TaggedData(TaggedData {
       tag: Some(21),
       t: type_from_token(Token::ANY),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::EB64LEGACY => Some(Type2::TaggedData {
+      ..Default::default()
+    })),
+    Token::EB64LEGACY => Some(Type2::TaggedData(TaggedData {
       tag: Some(22),
       t: type_from_token(Token::ANY),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::EB16 => Some(Type2::TaggedData {
+      ..Default::default()
+    })),
+    Token::EB16 => Some(Type2::TaggedData(TaggedData {
       tag: Some(23),
       t: type_from_token(Token::ANY),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::ENCODEDCBOR => Some(Type2::TaggedData {
+      ..Default::default()
+    })),
+    Token::ENCODEDCBOR => Some(Type2::TaggedData(TaggedData {
       tag: Some(24),
       t: type_from_token(Token::BSTR),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::URI => Some(Type2::TaggedData {
+      ..Default::default()
+    })),
+    Token::URI => Some(Type2::TaggedData(TaggedData {
       tag: Some(32),
       t: type_from_token(Token::TSTR),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::B64URL => Some(Type2::TaggedData {
+      ..Default::default()
+    })),
+    Token::B64URL => Some(Type2::TaggedData(TaggedData {
       tag: Some(33),
       t: type_from_token(Token::TSTR),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::B64LEGACY => Some(Type2::TaggedData {
+      ..Default::default()
+    })),
+    Token::B64LEGACY => Some(Type2::TaggedData(TaggedData {
       tag: Some(34),
       t: type_from_token(Token::TSTR),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::REGEXP => Some(Type2::TaggedData {
+      ..Default::default()
+    })),
+    Token::REGEXP => Some(Type2::TaggedData(TaggedData {
       tag: Some(35),
       t: type_from_token(Token::TSTR),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::MIMEMESSAGE => Some(Type2::TaggedData {
+      ..Default::default()
+    })),
+    Token::MIMEMESSAGE => Some(Type2::TaggedData(TaggedData {
       tag: Some(36),
       t: type_from_token(Token::TSTR),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
-    Token::CBORANY => Some(Type2::TaggedData {
+      ..Default::default()
+    })),
+    Token::CBORANY => Some(Type2::TaggedData(TaggedData {
       tag: Some(55799),
       t: type_from_token(Token::ANY),
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-span")]
-      span: Span::default(),
-    }),
+      ..Default::default()
+    })),
     _ => None,
   }
 }
@@ -1846,25 +1927,15 @@ pub fn type_from_token(token: Token) -> Type {
   Type {
     type_choices: vec![TypeChoice {
       type1: Type1 {
-        #[cfg(feature = "ast-comments")]
-        comments_after_type: None,
-        operator: None,
-        #[cfg(feature = "ast-span")]
-        span: Span::default(),
-        type2: Type2::Typename {
+        type2: Type2::Typename(Typename {
           ident: Identifier::from(token),
-          generic_args: None,
-          #[cfg(feature = "ast-span")]
-          span: Span::default(),
-        },
+          ..Default::default()
+        }),
+        ..Default::default()
       },
-      #[cfg(feature = "ast-comments")]
-      comments_after_type: None,
-      #[cfg(feature = "ast-comments")]
-      comments_before_type: None,
+      ..Default::default()
     }],
-    #[cfg(feature = "ast-span")]
-    span: Span::default(),
+    ..Default::default()
   }
 }
 
@@ -1874,7 +1945,7 @@ pub fn type_from_token(token: Token) -> Type {
 /// group = grpchoice * (S "//" S grpchoice)
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Group<'a> {
   /// Group choices
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
@@ -1968,7 +2039,7 @@ impl<'a> fmt::Display for Group<'a> {
 ///
 /// If tuple is true, then entry is marked by a trailing comma
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct GroupChoice<'a> {
   /// Group entries where the second item in the tuple indicates where or not a
   /// trailing comma is present
@@ -2518,7 +2589,7 @@ impl<'a> fmt::Display for Occurrence<'a> {
 /// [occur S] [memberkey S] type
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ValueMemberKeyEntry<'a> {
   /// Optional occurrence indicator
   pub occur: Option<Occurrence<'a>>,
@@ -2588,92 +2659,110 @@ impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum MemberKey<'a> {
   /// Type expression
-  Type1 {
-    /// Type1
-    #[cfg_attr(target_arch = "wasm32", serde(borrow))]
-    t1: Box<Type1<'a>>,
-    /// Is cut indicator present
-    is_cut: bool,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_before_cut: Option<Comments<'a>>,
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_after_cut: Option<Comments<'a>>,
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_after_arrowmap: Option<Comments<'a>>,
-  },
+  Type1(Type1MemberKey<'a>),
 
   /// Bareword string type
-  Bareword {
-    /// Identifier
-    #[cfg_attr(target_arch = "wasm32", serde(borrow))]
-    ident: Identifier<'a>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments: Option<Comments<'a>>,
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_after_colon: Option<Comments<'a>>,
-  },
+  Bareword(BarewordMemberKey<'a>),
 
   /// Value type
-  Value {
-    /// Value
-    #[cfg_attr(target_arch = "wasm32", serde(borrow))]
-    value: Value<'a>,
-    /// Span
-    #[cfg(feature = "ast-span")]
-    span: Span,
-
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments: Option<Comments<'a>>,
-    #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
-    #[doc(hidden)]
-    comments_after_colon: Option<Comments<'a>>,
-  },
+  Value(ValueMemberKey<'a>),
 
   // Used while parsing a parenthesized type that is not followed by a cut nor
   // an arrow map
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
-  ParenthesizedType {
-    non_member_key: ParenthesizedType<'a>,
-    #[cfg(feature = "ast-comments")]
-    comments_before_type_or_group: Option<Comments<'a>>,
-    #[cfg(feature = "ast-comments")]
-    comments_after_type_or_group: Option<Comments<'a>>,
-  },
+  Parenthesized(ParenthesizedMemberKey<'a>),
 }
 
+/// Type1 member key
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Type1MemberKey<'a> {
+  /// Type1
+  #[cfg_attr(target_arch = "wasm32", serde(borrow))]
+  pub t1: Box<Type1<'a>>,
+  /// Is cut indicator present
+  pub is_cut: bool,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_cut: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_cut: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_arrowmap: Option<Comments<'a>>,
+}
+
+/// Bareword member key
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BarewordMemberKey<'a> {
+  /// Identifier
+  #[cfg_attr(target_arch = "wasm32", serde(borrow))]
+  pub ident: Identifier<'a>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_colon: Option<Comments<'a>>,
+}
+
+/// Value member key
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValueMemberKey<'a> {
+  /// Value
+  #[cfg_attr(target_arch = "wasm32", serde(borrow))]
+  pub value: Value<'a>,
+  /// Span
+  #[cfg(feature = "ast-span")]
+  pub span: Span,
+
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_colon: Option<Comments<'a>>,
+}
+
+/// Parenthesized member key
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 #[doc(hidden)]
-pub enum ParenthesizedType<'a> {
-  Group(Group<'a>),
-  Type(Type<'a>),
+pub struct ParenthesizedMemberKey<'a> {
+  pub non_member_key: ParenthesizedTypeOrGroup<'a>,
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_before_type_or_group: Option<Comments<'a>>,
+  #[cfg(feature = "ast-comments")]
+  #[cfg_attr(target_arch = "wasm32", serde(skip))]
+  #[doc(hidden)]
+  pub comments_after_type_or_group: Option<Comments<'a>>,
 }
 
 impl<'a> fmt::Display for MemberKey<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      MemberKey::Type1 {
+      MemberKey::Type1(Type1MemberKey {
         t1,
         #[cfg(feature = "ast-comments")]
         comments_before_cut,
@@ -2683,7 +2772,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
         #[cfg(feature = "ast-comments")]
         comments_after_arrowmap,
         ..
-      } => {
+      }) => {
         let mut mk_str = format!("{} ", t1);
 
         #[cfg(feature = "ast-comments")]
@@ -2715,14 +2804,14 @@ impl<'a> fmt::Display for MemberKey<'a> {
 
         write!(f, "{}", mk_str)
       }
-      MemberKey::Bareword {
+      MemberKey::Bareword(BarewordMemberKey {
         ident,
         #[cfg(feature = "ast-comments")]
         comments,
         #[cfg(feature = "ast-comments")]
         comments_after_colon,
         ..
-      } => {
+      }) => {
         let mut mk_str = format!("{}", ident);
 
         #[cfg(feature = "ast-comments")]
@@ -2743,14 +2832,14 @@ impl<'a> fmt::Display for MemberKey<'a> {
 
         write!(f, "{}", mk_str)
       }
-      MemberKey::Value {
+      MemberKey::Value(ValueMemberKey {
         value,
         #[cfg(feature = "ast-comments")]
         comments,
         #[cfg(feature = "ast-comments")]
         comments_after_colon,
         ..
-      } => {
+      }) => {
         let mut mk_str = format!("{}", value);
 
         #[cfg(feature = "ast-comments")]
@@ -2771,13 +2860,13 @@ impl<'a> fmt::Display for MemberKey<'a> {
 
         write!(f, "{}", mk_str)
       }
-      MemberKey::ParenthesizedType {
-        non_member_key: ParenthesizedType::Group(g),
+      MemberKey::Parenthesized(ParenthesizedMemberKey {
+        non_member_key: ParenthesizedTypeOrGroup::Group(g),
         #[cfg(feature = "ast-comments")]
         comments_before_type_or_group,
         #[cfg(feature = "ast-comments")]
         comments_after_type_or_group,
-      } => {
+      }) => {
         let mut nmk_str = String::new();
 
         #[cfg(feature = "ast-comments")]
@@ -2794,13 +2883,13 @@ impl<'a> fmt::Display for MemberKey<'a> {
 
         write!(f, "{}", nmk_str)
       }
-      MemberKey::ParenthesizedType {
-        non_member_key: ParenthesizedType::Type(t),
+      MemberKey::Parenthesized(ParenthesizedMemberKey {
+        non_member_key: ParenthesizedTypeOrGroup::Type(ParenthesizedType { pt, .. }),
         #[cfg(feature = "ast-comments")]
         comments_before_type_or_group,
         #[cfg(feature = "ast-comments")]
         comments_after_type_or_group,
-      } => {
+      }) => {
         let mut nmk_str = String::new();
 
         #[cfg(feature = "ast-comments")]
@@ -2808,7 +2897,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
           nmk_str.push_str(&comments.to_string());
         }
 
-        nmk_str.push_str(&t.to_string());
+        nmk_str.push_str(&pt.to_string());
 
         #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_type_or_group {
@@ -2937,31 +3026,22 @@ mod tests {
               GroupEntry::ValueMemberKey {
                 ge: Box::from(ValueMemberKeyEntry {
                   occur: None,
-                  member_key: Some(MemberKey::Bareword {
+                  member_key: Some(MemberKey::Bareword(BarewordMemberKey {
                     ident: "key1".into(),
-                    comments: None,
-                    comments_after_colon: None,
-                    #[cfg(feature = "ast-span")]
-                    span: Span::default(),
-                  }),
+                    ..Default::default()
+                  })),
                   entry_type: Type {
                     type_choices: vec![TypeChoice {
                       type1: Type1 {
-                        type2: Type2::TextValue {
+                        type2: Type2::TextValue(TextValue {
                           value: "value1".into(),
-                          #[cfg(feature = "ast-span")]
-                          span: Span::default(),
-                        },
-                        operator: None,
-                        comments_after_type: None,
-                        #[cfg(feature = "ast-span")]
-                        span: Span::default(),
+                          ..Default::default()
+                        }),
+                        ..Default::default()
                       },
-                      comments_before_type: None,
-                      comments_after_type: None,
+                      ..Default::default()
                     }],
-                    #[cfg(feature = "ast-span")]
-                    span: Span::default(),
+                    ..Default::default()
                   },
                 }),
                 leading_comments: None,
@@ -2971,39 +3051,29 @@ mod tests {
               },
               OptionalComma {
                 optional_comma: true,
-                trailing_comments: None,
-                _a: PhantomData::default(),
+                ..Default::default()
               }
             ),
             (
               GroupEntry::ValueMemberKey {
                 ge: Box::from(ValueMemberKeyEntry {
                   occur: None,
-                  member_key: Some(MemberKey::Bareword {
+                  member_key: Some(MemberKey::Bareword(BarewordMemberKey {
                     ident: "key2".into(),
-                    comments: None,
-                    comments_after_colon: None,
-                    #[cfg(feature = "ast-span")]
-                    span: Span::default(),
-                  }),
+                    ..Default::default()
+                  })),
                   entry_type: Type {
                     type_choices: vec![TypeChoice {
                       type1: Type1 {
-                        type2: Type2::TextValue {
+                        type2: Type2::TextValue(TextValue {
                           value: "value2".into(),
-                          #[cfg(feature = "ast-span")]
-                          span: Span::default(),
-                        },
-                        operator: None,
-                        comments_after_type: None,
-                        #[cfg(feature = "ast-span")]
-                        span: Span::default(),
+                          ..Default::default()
+                        }),
+                        ..Default::default()
                       },
-                      comments_before_type: None,
-                      comments_after_type: None,
+                      ..Default::default()
                     }],
-                    #[cfg(feature = "ast-span")]
-                    span: Span::default(),
+                    ..Default::default()
                   },
                 }),
                 leading_comments: None,
@@ -3013,17 +3083,13 @@ mod tests {
               },
               OptionalComma {
                 optional_comma: true,
-                trailing_comments: None,
-                _a: PhantomData::default(),
+                ..Default::default()
               }
             ),
           ],
-          comments_before_grpchoice: None,
-          #[cfg(feature = "ast-span")]
-          span: Span::default(),
+          ..Default::default()
         }],
-        #[cfg(feature = "ast-span")]
-        span: Span::default(),
+        ..Default::default()
       }
       .to_string(),
       " key1: \"value1\", key2: \"value2\", ".to_string()

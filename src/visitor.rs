@@ -138,7 +138,7 @@ pub trait Visitor<'a, E: Error> {
   }
 
   /// Visit nonmemberkey
-  fn visit_nonmemberkey(&mut self, nmk: &ParenthesizedType<'a>) -> Result<E> {
+  fn visit_nonmemberkey(&mut self, nmk: &ParenthesizedTypeOrGroup<'a>) -> Result<E> {
     walk_nonmemberkey(self, nmk)
   }
 }
@@ -259,47 +259,47 @@ where
   V: Visitor<'a, E> + ?Sized,
 {
   match t2 {
-    Type2::Array { group, .. } => visitor.visit_group(group),
-    Type2::Map { group, .. } => visitor.visit_group(group),
-    Type2::ChoiceFromGroup {
+    Type2::Array(Array { group, .. }) => visitor.visit_group(group),
+    Type2::Map(Map { group, .. }) => visitor.visit_group(group),
+    Type2::ChoiceFromGroup(ChoiceFromGroup {
       generic_args,
       ident,
       ..
-    } => {
+    }) => {
       if let Some(ga) = generic_args {
         visitor.visit_genericargs(ga)?;
       }
 
       visitor.visit_identifier(ident)
     }
-    Type2::ChoiceFromInlineGroup { group, .. } => visitor.visit_group(group),
-    Type2::TaggedData { t, .. } => visitor.visit_type(t),
-    Type2::Typename { ident, .. } => visitor.visit_identifier(ident),
-    Type2::Unwrap {
+    Type2::ChoiceFromInlineGroup(ChoiceFromInlineGroup { group, .. }) => visitor.visit_group(group),
+    Type2::TaggedData(TaggedData { t, .. }) => visitor.visit_type(t),
+    Type2::Typename(Typename { ident, .. }) => visitor.visit_identifier(ident),
+    Type2::Unwrap(Unwrap {
       generic_args,
       ident,
       ..
-    } => {
+    }) => {
       if let Some(ga) = generic_args {
         visitor.visit_genericargs(ga)?;
       }
 
       visitor.visit_identifier(ident)
     }
-    Type2::ParenthesizedType { pt, .. } => visitor.visit_type(pt),
-    Type2::B16ByteString { value, .. } => {
+    Type2::ParenthesizedType(ParenthesizedType { pt, .. }) => visitor.visit_type(pt),
+    Type2::B16ByteString(B16ByteString { value, .. }) => {
       visitor.visit_value(&Value::BYTE(ByteValue::B16(value.clone())))
     }
-    Type2::B64ByteString { value, .. } => {
+    Type2::B64ByteString(B64ByteString { value, .. }) => {
       visitor.visit_value(&Value::BYTE(ByteValue::B64(value.clone())))
     }
-    Type2::UTF8ByteString { value, .. } => {
+    Type2::UTF8ByteString(Utf8ByteString { value, .. }) => {
       visitor.visit_value(&Value::BYTE(ByteValue::UTF8(value.clone())))
     }
-    Type2::FloatValue { value, .. } => visitor.visit_value(&Value::FLOAT(*value)),
-    Type2::IntValue { value, .. } => visitor.visit_value(&Value::INT(*value)),
-    Type2::UintValue { value, .. } => visitor.visit_value(&Value::UINT(*value)),
-    Type2::TextValue { value, .. } => visitor.visit_value(&Value::TEXT(value.clone())),
+    Type2::FloatValue(FloatValue { value, .. }) => visitor.visit_value(&Value::FLOAT(*value)),
+    Type2::IntValue(IntValue { value, .. }) => visitor.visit_value(&Value::INT(*value)),
+    Type2::UintValue(UintValue { value, .. }) => visitor.visit_value(&Value::UINT(*value)),
+    Type2::TextValue(TextValue { value, .. }) => visitor.visit_value(&Value::TEXT(value.clone())),
     _ => Ok(()),
   }
 }
@@ -409,10 +409,10 @@ where
   V: Visitor<'a, E> + ?Sized,
 {
   match mk {
-    MemberKey::Type1 { t1, .. } => visitor.visit_type1(t1),
-    MemberKey::Bareword { ident, .. } => visitor.visit_identifier(ident),
-    MemberKey::Value { value, .. } => visitor.visit_value(value),
-    MemberKey::ParenthesizedType { non_member_key, .. } => {
+    MemberKey::Type1(Type1MemberKey { t1, .. }) => visitor.visit_type1(t1),
+    MemberKey::Bareword(BarewordMemberKey { ident, .. }) => visitor.visit_identifier(ident),
+    MemberKey::Value(ValueMemberKey { value, .. }) => visitor.visit_value(value),
+    MemberKey::Parenthesized(ParenthesizedMemberKey { non_member_key, .. }) => {
       visitor.visit_nonmemberkey(non_member_key)
     }
   }
@@ -441,13 +441,13 @@ where
 }
 
 /// Walk nonmemberkey
-pub fn walk_nonmemberkey<'a, E, V>(visitor: &mut V, nmk: &ParenthesizedType<'a>) -> Result<E>
+pub fn walk_nonmemberkey<'a, E, V>(visitor: &mut V, nmk: &ParenthesizedTypeOrGroup<'a>) -> Result<E>
 where
   E: Error,
   V: Visitor<'a, E> + ?Sized,
 {
   match nmk {
-    ParenthesizedType::Group(group) => visitor.visit_group(group),
-    ParenthesizedType::Type(t) => visitor.visit_type(t),
+    ParenthesizedTypeOrGroup::Group(group) => visitor.visit_group(group),
+    ParenthesizedTypeOrGroup::Type(t) => visitor.visit_type(&t.pt),
   }
 }

@@ -1,7 +1,7 @@
 #![cfg(any(feature = "json", feature = "cbor"))]
 #![cfg(not(feature = "lsp"))]
 
-use crate::ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL};
+use crate::ast::*;
 
 #[cfg(feature = "additional-controls")]
 use crate::{ast::Type, token::lookup_control_from_str, validator::ByteValue, Token};
@@ -23,7 +23,7 @@ pub fn string_literals_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec
             | t @ Type2::UTF8ByteString { .. }
             | t @ Type2::B16ByteString { .. }
             | t @ Type2::B64ByteString { .. } => literals.push(t),
-            Type2::Typename { ident, .. } => {
+            Type2::Typename(Typename { ident, .. }) => {
               literals.append(&mut string_literals_from_ident(cddl, ident))
             }
             _ => continue,
@@ -48,7 +48,7 @@ pub fn numeric_values_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec<
             t @ Type2::IntValue { .. }
             | t @ Type2::UintValue { .. }
             | t @ Type2::FloatValue { .. } => literals.push(t),
-            Type2::Typename { ident, .. } => {
+            Type2::Typename(Typename { ident, .. }) => {
               literals.append(&mut numeric_values_from_ident(cddl, ident))
             }
             _ => continue,
@@ -74,11 +74,11 @@ pub fn cat_operation<'a>(
   let ctrl = if is_dedent { Token::DET } else { Token::CAT };
 
   match target {
-    Type2::TextValue { value, .. } => match controller {
+    Type2::TextValue(TextValue { value, .. }) => match controller {
       // "testing" .cat "123"
-      Type2::TextValue {
+      Type2::TextValue(TextValue {
         value: controller, ..
-      } => {
+      }) => {
         if is_dedent {
           literals.push(format!("{}{}", dedent_str(value), dedent_str(controller)).into())
         } else {
@@ -86,7 +86,7 @@ pub fn cat_operation<'a>(
         }
       }
       // "testing" .cat a
-      Type2::Typename { ident, .. } => {
+      Type2::Typename(Typename { ident, .. }) => {
         let sl = string_literals_from_ident(cddl, ident);
         if sl.is_empty() {
           return Err(format!(
@@ -99,9 +99,9 @@ pub fn cat_operation<'a>(
         }
       }
       // "testing" .cat '123'
-      Type2::UTF8ByteString {
+      Type2::UTF8ByteString(Utf8ByteString {
         value: controller, ..
-      } => match std::str::from_utf8(controller) {
+      }) => match std::str::from_utf8(controller) {
         Ok(controller) => {
           let controller = controller.trim_start_matches('\'').trim_end_matches('\'');
 
@@ -114,9 +114,9 @@ pub fn cat_operation<'a>(
         Err(e) => return Err(format!("error parsing byte string: {}", e)),
       },
       // "testing" .cat h'313233'
-      Type2::B16ByteString {
+      Type2::B16ByteString(B16ByteString {
         value: controller, ..
-      } => match base16::decode(controller) {
+      }) => match base16::decode(controller) {
         Ok(controller) => match String::from_utf8(controller) {
           Ok(controller) => {
             if is_dedent {
@@ -130,9 +130,9 @@ pub fn cat_operation<'a>(
         Err(e) => return Err(format!("error decoding base16 byte string literal: {}", e)),
       },
       // "testing" .cat b64'MTIz'
-      Type2::B64ByteString {
+      Type2::B64ByteString(B64ByteString {
         value: controller, ..
-      } => match base64::decode_config(controller, base64::URL_SAFE) {
+      }) => match base64::decode_config(controller, base64::URL_SAFE) {
         Ok(controller) => match String::from_utf8(controller) {
           Ok(controller) => {
             if is_dedent {
@@ -151,7 +151,7 @@ pub fn cat_operation<'a>(
         }
       },
       // "testing" .cat ( "123" / "1234" )
-      Type2::ParenthesizedType { pt: controller, .. } => {
+      Type2::ParenthesizedType(ParenthesizedType { pt: controller, .. }) => {
         for controller in controller.type_choices.iter() {
           if controller.type1.operator.is_none() {
             literals.append(&mut cat_operation(
@@ -166,7 +166,7 @@ pub fn cat_operation<'a>(
       _ => return Err(format!("invalid controller used for {} operation", ctrl)),
     },
     // a .cat "123"
-    Type2::Typename { ident, .. } => {
+    Type2::Typename(Typename { ident, .. }) => {
       // Only grab the first type choice literal from the target per
       // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
       if let Some(value) = string_literals_from_ident(cddl, ident).first() {
@@ -176,7 +176,7 @@ pub fn cat_operation<'a>(
       }
     }
     // ( "test" / "testing" ) .cat "123"
-    Type2::ParenthesizedType { pt: target, .. } => {
+    Type2::ParenthesizedType(ParenthesizedType { pt: target, .. }) => {
       // Only grab the first type choice literal from the target per
       // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
       if let Some(tc) = target.type_choices.first() {
@@ -193,12 +193,12 @@ pub fn cat_operation<'a>(
 
       return Err(format!("invalid target type in {} control operator", ctrl));
     }
-    Type2::UTF8ByteString { value, .. } => match std::str::from_utf8(value) {
+    Type2::UTF8ByteString(Utf8ByteString { value, .. }) => match std::str::from_utf8(value) {
       Ok(value) => match controller {
         // 'testing' .cat "123"
-        Type2::TextValue {
+        Type2::TextValue(TextValue {
           value: controller, ..
-        } => {
+        }) => {
           let value = value.trim_start_matches('\'').trim_end_matches('\'');
 
           if is_dedent {
@@ -207,7 +207,7 @@ pub fn cat_operation<'a>(
             literals.push(format!("{}{}", value, controller).into())
           }
         }
-        Type2::Typename { ident, .. } => {
+        Type2::Typename(Typename { ident, .. }) => {
           let sl = string_literals_from_ident(cddl, ident);
           if sl.is_empty() {
             return Err(format!(
@@ -220,9 +220,9 @@ pub fn cat_operation<'a>(
           }
         }
         // 'testing' .cat '123
-        Type2::UTF8ByteString {
+        Type2::UTF8ByteString(Utf8ByteString {
           value: controller, ..
-        } => match std::str::from_utf8(controller) {
+        }) => match std::str::from_utf8(controller) {
           Ok(controller) => {
             let value = value.trim_start_matches('\'').trim_end_matches('\'');
             let controller = controller.trim_start_matches('\'').trim_end_matches('\'');
@@ -236,9 +236,9 @@ pub fn cat_operation<'a>(
           Err(e) => return Err(format!("error parsing byte string: {}", e)),
         },
         // 'testing' .cat h'313233'
-        Type2::B16ByteString {
+        Type2::B16ByteString(B16ByteString {
           value: controller, ..
-        } => match base16::decode(controller) {
+        }) => match base16::decode(controller) {
           Ok(controller) => match String::from_utf8(controller) {
             Ok(controller) => {
               let value = value.trim_start_matches('\'').trim_end_matches('\'');
@@ -254,9 +254,9 @@ pub fn cat_operation<'a>(
           Err(e) => return Err(format!("error decoding base16 byte string literal: {}", e)),
         },
         // 'testing' .cat b64'MTIz'
-        Type2::B64ByteString {
+        Type2::B64ByteString(B64ByteString {
           value: controller, ..
-        } => match base64::decode_config(controller, base64::URL_SAFE) {
+        }) => match base64::decode_config(controller, base64::URL_SAFE) {
           Ok(controller) => match String::from_utf8(controller) {
             Ok(controller) => {
               let value = value.trim_start_matches('\'').trim_end_matches('\'');
@@ -277,7 +277,7 @@ pub fn cat_operation<'a>(
           }
         },
         // 'testing' .cat ( "123" / "1234" )
-        Type2::ParenthesizedType { pt: controller, .. } => {
+        Type2::ParenthesizedType(ParenthesizedType { pt: controller, .. }) => {
           for controller in controller.type_choices.iter() {
             if controller.type1.operator.is_none() {
               literals.append(&mut cat_operation(
@@ -293,11 +293,11 @@ pub fn cat_operation<'a>(
       },
       Err(e) => return Err(format!("error parsing byte string: {}", e)),
     },
-    Type2::B16ByteString { value, .. } => match controller {
+    Type2::B16ByteString(B16ByteString { value, .. }) => match controller {
       // h'74657374696E67' .cat "123"
-      Type2::TextValue {
+      Type2::TextValue(TextValue {
         value: controller, ..
-      } => {
+      }) => {
         let controller = if is_dedent {
           base16::encode_lower(dedent_str(controller).as_bytes())
         } else {
@@ -316,7 +316,7 @@ pub fn cat_operation<'a>(
         }
       }
       // h'74657374696E67' .cat b
-      Type2::Typename { ident, .. } => {
+      Type2::Typename(Typename { ident, .. }) => {
         let sl = string_literals_from_ident(cddl, ident);
         if sl.is_empty() {
           return Err(format!(
@@ -329,9 +329,9 @@ pub fn cat_operation<'a>(
         }
       }
       // h'74657374696E67' .cat '123'
-      Type2::UTF8ByteString {
+      Type2::UTF8ByteString(Utf8ByteString {
         value: controller, ..
-      } => {
+      }) => {
         let controller = if is_dedent {
           base16::encode_lower(&dedent_bytes(controller, true)?)
         } else {
@@ -351,9 +351,9 @@ pub fn cat_operation<'a>(
         }
       }
       // h'74657374696E67' .cat h'313233'
-      Type2::B16ByteString {
+      Type2::B16ByteString(B16ByteString {
         value: controller, ..
-      } => {
+      }) => {
         let concat = if is_dedent {
           [
             &dedent_bytes(value, false)?[..],
@@ -370,9 +370,9 @@ pub fn cat_operation<'a>(
         }
       }
       // h'74657374696E67' .cat b64'MTIz'
-      Type2::B64ByteString {
+      Type2::B64ByteString(B64ByteString {
         value: controller, ..
-      } => match base64::decode_config(controller, base64::URL_SAFE) {
+      }) => match base64::decode_config(controller, base64::URL_SAFE) {
         Ok(controller) => {
           let controller = base16::encode_lower(&controller);
           let concat = if is_dedent {
@@ -393,7 +393,7 @@ pub fn cat_operation<'a>(
         Err(e) => return Err(format!("controller is invalid base64: {}", e)),
       },
       // h'74657374696E67' .cat ( "123" / "1234" )
-      Type2::ParenthesizedType { pt: controller, .. } => {
+      Type2::ParenthesizedType(ParenthesizedType { pt: controller, .. }) => {
         for controller in controller.type_choices.iter() {
           if controller.type1.operator.is_none() {
             literals.append(&mut cat_operation(
@@ -407,11 +407,11 @@ pub fn cat_operation<'a>(
       }
       _ => return Err(format!("invalid controller used for {} operation", ctrl)),
     },
-    Type2::B64ByteString { value, .. } => match controller {
+    Type2::B64ByteString(B64ByteString { value, .. }) => match controller {
       // b64'dGVzdGluZw==' .cat "123"
-      Type2::TextValue {
+      Type2::TextValue(TextValue {
         value: controller, ..
-      } => match base64::decode_config(value, base64::URL_SAFE) {
+      }) => match base64::decode_config(value, base64::URL_SAFE) {
         Ok(value) => {
           let concat = if is_dedent {
             [
@@ -435,7 +435,7 @@ pub fn cat_operation<'a>(
         Err(e) => return Err(format!("target is invalid base64: {}", e)),
       },
       // b64'dGVzdGluZw==' .cat b
-      Type2::Typename { ident, .. } => {
+      Type2::Typename(Typename { ident, .. }) => {
         let sl = string_literals_from_ident(cddl, ident);
         if sl.is_empty() {
           return Err(format!(
@@ -448,9 +448,9 @@ pub fn cat_operation<'a>(
         }
       }
       // b64'dGVzdGluZw==' .cat '123'
-      Type2::UTF8ByteString {
+      Type2::UTF8ByteString(Utf8ByteString {
         value: controller, ..
-      } => match base64::decode_config(value, base64::URL_SAFE) {
+      }) => match base64::decode_config(value, base64::URL_SAFE) {
         Ok(value) => {
           let concat = if is_dedent {
             [
@@ -474,9 +474,9 @@ pub fn cat_operation<'a>(
         Err(e) => return Err(format!("target is invalid base64: {}", e)),
       },
       // b64'dGVzdGluZw==' .cat h'313233'
-      Type2::B16ByteString {
+      Type2::B16ByteString(B16ByteString {
         value: controller, ..
-      } => match base64::decode_config(value, base64::URL_SAFE) {
+      }) => match base64::decode_config(value, base64::URL_SAFE) {
         Ok(value) => match base16::decode(controller) {
           Ok(controller) => {
             let concat = if is_dedent {
@@ -502,9 +502,9 @@ pub fn cat_operation<'a>(
         Err(e) => return Err(format!("target is invalid base64: {}", e)),
       },
       // b64'dGVzdGluZw==' .cat b64'MTIz'
-      Type2::B64ByteString {
+      Type2::B64ByteString(B64ByteString {
         value: controller, ..
-      } => match base64::decode_config(value, base64::URL_SAFE) {
+      }) => match base64::decode_config(value, base64::URL_SAFE) {
         Ok(value) => match base64::decode_config(controller, base64::URL_SAFE) {
           Ok(controller) => {
             let concat = if is_dedent {
@@ -530,7 +530,7 @@ pub fn cat_operation<'a>(
         Err(e) => return Err(format!("target is invalid base64: {}", e)),
       },
       // b64'dGVzdGluZw==' .cat ( "123" / "1234" )
-      Type2::ParenthesizedType { pt: controller, .. } => {
+      Type2::ParenthesizedType(ParenthesizedType { pt: controller, .. }) => {
         for controller in controller.type_choices.iter() {
           if controller.type1.operator.is_none() {
             literals.append(&mut cat_operation(
@@ -607,17 +607,17 @@ pub fn plus_operation<'a>(
 ) -> Result<Vec<Type2<'a>>, String> {
   let mut values = Vec::new();
   match target {
-    Type2::UintValue { value, .. } => match controller {
-      Type2::UintValue {
+    Type2::UintValue(UintValue { value, .. }) => match controller {
+      Type2::UintValue(UintValue {
         value: controller, ..
-      } => values.push((value + controller).into()),
-      Type2::IntValue {
+      }) => values.push((value + controller).into()),
+      Type2::IntValue(IntValue {
         value: controller, ..
-      } => values.push(((*value as isize + controller) as usize).into()),
-      Type2::FloatValue {
+      }) => values.push(((*value as isize + controller) as usize).into()),
+      Type2::FloatValue(FloatValue {
         value: controller, ..
-      } => values.push(((*value as isize + *controller as isize) as usize).into()),
-      Type2::Typename { ident, .. } => {
+      }) => values.push(((*value as isize + *controller as isize) as usize).into()),
+      Type2::Typename(Typename { ident, .. }) => {
         let nv = numeric_values_from_ident(cddl, ident);
         if nv.is_empty() {
           return Err(format!(
@@ -630,7 +630,7 @@ pub fn plus_operation<'a>(
           values.append(&mut plus_operation(cddl, target, controller)?)
         }
       }
-      Type2::ParenthesizedType { pt: controller, .. } => {
+      Type2::ParenthesizedType(ParenthesizedType { pt: controller, .. }) => {
         for controller in controller.type_choices.iter() {
           match &controller.type1.operator {
             Some(Operator {
@@ -649,17 +649,17 @@ pub fn plus_operation<'a>(
       }
       _ => return Err("invalid controller used for .plus operation".to_string()),
     },
-    Type2::IntValue { value, .. } => match controller {
-      Type2::IntValue {
+    Type2::IntValue(IntValue { value, .. }) => match controller {
+      Type2::IntValue(IntValue {
         value: controller, ..
-      } => values.push((value + controller).into()),
-      Type2::UintValue {
+      }) => values.push((value + controller).into()),
+      Type2::UintValue(UintValue {
         value: controller, ..
-      } => values.push((value + *controller as isize).into()),
-      Type2::FloatValue {
+      }) => values.push((value + *controller as isize).into()),
+      Type2::FloatValue(FloatValue {
         value: controller, ..
-      } => values.push((value + *controller as isize).into()),
-      Type2::Typename { ident, .. } => {
+      }) => values.push((value + *controller as isize).into()),
+      Type2::Typename(Typename { ident, .. }) => {
         let nv = numeric_values_from_ident(cddl, ident);
         if nv.is_empty() {
           return Err(format!(
@@ -672,7 +672,7 @@ pub fn plus_operation<'a>(
           values.append(&mut plus_operation(cddl, target, controller)?)
         }
       }
-      Type2::ParenthesizedType { pt: controller, .. } => {
+      Type2::ParenthesizedType(ParenthesizedType { pt: controller, .. }) => {
         for controller in controller.type_choices.iter() {
           match &controller.type1.operator {
             Some(Operator {
@@ -691,14 +691,14 @@ pub fn plus_operation<'a>(
       }
       _ => return Err("invalid controller used for .plus operation".to_string()),
     },
-    Type2::FloatValue { value, .. } => match controller {
-      Type2::IntValue {
+    Type2::FloatValue(FloatValue { value, .. }) => match controller {
+      Type2::IntValue(IntValue {
         value: controller, ..
-      } => values.push((value + *controller as f64).into()),
-      Type2::FloatValue {
+      }) => values.push((value + *controller as f64).into()),
+      Type2::FloatValue(FloatValue {
         value: controller, ..
-      } => values.push((value + controller).into()),
-      Type2::Typename { ident, .. } => {
+      }) => values.push((value + controller).into()),
+      Type2::Typename(Typename { ident, .. }) => {
         let nv = numeric_values_from_ident(cddl, ident);
         if nv.is_empty() {
           return Err(format!(
@@ -711,7 +711,7 @@ pub fn plus_operation<'a>(
           values.append(&mut plus_operation(cddl, target, controller)?)
         }
       }
-      Type2::ParenthesizedType { pt: controller, .. } => {
+      Type2::ParenthesizedType(ParenthesizedType { pt: controller, .. }) => {
         for controller in controller.type_choices.iter() {
           match &controller.type1.operator {
             Some(Operator {
@@ -730,7 +730,7 @@ pub fn plus_operation<'a>(
       }
       _ => return Err("invalid controller used for .plus operation".to_string()),
     },
-    Type2::Typename { ident, .. } => {
+    Type2::Typename(Typename { ident, .. }) => {
       // Only grab the first type choice value from the target per
       // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
       if let Some(value) = numeric_values_from_ident(cddl, ident).first() {
@@ -739,7 +739,7 @@ pub fn plus_operation<'a>(
         return Err("invalid controller used for .plus operation".to_string());
       }
     }
-    Type2::ParenthesizedType { pt: target, .. } => {
+    Type2::ParenthesizedType(ParenthesizedType { pt: target, .. }) => {
       // Only grab the first type choice value from the target per
       // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
       if let Some(tc) = target.type_choices.first() {
@@ -859,11 +859,10 @@ mod tests {
         )),
         false,
       )?,
-      vec![Type2::TextValue {
+      vec![Type2::TextValue(TextValue {
         value: "foo\n  bar\n  baz\n".into(),
-        #[cfg(feature = "ast-span")]
-        span: Span::default(),
-      }],
+        ..Default::default()
+      })],
     );
 
     Ok(())
@@ -889,19 +888,16 @@ mod tests {
       cat_operation(
         &cddl,
         &Type2::from("foo".to_string()),
-        &Type2::Typename {
+        &Type2::Typename(Typename {
           ident: "b".into(),
-          generic_args: None,
-          #[cfg(feature = "ast-span")]
-          span: Span::default(),
-        },
+          ..Default::default()
+        }),
         true,
       )?,
-      vec![Type2::TextValue {
+      vec![Type2::TextValue(TextValue {
         value: "foo\nbar\nbaz\n".into(),
-        #[cfg(feature = "ast-span")]
-        span: Span::default(),
-      }]
+        ..Default::default()
+      })]
     );
 
     Ok(())

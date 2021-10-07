@@ -47,7 +47,7 @@ fn verify_cddl() -> Result<()> {
                 value: Type {
                   type_choices: vec![TypeChoice {
                     type1: Type1 {
-                      type2: Type2::Typename {
+                      type2: Type2::Typename(Typename {
                         ident: Identifier {
                           ident: "secondrule".into(),
                           socket: None,
@@ -55,19 +55,16 @@ fn verify_cddl() -> Result<()> {
                         },
                         generic_args: None,
                         span: Span(9, 19, 1),
-                      },
-                      operator: None,
-                      comments_after_type: None,
+                      }),
                       span: Span(9, 19, 1),
+                      ..Default::default()
                     },
-                    comments_before_type: None,
-                    comments_after_type: None,
+                    ..Default::default()
                   }],
 
                   span: Span(9, 19, 1),
                 },
-                comments_before_assignt: None,
-                comments_after_assignt: None,
+                ..Default::default()
               },
               comments_after_rule: None,
               span: Span(0, 19, 1),
@@ -79,21 +76,19 @@ fn verify_cddl() -> Result<()> {
                   socket: None,
                   span: Span(20, 27, 2),
                 },
-                generic_params: None,
-                is_type_choice_alternate: false,
                 value: Type {
                   type_choices: vec![TypeChoice {
                     type1: Type1 {
-                      type2: Type2::UintValue {
+                      type2: Type2::UintValue(UintValue {
                         value: 10,
                         span: Span(30, 32, 2),
-                      },
+                      }),
                       operator: Some(Operator {
                         operator: RangeCtlOp::RangeOp {
                           is_inclusive: true,
                           span: Span(32, 34, 2),
                         },
-                        type2: Type2::Typename {
+                        type2: Type2::Typename(Typename {
                           ident: Identifier {
                             ident: "upper".into(),
                             socket: None,
@@ -101,7 +96,7 @@ fn verify_cddl() -> Result<()> {
                           },
                           generic_args: None,
                           span: Span(34, 39, 2),
-                        },
+                        }),
                         comments_before_operator: None,
                         comments_after_operator: None,
                       }),
@@ -113,8 +108,7 @@ fn verify_cddl() -> Result<()> {
                   }],
                   span: Span(30, 39, 2),
                 },
-                comments_before_assignt: None,
-                comments_after_assignt: None,
+                ..Default::default()
               },
               comments_after_rule: None,
               span: Span(20, 39, 2),
@@ -132,35 +126,30 @@ fn verify_cddl() -> Result<()> {
                   type_choices: vec![
                     TypeChoice {
                       type1: Type1 {
-                        type2: Type2::UintValue {
+                        type2: Type2::UintValue(UintValue {
                           value: 500,
                           span: Span(48, 51, 3),
-                        },
-                        operator: None,
-                        comments_after_type: None,
+                        }),
                         span: Span(48, 51, 3),
+                        ..Default::default()
                       },
-                      comments_before_type: None,
-                      comments_after_type: None,
+                      ..Default::default()
                     },
                     TypeChoice {
                       type1: Type1 {
-                        type2: Type2::UintValue {
+                        type2: Type2::UintValue(UintValue {
                           value: 600,
                           span: Span(54, 57, 3),
-                        },
-                        operator: None,
-                        comments_after_type: None,
+                        }),
                         span: Span(54, 57, 3),
+                        ..Default::default()
                       },
-                      comments_before_type: None,
-                      comments_after_type: None,
+                      ..Default::default()
                     },
                   ],
                   span: Span(48, 57, 3),
                 },
-                comments_before_assignt: None,
-                comments_after_assignt: None,
+                ..Default::default()
               },
               comments_after_rule: None,
               span: Span(40, 57, 3),
@@ -234,7 +223,7 @@ fn verify_cddl() -> Result<()> {
                 value: Type {
                   type_choices: vec![TypeChoice {
                     type1: Type1 {
-                      type2: Type2::Typename {
+                      type2: Type2::Typename(Typename {
                         ident: Identifier {
                           ident: "message".into(),
                           socket: None,
@@ -244,50 +233,42 @@ fn verify_cddl() -> Result<()> {
                           args: vec![
                             GenericArg {
                               arg: Box::from(Type1 {
-                                type2: Type2::TextValue {
+                                type2: Type2::TextValue(TextValue {
                                   value: "reboot".into(),
                                   span: Span(94, 102, 5),
-                                },
-                                operator: None,
-                                comments_after_type: None,
+                                }),
                                 span: Span(94, 102, 5),
+                                ..Default::default()
                               }),
-                              comments_before_type: None,
-                              comments_after_type: None,
+                              ..Default::default()
                             },
                             GenericArg {
                               arg: Box::from(Type1 {
-                                type2: Type2::TextValue {
+                                type2: Type2::TextValue(TextValue {
                                   value: "now".into(),
                                   span: Span(104, 109, 5),
-                                },
-                                operator: None,
-                                comments_after_type: None,
+                                }),
                                 span: Span(104, 109, 5),
+                                ..Default::default()
                               }),
-                              comments_before_type: None,
-                              comments_after_type: None,
+                              ..Default::default()
                             },
                           ],
-
                           span: Span(93, 110, 5),
                         }),
                         span: Span(86, 110, 5),
-                      },
-                      operator: None,
-                      comments_after_type: None,
+                      }),
                       span: Span(86, 110, 5),
+                      ..Default::default()
                     },
-                    comments_before_type: None,
-                    comments_after_type: None,
+                    ..Default::default()
                   }],
                   span: Span(86, 110, 5),
                 },
-                comments_before_assignt: None,
-                comments_after_assignt: None,
+                ..Default::default()
               },
-              comments_after_rule: None,
               span: Span(75, 110, 5),
+              comments_after_rule: None,
             },
             Rule::Type {
               rule: TypeRule {
@@ -304,8 +285,7 @@ fn verify_cddl() -> Result<()> {
                         socket: None,
                         span: Span(119, 120, 6),
                       },
-                      comments_before_ident: None,
-                      comments_after_ident: None,
+                      ..Default::default()
                     },
                     GenericParam {
                       param: Identifier {
@@ -313,8 +293,7 @@ fn verify_cddl() -> Result<()> {
                         socket: None,
                         span: Span(122, 123, 6),
                       },
-                      comments_before_ident: None,
-                      comments_after_ident: None,
+                      ..Default::default()
                     },
                   ],
                   span: Span(118, 124, 6),
@@ -323,7 +302,7 @@ fn verify_cddl() -> Result<()> {
                 value: Type {
                   type_choices: vec![TypeChoice {
                     type1: Type1 {
-                      type2: Type2::Map {
+                      type2: Type2::Map(Map {
                         group: Group {
                           group_choices: vec![GroupChoice {
                             group_entries: vec![
@@ -331,29 +310,26 @@ fn verify_cddl() -> Result<()> {
                                 GroupEntry::ValueMemberKey {
                                   ge: Box::from(ValueMemberKeyEntry {
                                     occur: None,
-                                    member_key: Some(MemberKey::Bareword {
+                                    member_key: Some(MemberKey::Bareword(BarewordMemberKey {
                                       ident: Identifier {
                                         ident: "type".into(),
                                         socket: None,
                                         span: Span(128, 132, 6),
                                       },
-                                      comments: None,
-                                      comments_after_colon: None,
                                       span: Span(128, 133, 6),
-                                    }),
+                                      ..Default::default()
+                                    })),
                                     entry_type: Type {
                                       type_choices: vec![TypeChoice {
                                         type1: Type1 {
-                                          type2: Type2::UintValue {
+                                          type2: Type2::UintValue(UintValue {
                                             value: 2,
                                             span: Span(134, 135, 6),
-                                          },
-                                          operator: None,
-                                          comments_after_type: None,
+                                          }),
                                           span: Span(134, 135, 6),
+                                          ..Default::default()
                                         },
-                                        comments_before_type: None,
-                                        comments_after_type: None,
+                                        ..Default::default()
                                       }],
                                       span: Span(134, 135, 6),
                                     },
@@ -372,20 +348,19 @@ fn verify_cddl() -> Result<()> {
                                 GroupEntry::ValueMemberKey {
                                   ge: Box::from(ValueMemberKeyEntry {
                                     occur: None,
-                                    member_key: Some(MemberKey::Bareword {
+                                    member_key: Some(MemberKey::Bareword(BarewordMemberKey {
                                       ident: Identifier {
                                         ident: "value".into(),
                                         socket: None,
                                         span: Span(137, 142, 6),
                                       },
-                                      comments: None,
-                                      comments_after_colon: None,
                                       span: Span(137, 143, 6),
-                                    }),
+                                      ..Default::default()
+                                    })),
                                     entry_type: Type {
                                       type_choices: vec![TypeChoice {
                                         type1: Type1 {
-                                          type2: Type2::Typename {
+                                          type2: Type2::Typename(Typename {
                                             ident: Identifier {
                                               ident: "v".into(),
                                               socket: None,
@@ -393,13 +368,11 @@ fn verify_cddl() -> Result<()> {
                                             },
                                             generic_args: None,
                                             span: Span(144, 145, 6),
-                                          },
-                                          operator: None,
-                                          comments_after_type: None,
+                                          }),
                                           span: Span(144, 145, 6),
+                                          ..Default::default()
                                         },
-                                        comments_before_type: None,
-                                        comments_after_type: None,
+                                        ..Default::default()
                                       }],
                                       span: Span(144, 145, 6),
                                     },
@@ -420,21 +393,17 @@ fn verify_cddl() -> Result<()> {
                           }],
                           span: Span(128, 145, 6),
                         },
-                        comments_before_group: None,
-                        comments_after_group: None,
                         span: Span(127, 146, 6),
-                      },
-                      operator: None,
-                      comments_after_type: None,
+                        ..Default::default()
+                      }),
                       span: Span(127, 146, 6),
+                      ..Default::default()
                     },
-                    comments_before_type: None,
-                    comments_after_type: None,
+                    ..Default::default()
                   }],
                   span: Span(127, 146, 6),
                 },
-                comments_before_assignt: None,
-                comments_after_assignt: None,
+                ..Default::default()
               },
               comments_after_rule: None,
               span: Span(111, 146, 6),
@@ -451,27 +420,23 @@ fn verify_cddl() -> Result<()> {
                 value: Type {
                   type_choices: vec![TypeChoice {
                     type1: Type1 {
-                      type2: Type2::ChoiceFromGroup {
+                      type2: Type2::ChoiceFromGroup(ChoiceFromGroup {
                         ident: Identifier {
                           ident: "colors".into(),
                           socket: None,
                           span: Span(156, 162, 7),
                         },
-                        generic_args: None,
-                        comments: None,
                         span: Span(155, 162, 7),
-                      },
-                      operator: None,
-                      comments_after_type: None,
+                        ..Default::default()
+                      }),
                       span: Span(155, 162, 7),
+                      ..Default::default()
                     },
-                    comments_before_type: None,
-                    comments_after_type: None,
+                    ..Default::default()
                   }],
                   span: Span(155, 162, 7),
                 },
-                comments_before_assignt: None,
-                comments_after_assignt: None,
+                ..Default::default()
               },
               comments_after_rule: None,
               span: Span(147, 162, 7),
@@ -493,29 +458,26 @@ fn verify_cddl() -> Result<()> {
                         GroupEntry::ValueMemberKey {
                           ge: Box::from(ValueMemberKeyEntry {
                             occur: None,
-                            member_key: Some(MemberKey::Bareword {
+                            member_key: Some(MemberKey::Bareword(BarewordMemberKey {
                               ident: Identifier {
                                 ident: "red".into(),
                                 socket: None,
                                 span: Span(174, 177, 8),
                               },
-                              comments: None,
-                              comments_after_colon: None,
                               span: Span(174, 178, 8),
-                            }),
+                              ..Default::default()
+                            })),
                             entry_type: Type {
                               type_choices: vec![TypeChoice {
                                 type1: Type1 {
-                                  type2: Type2::TextValue {
+                                  type2: Type2::TextValue(TextValue {
                                     value: "red".into(),
                                     span: Span(179, 184, 8),
-                                  },
-                                  operator: None,
-                                  comments_after_type: None,
+                                  }),
                                   span: Span(179, 184, 8),
+                                  ..Default::default()
                                 },
-                                comments_before_type: None,
-                                comments_after_type: None,
+                                ..Default::default()
                               }],
                               span: Span(179, 184, 8),
                             },
@@ -557,12 +519,12 @@ fn verify_cddl() -> Result<()> {
                 value: Type {
                   type_choices: vec![TypeChoice {
                     type1: Type1 {
-                      type2: Type2::ParenthesizedType {
+                      type2: Type2::ParenthesizedType(ParenthesizedType {
                         pt: Type {
                           type_choices: vec![
                             TypeChoice {
                               type1: Type1 {
-                                type2: Type2::Typename {
+                                type2: Type2::Typename(Typename {
                                   ident: Identifier {
                                     ident: "int".into(),
                                     socket: None,
@@ -570,17 +532,15 @@ fn verify_cddl() -> Result<()> {
                                   },
                                   generic_args: None,
                                   span: Span(196, 199, 9),
-                                },
-                                operator: None,
-                                comments_after_type: None,
+                                }),
                                 span: Span(196, 199, 9),
+                                ..Default::default()
                               },
-                              comments_before_type: None,
-                              comments_after_type: None,
+                              ..Default::default()
                             },
                             TypeChoice {
                               type1: Type1 {
-                                type2: Type2::Typename {
+                                type2: Type2::Typename(Typename {
                                   ident: Identifier {
                                     ident: "float".into(),
                                     socket: None,
@@ -588,27 +548,22 @@ fn verify_cddl() -> Result<()> {
                                   },
                                   generic_args: None,
                                   span: Span(202, 207, 9),
-                                },
-                                operator: None,
-                                comments_after_type: None,
+                                }),
                                 span: Span(202, 207, 9),
+                                ..Default::default()
                               },
-                              comments_before_type: None,
-                              comments_after_type: None,
+                              ..Default::default()
                             },
                           ],
                           span: Span(196, 207, 9),
                         },
-                        comments_before_type: None,
-                        comments_after_type: None,
                         span: Span(194, 209, 9),
-                      },
-                      operator: None,
-                      comments_after_type: None,
+                        ..Default::default()
+                      }),
                       span: Span(194, 210, 9),
+                      ..Default::default()
                     },
-                    comments_before_type: None,
-                    comments_after_type: None,
+                    ..Default::default()
                   }],
 
                   span: Span(194, 210, 9),

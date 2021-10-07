@@ -1,5 +1,5 @@
 use crate::{
-  ast::*,
+  ast::{self, *},
   token::{lookup_ident, Token},
   util::*,
   visitor::{self, *},
@@ -203,15 +203,15 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
     ctrl: &Token<'a>,
     controller: &Type2<'a>,
   ) -> visitor::Result<Error> {
-    if let Type2::Typename {
+    if let Type2::Typename(Typename {
       ident: target_ident,
       ..
-    } = target
+    }) = target
     {
-      if let Type2::Typename {
+      if let Type2::Typename(Typename {
         ident: controller_ident,
         ..
-      } = controller
+      }) = controller
       {
         if let Some(name) = self.eval_generic_rule {
           if let Some(gr) = self
@@ -258,7 +258,7 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
 
     match ctrl {
       Token::SIZE => match target {
-        Type2::Typename { ident, .. }
+        Type2::Typename(Typename { ident, .. })
           if is_ident_string_data_type(self.cddl, ident)
             || is_ident_uint_data_type(self.cddl, ident) =>
         {
@@ -281,26 +281,26 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
     is_inclusive: bool,
   ) -> visitor::Result<Error> {
     match lower {
-      Type2::IntValue { value: lower_v, .. } => match upper {
-        Type2::IntValue { value: upper, .. } => {
+      Type2::IntValue(IntValue { value: lower_v, .. }) => match upper {
+        Type2::IntValue(IntValue { value: upper, .. }) => {
           if is_inclusive {
             self.faked_json = Some((*lower_v..=*upper).fake::<isize>().into());
           } else {
             self.faked_json = Some((*lower_v..*upper).fake::<isize>().into());
           }
         }
-        Type2::UintValue { value: upper, .. } => {
+        Type2::UintValue(UintValue { value: upper, .. }) => {
           if is_inclusive {
             self.faked_json = Some((*lower_v..=*upper as isize).fake::<isize>().into());
           } else {
             self.faked_json = Some((*lower_v..*upper as isize).fake::<isize>().into());
           }
         }
-        Type2::Typename {
+        Type2::Typename(Typename {
           ident,
           generic_args,
           ..
-        } => {
+        }) => {
           if let Some(ga) = generic_args {
             return self.process_generic_args(ident, ga);
           }
@@ -311,26 +311,26 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
         }
         _ => return Ok(()),
       },
-      Type2::UintValue { value: lower_v, .. } => match upper {
-        Type2::IntValue { value: upper, .. } => {
+      Type2::UintValue(UintValue { value: lower_v, .. }) => match upper {
+        Type2::IntValue(IntValue { value: upper, .. }) => {
           if is_inclusive {
             self.faked_json = Some((*lower_v..=*upper as usize).fake::<usize>().into());
           } else {
             self.faked_json = Some((*lower_v..*upper as usize).fake::<usize>().into());
           }
         }
-        Type2::UintValue { value: upper, .. } => {
+        Type2::UintValue(UintValue { value: upper, .. }) => {
           if is_inclusive {
             self.faked_json = Some((*lower_v..=*upper).fake::<usize>().into());
           } else {
             self.faked_json = Some((*lower_v..*upper).fake::<usize>().into());
           }
         }
-        Type2::Typename {
+        Type2::Typename(Typename {
           ident,
           generic_args,
           ..
-        } => {
+        }) => {
           if let Some(ga) = generic_args {
             return self.process_generic_args(ident, ga);
           }
@@ -341,19 +341,19 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
         }
         _ => return Ok(()),
       },
-      Type2::FloatValue { value: lower_v, .. } => match upper {
-        Type2::FloatValue { value: upper, .. } => {
+      Type2::FloatValue(FloatValue { value: lower_v, .. }) => match upper {
+        Type2::FloatValue(FloatValue { value: upper, .. }) => {
           if is_inclusive {
             self.faked_json = Some((*lower_v..=*upper).fake::<f64>().into());
           } else {
             self.faked_json = Some((*lower_v..*upper).fake::<f64>().into());
           }
         }
-        Type2::Typename {
+        Type2::Typename(Typename {
           ident,
           generic_args,
           ..
-        } => {
+        }) => {
           if let Some(ga) = generic_args {
             return self.process_generic_args(ident, ga);
           }
@@ -364,11 +364,11 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
         }
         _ => return Ok(()),
       },
-      Type2::Typename {
+      Type2::Typename(Typename {
         ident,
         generic_args,
         ..
-      } => {
+      }) => {
         if let Some(ga) = generic_args {
           return self.process_generic_args(ident, ga);
         }
@@ -392,10 +392,10 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
 
       if let Some(mk) = &entry.member_key {
         match mk {
-          MemberKey::Bareword { ident, .. } => {
+          MemberKey::Bareword(BarewordMemberKey { ident, .. }) => {
             entries.insert(ident.ident.to_string(), (occur, entry.entry_type.clone()));
           }
-          MemberKey::Value { value, .. } => {
+          MemberKey::Value(ValueMemberKey { value, .. }) => {
             entries.insert(value.to_string(), (occur, entry.entry_type.clone()));
           }
           _ => return Ok(()),
@@ -413,14 +413,14 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
 
   fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error> {
     match t2 {
-      Type2::TextValue { value, .. } => {
+      Type2::TextValue(TextValue { value, .. }) => {
         if let Some(Value::Array(array)) = self.faked_json.as_mut() {
           array.push(value.as_ref().into());
         } else {
           self.faked_json = Some(value.as_ref().into());
         }
       }
-      Type2::UTF8ByteString { value, .. } => {
+      Type2::UTF8ByteString(Utf8ByteString { value, .. }) => {
         let value = std::str::from_utf8(value.as_ref()).map_err(Error::Utf8Error)?;
 
         if let Some(Value::Array(array)) = self.faked_json.as_mut() {
@@ -429,7 +429,7 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
           self.faked_json = Some(value.into());
         }
       }
-      Type2::UintValue { value, .. } => match &self.ctrl {
+      Type2::UintValue(UintValue { value, .. }) => match &self.ctrl {
         Some((target, Token::SIZE)) => {
           if is_ident_string_data_type(self.cddl, target) {
             self.faked_json = Some(value.fake::<String>().into())
@@ -439,9 +439,9 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
         }
         _ => self.faked_json = Some((*value).into()),
       },
-      Type2::IntValue { value, .. } => self.faked_json = Some((*value).into()),
-      Type2::FloatValue { value, .. } => self.faked_json = Some((*value).into()),
-      Type2::Array { group, .. } => {
+      Type2::IntValue(IntValue { value, .. }) => self.faked_json = Some((*value).into()),
+      Type2::FloatValue(FloatValue { value, .. }) => self.faked_json = Some((*value).into()),
+      Type2::Array(Array { group, .. }) => {
         self.faked_json = Some(Value::Array(Vec::new()));
         self.entries = Entries::Array(Vec::new());
         self.visit_group(group)?;
@@ -620,7 +620,7 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
 
         self.entries = Entries::None;
       }
-      Type2::Map { group, .. } => {
+      Type2::Map(ast::Map { group, .. }) => {
         self.faked_json = Some(Value::Object(Map::default()));
         self.entries = Entries::Map(HashMap::new());
         self.visit_group(group)?;
@@ -658,22 +658,22 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
 
         self.entries = Entries::None;
       }
-      Type2::Typename {
+      Type2::Typename(Typename {
         ident,
         generic_args,
         ..
-      } => {
+      }) => {
         if let Some(ga) = generic_args {
           return self.process_generic_args(ident, ga);
         }
 
         return self.visit_identifier(ident);
       }
-      Type2::ChoiceFromGroup {
+      Type2::ChoiceFromGroup(ChoiceFromGroup {
         ident,
         generic_args,
         ..
-      } => {
+      }) => {
         if let Some(ga) = generic_args {
           self.is_group_to_choice_enum = true;
 
@@ -712,20 +712,22 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
       self.faked_json = Some(Name(EN).fake::<String>().into());
     } else if let Token::NUMBER = lookup_ident(ident.ident) {
       if FFaker.fake::<bool>() {
-        self.faked_json = Some(FFaker.fake::<i16>().into())
+        self.faked_json = Some(FFaker.fake::<i16>().into());
       } else {
-        self.faked_json = Some(FFaker.fake::<f32>().into())
+        self.faked_json = Some(FFaker.fake::<f32>().into());
       }
     } else if is_ident_float_data_type(self.cddl, ident) {
-      self.faked_json = Some(FFaker.fake::<f32>().into())
+      self.faked_json = Some(FFaker.fake::<f32>().into());
     } else if is_ident_uint_data_type(self.cddl, ident) {
-      self.faked_json = Some(FFaker.fake::<u16>().into())
+      self.faked_json = Some(FFaker.fake::<u16>().into());
     } else if is_ident_nint_data_type(self.cddl, ident) {
-      self.faked_json = Some((..0).fake::<i16>().into())
+      self.faked_json = Some((..0).fake::<i16>().into());
     } else if is_ident_integer_data_type(self.cddl, ident) {
-      self.faked_json = Some(FFaker.fake::<i16>().into())
+      self.faked_json = Some(FFaker.fake::<i16>().into());
     } else if is_ident_bool_data_type(self.cddl, ident) {
-      self.faked_json = Some(FFaker.fake::<bool>().into())
+      self.faked_json = Some(FFaker.fake::<bool>().into());
+    } else if is_ident_null_data_type(self.cddl, ident) {
+      self.faked_json = Some(Value::Null);
     } else if let Some(rule) = rule_from_ident(self.cddl, ident) {
       self.visit_rule(rule)?;
     } else {
