@@ -5,7 +5,9 @@ use std::marker::PhantomData;
 
 use cddl::{
   ast::*,
+  cddl_from_str,
   lexer::Lexer,
+  lexer_from_str,
   parser::{Error, Parser, Result},
 };
 use indoc::indoc;
@@ -643,4 +645,34 @@ fn verify_cddl() -> Result<()> {
     },
     Err(e) => Err(e),
   }
+}
+
+#[test]
+fn cri_reference() -> std::result::Result<(), String> {
+  let cddl = indoc!(
+    r#"
+      CRI-Reference = [
+        (?scheme, ?((host.name // host.ip), ?port) // path.type),
+        *path,
+        *query,
+        ?fragment
+      ]
+
+      scheme    = (0, text .regexp "[a-z][a-z0-9+.-]*")
+      host.name = (1, text)
+      host.ip   = (2, bytes .size 4 / bytes .size 16)
+      port      = (3, 0..65535)
+      path.type = (4, 0..127)
+      path      = (5, text)
+      query     = (6, text)
+      fragment  = (7, text)
+    "#
+  );
+
+  let mut l = lexer_from_str(cddl);
+  let c_ast = cddl_from_str(&mut l, cddl, true)?;
+
+  println!("{}", c_ast);
+
+  Ok(())
 }
