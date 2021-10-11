@@ -1293,11 +1293,17 @@ where
           #[cfg(feature = "ast-span")]
           let end_type2_range = self.parser_position.range.1;
 
+          #[cfg(feature = "ast-span")]
           if !self
             .visited_rule_idents
             .contains(&(ident.ident, ident.span))
           {
             self.visited_rule_idents.push((ident.ident, ident.span));
+          }
+
+          #[cfg(not(feature = "ast-span"))]
+          if !self.visited_rule_idents.contains(&ident.ident) {
+            self.visited_rule_idents.push(ident.ident);
           }
 
           return Ok(Type2::Typename(Typename {
@@ -1314,14 +1320,21 @@ where
           self.parser_position.line = self.lexer_position.line;
         }
 
+        #[cfg(feature = "ast-span")]
         let span = Span(
           self.parser_position.range.0,
           self.parser_position.range.1,
           self.parser_position.line,
         );
 
+        #[cfg(feature = "ast-span")]
         if ident.1.is_none() && !self.visited_rule_idents.iter().any(|r| r.0 == ident.0) {
           self.visited_rule_idents.push((ident.0, span));
+        }
+
+        #[cfg(not(feature = "ast-span"))]
+        if ident.1.is_none() && !self.visited_rule_idents.iter().any(|r| *r == ident.0) {
+          self.visited_rule_idents.push(ident.0);
         }
 
         Ok(Type2::Typename(Typename {
@@ -2091,12 +2104,12 @@ where
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
               if !params.iter().any(|&p| p == name.ident)
-                && !self.visited_rule_idents.iter().any(|r| r.0 == name.ident)
+                && !self.visited_rule_idents.iter().any(|r| *r == name.ident)
               {
-                self.visited_rule_idents.push((name.ident, name.span));
+                self.visited_rule_idents.push(name.ident);
               }
-            } else if !self.visited_rule_idents.iter().any(|r| r.0 == name.ident) {
-              self.visited_rule_idents.push((name.ident, name.span));
+            } else if !self.visited_rule_idents.iter().any(|r| *r == name.ident) {
+              self.visited_rule_idents.push(name.ident);
             }
           }
 
@@ -2148,12 +2161,12 @@ where
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
               if !params.iter().any(|&p| p == ident.ident)
-                && !self.visited_rule_idents.iter().any(|r| r.0 == ident.ident)
+                && !self.visited_rule_idents.iter().any(|r| *r == ident.ident)
               {
-                self.visited_rule_idents.push((ident.ident, ident.span));
+                self.visited_rule_idents.push(ident.ident);
               }
-            } else if !self.visited_rule_idents.iter().any(|r| r.0 == ident.ident) {
-              self.visited_rule_idents.push((ident.ident, ident.span));
+            } else if !self.visited_rule_idents.iter().any(|r| *r == ident.ident) {
+              self.visited_rule_idents.push(ident.ident);
             }
           }
         }
@@ -2242,12 +2255,12 @@ where
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
               if !params.iter().any(|&p| p == ident.ident)
-                && !self.visited_rule_idents.iter().any(|r| r.0 == ident.ident)
+                && !self.visited_rule_idents.iter().any(|r| *r == ident.ident)
               {
-                self.visited_rule_idents.push((ident.ident, ident.span));
+                self.visited_rule_idents.push(ident.ident);
               }
-            } else if !self.visited_rule_idents.iter().any(|r| r.0 == ident.ident) {
-              self.visited_rule_idents.push((ident.ident, ident.span));
+            } else if !self.visited_rule_idents.iter().any(|r| *r == ident.ident) {
+              self.visited_rule_idents.push(ident.ident);
             }
           }
         }
@@ -2348,12 +2361,12 @@ where
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
               if !params.iter().any(|&p| p == name.ident)
-                && !self.visited_rule_idents.iter().any(|r| r.0 == name.ident)
+                && !self.visited_rule_idents.iter().any(|r| *r == name.ident)
               {
-                self.visited_rule_idents.push((name.ident, name.span));
+                self.visited_rule_idents.push(name.ident);
               }
-            } else if !self.visited_rule_idents.iter().any(|r| r.0 == name.ident) {
-              self.visited_rule_idents.push((name.ident, name.span));
+            } else if !self.visited_rule_idents.iter().any(|r| *r == name.ident) {
+              self.visited_rule_idents.push(name.ident);
             }
           }
 
@@ -2398,12 +2411,12 @@ where
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
               if !params.iter().any(|&p| p == ident.ident)
-                && !self.visited_rule_idents.iter().any(|r| r.0 == ident.ident)
+                && !self.visited_rule_idents.iter().any(|r| *r == ident.ident)
               {
-                self.visited_rule_idents.push((ident.ident, ident.span));
+                self.visited_rule_idents.push(ident.ident);
               }
-            } else if !self.visited_rule_idents.iter().any(|r| r.0 == ident.ident) {
-              self.visited_rule_idents.push((ident.ident, ident.span));
+            } else if !self.visited_rule_idents.iter().any(|r| *r == ident.ident) {
+              self.visited_rule_idents.push(ident.ident);
             }
           }
         }
