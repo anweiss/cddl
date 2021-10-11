@@ -512,9 +512,9 @@ where
     let mut is_type_choice_alternate = false;
     let mut is_group_choice_alternate = false;
 
-    if self.cur_token_is(Token::TCHOICEALT) {
+    if let Token::TCHOICEALT = &self.cur_token {
       is_type_choice_alternate = true;
-    } else if self.cur_token_is(Token::GCHOICEALT) {
+    } else if let Token::GCHOICEALT = &self.cur_token {
       is_group_choice_alternate = true;
     }
 
@@ -766,10 +766,7 @@ where
         #[cfg(not(feature = "ast-comments"))]
         self.advance_newline()?;
 
-        if self.cur_token_is(Token::ASSIGN)
-          || self.cur_token_is(Token::TCHOICEALT)
-          || self.cur_token_is(Token::GCHOICEALT)
-        {
+        if let Token::ASSIGN | Token::TCHOICEALT | Token::GCHOICEALT = &self.cur_token {
           self.errors.push(Error::PARSER {
             #[cfg(feature = "ast-span")]
             position: Position {
@@ -818,7 +815,7 @@ where
     #[cfg(feature = "ast-span")]
     let begin_range = self.lexer_position.range.0;
 
-    if self.cur_token_is(Token::LANGLEBRACKET) {
+    if let Token::LANGLEBRACKET = &self.cur_token {
       self.next_token()?;
     }
 
@@ -924,7 +921,7 @@ where
     let begin_generic_arg_line = self.lexer_position.line;
 
     // Required for type2 mutual recursion
-    if self.cur_token_is(Token::LANGLEBRACKET) {
+    if let Token::LANGLEBRACKET = &self.cur_token {
       self.next_token()?;
     }
 
@@ -955,7 +952,7 @@ where
         self.next_token()?;
       }
 
-      if self.cur_token_is(Token::EOF) {
+      if let Token::EOF = &self.cur_token {
         self.errors.push(Error::PARSER {
           #[cfg(feature = "ast-span")]
           position: self.parser_position,
@@ -966,7 +963,7 @@ where
       }
     }
 
-    if self.cur_token_is(Token::RANGLEBRACKET) {
+    if let Token::RANGLEBRACKET = &self.cur_token {
       #[cfg(feature = "ast-span")]
       {
         self.parser_position.range.1 = self.lexer_position.range.1;
@@ -1030,7 +1027,7 @@ where
 
     t.type_choices.push(tc);
 
-    while self.cur_token_is(Token::TCHOICE) {
+    while let Token::TCHOICE = &self.cur_token {
       self.next_token()?;
 
       #[cfg(feature = "ast-comments")]
@@ -1723,7 +1720,7 @@ where
               self.parser_position.range = self.lexer_position.range;
             }
 
-            if self.cur_token_is(Token::COLON) || self.cur_token_is(Token::ARROWMAP) {
+            if let Token::COLON | Token::ARROWMAP = &self.cur_token {
               self.errors.push(Error::PARSER {
                 #[cfg(feature = "ast-span")]
                 position: self.parser_position,
@@ -1733,10 +1730,7 @@ where
               return Err(Error::INCREMENTAL);
             }
 
-            if self.cur_token_is(Token::RBRACE)
-              || self.cur_token_is(Token::RBRACKET)
-              || self.cur_token_is(Token::RPAREN)
-            {
+            if let Token::RBRACE | Token::RBRACKET | Token::RPAREN = &self.cur_token {
               self.errors.push(Error::PARSER {
                 #[cfg(feature = "ast-span")]
                 position: self.parser_position,
@@ -1771,15 +1765,12 @@ where
   #[allow(missing_docs)]
   pub fn parse_group(&mut self) -> Result<Group<'a>> {
     #[cfg(feature = "ast-span")]
-    let begin_group_range = if self.cur_token_is(Token::LBRACE)
-      || self.cur_token_is(Token::LPAREN)
-      || self.cur_token_is(Token::LBRACKET)
-      || self.cur_token_is(Token::GCHOICE)
-    {
-      self.peek_lexer_position.range.0
-    } else {
-      self.lexer_position.range.0
-    };
+    let begin_group_range =
+      if let Token::LBRACE | Token::LPAREN | Token::LBRACKET | Token::GCHOICE = &self.cur_token {
+        self.peek_lexer_position.range.0
+      } else {
+        self.lexer_position.range.0
+      };
 
     let closing_delimiter = token::closing_delimiter(&self.cur_token);
 
@@ -1791,7 +1782,7 @@ where
 
     group.group_choices.push(self.parse_grpchoice()?);
 
-    while self.cur_token_is(Token::GCHOICE) {
+    while let Token::GCHOICE = &self.cur_token {
       group.group_choices.push(self.parse_grpchoice()?);
     }
 
@@ -1825,7 +1816,7 @@ where
       span: (self.lexer_position.range.0, 0, self.lexer_position.line),
     };
 
-    if self.cur_token_is(Token::GCHOICE) {
+    if let Token::GCHOICE = &self.cur_token {
       self.next_token()?;
 
       #[cfg(feature = "ast-comments")]
@@ -1839,7 +1830,7 @@ where
       {
         grpchoice.span.0 = self.lexer_position.range.0;
       }
-    } else if self.cur_token_is(Token::LBRACE) || self.cur_token_is(Token::LBRACKET) {
+    } else if let Token::LBRACE | Token::LBRACKET = &self.cur_token {
       self.next_token()?;
 
       #[cfg(feature = "ast-span")]
@@ -1865,7 +1856,7 @@ where
     {
       let ge = self.parse_grpent(false)?;
 
-      if self.cur_token_is(Token::GCHOICE) {
+      if let Token::GCHOICE = &self.cur_token {
         grpchoice.group_entries.push((
           ge,
           OptionalComma {
@@ -1910,7 +1901,7 @@ where
 
       let mut optional_comma = false;
 
-      if self.cur_token_is(Token::COMMA) {
+      if let Token::COMMA = &self.cur_token {
         optional_comma = true;
 
         #[cfg(feature = "ast-span")]
@@ -2034,7 +2025,7 @@ where
         comments_after_type_or_group,
       }) => {
         #[cfg(feature = "ast-span")]
-        if self.cur_token_is(Token::COMMA) {
+        if let Token::COMMA = &self.cur_token {
           span.1 = self.lexer_position.range.1;
         }
 
@@ -2170,7 +2161,7 @@ where
         comments_after_type_or_group,
       }) => {
         #[cfg(feature = "ast-span")]
-        if self.cur_token_is(Token::COMMA) {
+        if let Token::COMMA = &self.cur_token {
           span.1 = self.lexer_position.range.1;
         }
 
@@ -2200,7 +2191,7 @@ where
         }
 
         #[cfg(feature = "ast-span")]
-        if self.cur_token_is(Token::COMMA) {
+        if let Token::COMMA = &self.cur_token {
           span.1 = self.lexer_position.range.1;
         }
 
@@ -2273,7 +2264,7 @@ where
         self.advance_newline()?;
 
         #[cfg(feature = "ast-span")]
-        if self.cur_token_is(Token::COMMA) {
+        if let Token::COMMA = &self.cur_token {
           span.1 = self.lexer_position.range.1;
         }
 
@@ -2445,7 +2436,7 @@ where
     #[cfg(not(feature = "ast-comments"))]
     self.advance_newline()?;
 
-    let mk = if self.cur_token_is(Token::CUT) {
+    let mk = if let Token::CUT = &self.cur_token {
       self.next_token()?;
 
       #[cfg(feature = "ast-comments")]
@@ -2509,12 +2500,12 @@ where
       self.next_token()?;
 
       Some(t1)
-    } else if self.cur_token_is(Token::ARROWMAP) {
+    } else if let Token::ARROWMAP = &self.cur_token {
       #[cfg(feature = "ast-span")]
       let end_memberkey_range = self.lexer_position.range.1;
 
       #[cfg(feature = "ast-comments")]
-      let comments_after_arrowmap = if let Token::COMMENT(_) = self.peek_token {
+      let comments_after_arrowmap = if let Token::COMMENT(_) = &self.peek_token {
         self.next_token()?;
 
         self.collect_comments()?
@@ -2558,7 +2549,7 @@ where
 
       Some(t1)
     } else {
-      if self.cur_token_is(Token::COLON) {
+      if let Token::COLON = &self.cur_token {
         self.next_token()?;
       }
 
@@ -2639,7 +2630,7 @@ where
         #[cfg(not(feature = "ast-comments"))]
         self.advance_newline()?;
 
-        let mk = if self.cur_token_is(Token::CUT) {
+        let mk = if let Token::CUT = &self.cur_token {
           self.next_token()?;
 
           #[cfg(feature = "ast-comments")]
@@ -2724,7 +2715,7 @@ where
           })
         };
 
-        if self.cur_token_is(Token::COLON) {
+        if let Token::COLON = &self.cur_token {
           self.next_token()?;
         }
 
@@ -2757,16 +2748,21 @@ where
         #[cfg(feature = "ast-span")]
         let mut closing_parend_index = 0;
         while !closing_parend {
-          if self.cur_token_is(Token::ARROWMAP) || self.cur_token_is(Token::COLON) {
+          if let Token::ARROWMAP
+          | Token::COLON
+          | Token::OPTIONAL
+          | Token::ASTERISK
+          | Token::GCHOICE = &self.cur_token
+          {
             has_group_entries = true;
           }
 
           // TODO: parse nested comments
-          if self.cur_token_is(Token::LPAREN) {
+          if let Token::LPAREN = &self.cur_token {
             nested_parend_count += 1;
           }
 
-          if self.cur_token_is(Token::RPAREN) {
+          if let Token::RPAREN = &self.cur_token {
             match nested_parend_count.cmp(&0) {
               Ordering::Greater => nested_parend_count -= 1,
               Ordering::Equal | Ordering::Less => {
@@ -2779,8 +2775,7 @@ where
             }
           }
 
-          let t = self.cur_token.clone();
-          tokens.push(Ok((self.lexer_position, t)));
+          tokens.push(Ok((self.lexer_position, self.cur_token.clone())));
 
           #[cfg(feature = "ast-span")]
           {
@@ -2796,7 +2791,7 @@ where
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
 
-          if self.cur_token_is(Token::EOF) {
+          if let Token::EOF = &self.cur_token {
             self.errors.push(Error::PARSER {
               #[cfg(feature = "ast-span")]
               position: self.lexer_position,
@@ -2850,7 +2845,7 @@ where
         #[cfg(not(feature = "ast-comments"))]
         self.advance_newline()?;
 
-        if self.cur_token_is(Token::CUT) {
+        if let Token::CUT = &self.cur_token {
           self.next_token()?;
 
           #[cfg(feature = "ast-comments")]
@@ -2913,7 +2908,7 @@ where
           return Ok(t1);
         }
 
-        let t1 = if self.cur_token_is(Token::ARROWMAP) {
+        let t1 = if let Token::ARROWMAP = &self.cur_token {
           self.next_token()?;
 
           #[cfg(feature = "ast-span")]
@@ -2993,7 +2988,7 @@ where
         #[cfg(not(feature = "ast-comments"))]
         self.advance_newline()?;
 
-        if self.cur_token_is(Token::CUT) {
+        if let Token::CUT = &self.cur_token {
           self.next_token()?;
 
           #[cfg(feature = "ast-comments")]
@@ -3038,7 +3033,7 @@ where
           }));
         }
 
-        let t1 = if self.cur_token_is(Token::ARROWMAP) {
+        let t1 = if let Token::ARROWMAP = &self.cur_token {
           self.next_token()?;
 
           #[cfg(feature = "ast-span")]
