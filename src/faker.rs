@@ -742,7 +742,7 @@ impl<'a> Visitor<'a, Error> for Faker<'a> {
 /// Generate fake JSON from a given CDDL document string
 pub fn fake_json_from_cddl_str(cddl_str: &str) -> Result<String> {
   let mut lexer = lexer_from_str(cddl_str);
-  let cddl = cddl_from_str(&mut lexer, cddl_str, true).map_err(Error::CDDLParsing)?;
+  let cddl = cddl_from_str(&mut lexer, cddl_str, true, false).map_err(Error::CDDLParsing)?;
   let mut faker = Faker::new(&cddl);
 
   for rule in faker.cddl.rules.iter() {

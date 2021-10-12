@@ -20,11 +20,11 @@ mod tests {
     let input = indoc!(
       r#"
         a = 1234
-        a = b
+        a = 5678
       "#
     );
 
-    match Parser::new(Lexer::new(input).iter(), input) {
+    match Parser::new(Lexer::new(input).iter(), input, false) {
       Ok(mut p) => match p.parse_cddl() {
         Ok(_) => Ok(()),
         #[cfg(feature = "std")]
@@ -41,8 +41,8 @@ mod tests {
                 error: parser errors
                   ┌─ input:2:1
                   │
-                2 │ a = b
-                  │ ^^^^^ rule with the same identifier is already defined
+                2 │ a = 5678
+                  │ ^^^^^^^^ rule with the same identifier is already defined
 
               "#
             )
@@ -59,8 +59,8 @@ mod tests {
 
                    ┌── input:2:1 ───
                    │
-                 2 │ a = b
-                   │ ^^^^^ rule with the same identifier is already defined
+                 2 │ a = 5678
+                   │ ^^^^^^^^ rule with the same identifier is already defined
 
               "#
             )
@@ -78,7 +78,7 @@ mod tests {
     let input = r#"<t, v>"#;
 
     let mut l = Lexer::new(input);
-    let gps = Parser::new(&mut l.iter(), input)?.parse_genericparm()?;
+    let gps = Parser::new(&mut l.iter(), input, false)?.parse_genericparm()?;
 
     let expected_output = GenericParams {
       params: vec![
@@ -114,7 +114,7 @@ mod tests {
   fn verify_genericparm_diagnostic() -> Result<()> {
     let input = r#"<1, 2>"#;
 
-    match Parser::new(Lexer::new(input).iter(), input) {
+    match Parser::new(Lexer::new(input).iter(), input, false) {
       Ok(mut p) => match p.parse_genericparm() {
         Ok(_) => Ok(()),
         #[cfg(feature = "std")]
@@ -175,7 +175,7 @@ mod tests {
       "#
     );
 
-    match Parser::new(Lexer::new(input).iter(), input) {
+    match Parser::new(Lexer::new(input).iter(), input, false) {
       Ok(mut p) => match p.parse_cddl() {
         Ok(_) => Ok(()),
         #[cfg(feature = "std")]
@@ -195,10 +195,17 @@ mod tests {
                   │      ^^^^^^^^^^^^^ generic parameters should be between angle brackets '<' and '>' and separated by a comma ','
                 2 │ ruleb = rulec
                 3 │ ruleb = ruled
-                  │ ^^^^^^^^^^^^^ rule with the same identifier is already defined
+                  │ ^^^^^^^^^^^^^
+                  │ │       │
+                  │ │       missing definition for "ruled"
+                  │ rule with the same identifier is already defined
                 4 │ rulec = rulee
+                  │         ^^^^^ missing definition for "rulee"
                 5 │ rulec = rulee2
-                  │ ^^^^^^^^^^^^^^ rule with the same identifier is already defined
+                  │ ^^^^^^^^^^^^^^
+                  │ │       │
+                  │ │       missing definition for "rulee2"
+                  │ rule with the same identifier is already defined
 
               "#
             )
@@ -241,7 +248,7 @@ mod tests {
 
     let mut l = Lexer::new(input);
 
-    let generic_args = Parser::new(l.iter(), input)?.parse_genericargs()?;
+    let generic_args = Parser::new(l.iter(), input, false)?.parse_genericargs()?;
 
     let expected_output = GenericArgs {
       args: vec![
@@ -283,7 +290,7 @@ mod tests {
 
     let mut l = Lexer::new(input);
 
-    let t = Parser::new(l.iter(), input)?.parse_type(None)?;
+    let t = Parser::new(l.iter(), input, false)?.parse_type(None)?;
 
     let expected_output = Type {
       type_choices: vec![TypeChoice {
@@ -537,7 +544,7 @@ mod tests {
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
       let mut l = Lexer::new(inputs[idx]);
-      let t1 = Parser::new(l.iter(), inputs[idx])?.parse_type1(None)?;
+      let t1 = Parser::new(l.iter(), inputs[idx], false)?.parse_type1(None)?;
 
       assert_eq!(&t1, expected_output);
       assert_eq!(t1.to_string(), expected_output.to_string());
@@ -955,7 +962,7 @@ mod tests {
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
       let mut l = Lexer::new(inputs[idx]);
-      let t2 = Parser::new(l.iter(), inputs[idx])?.parse_type2()?;
+      let t2 = Parser::new(l.iter(), inputs[idx], false)?.parse_type2()?;
 
       assert_eq!(&t2, expected_output);
       assert_eq!(t2.to_string(), expected_output.to_string());
@@ -1317,7 +1324,7 @@ mod tests {
 
     for (idx, expected_output) in expected_ouputs.iter().enumerate() {
       let mut l = Lexer::new(inputs[idx]);
-      let t2 = Parser::new(l.iter(), inputs[idx])?.parse_type2()?;
+      let t2 = Parser::new(l.iter(), inputs[idx], false)?.parse_type2()?;
 
       assert_eq!(&t2, expected_output);
       assert_eq!(t2.to_string(), expected_output.to_string());
@@ -1597,7 +1604,7 @@ mod tests {
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
       let mut l = Lexer::new(inputs[idx]);
-      let grpent = Parser::new(l.iter(), inputs[idx])?.parse_grpent(false)?;
+      let grpent = Parser::new(l.iter(), inputs[idx], false)?.parse_grpent(false)?;
 
       assert_eq!(&grpent, expected_output);
       assert_eq!(grpent.to_string(), expected_output.to_string());
@@ -1714,7 +1721,7 @@ mod tests {
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
       let mut l = Lexer::new(inputs[idx]);
-      let mk = Parser::new(l.iter(), inputs[idx])?.parse_memberkey(false)?;
+      let mk = Parser::new(l.iter(), inputs[idx], false)?.parse_memberkey(false)?;
 
       if let Some(mk) = mk {
         assert_eq!(&mk, expected_output);
@@ -1776,7 +1783,7 @@ mod tests {
 
     for (idx, expected_output) in expected_outputs.iter().enumerate() {
       let mut l = Lexer::new(inputs[idx]);
-      let o = Parser::new(l.iter(), inputs[idx])?.parse_occur(false)?;
+      let o = Parser::new(l.iter(), inputs[idx], false)?.parse_occur(false)?;
 
       if let Some(o) = o {
         assert_eq!(&o, expected_output);

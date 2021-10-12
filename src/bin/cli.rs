@@ -98,6 +98,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .author(crate_authors!())
                     .about("Tool for verifying conformance of CDDL definitions against RFC 8610 and for validating JSON documents and CBOR binary files")
                     .setting(AppSettings::SubcommandRequiredElseHelp)
+                    .arg(
+                      Arg::with_name("allow-missing-definitions")
+                      .long("allow-missing-definitions")
+                      .required(false)
+                      .takes_value(false)
+                      .global(true)
+                      .help("Allow references to missing rule definitions")
+                    )
                     .subcommand(SubCommand::with_name("compile-cddl")
                                 .about("Compile CDDL against RFC 8610")
                                 .arg_from_usage("-c --cddl=<FILE> 'CDDL input file'"))
@@ -108,8 +116,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   let matches = app.get_matches();
 
-  if let Some(matches) = matches.subcommand_matches("compile-cddl") {
-    if let Some(c) = matches.value_of("cddl") {
+  if let Some(sub_matches) = matches.subcommand_matches("compile-cddl") {
+    if let Some(c) = sub_matches.value_of("cddl") {
       let p = Path::new(c);
       if !p.exists() {
         error!("CDDL document {:?} does not exist", p);
@@ -126,14 +134,20 @@ fn main() -> Result<(), Box<dyn Error>> {
       }
 
       let file_content = fs::read_to_string(c)?;
-      cddl_from_str(&mut lexer_from_str(&file_content), &file_content, true).map(|_| ())?;
+      cddl_from_str(
+        &mut lexer_from_str(&file_content),
+        &file_content,
+        true,
+        matches.is_present("allow-missing-definitions"),
+      )
+      .map(|_| ())?;
 
       info!("{} is conformant", c);
     }
   }
 
-  if let Some(matches) = matches.subcommand_matches("compile-json") {
-    if let Some(j) = matches.value_of("json") {
+  if let Some(sub_matches) = matches.subcommand_matches("compile-json") {
+    if let Some(j) = sub_matches.value_of("json") {
       let p = Path::new(j);
       if !p.exists() {
         error!("CDDL document {:?} does not exist", p);
@@ -157,10 +171,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
   }
 
-  if let Some(matches) = matches.subcommand_matches("validate") {
-    if let Some(cddl) = matches.value_of("cddl") {
+  if let Some(sub_matches) = matches.subcommand_matches("validate") {
+    if let Some(cddl) = sub_matches.value_of("cddl") {
       #[cfg(feature = "additional-controls")]
-      let enabled_features: Option<Vec<&str>> = matches.values_of("features").map(|f| f.collect());
+      let enabled_features: Option<Vec<&str>> =
+        sub_matches.values_of("features").map(|f| f.collect());
       #[cfg(feature = "additional-controls")]
       if let Some(enabled_features) = &enabled_features {
         let mut feature_str = String::from("enabled features: [");
@@ -193,7 +208,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
       let cddl_str = fs::read_to_string(cddl)?;
 
-      if let Some(files) = matches.values_of("json") {
+      if let Some(files) = sub_matches.values_of("json") {
         for file in files {
           let p = Path::new(file);
           if !p.exists() {
@@ -206,10 +221,15 @@ fn main() -> Result<(), Box<dyn Error>> {
           let r = validate_json_from_str(
             &cddl_str,
             &fs::read_to_string(file)?,
+            matches.is_present("allow-missing-definitions"),
             enabled_features.as_deref(),
           );
           #[cfg(not(feature = "additional-controls"))]
-          let r = validate_json_from_str(&cddl_str, &fs::read_to_string(file)?);
+          let r = validate_json_from_str(
+            &cddl_str,
+            &fs::read_to_string(file)?,
+            matches.is_present("allow-missing-definitions"),
+          );
 
           match r {
             Ok(()) => {
@@ -222,7 +242,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
       }
 
-      if let Some(files) = matches.values_of("cbor") {
+      if let Some(files) = sub_matches.values_of("cbor") {
         for file in files {
           let p = Path::new(file);
           if !p.exists() {
@@ -235,9 +255,18 @@ fn main() -> Result<(), Box<dyn Error>> {
           f.read_to_end(&mut data)?;
 
           #[cfg(feature = "additional-controls")]
-          let c = validate_cbor_from_slice(&cddl_str, &data, None);
+          let c = validate_cbor_from_slice(
+            &cddl_str,
+            &data,
+            matches.is_present("allow-missing-definitions"),
+            None,
+          );
           #[cfg(not(feature = "additional-controls"))]
-          let c = validate_cbor_from_slice(&cddl_str, &data);
+          let c = validate_cbor_from_slice(
+            &cddl_str,
+            &data,
+            matches.is_present("allow-missing-definitions"),
+          );
 
           match c {
             Ok(()) => {
@@ -252,7 +281,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
       }
 
-      if matches.is_present("stdin") {
+      if sub_matches.is_present("stdin") {
         let stdin = io::stdin();
 
         let mut reader = stdin.lock();
@@ -260,9 +289,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         reader.read_to_end(&mut data)?;
         if let Ok(json) = std::str::from_utf8(&data) {
           #[cfg(feature = "additional-controls")]
-          let r = validate_json_from_str(&cddl_str, json, None);
+          let r = validate_json_from_str(
+            &cddl_str,
+            json,
+            matches.is_present("allow-missing-definitions"),
+            None,
+          );
           #[cfg(not(feature = "additional-controls"))]
-          let r = validate_json_from_str(&cddl_str, json);
+          let r = validate_json_from_str(
+            &cddl_str,
+            json,
+            matches.is_present("allow-missing-definitions"),
+          );
 
           match r {
             Ok(()) => {
@@ -274,9 +312,18 @@ fn main() -> Result<(), Box<dyn Error>> {
           }
         } else {
           #[cfg(feature = "additional-controls")]
-          let c = validate_cbor_from_slice(&cddl_str, &data, enabled_features.as_deref());
+          let c = validate_cbor_from_slice(
+            &cddl_str,
+            &data,
+            matches.is_present("allow-missing-definitions"),
+            enabled_features.as_deref(),
+          );
           #[cfg(not(feature = "additional-controls"))]
-          let c = validate_cbor_from_slice(&cddl_str, &data);
+          let c = validate_cbor_from_slice(
+            &cddl_str,
+            &data,
+            matches.is_present("allow-missing-definitions"),
+          );
 
           match c {
             Ok(()) => {

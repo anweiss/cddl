@@ -44,6 +44,9 @@ pub struct Parser<'a, I>
 where
   I: Iterator<Item = lexer::Item<'a>>,
 {
+  /// Vec of collected parsing errors
+  pub errors: Vec<Error>,
+
   tokens: I,
   str_input: &'a str,
   cur_token: Token<'a>,
@@ -52,13 +55,12 @@ where
   peek_lexer_position: Position,
   #[cfg(feature = "ast-span")]
   parser_position: Position,
-  /// Vec of collected parsing errors
-  pub errors: Vec<Error>,
   #[cfg(feature = "ast-span")]
   visited_rule_idents: Vec<(&'a str, Span)>,
   #[cfg(not(feature = "ast-span"))]
   visited_rule_idents: Vec<&'a str>,
   current_rule_generic_param_idents: Option<Vec<&'a str>>,
+  allow_missing_definitions: bool,
 }
 
 /// Parsing error types
@@ -108,9 +110,9 @@ where
   /// use cddl::lexer::Lexer;
   ///
   /// let input = r#"mycddl = ( int / float )"#;
-  /// let p = Parser::new(Lexer::new(input).iter(), input);
+  /// let p = Parser::new(Lexer::new(input).iter(), input, false);
   /// ```
-  pub fn new(tokens: I, str_input: &'a str) -> Result<Parser<I>> {
+  pub fn new(tokens: I, str_input: &'a str, allow_missing_definitions: bool) -> Result<Parser<I>> {
     let mut p = Parser {
       tokens,
       str_input,
@@ -123,6 +125,7 @@ where
       parser_position: Position::default(),
       visited_rule_idents: Vec::default(),
       current_rule_generic_param_idents: None,
+      allow_missing_definitions,
     };
 
     p.next_token()?;
@@ -145,7 +148,7 @@ where
   /// use cddl::lexer::Lexer;
   ///
   /// let input = r#"mycddl = ( int / float )"#;
-  /// if let Ok(mut p) = Parser::new(Lexer::new(input).iter(), input) {
+  /// if let Ok(mut p) = Parser::new(Lexer::new(input).iter(), input, false) {
   ///   if let Err(Error::INCREMENTAL) = p.parse_cddl() {
   ///     let _ = p.report_errors(true);
   ///   }
@@ -379,33 +382,35 @@ where
       }
     }
 
-    #[cfg(feature = "ast-span")]
-    for (rule, span) in self.visited_rule_idents.iter() {
-      if !c.rules.iter().any(|r| r.name() == *rule) {
-        self.errors.push(Error::PARSER {
-          position: Position {
-            column: 0,
-            index: span.0,
-            line: span.2,
-            range: (span.0, span.1),
-          },
-          msg: ErrorMsg {
-            short: format!("missing definition for \"{}\"", rule),
-            extended: None,
-          },
-        })
+    if !self.allow_missing_definitions {
+      #[cfg(feature = "ast-span")]
+      for (rule, span) in self.visited_rule_idents.iter() {
+        if !c.rules.iter().any(|r| r.name() == *rule) {
+          self.errors.push(Error::PARSER {
+            position: Position {
+              column: 0,
+              index: span.0,
+              line: span.2,
+              range: (span.0, span.1),
+            },
+            msg: ErrorMsg {
+              short: format!("missing definition for \"{}\"", rule),
+              extended: None,
+            },
+          })
+        }
       }
-    }
 
-    #[cfg(not(feature = "ast-span"))]
-    for rule in self.visited_rule_idents.iter() {
-      if !c.rules.iter().any(|r| r.name() == *rule) {
-        self.errors.push(Error::PARSER {
-          msg: ErrorMsg {
-            short: format!("missing definition for \"{}\"", rule),
-            extended: None,
-          },
-        })
+      #[cfg(not(feature = "ast-span"))]
+      for rule in self.visited_rule_idents.iter() {
+        if !c.rules.iter().any(|r| r.name() == *rule) {
+          self.errors.push(Error::PARSER {
+            msg: ErrorMsg {
+              short: format!("missing definition for \"{}\"", rule),
+              extended: None,
+            },
+          })
+        }
       }
     }
 
@@ -1294,7 +1299,15 @@ where
           let end_type2_range = self.parser_position.range.1;
 
           #[cfg(feature = "ast-span")]
-          if !self
+          if let Some(params) = &self.current_rule_generic_param_idents {
+            if !params.iter().any(|&p| p == ident.ident)
+              && !self
+                .visited_rule_idents
+                .contains(&(ident.ident, ident.span))
+            {
+              self.visited_rule_idents.push((ident.ident, ident.span));
+            }
+          } else if !self
             .visited_rule_idents
             .contains(&(ident.ident, ident.span))
           {
@@ -1302,7 +1315,13 @@ where
           }
 
           #[cfg(not(feature = "ast-span"))]
-          if !self.visited_rule_idents.contains(&ident.ident) {
+          if let Some(params) = &self.current_rule_generic_param_idents {
+            if !params.iter().any(|&p| p == ident.ident)
+              && !self.visited_rule_idents.contains(&ident.ident)
+            {
+              self.visited_rule_idents.push(ident.ident);
+            }
+          } else if !self.visited_rule_idents.contains(&ident.ident) {
             self.visited_rule_idents.push(ident.ident);
           }
 
@@ -1328,12 +1347,22 @@ where
         );
 
         #[cfg(feature = "ast-span")]
-        if ident.1.is_none() && !self.visited_rule_idents.iter().any(|r| r.0 == ident.0) {
+        if let Some(params) = &self.current_rule_generic_param_idents {
+          if !params.iter().any(|&p| p == ident.0)
+            && !self.visited_rule_idents.contains(&(ident.0, span))
+          {
+            self.visited_rule_idents.push((ident.0, span));
+          }
+        } else if ident.1.is_none() && !self.visited_rule_idents.iter().any(|r| r.0 == ident.0) {
           self.visited_rule_idents.push((ident.0, span));
         }
 
         #[cfg(not(feature = "ast-span"))]
-        if ident.1.is_none() && !self.visited_rule_idents.iter().any(|r| *r == ident.0) {
+        if let Some(params) = &self.current_rule_generic_param_idents {
+          if !params.iter().any(|&p| p == ident.0) && !self.visited_rule_idents.contains(&ident.0) {
+            self.visited_rule_idents.push(ident.0);
+          }
+        } else if ident.1.is_none() && !self.visited_rule_idents.iter().any(|r| *r == ident.0) {
           self.visited_rule_idents.push(ident.0);
         }
 
@@ -2848,7 +2877,11 @@ where
 
         // Parse tokens vec as group
         if has_group_entries {
-          let mut p = Parser::new(tokens.into_iter(), self.str_input)?;
+          let mut p = Parser::new(
+            tokens.into_iter(),
+            self.str_input,
+            self.allow_missing_definitions,
+          )?;
           let group = match p.parse_group() {
             Ok(g) => g,
             Err(Error::INCREMENTAL) => {
@@ -2873,7 +2906,11 @@ where
         }
 
         // Parse tokens vec as type
-        let mut p = Parser::new(tokens.into_iter(), self.str_input)?;
+        let mut p = Parser::new(
+          tokens.into_iter(),
+          self.str_input,
+          self.allow_missing_definitions,
+        )?;
         let t = match p.parse_type(None) {
           Ok(t) => t,
           Err(Error::INCREMENTAL) => {
@@ -3384,6 +3421,7 @@ where
 ///   `cddl::lexer_from_str()`
 /// * `input` - A string slice with the CDDL text input
 /// * `print_stderr` - When true, print any errors to stderr
+/// * `allow_missing_definitions` - When true, allow references to missing rule definitions
 ///
 /// # Example
 ///
@@ -3391,15 +3429,16 @@ where
 /// use cddl::{lexer_from_str, parser::cddl_from_str};
 ///
 /// let input = r#"myrule = int"#;
-/// let _ = cddl_from_str(&mut lexer_from_str(input), input, true);
+/// let _ = cddl_from_str(&mut lexer_from_str(input), input, true, false);
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(feature = "std")]
 pub fn cddl_from_str<'a>(
   lexer: &'a mut Lexer<'a>,
   input: &'a str,
   print_stderr: bool,
+  allow_missing_definitions: bool,
 ) -> std::result::Result<CDDL<'a>, String> {
-  match Parser::new(lexer.iter(), input).map_err(|e| e.to_string()) {
+  match Parser::new(lexer.iter(), input, allow_missing_definitions).map_err(|e| e.to_string()) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c),
       Err(Error::INCREMENTAL) => {
@@ -3428,6 +3467,8 @@ pub fn cddl_from_str<'a>(
 /// * `lexer` - A mutable reference to a `lexer::Lexer`. Can be created from
 ///   `cddl::lexer_from_str()`
 /// * `input` - A string slice with the CDDL text input
+/// * `allow_missing_definitions` - When true, allow references to missing rule
+///   definitions
 ///
 /// # Example
 ///
@@ -3443,8 +3484,9 @@ pub fn cddl_from_str<'a>(
 pub fn cddl_from_str<'a>(
   lexer: &'a mut Lexer<'a>,
   input: &'a str,
+  allow_missing_definitions: bool,
 ) -> std::result::Result<CDDL<'a>, String> {
-  match Parser::new(lexer.iter(), input).map_err(|e| e.to_string()) {
+  match Parser::new(lexer.iter(), input, allow_missing_definitions).map_err(|e| e.to_string()) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c),
       Err(Error::INCREMENTAL) => {
@@ -3465,6 +3507,7 @@ pub fn cddl_from_str<'a>(
 /// # Arguments
 ///
 /// * `input` - A string slice with the CDDL text input
+/// * `allow_missing_definitions` - When true, allow references to missing rule definitions
 ///
 /// # Example
 ///
@@ -3480,14 +3523,17 @@ pub fn cddl_from_str<'a>(
 /// ```
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
-pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
+pub fn cddl_from_str(
+  input: &str,
+  allow_missing_definitions: bool,
+) -> result::Result<JsValue, JsValue> {
   #[derive(Serialize)]
   struct ParserError {
     position: Position,
     msg: ErrorMsg,
   }
 
-  match Parser::new(Lexer::new(input).iter(), input) {
+  match Parser::new(Lexer::new(input).iter(), input, allow_missing_definitions) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => JsValue::from_serde(&c).map_err(|e| JsValue::from(e.to_string())),
       Err(Error::INCREMENTAL) => {
@@ -3524,14 +3570,17 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 /// Formats cddl from input string
-pub fn format_cddl_from_str(input: &str) -> result::Result<String, JsValue> {
+pub fn format_cddl_from_str(
+  input: &str,
+  allow_missing_definitions: bool,
+) -> result::Result<String, JsValue> {
   #[derive(Serialize)]
   struct ParserError {
     position: Position,
     msg: ErrorMsg,
   }
 
-  match Parser::new(Lexer::new(input).iter(), input) {
+  match Parser::new(Lexer::new(input).iter(), input, allow_missing_definitions) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c.to_string()),
       Err(Error::INCREMENTAL) => {

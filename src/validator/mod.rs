@@ -44,10 +44,12 @@ trait Validator<'a, E: Error>: Visitor<'a, E> {
 pub fn validate_json_from_str(
   cddl: &str,
   json: &str,
+  allow_missing_definitions: bool,
   #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
 ) -> json::Result {
   let mut lexer = lexer_from_str(cddl);
-  let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing)?;
+  let cddl = cddl_from_str(&mut lexer, cddl, true, allow_missing_definitions)
+    .map_err(json::Error::CDDLParsing)?;
   let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
   #[cfg(feature = "additional-controls")]
@@ -66,10 +68,12 @@ pub fn validate_json_from_str(
 pub fn validate_json_from_str(
   cddl: &str,
   json: &str,
+  allow_missing_definitions: bool,
   enabled_features: Option<Box<[JsValue]>>,
 ) -> std::result::Result<JsValue, JsValue> {
   let mut l = Lexer::new(cddl);
-  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let mut p = Parser::new((&mut l).iter(), cddl, allow_missing_definitions)
+    .map_err(|e| JsValue::from(e.to_string()))?;
   let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
   if !p.errors.is_empty() {
     return Err(
@@ -106,9 +110,14 @@ pub fn validate_json_from_str(
 #[cfg(not(feature = "additional-controls"))]
 #[wasm_bindgen]
 /// Validate JSON string from a given CDDL document string
-pub fn validate_json_from_str(cddl: &str, json: &str) -> std::result::Result<JsValue, JsValue> {
+pub fn validate_json_from_str(
+  cddl: &str,
+  json: &str,
+  allow_missing_definitions: bool,
+) -> std::result::Result<JsValue, JsValue> {
   let mut l = Lexer::new(cddl);
-  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let mut p = Parser::new((&mut l).iter(), cddl, allow_missing_definitions)
+    .map_err(|e| JsValue::from(e.to_string()))?;
   let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
   if !p.errors.is_empty() {
     return Err(
@@ -147,10 +156,12 @@ pub fn validate_json_from_str(cddl: &str, json: &str) -> std::result::Result<JsV
 pub fn validate_cbor_from_slice(
   cddl: &str,
   cbor_slice: &[u8],
+  allow_missing_definitions: bool,
   enabled_features: Option<&[&str]>,
 ) -> cbor::Result<std::io::Error> {
   let mut lexer = lexer_from_str(cddl);
-  let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(cbor::Error::CDDLParsing)?;
+  let cddl = cddl_from_str(&mut lexer, cddl, true, allow_missing_definitions)
+    .map_err(cbor::Error::CDDLParsing)?;
 
   let cbor: ciborium::value::Value = ciborium::de::from_reader(cbor_slice).unwrap();
 
@@ -162,9 +173,14 @@ pub fn validate_cbor_from_slice(
 #[cfg(feature = "cbor")]
 #[cfg(not(feature = "additional-controls"))]
 /// Validate CBOR slice from a given CDDL document string
-pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result<std::io::Error> {
+pub fn validate_cbor_from_slice(
+  cddl: &str,
+  cbor_slice: &[u8],
+  allow_missing_definitions: bool,
+) -> cbor::Result<std::io::Error> {
   let mut lexer = lexer_from_str(cddl);
-  let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(cbor::Error::CDDLParsing)?;
+  let cddl =
+    cddl_from_str(&mut lexer, cddl, allow_missing_definitions).map_err(cbor::Error::CDDLParsing)?;
   let cbor: ciborium::value::Value =
     ciborium::de::from_reader(cbor_slice).map_err(cbor::Error::CBORParsing)?;
 
@@ -180,10 +196,12 @@ pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result<s
 pub fn validate_cbor_from_slice(
   cddl: &str,
   cbor_slice: &[u8],
+  allow_missing_definitions: bool,
   enabled_features: Option<Box<[JsValue]>>,
 ) -> std::result::Result<JsValue, JsValue> {
   let mut l = Lexer::new(cddl);
-  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let mut p = Parser::new((&mut l).iter(), cddl, allow_missing_definitions)
+    .map_err(|e| JsValue::from(e.to_string()))?;
   let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
   if !p.errors.is_empty() {
     return Err(
@@ -223,9 +241,11 @@ pub fn validate_cbor_from_slice(
 pub fn validate_cbor_from_slice(
   cddl: &str,
   cbor_slice: &[u8],
+  allow_missing_definitions: bool,
 ) -> std::result::Result<JsValue, JsValue> {
   let mut l = Lexer::new(cddl);
-  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let mut p = Parser::new((&mut l).iter(), cddl, allow_missing_definitions)
+    .map_err(|e| JsValue::from(e.to_string()))?;
   let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
   if !p.errors.is_empty() {
     return Err(

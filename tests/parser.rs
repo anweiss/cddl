@@ -30,7 +30,7 @@ fn verify_cddl() -> Result<()> {
       "#
   );
 
-  match Parser::new(Lexer::new(input).iter(), input) {
+  match Parser::new(Lexer::new(input).iter(), input, true) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(cddl) => {
         let expected_output = CDDL {
@@ -625,7 +625,7 @@ fn cri_reference() -> std::result::Result<(), String> {
   );
 
   let mut l = lexer_from_str(cddl);
-  let c_ast = cddl_from_str(&mut l, cddl, true)?;
+  let c_ast = cddl_from_str(&mut l, cddl, true, false)?;
 
   println!("{}", c_ast);
 

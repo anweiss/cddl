@@ -3667,7 +3667,7 @@ mod tests {
     let cbor = ciborium::value::Value::Bytes(sha256_oid.as_bytes().to_vec());
 
     let mut lexer = lexer_from_str(cddl);
-    let cddl = cddl_from_str(&mut lexer, cddl, true)?;
+    let cddl = cddl_from_str(&mut lexer, cddl, true, false)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor, None);
     cv.validate()?;
@@ -3686,7 +3686,7 @@ mod tests {
     );
 
     let mut lexer = lexer_from_str(cddl);
-    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
+    let cddl = cddl_from_str(&mut lexer, cddl, true, false).map_err(json::Error::CDDLParsing);
     if let Err(e) = &cddl {
       println!("{}", e);
     }
