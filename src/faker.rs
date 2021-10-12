@@ -762,7 +762,10 @@ pub fn fake_json_from_cddl_str(cddl_str: &str) -> Result<String> {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 /// Generate fake JSON from a given CDDL document string
-pub fn fake_json_from_cddl_str(cddl_str: &str) -> std::result::Result<JsValue, JsValue> {
+pub fn fake_json_from_cddl_str(
+  cddl_str: &str,
+  allow_missing_definitions: bool,
+) -> std::result::Result<JsValue, JsValue> {
   use crate::{
     error::ParserError,
     lexer::Lexer,
@@ -770,7 +773,8 @@ pub fn fake_json_from_cddl_str(cddl_str: &str) -> std::result::Result<JsValue, J
   };
 
   let mut l = Lexer::new(cddl_str);
-  let mut p = Parser::new((&mut l).iter(), cddl_str).map_err(|e| JsValue::from(e.to_string()))?;
+  let mut p = Parser::new((&mut l).iter(), cddl_str, allow_missing_definitions)
+    .map_err(|e| JsValue::from(e.to_string()))?;
   let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
   if !p.errors.is_empty() {
     return Err(
