@@ -27,7 +27,7 @@ regex = { version = "1.5.4", default-features = false, features = ["std"] }
 regex-syntax = { version = "0.6.25", optional = true }
 serde = { version = "1.0.127", optional = true, features = ["derive"] }
 ciborium = { git = "https://github.com/enarx/ciborium", branch = "main", optional = true }
-serde_json = { version = "1.0.66", optional = true, default-features = false }
+serde_json = { version = "1.0.66", optional = true, default-features = false, features = ["std"] }
 uriparse = { version = "0.6.3", optional = true }
 base64-url = { version = "1.4.10", optional = true }
 abnf_to_pest = "0.5.0"
