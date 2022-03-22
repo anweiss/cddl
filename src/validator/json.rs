@@ -1587,6 +1587,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value.clone())),
       Type2::Map { group, .. } => match &self.json {
         Value::Object(o) => {
+          #[allow(clippy::needless_collect)]
           let o = o.keys().cloned().collect::<Vec<_>>();
 
           self.visit_group(group)?;
@@ -1732,8 +1733,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               }
             }
 
-            for mut error in errors.values_mut() {
-              self.errors.append(&mut error);
+            for error in errors.values_mut() {
+              self.errors.append(error);
             }
           }
 

@@ -347,7 +347,7 @@ impl<'a> fmt::Display for Rule<'a> {
             if let Some(&"\n") = comments.0.first() {
               rule_str.push_str(&comments.to_string());
             } else {
-              rule_str.push_str(&format!(" {}", comments.to_string()));
+              rule_str.push_str(&format!(" {}", comments));
             }
           }
         }
@@ -499,23 +499,13 @@ impl<'a> fmt::Display for GroupRule<'a> {
 /// genericparm =  "<" S id S *("," S id S ) ">"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct GenericParams<'a> {
   /// List of generic parameters
   pub params: Vec<GenericParam<'a>>,
   /// Span
   #[cfg(feature = "ast-span")]
   pub span: Span,
-}
-
-impl<'a> Default for GenericParams<'a> {
-  fn default() -> Self {
-    GenericParams {
-      params: Vec::new(),
-      #[cfg(feature = "ast-span")]
-      span: (0, 0, 0),
-    }
-  }
 }
 
 /// Generic parameter
@@ -709,9 +699,9 @@ impl<'a> fmt::Display for Type<'a> {
       }
 
       if self.type_choices.len() > 2 {
-        type_str.push_str(&format!("\n\t/ {}", tc.type1.to_string()));
+        type_str.push_str(&format!("\n\t/ {}", tc.type1));
       } else {
-        type_str.push_str(&format!(" / {}", tc.type1.to_string()));
+        type_str.push_str(&format!(" / {}", tc.type1));
       }
 
       #[cfg(feature = "ast-comments")]
@@ -1242,7 +1232,7 @@ impl<'a> fmt::Display for Type2<'a> {
         if let Some(comments) = comments_before_type {
           if comments.any_non_newline() {
             pt_str.push_str(&format!(" {}\t", comments));
-            pt_str.push_str(&pt.to_string().trim_start().to_string());
+            pt_str.push_str(pt.to_string().trim_start());
           } else {
             pt_str.push_str(&pt.to_string());
           }
@@ -1282,7 +1272,7 @@ impl<'a> fmt::Display for Type2<'a> {
           if comments.any_non_newline() {
             non_newline_comments_before_group = true;
             t2_str.push_str(&format!(" {}\t", comments));
-            t2_str.push_str(&group.to_string().trim_start().to_string());
+            t2_str.push_str(group.to_string().trim_start());
           } else {
             t2_str.push_str(&group.to_string());
           }
@@ -2281,7 +2271,7 @@ impl<'a> fmt::Display for OptionalComma<'a> {
           if idx == 0 && comment != "\n" {
             optcomma_str.push_str(&format!(";{}\n", comment));
           } else if idx == 0 {
-            optcomma_str.push_str(&comment.to_string());
+            optcomma_str.push_str(comment);
           } else if comment != "\n" {
             optcomma_str.push_str(&format!("\t;{}\n", comment));
           } else {
@@ -2373,7 +2363,7 @@ impl<'a> fmt::Display for GroupEntry<'a> {
         let mut ge_str = String::new();
 
         if let Some(o) = occur {
-          ge_str.push_str(&format!("{} ", o.occur.to_string()));
+          ge_str.push_str(&format!("{} ", o.occur));
 
           #[cfg(feature = "ast-comments")]
           if let Some(comments) = &o.comments {
@@ -2493,11 +2483,11 @@ impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
     let mut vmke_str = String::new();
 
     if let Some(o) = &self.occur {
-      vmke_str.push_str(&format!("{} ", o.to_string()));
+      vmke_str.push_str(&format!("{} ", o));
     }
 
     if let Some(mk) = &self.member_key {
-      vmke_str.push_str(&format!("{} ", mk.to_string()));
+      vmke_str.push_str(&format!("{} ", mk));
     }
 
     vmke_str.push_str(&self.entry_type.to_string());
@@ -2524,7 +2514,7 @@ impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
     let mut tge_str = String::new();
 
     if let Some(o) = &self.occur {
-      tge_str.push_str(&format!("{} ", o.to_string()));
+      tge_str.push_str(&format!("{} ", o));
     }
 
     tge_str.push_str(&self.name.to_string());

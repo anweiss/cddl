@@ -414,14 +414,14 @@ impl<'a> fmt::Display for ByteValue<'a> {
         "h'{}'",
         String::from_utf8(b.to_vec())
           .map_err(|_| fmt::Error)?
-          .replace(" ", "")
+          .replace(' ', "")
       ),
       ByteValue::B64(b) => write!(
         f,
         "b64'{}'",
         String::from_utf8(b.to_vec())
           .map_err(|_| fmt::Error)?
-          .replace(" ", "")
+          .replace(' ', "")
       ),
     }
   }

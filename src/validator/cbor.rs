@@ -560,24 +560,7 @@ where
             entry_counts.push(count);
           }
           let len = m.len();
-          if let Token::EQ = t {
-            if !validate_entry_count(&entry_counts, len) {
-              for ec in entry_counts.iter() {
-                if let Some(occur) = &ec.entry_occurrence {
-                  self.add_error(format!(
-                    "expecting array with length per occurrence {}",
-                    occur,
-                  ));
-                } else {
-                  self.add_error(format!(
-                    "expecting array with length {}, got {}",
-                    ec.count, len
-                  ));
-                }
-              }
-              return Ok(());
-            }
-          } else if let Token::NE = t {
+          if let Token::EQ | Token::NE = t {
             if !validate_entry_count(&entry_counts, len) {
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
@@ -1645,6 +1628,7 @@ where
             return Ok(());
           }
 
+          #[allow(clippy::needless_collect)]
           let m = m.iter().map(|entry| entry.0.clone()).collect::<Vec<_>>();
 
           self.visit_group(group)?;
@@ -1794,8 +1778,8 @@ where
               }
             }
 
-            for mut error in errors.values_mut() {
-              self.errors.append(&mut error);
+            for error in errors.values_mut() {
+              self.errors.append(error);
             }
           }
 

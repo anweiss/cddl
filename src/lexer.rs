@@ -759,7 +759,7 @@ impl<'a> Lexer<'a> {
             return Ok(
               self.str_input[idx..self.read_char()?.0]
                 .to_string()
-                .replace(" ", "")
+                .replace(' ', "")
                 .into_bytes()
                 .into(),
             );

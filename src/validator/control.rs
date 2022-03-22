@@ -790,7 +790,7 @@ pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
 
     let vm = pest_vm::Vm::new(pest_meta::optimizer::optimize(ast));
 
-    let rule = rule.replace("-", "_");
+    let rule = rule.replace('-', "_");
     let _ = vm.parse(&rule, target).map_err(|e| e.to_string())?;
   }
 
