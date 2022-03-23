@@ -256,8 +256,7 @@ jobs:
           npm run build
 
       - name: Deploy web
-        uses: JamesIves/github-pages-deploy-action@releases/v3
+        uses: JamesIves/github-pages-deploy-action@v4.2.5
         with:
-          ACCESS_TOKEN: ${{ secrets.AccessToken }}
-          BRANCH: gh-pages
-          FOLDER: www/dist
+          branch: gh-pages
+          folder: www/dist
