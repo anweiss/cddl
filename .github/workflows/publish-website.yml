@@ -1,0 +1,75 @@
+name: Publish packages
+on:
+  repository_dispatch:
+
+jobs:
+    name: Publish crate
+    strategy:
+      matrix:
+        rust_toolchain: [stable]
+    runs-on: ubuntu-latest
+    if: contains(github.ref, 'vscode-extension') != true
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust_toolchain }}
+          override: true
+
+      - name: Login to crates.io
+        uses: actions-rs/cargo@v1
+        with:
+          command: login
+          args: ${{ secrets.CratesIOToken }}
+
+      - name: Publish crate
+        uses: actions-rs/cargo@v1
+        with:
+          command: publish
+
+  publish-website:
+    name: Publish website
+    runs-on: ubuntu-latest
+    if: contains(github.ref, 'vscode-extension') != true
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          target: wasm32-unknown-unknown
+
+      - name: Install wasmpack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install node
+        uses: actions/setup-node@v1
+        with:
+          node-version: '16'
+
+      - name: Build wasm
+        run: |
+          wasm-pack build --release --no-default-features --features web
+
+      - name: Build web
+        run: |
+          cd www
+          npm install
+          npm run build
+
+      - name: Deploy web
+        uses: JamesIves/github-pages-deploy-action@v4.2.5
+        with:
+          branch: gh-pages
+          folder: www/dist
