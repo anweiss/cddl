@@ -1514,10 +1514,10 @@ impl<'a> From<RangeValue<'a>> for Type2<'a> {
     let span = (0, 0, 0);
 
     match rv {
-      RangeValue::IDENT(ident) => Type2::Typename {
+      RangeValue::IDENT(ident, socket) => Type2::Typename {
         ident: Identifier {
-          ident: ident.0,
-          socket: ident.1,
+          ident,
+          socket,
           #[cfg(feature = "ast-span")]
           span,
         },

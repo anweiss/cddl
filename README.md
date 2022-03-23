@@ -8,7 +8,7 @@ A Rust implementation of the Concise data definition language (CDDL). CDDL is an
 
 This crate includes a handwritten parser and lexer for CDDL, and its development has been heavily inspired by the techniques outlined in Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
-This crate supports validation of both CBOR and JSON data structures. An extremely basic REPL is included as well. This crate's minimum supported Rust version (MSRV) is 1.51.0.
+This crate supports validation of both CBOR and JSON data structures. An extremely basic REPL is included as well. This crate's minimum supported Rust version (MSRV) is 1.56.0.
 
 Also bundled into this repository is a basic language server implementation and extension for Visual Studio Code for editing CDDL. The implementation is backed by the compiled WebAssembly target included in this crate.
 
@@ -100,7 +100,7 @@ docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.9.0-beta.1 
 
 ## Website
 
-You can also find a simple RFC 8610 conformance tool at [https://cddl.anweiss.tech](https://cddl.anweiss.tech). This same codebase has been compiled for use in the browser via WebAssembly. The web tool does not yet support the additional control operators defined by [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165).
+You can also find a simple RFC 8610 conformance tool at [https://cddl.anweiss.tech](https://cddl.anweiss.tech). This same codebase has been compiled for use in the browser via WebAssembly.
 
 ## Visual Studio Code extension
 
@@ -400,3 +400,4 @@ Both JSON and CBOR validation are dependent on their respective heap allocated `
 Below are some known projects that leverage this crate:
 
 - [https://github.com/Emurgo/cddl-codegen](https://github.com/Emurgo/cddl-codegen)
+- [https://github.com/p2panda/p2panda](https://github.com/p2panda/p2panda)

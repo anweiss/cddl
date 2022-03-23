@@ -280,7 +280,7 @@ where
 
     while !is_possible_rule {
       self.next_token()?;
-      if let Token::IDENT(_) = self.cur_token {
+      if let Token::IDENT(..) = self.cur_token {
         match self.peek_token {
           Token::ASSIGN | Token::TCHOICEALT | Token::GCHOICEALT => is_possible_rule = true,
           _ => continue,
@@ -450,7 +450,7 @@ where
     let begin_rule_col = self.lexer_position.column;
 
     let ident = match &self.cur_token {
-      Token::IDENT(i) => self.identifier_from_ident_token(*i),
+      Token::IDENT(i, s) => self.identifier_from_ident_token(*i, *s),
       _ => {
         #[cfg(feature = "ast-span")]
         {
@@ -828,8 +828,8 @@ where
       self.advance_newline()?;
 
       match &self.cur_token {
-        Token::IDENT(ident) => {
-          let param = self.identifier_from_ident_token(*ident);
+        Token::IDENT(ident, socket) => {
+          let param = self.identifier_from_ident_token(*ident, *socket);
 
           self.next_token()?;
 
@@ -1273,7 +1273,7 @@ where
       }
 
       // typename [genericarg]
-      Token::IDENT(ident) => {
+      Token::IDENT(ident, socket) => {
         #[cfg(feature = "ast-span")]
         let begin_type2_range = self.lexer_position.range.0;
         #[cfg(feature = "ast-span")]
@@ -1281,7 +1281,7 @@ where
 
         // optional genericarg detected
         if self.peek_token_is(&Token::LANGLEBRACKET) {
-          let ident = self.identifier_from_ident_token(*ident);
+          let ident = self.identifier_from_ident_token(*ident, *socket);
           let ga = self.parse_genericargs()?;
 
           #[cfg(feature = "ast-span")]
@@ -1302,7 +1302,7 @@ where
         }
 
         Ok(Type2::Typename {
-          ident: self.identifier_from_ident_token(*ident),
+          ident: self.identifier_from_ident_token(*ident, *socket),
           generic_args: None,
           #[cfg(feature = "ast-span")]
           span: (
@@ -1462,9 +1462,9 @@ where
         self.advance_newline()?;
 
         let ident = if let Some(ident) = self.cur_token.in_standard_prelude() {
-          Some(self.identifier_from_ident_token((ident, None)))
-        } else if let Token::IDENT(ident) = &self.cur_token {
-          Some(self.identifier_from_ident_token(*ident))
+          Some(self.identifier_from_ident_token(ident, None))
+        } else if let Token::IDENT(ident, socket) = &self.cur_token {
+          Some(self.identifier_from_ident_token(*ident, *socket))
         } else {
           None
         };
@@ -1549,8 +1549,8 @@ where
               ),
             })
           }
-          Token::IDENT(ident) => {
-            let ident = self.identifier_from_ident_token(*ident);
+          Token::IDENT(ident, socket) => {
+            let ident = self.identifier_from_ident_token(*ident, *socket);
             if self.peek_token_is(&Token::LANGLEBRACKET) {
               self.next_token()?;
 
@@ -1607,13 +1607,13 @@ where
       //   Tag::MAJORTYPE(mt) => Ok(Type2::DataMajorType(*mt)),
       //   Tag::ANY => Ok(Type2::Any),
       // },
-      Token::TAG(t) => {
+      Token::TAG(mt, constraint) => {
         #[cfg(feature = "ast-span")]
         let begin_type2_range = self.lexer_position.range.0;
         #[cfg(feature = "ast-span")]
         let begin_type2_line = self.lexer_position.line;
 
-        match *t {
+        match (*mt, *constraint) {
           // Tagged data item containing the given type as the tagged value
           (Some(6), tag) => {
             self.next_token()?;
@@ -1695,7 +1695,7 @@ where
 
         match self.cur_token.in_standard_prelude() {
           Some(s) => {
-            let ident = self.identifier_from_ident_token((s, None));
+            let ident = self.identifier_from_ident_token(s, None);
             #[cfg(feature = "ast-span")]
             {
               self.parser_position.range = self.lexer_position.range;
@@ -1890,7 +1890,7 @@ where
         && !self.peek_token_is(&Token::COLON)
         && !self.peek_token_is(&Token::ARROWMAP)
         && !self.cur_token_is(Token::EOF)
-        && !matches!(self.cur_token, Token::IDENT(_))
+        && !matches!(self.cur_token, Token::IDENT(..))
       {
         #[cfg(feature = "ast-span")]
         {
@@ -2400,7 +2400,8 @@ where
   fn parse_memberkey_from_ident(
     &mut self,
     is_optional: bool,
-    ident: (&'a str, Option<token::SocketPlug>),
+    ident: &'a str,
+    socket: Option<token::SocketPlug>,
     #[cfg(feature = "ast-span")] begin_memberkey_range: usize,
     #[cfg(feature = "ast-span")] begin_memberkey_line: usize,
   ) -> Result<Option<MemberKey<'a>>> {
@@ -2421,9 +2422,9 @@ where
     let end_t1_range = self.lexer_position.range.1;
 
     #[cfg(feature = "ast-span")]
-    let mut ident = self.identifier_from_ident_token((ident.0, ident.1));
+    let mut ident = self.identifier_from_ident_token(ident, socket);
     #[cfg(not(feature = "ast-span"))]
-    let ident = self.identifier_from_ident_token((ident.0, ident.1));
+    let ident = self.identifier_from_ident_token(ident, socket);
     #[cfg(feature = "ast-span")]
     {
       ident.span = (begin_memberkey_range, end_t1_range, begin_memberkey_line);
@@ -2586,7 +2587,8 @@ where
     if let Some(t) = self.cur_token.in_standard_prelude() {
       return self.parse_memberkey_from_ident(
         is_optional,
-        (t, None),
+        t,
+        None,
         #[cfg(feature = "ast-span")]
         begin_memberkey_range,
         #[cfg(feature = "ast-span")]
@@ -2595,12 +2597,14 @@ where
     }
 
     match &self.cur_token {
-      Token::IDENT(ident) => {
+      Token::IDENT(ident, socket) => {
         let ident = *ident;
+        let socket = *socket;
 
         self.parse_memberkey_from_ident(
           is_optional,
           ident,
+          socket,
           #[cfg(feature = "ast-span")]
           begin_memberkey_range,
           #[cfg(feature = "ast-span")]
@@ -3297,11 +3301,12 @@ where
   /// Create `ast::Identifier` from `Token::IDENT(ident)`
   fn identifier_from_ident_token(
     &self,
-    ident: (&'a str, Option<token::SocketPlug>),
+    ident: &'a str,
+    socket: Option<token::SocketPlug>,
   ) -> Identifier<'a> {
     Identifier {
-      ident: ident.0,
-      socket: ident.1,
+      ident,
+      socket,
       #[cfg(feature = "ast-span")]
       span: (
         self.lexer_position.range.0,
