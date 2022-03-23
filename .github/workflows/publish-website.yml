@@ -1,36 +1,8 @@
-name: Publish packages
+name: Publish website
 on:
   repository_dispatch:
 
 jobs:
-    name: Publish crate
-    strategy:
-      matrix:
-        rust_toolchain: [stable]
-    runs-on: ubuntu-latest
-    if: contains(github.ref, 'vscode-extension') != true
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v2
-
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.rust_toolchain }}
-          override: true
-
-      - name: Login to crates.io
-        uses: actions-rs/cargo@v1
-        with:
-          command: login
-          args: ${{ secrets.CratesIOToken }}
-
-      - name: Publish crate
-        uses: actions-rs/cargo@v1
-        with:
-          command: publish
-
   publish-website:
     name: Publish website
     runs-on: ubuntu-latest
