@@ -42,9 +42,9 @@ fn validate_did_json_examples() -> Result<(), Box<dyn Error>> {
         let file = file?;
         if file.path().extension().and_then(OsStr::to_str).unwrap() == "json" {
           #[cfg(feature = "additional-controls")]
-          let r = validate_json_from_str(&cddl, &fs::read_to_string(file.path())?, None);
+          let r = validate_json_from_str(&cddl, &fs::read_to_string(file.path())?, true, None);
           #[cfg(not(feature = "additional-controls"))]
-          let r = validate_json_from_str(&cddl, &fs::read_to_string(file.path())?);
+          let r = validate_json_from_str(&cddl, &fs::read_to_string(file.path())?, true);
           println!("assert ok {:?}", file.path());
           if let Err(e) = &r {
             println!("error validating {:?}\n", file.path());
@@ -92,9 +92,9 @@ fn validate_did_cbor_examples() -> Result<(), Box<dyn Error>> {
           let mut data = Vec::new();
           f.read_to_end(&mut data)?;
           #[cfg(feature = "additional-controls")]
-          let r = validate_cbor_from_slice(&cddl, &data, None);
+          let r = validate_cbor_from_slice(&cddl, &data, true, None);
           #[cfg(not(feature = "additional-controls"))]
-          let r = validate_cbor_from_slice(&cddl, &data);
+          let r = validate_cbor_from_slice(&cddl, &data, true);
 
           println!("assert ok {:?}", file.path());
           if let Err(e) = &r {

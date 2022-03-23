@@ -3,7 +3,7 @@
 //! [![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl)
 //! [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl)
 //! [![Publish
-//! packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.9.0-beta.0&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22)
+//! packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.9.0-beta.1&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22)
 //! [![Build and
 //! Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22)
 //! [![Active
@@ -227,7 +227,7 @@
 //! use cddl::{lexer_from_str, parser::cddl_from_str};
 //!
 //! let input = r#"myrule = int"#;
-//! assert!(cddl_from_str(&mut lexer_from_str(input), input, true).is_ok())
+//! assert!(cddl_from_str(&mut lexer_from_str(input), input, true, false).is_ok())
 //! ```
 //!
 //! ### Validating JSON
@@ -407,7 +407,7 @@
 //! let json = r#""v""#;
 //!
 //! #[cfg(feature = "additional-controls")]
-//! assert!(validate_json_from_str(cddl, json, Some(&["json"])).is_ok())
+//! assert!(validate_json_from_str(cddl, json, false, Some(&["json"])).is_ok())
 //! ```
 //!
 //! #### Comparing with JSON schema and JSON schema language
@@ -493,7 +493,7 @@
 //! let cbor = b"\x02";
 //!
 //! #[cfg(feature = "additional-controls")]
-//! assert!(validate_cbor_from_slice(cddl, cbor, Some(&["cbor"])).is_ok())
+//! assert!(validate_cbor_from_slice(cddl, cbor, false, Some(&["cbor"])).is_ok())
 //! ```
 //!
 //! ## `no_std` support
@@ -533,15 +533,6 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate core as std;
 
-#[cfg(feature = "std")]
-extern crate serde_json;
-
-#[cfg(feature = "std")]
-extern crate uriparse;
-
-#[cfg(feature = "std")]
-extern crate base64_url;
-
 /// Abstract syntax tree representing a CDDL definition
 pub mod ast;
 /// Static error messages
@@ -555,9 +546,15 @@ pub mod parser;
 pub mod repl;
 /// CDDL tokens for lexing
 pub mod token;
+/// CDDL helper functions
+pub mod util;
 /// Validators for JSON and CBOR data structures
 #[cfg(feature = "std")]
 pub mod validator;
+
+/// Generate fake JSON data from CDDL
+#[cfg(feature = "std")]
+pub mod faker;
 
 /// CDDL AST visitor
 pub mod visitor;

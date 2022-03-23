@@ -15,7 +15,12 @@ fn verify_cddl_compiles() -> Result<(), parser::Error> {
     }
 
     let file_content = fs::read_to_string(file.path()).unwrap();
-    match parser::cddl_from_str(&mut lexer_from_str(&file_content), &file_content, true) {
+    match parser::cddl_from_str(
+      &mut lexer_from_str(&file_content),
+      &file_content,
+      true,
+      true,
+    ) {
       Ok(_) => println!("file: {:#?} ... success", file.path()),
       Err(_) => {
         return Err(parser::Error::INCREMENTAL);
@@ -31,6 +36,7 @@ fn verify_json_validation() -> json::Result {
   validate_json_from_str(
     &fs::read_to_string("tests/fixtures/cddl/reputon.cddl").unwrap(),
     &fs::read_to_string("tests/fixtures/json/reputon.json").unwrap(),
+    true,
     None,
   )
 }

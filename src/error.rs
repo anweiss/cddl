@@ -1,3 +1,6 @@
+#[cfg(target_arch = "wasm32")]
+use crate::lexer::Position;
+
 use std::fmt;
 
 #[cfg(target_arch = "wasm32")]
@@ -186,4 +189,11 @@ impl From<MsgType> for ErrorMsg {
       }
     }
   }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Serialize)]
+pub struct ParserError {
+  pub position: Position,
+  pub msg: ErrorMsg,
 }

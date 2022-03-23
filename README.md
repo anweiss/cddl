@@ -1,6 +1,6 @@
 # cddl-rs
 
-[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Publish packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.9.0-beta.0&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22) [![Build and Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22) [![Active Development](https://img.shields.io/badge/Maintenance%20Level-Actively%20Developed-brightgreen.svg)](https://gist.github.com/cheerfulstoic/d107229326a01ff0f333a1d3476e068d)
+[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Publish packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.9.0-beta.1&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22) [![Build and Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22)
 
 > This crate was originally developed as a personal learning exercise for getting acquainted with Rust and parsing in general. There are likely more performant and stable libraries out there for parsing CDDL. While there are some examples of this crate being used in production, careful consideration should be made prior to using this crate as such.
 
@@ -19,7 +19,7 @@ Also bundled into this repository is a basic language server implementation and 
 - [x] Validate CBOR data structures
 - [x] Validate JSON documents
 - [x] Basic REPL
-- [ ] Generate dummy JSON from conformant CDDL
+- [x] Generate dummy JSON from conformant CDDL
 - [x] As close to zero-copy as possible
 - [x] Compile WebAssembly target for browser and Node.js
 - [x] `no_std` support (lexing and parsing only)
@@ -67,7 +67,7 @@ cddl help
 
 If using Docker:
 
-> Replace `<version>` with an appropriate [release](https://github.com/anweiss/cddl/releases) tag. Requires use of the `--volume` argument for mounting `.cddl` documents into the container when executing the command. `.json` or `.cbor` files can either be included in the volume mount or passed into the command via STDIN.
+> Replace `<version>` with an appropriate [release](https://github.com/anweiss/cddl/releases) tag. Requires use of the `--volume` argument for mounting `.cddl` documents into the container when executing the command. JSON or CBOR files can either be included in the volume mount or passed into the command via STDIN.
 
 ```sh
 docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
@@ -76,13 +76,13 @@ docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> he
 You can validate JSON documents:
 
 ```sh
-cddl validate --cddl <FILE.cddl> --json [FILE.json]...
+cddl validate --cddl <FILE.cddl> --json [FILE]...
 ```
 
 You can validate CBOR files:
 
 ```sh
-cddl validate --cddl <FILE.cddl> --cbor [FILE.cbor]...
+cddl validate --cddl <FILE.cddl> --cbor [FILE]...
 ```
 
 It also supports validating files from STDIN (if it detects the input as valid UTF-8, it will attempt to validate the input as JSON, otherwise it will treat it as CBOR):
@@ -140,7 +140,7 @@ Simply add the dependency to `Cargo.toml`:
 
 ```toml
 [dependencies]
-cddl = "0.9.0-beta.0"
+cddl = "0.9.0-beta.1"
 ```
 
 Both JSON and CBOR validation require `std`.
@@ -175,7 +175,7 @@ Enable validation support for the additional control operators proposed in [http
 use cddl::{lexer_from_str, parser::cddl_from_str};
 
 let input = r#"myrule = int"#;
-assert!(cddl_from_str(&mut lexer_from_str(input), input, true).is_ok())
+assert!(cddl_from_str(&mut lexer_from_str(input), input, true, false).is_ok())
 ```
 
 ### Validating JSON
@@ -195,7 +195,7 @@ let json = r#"{
   "address": "1234 Lakeshore Dr"
 }"#;
 
-assert!(validate_json_from_str(cddl, json).is_ok())
+assert!(validate_json_from_str(cddl, json, false).is_ok())
 ```
 
 This crate uses the [Serde](https://serde.rs/) framework, and more specifically, the [serde_json](https://crates.io/crates/serde_json) crate, for parsing and validating JSON. Serde was chosen due to its maturity in the ecosystem and its support for serializing and deserializing CBOR via the [ciborium](https://crates.io/crates/ciborium) crate.
@@ -330,7 +330,7 @@ let cddl = r#"rule = false"#;
 
 let cbor = b"\xF4";
 
-assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
+assert!(validate_cbor_from_slice(cddl, cbor, false).is_ok())
 ```
 
 This crate also uses [Serde](https://serde.rs/) and [ciborium](https://crates.io/crates/ciborium) for validating CBOR data structures. CBOR validation is done via the loosely typed [`ciborium::value::Value`](https://github.com/enarx/ciborium/blob/main/ciborium/src/value/mod.rs#L22) enum. In addition to all of the same features implemented by the JSON validator, this crate also supports validating CBOR tags (e.g. `#6.32(tstr)`), CBOR major types (e.g. `#1.2`), table types (e.g. `{ [ + tstr ] => int }`) and byte strings. The `.bits`, `.cbor` and `.cborseq` control operators are all supported as well.
@@ -379,7 +379,7 @@ let cddl = r#"
 
 let cbor = b"\x02";
 
-assert!(validate_cbor_from_slice(cddl, cbor, Some(&["cbor"])).is_ok())
+assert!(validate_cbor_from_slice(cddl, cbor, false, Some(&["cbor"])).is_ok())
 ```
 
 ## `no_std` support
@@ -388,7 +388,7 @@ Only the lexer and parser can be used in a `no_std` context provided that a heap
 
 ```toml
 [dependencies]
-cddl = { version = "0.9.0-beta.0", default-features = false }
+cddl = { version = "0.9.0-beta.1", default-features = false }
 ```
 
 Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling and diagnostics.

@@ -44,6 +44,9 @@ pub struct Parser<'a, I>
 where
   I: Iterator<Item = lexer::Item<'a>>,
 {
+  /// Vec of collected parsing errors
+  pub errors: Vec<Error>,
+
   tokens: I,
   str_input: &'a str,
   cur_token: Token<'a>,
@@ -52,13 +55,12 @@ where
   peek_lexer_position: Position,
   #[cfg(feature = "ast-span")]
   parser_position: Position,
-  /// Vec of collected parsing errors
-  pub errors: Vec<Error>,
   #[cfg(feature = "ast-span")]
   visited_rule_idents: Vec<(&'a str, Span)>,
   #[cfg(not(feature = "ast-span"))]
   visited_rule_idents: Vec<&'a str>,
   current_rule_generic_param_idents: Option<Vec<&'a str>>,
+  allow_missing_definitions: bool,
 }
 
 /// Parsing error types
@@ -108,9 +110,9 @@ where
   /// use cddl::lexer::Lexer;
   ///
   /// let input = r#"mycddl = ( int / float )"#;
-  /// let p = Parser::new(Lexer::new(input).iter(), input);
+  /// let p = Parser::new(Lexer::new(input).iter(), input, false);
   /// ```
-  pub fn new(tokens: I, str_input: &'a str) -> Result<Parser<I>> {
+  pub fn new(tokens: I, str_input: &'a str, allow_missing_definitions: bool) -> Result<Parser<I>> {
     let mut p = Parser {
       tokens,
       str_input,
@@ -123,6 +125,7 @@ where
       parser_position: Position::default(),
       visited_rule_idents: Vec::default(),
       current_rule_generic_param_idents: None,
+      allow_missing_definitions,
     };
 
     p.next_token()?;
@@ -145,7 +148,7 @@ where
   /// use cddl::lexer::Lexer;
   ///
   /// let input = r#"mycddl = ( int / float )"#;
-  /// if let Ok(mut p) = Parser::new(Lexer::new(input).iter(), input) {
+  /// if let Ok(mut p) = Parser::new(Lexer::new(input).iter(), input, false) {
   ///   if let Err(Error::INCREMENTAL) = p.parse_cddl() {
   ///     let _ = p.report_errors(true);
   ///   }
@@ -379,33 +382,35 @@ where
       }
     }
 
-    #[cfg(feature = "ast-span")]
-    for (rule, span) in self.visited_rule_idents.iter() {
-      if !c.rules.iter().any(|r| r.name() == *rule) {
-        self.errors.push(Error::PARSER {
-          position: Position {
-            column: 0,
-            index: span.0,
-            line: span.2,
-            range: (span.0, span.1),
-          },
-          msg: ErrorMsg {
-            short: format!("missing definition for rule {}", rule),
-            extended: None,
-          },
-        })
+    if !self.allow_missing_definitions {
+      #[cfg(feature = "ast-span")]
+      for (rule, span) in self.visited_rule_idents.iter() {
+        if !c.rules.iter().any(|r| r.name() == *rule) {
+          self.errors.push(Error::PARSER {
+            position: Position {
+              column: 0,
+              index: span.0,
+              line: span.2,
+              range: (span.0, span.1),
+            },
+            msg: ErrorMsg {
+              short: format!("missing definition for \"{}\"", rule),
+              extended: None,
+            },
+          })
+        }
       }
-    }
 
-    #[cfg(not(feature = "ast-span"))]
-    for rule in self.visited_rule_idents.iter() {
-      if !c.rules.iter().any(|r| r.name() == *rule) {
-        self.errors.push(Error::PARSER {
-          msg: ErrorMsg {
-            short: format!("missing definition for rule {}", rule),
-            extended: None,
-          },
-        })
+      #[cfg(not(feature = "ast-span"))]
+      for rule in self.visited_rule_idents.iter() {
+        if !c.rules.iter().any(|r| r.name() == *rule) {
+          self.errors.push(Error::PARSER {
+            msg: ErrorMsg {
+              short: format!("missing definition for \"{}\"", rule),
+              extended: None,
+            },
+          })
+        }
       }
     }
 
@@ -573,7 +578,7 @@ where
           self.advance_newline()?;
 
           #[cfg(feature = "ast-span")]
-          let span = (
+          let span = Span(
             begin_rule_range,
             self.parser_position.range.1,
             begin_rule_line,
@@ -604,7 +609,7 @@ where
           let t = self.parse_type(None)?;
 
           #[cfg(feature = "ast-span")]
-          let span = (
+          let span = Span(
             begin_rule_range,
             self.parser_position.range.1,
             begin_rule_line,
@@ -679,19 +684,20 @@ where
                     // TODO: Replace with box pattern destructuring once supported in stable
                     if let GroupEntry::ValueMemberKey { ge, .. } = &group_entry.0 {
                       if ge.occur.is_none() && ge.member_key.is_none() {
-                        let value = self.parse_type(Some(Type2::ParenthesizedType {
-                          #[cfg(feature = "ast-comments")]
-                          comments_before_type: comments_before_group.clone(),
-                          pt: ge.entry_type.clone(),
-                          #[cfg(feature = "ast-comments")]
-                          comments_after_type: comments_after_group.clone(),
-                          #[cfg(feature = "ast-span")]
-                          span: (
-                            begin_pt_range,
-                            self.parser_position.range.1,
-                            begin_rule_line,
-                          ),
-                        }))?;
+                        let value =
+                          self.parse_type(Some(Type2::ParenthesizedType(ParenthesizedType {
+                            #[cfg(feature = "ast-comments")]
+                            comments_before_type: comments_before_group.clone(),
+                            pt: ge.entry_type.clone(),
+                            #[cfg(feature = "ast-comments")]
+                            comments_after_type: comments_after_group.clone(),
+                            #[cfg(feature = "ast-span")]
+                            span: Span(
+                              begin_pt_range,
+                              self.parser_position.range.1,
+                              begin_rule_line,
+                            ),
+                          })))?;
 
                         #[cfg(feature = "ast-span")]
                         {
@@ -714,7 +720,7 @@ where
                           #[cfg(feature = "ast-comments")]
                           comments_after_rule,
                           #[cfg(feature = "ast-span")]
-                          span: (begin_rule_range, end_rule_range, begin_rule_line),
+                          span: Span(begin_rule_range, end_rule_range, begin_rule_line),
                         });
                       }
                     }
@@ -741,7 +747,7 @@ where
           #[cfg(feature = "ast-comments")]
           comments_after_rule,
           #[cfg(feature = "ast-span")]
-          span: (begin_rule_range, end_rule_range, begin_rule_line),
+          span: Span(begin_rule_range, end_rule_range, begin_rule_line),
         })
       }
       _ => {
@@ -782,7 +788,7 @@ where
         }
 
         #[cfg(feature = "ast-span")]
-        let span = (
+        let span = Span(
           begin_rule_range,
           self.parser_position.range.1,
           begin_rule_line,
@@ -903,7 +909,7 @@ where
     #[cfg(feature = "ast-span")]
     {
       let end_range = self.lexer_position.range.1;
-      generic_params.span = (begin_range, end_range, self.lexer_position.line);
+      generic_params.span = Span(begin_range, end_range, self.lexer_position.line);
     }
 
     Ok(generic_params)
@@ -973,7 +979,7 @@ where
 
     #[cfg(feature = "ast-span")]
     {
-      generic_args.span = (
+      generic_args.span = Span(
         begin_generic_arg_range,
         self.parser_position.range.1,
         begin_generic_arg_line,
@@ -992,18 +998,19 @@ where
     }
 
     #[cfg(feature = "ast-span")]
-    let begin_type_range = if let Some(Type2::ParenthesizedType { span, .. }) = parenthesized_type {
-      self.parser_position.line = span.2;
+    let begin_type_range =
+      if let Some(Type2::ParenthesizedType(ParenthesizedType { span, .. })) = parenthesized_type {
+        self.parser_position.line = span.2;
 
-      span.0
-    } else {
-      self.parser_position.range.0
-    };
+        span.0
+      } else {
+        self.parser_position.range.0
+      };
 
     let mut t = Type {
       type_choices: Vec::new(),
       #[cfg(feature = "ast-span")]
-      span: (begin_type_range, 0, self.parser_position.line),
+      span: Span(begin_type_range, 0, self.parser_position.line),
     };
 
     #[cfg(feature = "ast-comments")]
@@ -1072,7 +1079,7 @@ where
     #[cfg(feature = "ast-span")]
     let mut begin_type1_range = self.lexer_position.range.0;
 
-    let t2_1 = if let Some(Type2::ParenthesizedType {
+    let t2_1 = if let Some(Type2::ParenthesizedType(ParenthesizedType {
       #[cfg(feature = "ast-comments")]
       comments_before_type,
       pt,
@@ -1080,7 +1087,7 @@ where
       comments_after_type,
       #[cfg(feature = "ast-span")]
       span,
-    }) = parenthesized_type
+    })) = parenthesized_type
     {
       #[cfg(feature = "ast-span")]
       {
@@ -1088,7 +1095,7 @@ where
         begin_type1_range = span.0;
       }
 
-      Type2::ParenthesizedType {
+      Type2::ParenthesizedType(ParenthesizedType {
         #[cfg(feature = "ast-comments")]
         comments_before_type,
         pt,
@@ -1096,13 +1103,13 @@ where
         comments_after_type,
         #[cfg(feature = "ast-span")]
         span,
-      }
+      })
     } else {
       self.parse_type2()?
     };
 
     #[cfg(feature = "ast-span")]
-    let mut span = (
+    let mut span = Span(
       begin_type1_range,
       self.lexer_position.range.1,
       begin_type1_line,
@@ -1142,7 +1149,7 @@ where
 
     #[cfg(feature = "ast-span")]
     {
-      span = (
+      span = Span(
         begin_type1_range,
         self.parser_position.range.1,
         begin_type1_line,
@@ -1204,71 +1211,75 @@ where
         }
 
         #[cfg(feature = "ast-span")]
-        let span = (
+        let span = Span(
           self.parser_position.range.0,
           self.parser_position.range.1,
           self.parser_position.line,
         );
 
         match value {
-          token::Value::TEXT(t) => Ok(Type2::TextValue {
+          token::Value::TEXT(t) => Ok(Type2::TextValue(TextValue {
             value: t.clone(),
             #[cfg(feature = "ast-span")]
             span,
-          }),
-          token::Value::INT(i) => Ok(Type2::IntValue {
+          })),
+          token::Value::INT(i) => Ok(Type2::IntValue(IntValue {
             value: *i,
             #[cfg(feature = "ast-span")]
             span,
-          }),
-          token::Value::UINT(ui) => Ok(Type2::UintValue {
+          })),
+          token::Value::UINT(ui) => Ok(Type2::UintValue(UintValue {
             value: *ui,
             #[cfg(feature = "ast-span")]
             span,
-          }),
-          token::Value::FLOAT(f) => Ok(Type2::FloatValue {
+          })),
+          token::Value::FLOAT(f) => Ok(Type2::FloatValue(FloatValue {
             value: *f,
             #[cfg(feature = "ast-span")]
             span,
-          }),
+          })),
           token::Value::BYTE(token::ByteValue::UTF8(Cow::Borrowed(utf8))) => {
-            Ok(Type2::UTF8ByteString {
+            Ok(Type2::UTF8ByteString(Utf8ByteString {
               value: Cow::Borrowed(utf8),
               #[cfg(feature = "ast-span")]
               span,
-            })
+            }))
           }
           token::Value::BYTE(token::ByteValue::UTF8(Cow::Owned(utf8))) => {
-            Ok(Type2::UTF8ByteString {
+            Ok(Type2::UTF8ByteString(Utf8ByteString {
               value: Cow::Owned(utf8.to_owned()),
               #[cfg(feature = "ast-span")]
               span,
-            })
+            }))
           }
           token::Value::BYTE(token::ByteValue::B16(Cow::Borrowed(b16))) => {
-            Ok(Type2::B16ByteString {
+            Ok(Type2::B16ByteString(B16ByteString {
               value: Cow::Borrowed(b16),
               #[cfg(feature = "ast-span")]
               span,
-            })
+            }))
           }
-          token::Value::BYTE(token::ByteValue::B16(Cow::Owned(b16))) => Ok(Type2::B16ByteString {
-            value: Cow::Owned(b16.to_owned()),
-            #[cfg(feature = "ast-span")]
-            span,
-          }),
+          token::Value::BYTE(token::ByteValue::B16(Cow::Owned(b16))) => {
+            Ok(Type2::B16ByteString(B16ByteString {
+              value: Cow::Owned(b16.to_owned()),
+              #[cfg(feature = "ast-span")]
+              span,
+            }))
+          }
           token::Value::BYTE(token::ByteValue::B64(Cow::Borrowed(b64))) => {
-            Ok(Type2::B64ByteString {
+            Ok(Type2::B64ByteString(B64ByteString {
               value: Cow::Borrowed(b64),
               #[cfg(feature = "ast-span")]
               span,
-            })
+            }))
           }
-          token::Value::BYTE(token::ByteValue::B64(Cow::Owned(b64))) => Ok(Type2::B64ByteString {
-            value: Cow::Owned(b64.to_owned()),
-            #[cfg(feature = "ast-span")]
-            span,
-          }),
+          token::Value::BYTE(token::ByteValue::B64(Cow::Owned(b64))) => {
+            Ok(Type2::B64ByteString(B64ByteString {
+              value: Cow::Owned(b64.to_owned()),
+              #[cfg(feature = "ast-span")]
+              span,
+            }))
+          }
         }
       }
 
@@ -1287,12 +1298,39 @@ where
           #[cfg(feature = "ast-span")]
           let end_type2_range = self.parser_position.range.1;
 
-          return Ok(Type2::Typename {
+          #[cfg(feature = "ast-span")]
+          if let Some(params) = &self.current_rule_generic_param_idents {
+            if !params.iter().any(|&p| p == ident.ident)
+              && !self
+                .visited_rule_idents
+                .contains(&(ident.ident, ident.span))
+            {
+              self.visited_rule_idents.push((ident.ident, ident.span));
+            }
+          } else if !self
+            .visited_rule_idents
+            .contains(&(ident.ident, ident.span))
+          {
+            self.visited_rule_idents.push((ident.ident, ident.span));
+          }
+
+          #[cfg(not(feature = "ast-span"))]
+          if let Some(params) = &self.current_rule_generic_param_idents {
+            if !params.iter().any(|&p| p == ident.ident)
+              && !self.visited_rule_idents.contains(&ident.ident)
+            {
+              self.visited_rule_idents.push(ident.ident);
+            }
+          } else if !self.visited_rule_idents.contains(&ident.ident) {
+            self.visited_rule_idents.push(ident.ident);
+          }
+
+          return Ok(Type2::Typename(Typename {
             ident,
             generic_args: Some(ga),
             #[cfg(feature = "ast-span")]
-            span: (begin_type2_range, end_type2_range, begin_type2_line),
-          });
+            span: Span(begin_type2_range, end_type2_range, begin_type2_line),
+          }));
         }
 
         #[cfg(feature = "ast-span")]
@@ -1301,16 +1339,39 @@ where
           self.parser_position.line = self.lexer_position.line;
         }
 
-        Ok(Type2::Typename {
+        #[cfg(feature = "ast-span")]
+        let span = Span(
+          self.parser_position.range.0,
+          self.parser_position.range.1,
+          self.parser_position.line,
+        );
+
+        #[cfg(feature = "ast-span")]
+        if let Some(params) = &self.current_rule_generic_param_idents {
+          if !params.iter().any(|&p| p == ident.0)
+            && !self.visited_rule_idents.contains(&(ident.0, span))
+          {
+            self.visited_rule_idents.push((ident.0, span));
+          }
+        } else if ident.1.is_none() && !self.visited_rule_idents.iter().any(|r| r.0 == ident.0) {
+          self.visited_rule_idents.push((ident.0, span));
+        }
+
+        #[cfg(not(feature = "ast-span"))]
+        if let Some(params) = &self.current_rule_generic_param_idents {
+          if !params.iter().any(|&p| p == ident.0) && !self.visited_rule_idents.contains(&ident.0) {
+            self.visited_rule_idents.push(ident.0);
+          }
+        } else if ident.1.is_none() && !self.visited_rule_idents.iter().any(|r| *r == ident.0) {
+          self.visited_rule_idents.push(ident.0);
+        }
+
+        Ok(Type2::Typename(Typename {
           ident: self.identifier_from_ident_token(*ident),
           generic_args: None,
           #[cfg(feature = "ast-span")]
-          span: (
-            self.parser_position.range.0,
-            self.parser_position.range.1,
-            self.parser_position.line,
-          ),
-        })
+          span,
+        }))
       }
 
       // ( type )
@@ -1341,19 +1402,19 @@ where
         #[cfg(not(feature = "ast-comments"))]
         self.advance_newline()?;
 
-        Ok(Type2::ParenthesizedType {
+        Ok(Type2::ParenthesizedType(ParenthesizedType {
           #[cfg(feature = "ast-comments")]
           comments_before_type,
           #[cfg(feature = "ast-comments")]
           comments_after_type,
           pt,
           #[cfg(feature = "ast-span")]
-          span: (
+          span: Span(
             self.parser_position.range.0,
             self.parser_position.range.1,
             self.parser_position.line,
           ),
-        })
+        }))
       }
 
       // { group }
@@ -1380,7 +1441,7 @@ where
         };
 
         #[cfg(feature = "ast-span")]
-        let span = (
+        let span = Span(
           begin_type2_range,
           self.lexer_position.range.1,
           begin_type2_line,
@@ -1391,7 +1452,7 @@ where
         #[cfg(not(feature = "ast-comments"))]
         self.advance_newline()?;
 
-        Ok(Type2::Map {
+        Ok(Type2::Map(Map {
           #[cfg(feature = "ast-comments")]
           comments_before_group,
           group,
@@ -1399,7 +1460,7 @@ where
           span,
           #[cfg(feature = "ast-comments")]
           comments_after_group,
-        })
+        }))
       }
 
       // [ group ]
@@ -1430,7 +1491,7 @@ where
         };
 
         #[cfg(feature = "ast-span")]
-        let span = (
+        let span = Span(
           begin_type2_range,
           self.lexer_position.range.1,
           begin_type2_line,
@@ -1441,7 +1502,7 @@ where
         #[cfg(not(feature = "ast-comments"))]
         self.advance_newline()?;
 
-        Ok(Type2::Array {
+        Ok(Type2::Array(Array {
           #[cfg(feature = "ast-comments")]
           comments_before_group,
           group,
@@ -1449,7 +1510,7 @@ where
           comments_after_group,
           #[cfg(feature = "ast-span")]
           span,
-        })
+        }))
       }
 
       // ~ typename [genericarg]
@@ -1473,24 +1534,24 @@ where
           if self.peek_token_is(&Token::LANGLEBRACKET) {
             self.next_token()?;
 
-            return Ok(Type2::Unwrap {
+            return Ok(Type2::Unwrap(Unwrap {
               #[cfg(feature = "ast-comments")]
               comments,
               ident,
               generic_args: Some(self.parse_genericargs()?),
               #[cfg(feature = "ast-span")]
-              span: (0, 0, 0),
-            });
+              span: Span(0, 0, 0),
+            }));
           }
 
-          return Ok(Type2::Unwrap {
+          return Ok(Type2::Unwrap(Unwrap {
             #[cfg(feature = "ast-comments")]
             comments,
             ident,
             generic_args: None,
             #[cfg(feature = "ast-span")]
-            span: (0, 0, 0),
-          });
+            span: Span(0, 0, 0),
+          }));
         }
 
         self.errors.push(Error::PARSER {
@@ -1533,7 +1594,7 @@ where
             #[cfg(not(feature = "ast-comments"))]
             self.advance_newline()?;
 
-            Ok(Type2::ChoiceFromInlineGroup {
+            Ok(Type2::ChoiceFromInlineGroup(ChoiceFromInlineGroup {
               #[cfg(feature = "ast-comments")]
               comments,
               #[cfg(feature = "ast-comments")]
@@ -1542,12 +1603,12 @@ where
               #[cfg(feature = "ast-comments")]
               comments_after_group,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_type2_range,
                 self.parser_position.range.1,
                 begin_type2_line,
               ),
-            })
+            }))
           }
           Token::IDENT(ident) => {
             let ident = self.identifier_from_ident_token(*ident);
@@ -1556,18 +1617,18 @@ where
 
               let generic_args = Some(self.parse_genericargs()?);
 
-              return Ok(Type2::ChoiceFromGroup {
+              return Ok(Type2::ChoiceFromGroup(ChoiceFromGroup {
                 #[cfg(feature = "ast-comments")]
                 comments,
                 ident,
                 generic_args,
                 #[cfg(feature = "ast-span")]
-                span: (
+                span: Span(
                   begin_type2_range,
                   self.parser_position.range.1,
                   begin_type2_line,
                 ),
-              });
+              }));
             }
 
             #[cfg(feature = "ast-span")]
@@ -1575,18 +1636,18 @@ where
               self.parser_position.range.1 = self.lexer_position.range.1;
             }
 
-            Ok(Type2::ChoiceFromGroup {
+            Ok(Type2::ChoiceFromGroup(ChoiceFromGroup {
               #[cfg(feature = "ast-comments")]
               comments,
               ident,
               generic_args: None,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_type2_range,
                 self.parser_position.range.1,
                 begin_type2_line,
               ),
-            })
+            }))
           }
           _ => {
             self.errors.push(Error::PARSER {
@@ -1651,7 +1712,7 @@ where
               return Err(Error::INCREMENTAL);
             }
 
-            Ok(Type2::TaggedData {
+            Ok(Type2::TaggedData(TaggedData {
               tag,
               #[cfg(feature = "ast-comments")]
               comments_before_type,
@@ -1659,26 +1720,26 @@ where
               #[cfg(feature = "ast-comments")]
               comments_after_type,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_type2_range,
                 self.parser_position.range.1,
                 begin_type2_line,
               ),
-            })
+            }))
           }
           // Tagged data of a major type
-          (Some(mt), constraint) => Ok(Type2::DataMajorType {
+          (Some(mt), constraint) => Ok(Type2::DataMajorType(DataMajorType {
             mt,
             constraint,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_type2_range,
               self.lexer_position.range.1,
               begin_type2_line,
             ),
-          }),
+          })),
           #[cfg(feature = "ast-span")]
-          _ => Ok(Type2::Any((
+          _ => Ok(Type2::Any(Span(
             begin_type2_range,
             self.lexer_position.range.1,
             begin_type2_line,
@@ -1702,16 +1763,16 @@ where
               self.parser_position.line = self.lexer_position.line;
             }
 
-            Ok(Type2::Typename {
+            Ok(Type2::Typename(Typename {
               ident,
               generic_args: None,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 self.parser_position.range.0,
                 self.parser_position.range.1,
                 self.parser_position.line,
               ),
-            })
+            }))
           }
           None => {
             #[cfg(feature = "ast-span")]
@@ -1777,7 +1838,7 @@ where
     let mut group = Group {
       group_choices: Vec::new(),
       #[cfg(feature = "ast-span")]
-      span: (begin_group_range, 0, self.lexer_position.line),
+      span: Span(begin_group_range, 0, self.lexer_position.line),
     };
 
     group.group_choices.push(self.parse_grpchoice()?);
@@ -1813,7 +1874,7 @@ where
       #[cfg(feature = "ast-comments")]
       comments_before_grpchoice: None,
       #[cfg(feature = "ast-span")]
-      span: (self.lexer_position.range.0, 0, self.lexer_position.line),
+      span: Span(self.lexer_position.range.0, 0, self.lexer_position.line),
     };
 
     if let Token::GCHOICE = &self.cur_token {
@@ -1962,7 +2023,7 @@ where
       let group = self.parse_group()?;
 
       #[cfg(feature = "ast-span")]
-      let mut span = (
+      let mut span = Span(
         begin_grpent_range,
         self.parser_position.range.1,
         begin_grpent_line,
@@ -2007,43 +2068,44 @@ where
     }
 
     #[cfg(feature = "ast-span")]
-    let mut span = (
+    let mut span = Span(
       begin_grpent_range,
       self.parser_position.range.1,
       begin_grpent_line,
     );
 
     match member_key {
-      Some(MemberKey::NonMemberKey {
+      Some(MemberKey::Parenthesized(ParenthesizedMemberKey {
         #[cfg(feature = "ast-comments")]
-          non_member_key: NonMemberKey::Type(mut entry_type),
+          non_member_key: ParenthesizedTypeOrGroup::Type(entry_type),
         #[cfg(not(feature = "ast-comments"))]
-          non_member_key: NonMemberKey::Type(entry_type),
+          non_member_key: ParenthesizedTypeOrGroup::Type(entry_type),
         #[cfg(feature = "ast-comments")]
         comments_before_type_or_group,
-        #[cfg(feature = "ast-comments")]
-        comments_after_type_or_group,
-      }) => {
+        ..
+      })) => {
         #[cfg(feature = "ast-span")]
         if let Token::COMMA = &self.cur_token {
           span.1 = self.lexer_position.range.1;
         }
 
         #[cfg(feature = "ast-comments")]
-        let trailing_comments = entry_type.comments_after_type();
+        let trailing_comments = entry_type.comments_after_type;
 
         #[cfg(feature = "ast-span")]
-        if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
+        if let Some((name, generic_args, _)) = entry_type.pt.groupname_entry() {
           if name.socket.is_none()
             && token::lookup_ident(name.ident)
               .in_standard_prelude()
               .is_none()
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == name.ident) {
+              if !params.iter().any(|&p| p == name.ident)
+                && !self.visited_rule_idents.iter().any(|r| r.0 == name.ident)
+              {
                 self.visited_rule_idents.push((name.ident, name.span));
               }
-            } else {
+            } else if !self.visited_rule_idents.iter().any(|r| r.0 == name.ident) {
               self.visited_rule_idents.push((name.ident, name.span));
             }
           }
@@ -2063,17 +2125,19 @@ where
         }
 
         #[cfg(not(feature = "ast-span"))]
-        if let Some((name, generic_args)) = entry_type.groupname_entry() {
+        if let Some((name, generic_args)) = entry_type.pt.groupname_entry() {
           if name.socket.is_none()
             && token::lookup_ident(name.ident)
               .in_standard_prelude()
               .is_none()
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == name.ident) {
+              if !params.iter().any(|&p| p == name.ident)
+                && !self.visited_rule_idents.iter().any(|r| *r == name.ident)
+              {
                 self.visited_rule_idents.push(name.ident);
               }
-            } else {
+            } else if !self.visited_rule_idents.iter().any(|r| *r == name.ident) {
               self.visited_rule_idents.push(name.ident);
             }
           }
@@ -2098,42 +2162,39 @@ where
           self.next_token()?;
         }
 
-        #[cfg(feature = "ast-comments")]
-        let trailing_comments = if let Some(comments) = entry_type.comments_after_type() {
-          Some(comments)
-        } else {
-          comments_after_type_or_group
-        };
-
         #[cfg(feature = "ast-span")]
-        if let Some((ident, _, _)) = entry_type.groupname_entry() {
+        if let Some((ident, _, _)) = entry_type.pt.groupname_entry() {
           if ident.socket.is_none()
             && token::lookup_ident(ident.ident)
               .in_standard_prelude()
               .is_none()
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == ident.ident) {
+              if !params.iter().any(|&p| p == ident.ident)
+                && !self.visited_rule_idents.iter().any(|r| r.0 == ident.ident)
+              {
                 self.visited_rule_idents.push((ident.ident, ident.span));
               }
-            } else {
+            } else if !self.visited_rule_idents.iter().any(|r| r.0 == ident.ident) {
               self.visited_rule_idents.push((ident.ident, ident.span));
             }
           }
         }
 
         #[cfg(not(feature = "ast-span"))]
-        if let Some((ident, _)) = entry_type.groupname_entry() {
+        if let Some((ident, _)) = entry_type.pt.groupname_entry() {
           if ident.socket.is_none()
             && token::lookup_ident(ident.ident)
               .in_standard_prelude()
               .is_none()
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == ident.ident) {
+              if !params.iter().any(|&p| p == ident.ident)
+                && !self.visited_rule_idents.iter().any(|r| *r == ident.ident)
+              {
                 self.visited_rule_idents.push(ident.ident);
               }
-            } else {
+            } else if !self.visited_rule_idents.iter().any(|r| *r == ident.ident) {
               self.visited_rule_idents.push(ident.ident);
             }
           }
@@ -2143,7 +2204,7 @@ where
           ge: Box::from(ValueMemberKeyEntry {
             occur,
             member_key: None,
-            entry_type,
+            entry_type: entry_type.pt,
           }),
           #[cfg(feature = "ast-comments")]
           leading_comments: comments_before_type_or_group,
@@ -2153,13 +2214,13 @@ where
           span,
         })
       }
-      Some(MemberKey::NonMemberKey {
-        non_member_key: NonMemberKey::Group(group),
+      Some(MemberKey::Parenthesized(ParenthesizedMemberKey {
+        non_member_key: ParenthesizedTypeOrGroup::Group(group),
         #[cfg(feature = "ast-comments")]
         comments_before_type_or_group,
         #[cfg(feature = "ast-comments")]
         comments_after_type_or_group,
-      }) => {
+      })) => {
         #[cfg(feature = "ast-span")]
         if let Token::COMMA = &self.cur_token {
           span.1 = self.lexer_position.range.1;
@@ -2203,10 +2264,12 @@ where
               .is_none()
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == ident.ident) {
+              if !params.iter().any(|&p| p == ident.ident)
+                && !self.visited_rule_idents.iter().any(|r| r.0 == ident.ident)
+              {
                 self.visited_rule_idents.push((ident.ident, ident.span));
               }
-            } else {
+            } else if !self.visited_rule_idents.iter().any(|r| r.0 == ident.ident) {
               self.visited_rule_idents.push((ident.ident, ident.span));
             }
           }
@@ -2220,10 +2283,12 @@ where
               .is_none()
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == ident.ident) {
+              if !params.iter().any(|&p| p == ident.ident)
+                && !self.visited_rule_idents.iter().any(|r| *r == ident.ident)
+              {
                 self.visited_rule_idents.push(ident.ident);
               }
-            } else {
+            } else if !self.visited_rule_idents.iter().any(|r| *r == ident.ident) {
               self.visited_rule_idents.push(ident.ident);
             }
           }
@@ -2284,10 +2349,12 @@ where
               .is_none()
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == name.ident) {
+              if !params.iter().any(|&p| p == name.ident)
+                && !self.visited_rule_idents.iter().any(|r| r.0 == name.ident)
+              {
                 self.visited_rule_idents.push((name.ident, name.span));
               }
-            } else {
+            } else if !self.visited_rule_idents.iter().any(|r| r.0 == name.ident) {
               self.visited_rule_idents.push((name.ident, name.span));
             }
           }
@@ -2322,10 +2389,12 @@ where
               .is_none()
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == name.ident) {
+              if !params.iter().any(|&p| p == name.ident)
+                && !self.visited_rule_idents.iter().any(|r| *r == name.ident)
+              {
                 self.visited_rule_idents.push(name.ident);
               }
-            } else {
+            } else if !self.visited_rule_idents.iter().any(|r| *r == name.ident) {
               self.visited_rule_idents.push(name.ident);
             }
           }
@@ -2351,10 +2420,12 @@ where
               .is_none()
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == ident.ident) {
+              if !params.iter().any(|&p| p == ident.ident)
+                && !self.visited_rule_idents.iter().any(|r| r.0 == ident.ident)
+              {
                 self.visited_rule_idents.push((ident.ident, ident.span));
               }
-            } else {
+            } else if !self.visited_rule_idents.iter().any(|r| r.0 == ident.ident) {
               self.visited_rule_idents.push((ident.ident, ident.span));
             }
           }
@@ -2368,10 +2439,12 @@ where
               .is_none()
           {
             if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == ident.ident) {
+              if !params.iter().any(|&p| p == ident.ident)
+                && !self.visited_rule_idents.iter().any(|r| *r == ident.ident)
+              {
                 self.visited_rule_idents.push(ident.ident);
               }
-            } else {
+            } else if !self.visited_rule_idents.iter().any(|r| *r == ident.ident) {
               self.visited_rule_idents.push(ident.ident);
             }
           }
@@ -2426,7 +2499,7 @@ where
     let ident = self.identifier_from_ident_token((ident.0, ident.1));
     #[cfg(feature = "ast-span")]
     {
-      ident.span = (begin_memberkey_range, end_t1_range, begin_memberkey_line);
+      ident.span = Span(begin_memberkey_range, end_t1_range, begin_memberkey_line);
     }
 
     self.next_token()?;
@@ -2468,19 +2541,19 @@ where
       #[cfg(not(feature = "ast-comments"))]
       self.advance_newline()?;
 
-      let t1 = MemberKey::Type1 {
+      let t1 = MemberKey::Type1(Type1MemberKey {
         t1: Box::from(Type1 {
-          type2: Type2::Typename {
+          type2: Type2::Typename(Typename {
             ident,
             generic_args: None,
             #[cfg(feature = "ast-span")]
-            span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
-          },
+            span: Span(begin_memberkey_range, end_t1_range, begin_memberkey_line),
+          }),
           operator: None,
           #[cfg(feature = "ast-comments")]
           comments_after_type: None,
           #[cfg(feature = "ast-span")]
-          span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+          span: Span(begin_memberkey_range, end_t1_range, begin_memberkey_line),
         }),
         #[cfg(feature = "ast-comments")]
         comments_before_cut,
@@ -2490,12 +2563,12 @@ where
         #[cfg(feature = "ast-comments")]
         comments_after_arrowmap,
         #[cfg(feature = "ast-span")]
-        span: (
+        span: Span(
           begin_memberkey_range,
           end_memberkey_range,
           begin_memberkey_line,
         ),
-      };
+      });
 
       self.next_token()?;
 
@@ -2516,19 +2589,19 @@ where
       #[cfg(not(feature = "ast-comments"))]
       self.advance_newline()?;
 
-      let t1 = MemberKey::Type1 {
+      let t1 = MemberKey::Type1(Type1MemberKey {
         t1: Box::from(Type1 {
-          type2: Type2::Typename {
+          type2: Type2::Typename(Typename {
             ident,
             generic_args: None,
             #[cfg(feature = "ast-span")]
-            span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
-          },
+            span: Span(begin_memberkey_range, end_t1_range, begin_memberkey_line),
+          }),
           operator: None,
           #[cfg(feature = "ast-comments")]
           comments_after_type: None,
           #[cfg(feature = "ast-span")]
-          span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+          span: Span(begin_memberkey_range, end_t1_range, begin_memberkey_line),
         }),
         #[cfg(feature = "ast-comments")]
         comments_before_cut,
@@ -2538,12 +2611,12 @@ where
         #[cfg(feature = "ast-comments")]
         comments_after_arrowmap,
         #[cfg(feature = "ast-span")]
-        span: (
+        span: Span(
           begin_memberkey_range,
           end_memberkey_range,
           begin_memberkey_line,
         ),
-      };
+      });
 
       self.next_token()?;
 
@@ -2558,19 +2631,19 @@ where
       #[cfg(not(feature = "ast-comments"))]
       self.advance_newline()?;
 
-      Some(MemberKey::Bareword {
+      Some(MemberKey::Bareword(BarewordMemberKey {
         ident,
         #[cfg(feature = "ast-comments")]
         comments: comments_before_cut,
         #[cfg(feature = "ast-comments")]
         comments_after_colon,
         #[cfg(feature = "ast-span")]
-        span: (
+        span: Span(
           begin_memberkey_range,
           self.parser_position.range.1,
           begin_memberkey_line,
         ),
-      })
+      }))
     };
 
     Ok(mk)
@@ -2657,7 +2730,7 @@ where
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
 
-          Some(MemberKey::Type1 {
+          Some(MemberKey::Type1(Type1MemberKey {
             t1: Box::from(t1),
             #[cfg(feature = "ast-comments")]
             comments_before_cut,
@@ -2667,12 +2740,12 @@ where
             #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: memberkey_comments,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_memberkey_range,
               end_memberkey_range,
               begin_memberkey_line,
             ),
-          })
+          }))
         } else {
           #[cfg(feature = "ast-comments")]
           let comments = self.collect_comments()?;
@@ -2700,19 +2773,19 @@ where
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
 
-          Some(MemberKey::Value {
+          Some(MemberKey::Value(ValueMemberKey {
             value,
             #[cfg(feature = "ast-comments")]
             comments,
             #[cfg(feature = "ast-comments")]
             comments_after_colon: memberkey_comments,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_memberkey_range,
               self.parser_position.range.1,
               begin_memberkey_line,
             ),
-          })
+          }))
         };
 
         if let Token::COLON = &self.cur_token {
@@ -2804,7 +2877,11 @@ where
 
         // Parse tokens vec as group
         if has_group_entries {
-          let mut p = Parser::new(tokens.into_iter(), self.str_input)?;
+          let mut p = Parser::new(
+            tokens.into_iter(),
+            self.str_input,
+            self.allow_missing_definitions,
+          )?;
           let group = match p.parse_group() {
             Ok(g) => g,
             Err(Error::INCREMENTAL) => {
@@ -2817,17 +2894,23 @@ where
             Err(e) => return Err(e),
           };
 
-          return Ok(Some(MemberKey::NonMemberKey {
-            non_member_key: NonMemberKey::Group(group),
+          self.visited_rule_idents.append(&mut p.visited_rule_idents);
+
+          return Ok(Some(MemberKey::Parenthesized(ParenthesizedMemberKey {
+            non_member_key: ParenthesizedTypeOrGroup::Group(group),
             #[cfg(feature = "ast-comments")]
             comments_before_type_or_group,
             #[cfg(feature = "ast-comments")]
             comments_after_type_or_group,
-          }));
+          })));
         }
 
         // Parse tokens vec as type
-        let mut p = Parser::new(tokens.into_iter(), self.str_input)?;
+        let mut p = Parser::new(
+          tokens.into_iter(),
+          self.str_input,
+          self.allow_missing_definitions,
+        )?;
         let t = match p.parse_type(None) {
           Ok(t) => t,
           Err(Error::INCREMENTAL) => {
@@ -2839,6 +2922,8 @@ where
           }
           Err(e) => return Err(e),
         };
+
+        self.visited_rule_idents.append(&mut p.visited_rule_idents);
 
         #[cfg(feature = "ast-comments")]
         let comments_before_cut = self.collect_comments()?;
@@ -2865,26 +2950,26 @@ where
           #[cfg(feature = "ast-span")]
           let end_memberkey_range = self.lexer_position.range.1;
 
-          let t1 = Some(MemberKey::Type1 {
+          let t1 = Some(MemberKey::Type1(Type1MemberKey {
             t1: Box::from(Type1 {
-              type2: Type2::ParenthesizedType {
+              type2: Type2::ParenthesizedType(ParenthesizedType {
                 pt: t,
                 #[cfg(feature = "ast-comments")]
                 comments_before_type: comments_before_type_or_group,
                 #[cfg(feature = "ast-comments")]
                 comments_after_type: comments_after_type_or_group,
                 #[cfg(feature = "ast-span")]
-                span: (
+                span: Span(
                   begin_memberkey_range,
                   closing_parend_index,
                   begin_memberkey_line,
                 ),
-              },
+              }),
               #[cfg(feature = "ast-comments")]
               comments_after_type: comments_before_cut.clone(),
               operator: None,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_memberkey_range,
                 closing_parend_index,
                 begin_memberkey_line,
@@ -2898,12 +2983,12 @@ where
             #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: None,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_memberkey_range,
               end_memberkey_range,
               begin_memberkey_line,
             ),
-          });
+          }));
 
           return Ok(t1);
         }
@@ -2921,26 +3006,26 @@ where
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
 
-          Some(MemberKey::Type1 {
+          Some(MemberKey::Type1(Type1MemberKey {
             t1: Box::from(Type1 {
-              type2: Type2::ParenthesizedType {
+              type2: Type2::ParenthesizedType(ParenthesizedType {
                 pt: t,
                 #[cfg(feature = "ast-comments")]
                 comments_before_type: comments_before_type_or_group,
                 #[cfg(feature = "ast-comments")]
                 comments_after_type: comments_after_type_or_group,
                 #[cfg(feature = "ast-span")]
-                span: (
+                span: Span(
                   begin_memberkey_range,
                   closing_parend_index,
                   begin_memberkey_line,
                 ),
-              },
+              }),
               #[cfg(feature = "ast-comments")]
               comments_after_type: comments_before_cut.clone(),
               operator: None,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_memberkey_range,
                 closing_parend_index,
                 begin_memberkey_line,
@@ -2954,28 +3039,32 @@ where
             #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: memberkey_comments,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_memberkey_range,
               self.lexer_position.range.0,
               begin_memberkey_line,
             ),
-          })
+          }))
         } else {
-          Some(MemberKey::NonMemberKey {
-            non_member_key: NonMemberKey::Type(Type {
-              type_choices: t.type_choices,
+          Some(MemberKey::Parenthesized(ParenthesizedMemberKey {
+            non_member_key: ParenthesizedTypeOrGroup::Type(ParenthesizedType {
+              pt: t,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_memberkey_range,
                 self.parser_position.range.1,
                 begin_memberkey_line,
               ),
+              #[cfg(feature = "ast-comments")]
+              comments_before_type: comments_before_type_or_group.clone(),
+              #[cfg(feature = "ast-comments")]
+              comments_after_type: comments_after_type_or_group.clone(),
             }),
             #[cfg(feature = "ast-comments")]
-            comments_before_type_or_group,
-            #[cfg(feature = "ast-comments")]
             comments_after_type_or_group,
-          })
+            #[cfg(feature = "ast-comments")]
+            comments_before_type_or_group,
+          }))
         };
 
         Ok(t1)
@@ -3015,7 +3104,7 @@ where
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
 
-          return Ok(Some(MemberKey::Type1 {
+          return Ok(Some(MemberKey::Type1(Type1MemberKey {
             t1: Box::from(t1),
             #[cfg(feature = "ast-comments")]
             comments_before_cut,
@@ -3025,12 +3114,12 @@ where
             #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: memberkey_comments,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_memberkey_range,
               end_memberkey_range,
               begin_memberkey_line,
             ),
-          }));
+          })));
         }
 
         let t1 = if let Token::ARROWMAP = &self.cur_token {
@@ -3046,7 +3135,7 @@ where
           #[cfg(not(feature = "ast-comments"))]
           self.advance_newline()?;
 
-          Some(MemberKey::Type1 {
+          Some(MemberKey::Type1(Type1MemberKey {
             t1: Box::from(t1),
             #[cfg(feature = "ast-comments")]
             comments_before_cut,
@@ -3056,24 +3145,36 @@ where
             #[cfg(feature = "ast-comments")]
             comments_after_arrowmap: memberkey_comments,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_memberkey_range,
               self.parser_position.range.1,
               begin_memberkey_line,
             ),
-          })
+          }))
         } else {
-          Some(MemberKey::NonMemberKey {
-            non_member_key: NonMemberKey::Type(Type {
-              type_choices: vec![TypeChoice {
-                #[cfg(feature = "ast-comments")]
-                comments_before_type: None,
-                #[cfg(feature = "ast-comments")]
-                comments_after_type: None,
-                type1: t1,
-              }],
+          Some(MemberKey::Parenthesized(ParenthesizedMemberKey {
+            non_member_key: ParenthesizedTypeOrGroup::Type(ParenthesizedType {
+              pt: Type {
+                type_choices: vec![TypeChoice {
+                  #[cfg(feature = "ast-comments")]
+                  comments_before_type: None,
+                  #[cfg(feature = "ast-comments")]
+                  comments_after_type: None,
+                  type1: t1,
+                }],
+                #[cfg(feature = "ast-span")]
+                span: Span(
+                  begin_memberkey_range,
+                  self.parser_position.range.1,
+                  begin_memberkey_line,
+                ),
+              },
+              #[cfg(feature = "ast-comments")]
+              comments_before_type: None,
+              #[cfg(feature = "ast-comments")]
+              comments_after_type: None,
               #[cfg(feature = "ast-span")]
-              span: (
+              span: Span(
                 begin_memberkey_range,
                 self.parser_position.range.1,
                 begin_memberkey_line,
@@ -3083,7 +3184,7 @@ where
             comments_before_type_or_group: None,
             #[cfg(feature = "ast-comments")]
             comments_after_type_or_group: comments_before_cut,
-          })
+          }))
         };
 
         Ok(t1)
@@ -3118,7 +3219,7 @@ where
 
         Ok(Some(Occurrence {
           #[cfg(feature = "ast-span")]
-          occur: Occur::Optional((
+          occur: Occur::Optional(Span(
             self.parser_position.range.0,
             self.parser_position.range.1,
             self.parser_position.line,
@@ -3145,7 +3246,7 @@ where
 
         Ok(Some(Occurrence {
           #[cfg(feature = "ast-span")]
-          occur: Occur::OneOrMore((
+          occur: Occur::OneOrMore(Span(
             self.parser_position.range.0,
             self.parser_position.range.1,
             self.parser_position.line,
@@ -3169,7 +3270,7 @@ where
             lower: None,
             upper: Some(*u),
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               self.parser_position.range.0,
               self.parser_position.range.1,
               self.parser_position.line,
@@ -3179,7 +3280,7 @@ where
           #[cfg(feature = "ast-span")]
           {
             self.parser_position.range = self.lexer_position.range;
-            Occur::ZeroOrMore((
+            Occur::ZeroOrMore(Span(
               self.parser_position.range.0,
               self.parser_position.range.1,
               self.parser_position.line,
@@ -3263,7 +3364,7 @@ where
             lower,
             upper,
             #[cfg(feature = "ast-span")]
-            span: (
+            span: Span(
               begin_occur_range,
               self.parser_position.range.1,
               begin_occur_line,
@@ -3303,7 +3404,7 @@ where
       ident: ident.0,
       socket: ident.1,
       #[cfg(feature = "ast-span")]
-      span: (
+      span: Span(
         self.lexer_position.range.0,
         self.lexer_position.range.1,
         self.lexer_position.line,
@@ -3320,6 +3421,7 @@ where
 ///   `cddl::lexer_from_str()`
 /// * `input` - A string slice with the CDDL text input
 /// * `print_stderr` - When true, print any errors to stderr
+/// * `allow_missing_definitions` - When true, allow references to missing rule definitions
 ///
 /// # Example
 ///
@@ -3327,15 +3429,16 @@ where
 /// use cddl::{lexer_from_str, parser::cddl_from_str};
 ///
 /// let input = r#"myrule = int"#;
-/// let _ = cddl_from_str(&mut lexer_from_str(input), input, true);
+/// let _ = cddl_from_str(&mut lexer_from_str(input), input, true, false);
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(feature = "std")]
 pub fn cddl_from_str<'a>(
   lexer: &'a mut Lexer<'a>,
   input: &'a str,
   print_stderr: bool,
+  allow_missing_definitions: bool,
 ) -> std::result::Result<CDDL<'a>, String> {
-  match Parser::new(lexer.iter(), input).map_err(|e| e.to_string()) {
+  match Parser::new(lexer.iter(), input, allow_missing_definitions).map_err(|e| e.to_string()) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c),
       Err(Error::INCREMENTAL) => {
@@ -3364,6 +3467,8 @@ pub fn cddl_from_str<'a>(
 /// * `lexer` - A mutable reference to a `lexer::Lexer`. Can be created from
 ///   `cddl::lexer_from_str()`
 /// * `input` - A string slice with the CDDL text input
+/// * `allow_missing_definitions` - When true, allow references to missing rule
+///   definitions
 ///
 /// # Example
 ///
@@ -3379,8 +3484,9 @@ pub fn cddl_from_str<'a>(
 pub fn cddl_from_str<'a>(
   lexer: &'a mut Lexer<'a>,
   input: &'a str,
+  allow_missing_definitions: bool,
 ) -> std::result::Result<CDDL<'a>, String> {
-  match Parser::new(lexer.iter(), input).map_err(|e| e.to_string()) {
+  match Parser::new(lexer.iter(), input, allow_missing_definitions).map_err(|e| e.to_string()) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c),
       Err(Error::INCREMENTAL) => {
@@ -3401,6 +3507,7 @@ pub fn cddl_from_str<'a>(
 /// # Arguments
 ///
 /// * `input` - A string slice with the CDDL text input
+/// * `allow_missing_definitions` - When true, allow references to missing rule definitions
 ///
 /// # Example
 ///
@@ -3416,14 +3523,17 @@ pub fn cddl_from_str<'a>(
 /// ```
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
-pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
+pub fn cddl_from_str(
+  input: &str,
+  allow_missing_definitions: bool,
+) -> result::Result<JsValue, JsValue> {
   #[derive(Serialize)]
   struct ParserError {
     position: Position,
     msg: ErrorMsg,
   }
 
-  match Parser::new(Lexer::new(input).iter(), input) {
+  match Parser::new(Lexer::new(input).iter(), input, allow_missing_definitions) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => JsValue::from_serde(&c).map_err(|e| JsValue::from(e.to_string())),
       Err(Error::INCREMENTAL) => {
@@ -3460,14 +3570,17 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 /// Formats cddl from input string
-pub fn format_cddl_from_str(input: &str) -> result::Result<String, JsValue> {
+pub fn format_cddl_from_str(
+  input: &str,
+  allow_missing_definitions: bool,
+) -> result::Result<String, JsValue> {
   #[derive(Serialize)]
   struct ParserError {
     position: Position,
     msg: ErrorMsg,
   }
 
-  match Parser::new(Lexer::new(input).iter(), input) {
+  match Parser::new(Lexer::new(input).iter(), input, allow_missing_definitions) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c.to_string()),
       Err(Error::INCREMENTAL) => {
