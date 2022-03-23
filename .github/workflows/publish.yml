@@ -247,7 +247,7 @@ jobs:
 
       - name: Build wasm
         run: |
-          wasm-pack build --release
+          wasm-pack build --release --no-default-features --features web
 
       - name: Build web
         run: |
