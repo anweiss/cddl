@@ -7,7 +7,7 @@ export function run(): Promise<void> {
 	const mocha = new Mocha({
 		ui: 'tdd',
 	});
-	mocha.useColors(true);
+	mocha.options.color = true;
 	mocha.timeout(100000);
 
 	const testsRoot = __dirname;

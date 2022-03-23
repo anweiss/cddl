@@ -135,7 +135,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v1
         with:
-          node-version: '12'
+          node-version: '16'
 
       - name: Install wasmpack
         run: |
@@ -172,7 +172,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v1
         with:
-          node-version: '12'
+          node-version: '16'
 
       - name: Deploy to Marketplace
         working-directory: ./cddl-lsp
