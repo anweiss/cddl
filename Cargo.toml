@@ -61,6 +61,7 @@ ast-span = []
 ast-comments = []
 json = ["std"]
 cbor = ["std"]
+web = ["ast-span", "wasm-bindgen", "serde"]
 
 [[bin]]
 name = "cddl"
