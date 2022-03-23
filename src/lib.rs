@@ -136,7 +136,7 @@
 //! or using Docker:
 //!
 //! ```sh
-//! docker run -i --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:latest validate --cddl reputon.cddl --stdin < reputon.json
+//! docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.9.0-beta.1 validate --cddl reputon.cddl --stdin < reputon.json
 //! ```
 //!
 //! ## Website
@@ -217,9 +217,9 @@
 //!
 //! **`--feature additional-controls`**
 //!
-//! Enable validation support for the additional control operators proposed in
-//! [https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05](https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05).
-//! Enabled by default.
+//! Enable validation support for the additional control operators defined in
+//! [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165). Enabled by
+//! default.
 //!
 //! ### Parsing CDDL
 //!
@@ -406,7 +406,7 @@
 //!
 //! let json = r#""v""#;
 //!
-//! #[cfg(feature = "additional-controls")]
+//! #[cfg(not(feature = "additional-controls"))]
 //! assert!(validate_json_from_str(cddl, json, Some(&["json"])).is_ok())
 //! ```
 //!
@@ -492,7 +492,6 @@
 //!
 //! let cbor = b"\x02";
 //!
-//! #[cfg(feature = "additional-controls")]
 //! assert!(validate_cbor_from_slice(cddl, cbor, Some(&["cbor"])).is_ok())
 //! ```
 //!
@@ -520,6 +519,7 @@
 //! Below are some known projects that leverage this crate:
 //!
 //! - [https://github.com/Emurgo/cddl-codegen](https://github.com/Emurgo/cddl-codegen)
+//! - [https://github.com/p2panda/p2panda](https://github.com/p2panda/p2panda)
 //!
 
 #![allow(dead_code)]

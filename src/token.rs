@@ -17,12 +17,22 @@ pub enum Token<'a> {
   /// End of file
   EOF,
 
-  /// Identifier with optional `SocketPlug`
-  IDENT((&'a str, Option<SocketPlug>)),
+  /// Identifier
+  IDENT(
+    /// Identifier
+    &'a str,
+    /// Socket/plug
+    Option<SocketPlug>,
+  ),
   /// Value
   VALUE(Value<'a>),
   /// CBOR tag '#'
-  TAG((Option<u8>, Option<usize>)),
+  TAG(
+    /// Major type
+    Option<u8>,
+    /// Optional constraint
+    Option<usize>,
+  ),
 
   // Operators
   /// Assignment operator '='
@@ -61,9 +71,15 @@ pub enum Token<'a> {
   /// Range operator. Inclusive '..' if true, otherwise exclusive '...'s
   RANGEOP(bool),
 
-  /// Range tuple with lower bound, upper bound, and bool indicating whether or
-  /// not the range is inclusive
-  RANGE((RangeValue<'a>, RangeValue<'a>, bool)),
+  /// Range
+  RANGE(
+    /// Lower bound
+    RangeValue<'a>,
+    /// Upper bound
+    RangeValue<'a>,
+    /// Inclusive
+    bool,
+  ),
 
   /// Left opening parend
   LPAREN,
@@ -116,34 +132,22 @@ pub enum Token<'a> {
   /// (PCREs). See <https://tools.ietf.org/html/rfc8610#section-3.8.3.2s>
   PCRE,
   #[cfg(feature = "additional-controls")]
-  /// .cat control operator
-  /// Proposed control extension for string concatenation. See
-  /// <https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-2.1>.
+  /// .cat control operator (rfc 9165)
   CAT,
   #[cfg(feature = "additional-controls")]
-  /// .det control operator
-  /// Proposed control extension for string concatenation with dedenting. See
-  /// <https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05#section-2.3>.
+  /// .det control operator (rfc 9165)
   DET,
   #[cfg(feature = "additional-controls")]
-  /// .plus control operator
-  /// Proposed control extension for numeric addition. See
-  /// <https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-2.2>.
+  /// .plus control operator (rfc 9165)
   PLUS,
   #[cfg(feature = "additional-controls")]
-  /// .abnf control operator
-  /// Proposed control extension for embedded ABNF as UTF-8. See
-  /// <https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-3>
+  /// .abnf control operator (rfc 9165)
   ABNF,
   #[cfg(feature = "additional-controls")]
-  /// .abnfb control operator
-  /// Proposed control extension for embedded ABNF as a sequence of bytes. See
-  /// <https://tools.ietf.org/html/draft-ietf-cbor-cddl-control-05#section-3>
+  /// .abnfb control operator (rfc 9165)
   ABNFB,
   #[cfg(feature = "additional-controls")]
-  /// .feature control operator
-  /// Proposed control extension for features. See
-  /// <https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05#section-4>
+  /// .feature control operator (rfc 9165)
   FEATURE,
 
   /// group to choice enumeration '&'
@@ -296,8 +300,13 @@ impl<'a> Token<'a> {
 /// Range value
 #[derive(Debug, PartialEq, Clone)]
 pub enum RangeValue<'a> {
-  /// Identifier with optional socket/plug prefix
-  IDENT((&'a str, Option<SocketPlug>)),
+  /// Identifier
+  IDENT(
+    /// Identifier
+    &'a str,
+    /// Socket/plug
+    Option<SocketPlug>,
+  ),
   /// Integer
   INT(isize),
   /// Unsigned integer
@@ -311,7 +320,7 @@ impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
 
   fn try_from(t: Token<'a>) -> Result<Self, Self::Error> {
     match t {
-      Token::IDENT(ident) => Ok(RangeValue::IDENT(ident)),
+      Token::IDENT(ident, socket) => Ok(RangeValue::IDENT(ident, socket)),
       Token::VALUE(value) => match value {
         Value::INT(i) => Ok(RangeValue::INT(i)),
         Value::UINT(ui) => Ok(RangeValue::UINT(ui)),
@@ -337,7 +346,7 @@ impl<'a> RangeValue<'a> {
 impl<'a> fmt::Display for RangeValue<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      RangeValue::IDENT(ident) => write!(f, "{}", ident.0),
+      RangeValue::IDENT(ident, _) => write!(f, "{}", ident),
       RangeValue::INT(i) => write!(f, "{}", i),
       RangeValue::UINT(i) => write!(f, "{}", i),
       RangeValue::FLOAT(fl) => write!(f, "{}", fl),
@@ -469,7 +478,7 @@ impl<'a> fmt::Display for SocketPlug {
 impl<'a> fmt::Display for Token<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      Token::IDENT((ident, socket_plug)) => {
+      Token::IDENT(ident, socket_plug) => {
         if let Some(sp) = socket_plug {
           return write!(f, "{}{}", sp, ident);
         }
@@ -542,9 +551,9 @@ impl<'a> fmt::Display for Token<'a> {
           write!(f, "...")
         }
       }
-      Token::RANGE((l, u, i)) => match l {
-        RangeValue::IDENT(_) if *i => write!(f, "{} .. {}", l, u),
-        RangeValue::IDENT(_) => write!(f, "{} ... {}", l, u),
+      Token::RANGE(l, u, i) => match l {
+        RangeValue::IDENT(..) if *i => write!(f, "{} .. {}", l, u),
+        RangeValue::IDENT(..) => write!(f, "{} ... {}", l, u),
         _ => {
           if *i {
             write!(f, "{}..{}", l, u)
@@ -553,7 +562,7 @@ impl<'a> fmt::Display for Token<'a> {
           }
         }
       },
-      Token::TAG((mt, tag)) => {
+      Token::TAG(mt, tag) => {
         if let Some(m) = mt {
           if let Some(t) = tag {
             return write!(f, "#{}.{}", m, t);
@@ -721,15 +730,15 @@ pub fn lookup_ident(ident: &str) -> Token {
         if c == '$' {
           if let Some(c) = ident.chars().nth(1) {
             if c == '$' {
-              return Token::IDENT((&ident[2..], Some(SocketPlug::GROUP)));
+              return Token::IDENT(&ident[2..], Some(SocketPlug::GROUP));
             }
           }
 
-          return Token::IDENT((&ident[1..], Some(SocketPlug::TYPE)));
+          return Token::IDENT(&ident[1..], Some(SocketPlug::TYPE));
         }
       }
 
-      Token::IDENT((ident, None))
+      Token::IDENT(ident, None)
     }
   }
 }

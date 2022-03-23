@@ -100,7 +100,7 @@ docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.9.0-beta.1 
 
 ## Website
 
-You can also find a simple RFC 8610 conformance tool at [https://cddl.anweiss.tech](https://cddl.anweiss.tech). This same codebase has been compiled for use in the browser via WebAssembly. The web tool does not yet support the additional control operators defined by [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165).
+You can also find a simple RFC 8610 conformance tool at [https://cddl.anweiss.tech](https://cddl.anweiss.tech). This same codebase has been compiled for use in the browser via WebAssembly.
 
 ## Visual Studio Code extension
 
@@ -400,3 +400,4 @@ Both JSON and CBOR validation are dependent on their respective heap allocated `
 Below are some known projects that leverage this crate:
 
 - [https://github.com/Emurgo/cddl-codegen](https://github.com/Emurgo/cddl-codegen)
+- [https://github.com/p2panda/p2panda](https://github.com/p2panda/p2panda)
