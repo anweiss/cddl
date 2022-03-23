@@ -100,7 +100,7 @@ docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.9.0-beta.0 
 
 ## Website
 
-You can also find a simple RFC 8610 conformance tool at [https://cddl.anweiss.tech](https://cddl.anweiss.tech). This same codebase has been compiled for use in the browser via WebAssembly.
+You can also find a simple RFC 8610 conformance tool at [https://cddl.anweiss.tech](https://cddl.anweiss.tech). This same codebase has been compiled for use in the browser via WebAssembly. The web tool does not yet support the additional control operators defined by [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165).
 
 ## Visual Studio Code extension
 
@@ -167,7 +167,7 @@ Enable CBOR validation. Enabled by default.
 
 **`--feature additional-controls`**
 
-Enable validation support for the additional control operators proposed in [https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05](https://datatracker.ietf.org/doc/html/draft-ietf-cbor-cddl-control-05). Enabled by default.
+Enable validation support for the additional control operators defined in [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165). Enabled by default.
 
 ### Parsing CDDL
 
