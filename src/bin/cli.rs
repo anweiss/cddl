@@ -3,12 +3,10 @@
 #![cfg(not(feature = "lsp"))]
 
 #[macro_use]
-extern crate clap;
-#[macro_use]
 extern crate log;
 
 use cddl::{cddl_from_str, lexer_from_str, validate_cbor_from_slice, validate_json_from_str};
-use clap::{App, AppSettings, Arg, SubCommand};
+use clap::{ArgGroup, Args, Parser, Subcommand};
 
 use simplelog::*;
 use std::{
@@ -17,6 +15,52 @@ use std::{
   io::{self, BufReader, Read},
   path::Path,
 };
+
+#[derive(Parser)]
+#[clap(author, version, about = "Tool for verifying conformance of CDDL definitions against RFC 8610 and for validating JSON documents and CBOR binary files", long_about = None)]
+struct Cli {
+  #[clap(subcommand)]
+  command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+  #[clap(name = "compile-cddl", about = "Compile CDDL against RFC 8610")]
+  CompileCddl {
+    #[clap(short = 'c', long = "cddl", help = "Path to CDDL document")]
+    file: String,
+  },
+  #[clap(name = "compile-json", about = "Compile JSON against RFC 8259")]
+  CompileJson {
+    #[clap(short = 'j', long = "json", help = "Path to JSON document")]
+    file: String,
+  },
+  Validate(Validate),
+}
+
+#[derive(Args)]
+#[clap(about = "Validate JSON and/or CBOR against a CDDL definition")]
+#[clap(group(ArgGroup::new("targets").required(true).args(&["json", "cbor", "stdin"])))]
+struct Validate {
+  #[clap(short = 'd', long = "cddl", help = "CDDL document")]
+  cddl: String,
+  #[clap(
+    short = 'j',
+    long = "json",
+    help = "JSON document(s) to validate",
+    multiple_values = true
+  )]
+  json: Option<Vec<String>>,
+  #[clap(
+    short = 'c',
+    long = "cbor",
+    help = "CBOR binary file(s) to validate",
+    multiple_values = true
+  )]
+  cbor: Option<Vec<String>>,
+  #[clap(long = "--", help = "JSON or CBOR input from stdin")]
+  stdin: bool,
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
   TermLogger::init(
@@ -28,270 +72,272 @@ fn main() -> Result<(), Box<dyn Error>> {
     ColorChoice::Auto,
   )?;
 
-  #[cfg(feature = "additional-controls")]
-  let validate_subcommand = SubCommand::with_name("validate")
-    .about("Validate JSON and/or CBOR against a CDDL definition")
-    .usage("cddl validate --cddl <CDDL> --json <FILE>... --cbor <FILE>...\n    cat hello.json | cddl validate --stdin")
-    .arg_from_usage("-c --cddl <CDDL> 'CDDL input file'")
-    .arg_from_usage("-f --features [FEATURE]... 'optional features to enable during validation'")
-    .arg(
-      Arg::with_name("json")
-        .long("json")
-        .takes_value(true)
-        .multiple(true)
-        .empty_values(false)
-        .help("JSON files to validate")
-        .required_unless_one(&["cbor", "stdin"])
-    )
-    .arg(
-      Arg::with_name("cbor")
-        .long("cbor")
-        .takes_value(true)
-        .multiple(true)
-        .empty_values(false)
-        .help("CBOR binary files to validate")
-        .required_unless_one(&["json", "stdin"]),
-    )
-    .arg(
-      Arg::with_name("stdin")
-        .long("stdin")
-        .takes_value(false)
-        .help("JSON or CBOR input from stdin")
-        .long_help("files read from stdin which are encoded as valid utf-8\nwill be implied as JSON whereas invalid utf-8 encoded\ninput is implied as CBOR")
-    )
-    .setting(AppSettings::DeriveDisplayOrder);
+  let cli = Cli::parse();
 
-  #[cfg(not(feature = "additional-controls"))]
-  let validate_subcommand = SubCommand::with_name("validate")
-    .about("Validate JSON and/or CBOR against a CDDL definition")
-    .usage("cddl validate --cddl <CDDL> --json <FILE>... --cbor <FILE>...\n    cat hello.json | cddl validate --stdin")
-    .arg_from_usage("-c --cddl <CDDL> 'CDDL input file'")
-    .arg(
-      Arg::with_name("json")
-        .long("json")
-        .takes_value(true)
-        .multiple(true)
-        .empty_values(false)
-        .help("JSON files to validate")
-        .required_unless_one(&["cbor", "stdin"])
-    )
-    .arg(
-      Arg::with_name("cbor")
-        .long("cbor")
-        .takes_value(true)
-        .multiple(true)
-        .empty_values(false)
-        .help("CBOR binary files to validate")
-        .required_unless_one(&["json", "stdin"]),
-    )
-    .arg(
-      Arg::with_name("stdin")
-        .long("stdin")
-        .takes_value(false)
-        .help("JSON or CBOR input from stdin")
-        .long_help("files read from stdin which are encoded as valid utf-8\nwill be implied as JSON whereas invalid utf-8 encoded\ninput is implied as CBOR")
-    )
-    .setting(AppSettings::DeriveDisplayOrder);
+  // #[cfg(feature = "additional-controls")]
+  // let validate_subcommand = SubCommand::with_name("validate")
+  //   .about("Validate JSON and/or CBOR against a CDDL definition")
+  //   .usage("cddl validate --cddl <CDDL> --json <FILE>... --cbor <FILE>...\n    cat hello.json | cddl validate --stdin")
+  //   .arg_from_usage("-c --cddl <CDDL> 'CDDL input file'")
+  //   .arg_from_usage("-f --features [FEATURE]... 'optional features to enable during validation'")
+  //   .arg(
+  //     Arg::with_name("json")
+  //       .long("json")
+  //       .takes_value(true)
+  //       .multiple(true)
+  //       .empty_values(false)
+  //       .help("JSON files to validate")
+  //       .required_unless_one(&["cbor", "stdin"])
+  //   )
+  //   .arg(
+  //     Arg::with_name("cbor")
+  //       .long("cbor")
+  //       .takes_value(true)
+  //       .multiple(true)
+  //       .empty_values(false)
+  //       .help("CBOR binary files to validate")
+  //       .required_unless_one(&["json", "stdin"]),
+  //   )
+  //   .arg(
+  //     Arg::with_name("stdin")
+  //       .long("stdin")
+  //       .takes_value(false)
+  //       .help("JSON or CBOR input from stdin")
+  //       .long_help("files read from stdin which are encoded as valid utf-8\nwill be implied as JSON whereas invalid utf-8 encoded\ninput is implied as CBOR")
+  //   )
+  //   .setting(AppSettings::DeriveDisplayOrder);
 
-  let app = App::new("cddl")
-                    .version(crate_version!())
-                    .author(crate_authors!())
-                    .about("Tool for verifying conformance of CDDL definitions against RFC 8610 and for validating JSON documents and CBOR binary files")
-                    .setting(AppSettings::SubcommandRequiredElseHelp)
-                    .subcommand(SubCommand::with_name("compile-cddl")
-                                .about("Compile CDDL against RFC 8610")
-                                .arg_from_usage("-c --cddl=<FILE> 'CDDL input file'"))
-                    .subcommand(SubCommand::with_name("compile-json")
-                                .about("Compile JSON against RFC 8259")
-                                .arg_from_usage("-j --json=<FILE> 'JSON input file'"))
-                    .subcommand(validate_subcommand);
+  // #[cfg(not(feature = "additional-controls"))]
+  // let validate_subcommand = SubCommand::with_name("validate")
+  //   .about("Validate JSON and/or CBOR against a CDDL definition")
+  //   .usage("cddl validate --cddl <CDDL> --json <FILE>... --cbor <FILE>...\n    cat hello.json | cddl validate --stdin")
+  //   .arg_from_usage("-c --cddl <CDDL> 'CDDL input file'")
+  //   .arg(
+  //     Arg::with_name("json")
+  //       .long("json")
+  //       .takes_value(true)
+  //       .multiple(true)
+  //       .empty_values(false)
+  //       .help("JSON files to validate")
+  //       .required_unless_one(&["cbor", "stdin"])
+  //   )
+  //   .arg(
+  //     Arg::with_name("cbor")
+  //       .long("cbor")
+  //       .takes_value(true)
+  //       .multiple(true)
+  //       .empty_values(false)
+  //       .help("CBOR binary files to validate")
+  //       .required_unless_one(&["json", "stdin"]),
+  //   )
+  //   .arg(
+  //     Arg::with_name("stdin")
+  //       .long("stdin")
+  //       .takes_value(false)
+  //       .help("JSON or CBOR input from stdin")
+  //       .long_help("files read from stdin which are encoded as valid utf-8\nwill be implied as JSON whereas invalid utf-8 encoded\ninput is implied as CBOR")
+  //   )
+  //   .setting(AppSettings::DeriveDisplayOrder);
 
-  let matches = app.get_matches();
+  // let app = App::new("cddl")
+  //                   .version(crate_version!())
+  //                   .author(crate_authors!())
+  //                   .about("Tool for verifying conformance of CDDL definitions against RFC 8610 and for validating JSON documents and CBOR binary files")
+  //                   .setting(AppSettings::SubcommandRequiredElseHelp)
+  //                   .subcommand(SubCommand::with_name("compile-cddl")
+  //                               .about("Compile CDDL against RFC 8610")
+  //                               .arg_from_usage("-c --cddl=<FILE> 'CDDL input file'"))
+  //                   .subcommand(SubCommand::with_name("compile-json")
+  //                               .about("Compile JSON against RFC 8259")
+  //                               .arg_from_usage("-j --json=<FILE> 'JSON input file'"))
+  //                   .subcommand(validate_subcommand);
 
-  if let Some(matches) = matches.subcommand_matches("compile-cddl") {
-    if let Some(c) = matches.value_of("cddl") {
-      let p = Path::new(c);
-      if !p.exists() {
-        error!("CDDL document {:?} does not exist", p);
+  // let matches = app.get_matches();
 
-        return Ok(());
-      }
+  // if let Some(matches) = matches.subcommand_matches("compile-cddl") {
+  //   if let Some(c) = matches.value_of("cddl") {
+  //     let p = Path::new(c);
+  //     if !p.exists() {
+  //       error!("CDDL document {:?} does not exist", p);
 
-      if let Some(e) = p.extension() {
-        if e.to_string_lossy() != "cddl" {
-          error!("File \"{}\" must have the \".cddl\" extension", c);
+  //       return Ok(());
+  //     }
 
-          return Ok(());
-        }
-      }
+  //     if let Some(e) = p.extension() {
+  //       if e.to_string_lossy() != "cddl" {
+  //         error!("File \"{}\" must have the \".cddl\" extension", c);
 
-      let file_content = fs::read_to_string(c)?;
-      cddl_from_str(&mut lexer_from_str(&file_content), &file_content, true).map(|_| ())?;
+  //         return Ok(());
+  //       }
+  //     }
 
-      info!("{} is conformant", c);
-    }
-  }
+  //     let file_content = fs::read_to_string(c)?;
+  //     cddl_from_str(&mut lexer_from_str(&file_content), &file_content, true).map(|_| ())?;
 
-  if let Some(matches) = matches.subcommand_matches("compile-json") {
-    if let Some(j) = matches.value_of("json") {
-      let p = Path::new(j);
-      if !p.exists() {
-        error!("CDDL document {:?} does not exist", p);
+  //     info!("{} is conformant", c);
+  //   }
+  // }
 
-        return Ok(());
-      }
+  // if let Some(matches) = matches.subcommand_matches("compile-json") {
+  //   if let Some(j) = matches.value_of("json") {
+  //     let p = Path::new(j);
+  //     if !p.exists() {
+  //       error!("CDDL document {:?} does not exist", p);
 
-      if let Some(e) = p.extension() {
-        if e.to_string_lossy() != "json" {
-          error!("File \"{}\" must have the \".json\" extension", j);
+  //       return Ok(());
+  //     }
 
-          return Ok(());
-        }
-      }
+  //     if let Some(e) = p.extension() {
+  //       if e.to_string_lossy() != "json" {
+  //         error!("File \"{}\" must have the \".json\" extension", j);
 
-      let file = File::open(j)?;
-      let reader = BufReader::new(file);
-      let _: serde_json::Value = serde_json::from_reader(reader)?;
+  //         return Ok(());
+  //       }
+  //     }
 
-      return Ok(());
-    }
-  }
+  //     let file = File::open(j)?;
+  //     let reader = BufReader::new(file);
+  //     let _: serde_json::Value = serde_json::from_reader(reader)?;
 
-  if let Some(matches) = matches.subcommand_matches("validate") {
-    if let Some(cddl) = matches.value_of("cddl") {
-      #[cfg(feature = "additional-controls")]
-      let enabled_features: Option<Vec<&str>> = matches.values_of("features").map(|f| f.collect());
-      #[cfg(feature = "additional-controls")]
-      if let Some(enabled_features) = &enabled_features {
-        let mut feature_str = String::from("enabled features: [");
-        for (idx, feature) in enabled_features.iter().enumerate() {
-          if idx == 0 {
-            feature_str.push_str(&format!("\"{}\"", feature));
-          } else {
-            feature_str.push_str(&format!(", \"{}\"", feature));
-          }
-        }
-        feature_str.push(']');
+  //     return Ok(());
+  //   }
+  // }
 
-        info!("{}", feature_str);
-      }
+  // if let Some(matches) = matches.subcommand_matches("validate") {
+  //   if let Some(cddl) = matches.value_of("cddl") {
+  //     #[cfg(feature = "additional-controls")]
+  //     let enabled_features: Option<Vec<&str>> = matches.values_of("features").map(|f| f.collect());
+  //     #[cfg(feature = "additional-controls")]
+  //     if let Some(enabled_features) = &enabled_features {
+  //       let mut feature_str = String::from("enabled features: [");
+  //       for (idx, feature) in enabled_features.iter().enumerate() {
+  //         if idx == 0 {
+  //           feature_str.push_str(&format!("\"{}\"", feature));
+  //         } else {
+  //           feature_str.push_str(&format!(", \"{}\"", feature));
+  //         }
+  //       }
+  //       feature_str.push(']');
 
-      let p = Path::new(cddl);
-      if !p.exists() {
-        error!("CDDL document {:?} does not exist", p);
+  //       info!("{}", feature_str);
+  //     }
 
-        return Ok(());
-      }
+  //     let p = Path::new(cddl);
+  //     if !p.exists() {
+  //       error!("CDDL document {:?} does not exist", p);
 
-      if let Some(e) = p.extension() {
-        if e.to_string_lossy() != "cddl" {
-          error!("File \"{}\" must have the \".cddl\" extension", cddl);
+  //       return Ok(());
+  //     }
 
-          return Ok(());
-        }
-      }
+  //     if let Some(e) = p.extension() {
+  //       if e.to_string_lossy() != "cddl" {
+  //         error!("File \"{}\" must have the \".cddl\" extension", cddl);
 
-      let cddl_str = fs::read_to_string(cddl)?;
+  //         return Ok(());
+  //       }
+  //     }
 
-      if let Some(files) = matches.values_of("json") {
-        for file in files {
-          let p = Path::new(file);
-          if !p.exists() {
-            error!("File {:?} does not exist", p);
+  //     let cddl_str = fs::read_to_string(cddl)?;
 
-            continue;
-          }
+  //     if let Some(files) = matches.values_of("json") {
+  //       for file in files {
+  //         let p = Path::new(file);
+  //         if !p.exists() {
+  //           error!("File {:?} does not exist", p);
 
-          #[cfg(feature = "additional-controls")]
-          let r = validate_json_from_str(
-            &cddl_str,
-            &fs::read_to_string(file)?,
-            enabled_features.as_deref(),
-          );
-          #[cfg(not(feature = "additional-controls"))]
-          let r = validate_json_from_str(&cddl_str, &fs::read_to_string(file)?);
+  //           continue;
+  //         }
 
-          match r {
-            Ok(()) => {
-              info!("Validation of {:?} is successful", p);
-            }
-            Err(e) => {
-              error!("Validation of {:?} failed: {}", p, e.to_string().trim_end());
-            }
-          }
-        }
-      }
+  //         #[cfg(feature = "additional-controls")]
+  //         let r = validate_json_from_str(
+  //           &cddl_str,
+  //           &fs::read_to_string(file)?,
+  //           enabled_features.as_deref(),
+  //         );
+  //         #[cfg(not(feature = "additional-controls"))]
+  //         let r = validate_json_from_str(&cddl_str, &fs::read_to_string(file)?);
 
-      if let Some(files) = matches.values_of("cbor") {
-        for file in files {
-          let p = Path::new(file);
-          if !p.exists() {
-            error!("File {:?} does not exist", p);
+  //         match r {
+  //           Ok(()) => {
+  //             info!("Validation of {:?} is successful", p);
+  //           }
+  //           Err(e) => {
+  //             error!("Validation of {:?} failed: {}", p, e.to_string().trim_end());
+  //           }
+  //         }
+  //       }
+  //     }
 
-            continue;
-          }
-          let mut f = File::open(p)?;
-          let mut data = Vec::new();
-          f.read_to_end(&mut data)?;
+  //     if let Some(files) = matches.values_of("cbor") {
+  //       for file in files {
+  //         let p = Path::new(file);
+  //         if !p.exists() {
+  //           error!("File {:?} does not exist", p);
 
-          #[cfg(feature = "additional-controls")]
-          let c = validate_cbor_from_slice(&cddl_str, &data, None);
-          #[cfg(not(feature = "additional-controls"))]
-          let c = validate_cbor_from_slice(&cddl_str, &data);
+  //           continue;
+  //         }
+  //         let mut f = File::open(p)?;
+  //         let mut data = Vec::new();
+  //         f.read_to_end(&mut data)?;
 
-          match c {
-            Ok(()) => {
-              info!("Validation of {:?} is successful", p);
-            }
-            Err(e) => {
-              error!("Validation of {:?} failed: {}", p, e.to_string().trim_end());
-            }
-          }
-        }
+  //         #[cfg(feature = "additional-controls")]
+  //         let c = validate_cbor_from_slice(&cddl_str, &data, None);
+  //         #[cfg(not(feature = "additional-controls"))]
+  //         let c = validate_cbor_from_slice(&cddl_str, &data);
 
-        return Ok(());
-      }
+  //         match c {
+  //           Ok(()) => {
+  //             info!("Validation of {:?} is successful", p);
+  //           }
+  //           Err(e) => {
+  //             error!("Validation of {:?} failed: {}", p, e.to_string().trim_end());
+  //           }
+  //         }
+  //       }
 
-      if matches.is_present("stdin") {
-        let stdin = io::stdin();
+  //       return Ok(());
+  //     }
 
-        let mut reader = stdin.lock();
-        let mut data = Vec::new();
-        reader.read_to_end(&mut data)?;
-        if let Ok(json) = std::str::from_utf8(&data) {
-          #[cfg(feature = "additional-controls")]
-          let r = validate_json_from_str(&cddl_str, json, None);
-          #[cfg(not(feature = "additional-controls"))]
-          let r = validate_json_from_str(&cddl_str, json);
+  //     if matches.is_present("stdin") {
+  //       let stdin = io::stdin();
 
-          match r {
-            Ok(()) => {
-              info!("Validation from stdin is successful");
-            }
-            Err(e) => {
-              error!("Validation from stdin failed: {}", e.to_string().trim_end());
-            }
-          }
-        } else {
-          #[cfg(feature = "additional-controls")]
-          let c = validate_cbor_from_slice(&cddl_str, &data, enabled_features.as_deref());
-          #[cfg(not(feature = "additional-controls"))]
-          let c = validate_cbor_from_slice(&cddl_str, &data);
+  //       let mut reader = stdin.lock();
+  //       let mut data = Vec::new();
+  //       reader.read_to_end(&mut data)?;
+  //       if let Ok(json) = std::str::from_utf8(&data) {
+  //         #[cfg(feature = "additional-controls")]
+  //         let r = validate_json_from_str(&cddl_str, json, None);
+  //         #[cfg(not(feature = "additional-controls"))]
+  //         let r = validate_json_from_str(&cddl_str, json);
 
-          match c {
-            Ok(()) => {
-              info!("Validation from stdin is successful");
-            }
-            Err(e) => {
-              error!("Validation from stdin failed: {}", e.to_string().trim_end());
-            }
-          }
-        }
+  //         match r {
+  //           Ok(()) => {
+  //             info!("Validation from stdin is successful");
+  //           }
+  //           Err(e) => {
+  //             error!("Validation from stdin failed: {}", e.to_string().trim_end());
+  //           }
+  //         }
+  //       } else {
+  //         #[cfg(feature = "additional-controls")]
+  //         let c = validate_cbor_from_slice(&cddl_str, &data, enabled_features.as_deref());
+  //         #[cfg(not(feature = "additional-controls"))]
+  //         let c = validate_cbor_from_slice(&cddl_str, &data);
 
-        return Ok(());
-      }
-    }
-  }
+  //         match c {
+  //           Ok(()) => {
+  //             info!("Validation from stdin is successful");
+  //           }
+  //           Err(e) => {
+  //             error!("Validation from stdin failed: {}", e.to_string().trim_end());
+  //           }
+  //         }
+  //       }
+
+  //       return Ok(());
+  //     }
+  //   }
+  // }
 
   Ok(())
 }

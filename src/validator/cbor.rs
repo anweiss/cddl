@@ -895,12 +895,12 @@ where
           match &self.cbor {
             Value::Float(f) => {
               if is_inclusive {
-                if f64::from(*f) < *l || f64::from(*f) > *u {
+                if *f < *l || *f > *u {
                   self.add_error(error_str);
                 } else {
                   return Ok(());
                 }
-              } else if f64::from(*f) <= *l || f64::from(*f) >= *u {
+              } else if *f <= *l || *f >= *u {
                 self.add_error(error_str);
                 return Ok(());
               } else {
@@ -2302,9 +2302,7 @@ where
         if is_ident_float_data_type(self.cddl, ident) {
           Ok(())
         } else if is_ident_time_data_type(self.cddl, ident) {
-          if let chrono::LocalResult::None =
-            Utc.timestamp_millis_opt((f64::from(*f) * 1000f64) as i64)
-          {
+          if let chrono::LocalResult::None = Utc.timestamp_millis_opt((*f * 1000f64) as i64) {
             let f = *f;
             self.add_error(format!(
               "expected time data type, invalid UNIX timestamp {:?}",
@@ -3217,18 +3215,14 @@ where
       },
       Value::Float(f) => match value {
         token::Value::FLOAT(v) => match &self.ctrl {
-          Some(Token::NE) | Some(Token::DEFAULT)
-            if (f64::from(*f) - *v).abs() > std::f64::EPSILON =>
-          {
-            None
-          }
-          Some(Token::LT) if f64::from(*f) < *v as f64 => None,
-          Some(Token::LE) if f64::from(*f) <= *v as f64 => None,
-          Some(Token::GT) if f64::from(*f) > *v as f64 => None,
-          Some(Token::GE) if f64::from(*f) >= *v as f64 => None,
+          Some(Token::NE) | Some(Token::DEFAULT) if (*f - *v).abs() > std::f64::EPSILON => None,
+          Some(Token::LT) if *f < *v as f64 => None,
+          Some(Token::LE) if *f <= *v as f64 => None,
+          Some(Token::GT) if *f > *v as f64 => None,
+          Some(Token::GE) if *f >= *v as f64 => None,
           #[cfg(feature = "additional-controls")]
           Some(Token::PLUS) => {
-            if (f64::from(*f) - *v).abs() < std::f64::EPSILON {
+            if (*f - *v).abs() < std::f64::EPSILON {
               None
             } else {
               Some(format!("expected computed .plus value {}, got {:?}", v, f))
@@ -3236,7 +3230,7 @@ where
           }
           #[cfg(feature = "additional-controls")]
           None | Some(Token::FEATURE) => {
-            if (f64::from(*f) - *v).abs() < std::f64::EPSILON {
+            if (*f - *v).abs() < std::f64::EPSILON {
               None
             } else {
               Some(format!("expected value {}, got {:?}", v, f))
@@ -3244,7 +3238,7 @@ where
           }
           #[cfg(not(feature = "additional-controls"))]
           None => {
-            if (f64::from(*f) - *v).abs() < std::f64::EPSILON {
+            if (*f - *v).abs() < std::f64::EPSILON {
               None
             } else {
               Some(format!("expected value {}, got {:?}", v, f))
@@ -3577,7 +3571,7 @@ pub fn token_value_into_cbor_value(value: token::Value) -> ciborium::value::Valu
   match value {
     token::Value::UINT(i) => ciborium::value::Value::Integer(i.into()),
     token::Value::INT(i) => ciborium::value::Value::Integer(i.into()),
-    token::Value::FLOAT(f) => ciborium::value::Value::Float(f.into()),
+    token::Value::FLOAT(f) => ciborium::value::Value::Float(f),
     token::Value::TEXT(t) => ciborium::value::Value::Text(t.to_string()),
     token::Value::BYTE(b) => match b {
       ByteValue::UTF8(b) | ByteValue::B16(b) | ByteValue::B64(b) => {
@@ -3645,8 +3639,7 @@ mod tests {
 
     let cbor = ciborium::value::Value::Bytes(sha256_oid.as_bytes().to_vec());
 
-    let mut lexer = lexer_from_str(cddl);
-    let cddl = cddl_from_str(&mut lexer, cddl, true)?;
+    let cddl = cddl_from_str(cddl, true)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor, None);
     cv.validate()?;
@@ -3664,8 +3657,7 @@ mod tests {
       "#
     );
 
-    let mut lexer = lexer_from_str(cddl);
-    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
     if let Err(e) = &cddl {
       println!("{}", e);
     }

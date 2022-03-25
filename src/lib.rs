@@ -224,10 +224,10 @@
 //! ### Parsing CDDL
 //!
 //! ```rust
-//! use cddl::{lexer_from_str, parser::cddl_from_str};
+//! use cddl::cddl_from_str;
 //!
 //! let input = r#"myrule = int"#;
-//! assert!(cddl_from_str(&mut lexer_from_str(input), input, true).is_ok())
+//! assert!(cddl_from_str(input, true).is_ok())
 //! ```
 //!
 //! ### Validating JSON

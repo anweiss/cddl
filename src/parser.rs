@@ -4,7 +4,7 @@ use super::{
     ErrorMsg,
     MsgType::{self, *},
   },
-  lexer::{self, Lexer, Position},
+  lexer::{self, Position},
   token::{self, SocketPlug, Token},
 };
 
@@ -40,11 +40,8 @@ use serde::Serialize;
 pub type Result<T> = result::Result<T, Error>;
 
 /// Parser type
-pub struct Parser<'a, I>
-where
-  I: Iterator<Item = lexer::Item<'a>>,
-{
-  tokens: I,
+pub struct Parser<'a> {
+  tokens: Box<dyn Iterator<Item = lexer::Item<'a>> + 'a>,
   str_input: &'a str,
   cur_token: Token<'a>,
   peek_token: Token<'a>,
@@ -94,10 +91,7 @@ pub enum Error {
 #[cfg(feature = "std")]
 impl std::error::Error for Error {}
 
-impl<'a, I> Parser<'a, I>
-where
-  I: Iterator<Item = lexer::Item<'a>>,
-{
+impl<'a> Parser<'a> {
   /// Create a new `Parser` from a given str input and iterator over
   /// `lexer::Item`.
   ///
@@ -108,9 +102,12 @@ where
   /// use cddl::lexer::Lexer;
   ///
   /// let input = r#"mycddl = ( int / float )"#;
-  /// let p = Parser::new(Lexer::new(input).iter(), input);
+  /// let p = Parser::new(input, Box::new(Lexer::new(input).iter()));
   /// ```
-  pub fn new(tokens: I, str_input: &'a str) -> Result<Parser<I>> {
+  pub fn new(
+    str_input: &'a str,
+    tokens: Box<dyn Iterator<Item = lexer::Item<'a>> + 'a>,
+  ) -> Result<Parser<'a>> {
     let mut p = Parser {
       tokens,
       str_input,
@@ -145,7 +142,7 @@ where
   /// use cddl::lexer::Lexer;
   ///
   /// let input = r#"mycddl = ( int / float )"#;
-  /// if let Ok(mut p) = Parser::new(Lexer::new(input).iter(), input) {
+  /// if let Ok(mut p) = Parser::new(input, Box::new(Lexer::new(input).iter())) {
   ///   if let Err(Error::INCREMENTAL) = p.parse_cddl() {
   ///     let _ = p.report_errors(true);
   ///   }
@@ -2808,7 +2805,7 @@ where
 
         // Parse tokens vec as group
         if has_group_entries {
-          let mut p = Parser::new(tokens.into_iter(), self.str_input)?;
+          let mut p = Parser::new(self.str_input, Box::new(tokens.into_iter()))?;
           let group = match p.parse_group() {
             Ok(g) => g,
             Err(Error::INCREMENTAL) => {
@@ -2831,7 +2828,7 @@ where
         }
 
         // Parse tokens vec as type
-        let mut p = Parser::new(tokens.into_iter(), self.str_input)?;
+        let mut p = Parser::new(self.str_input, Box::new(tokens.into_iter()))?;
         let t = match p.parse_type(None) {
           Ok(t) => t,
           Err(Error::INCREMENTAL) => {
@@ -3329,18 +3326,15 @@ where
 /// # Example
 ///
 /// ```
-/// use cddl::{lexer_from_str, parser::cddl_from_str};
+/// use cddl::parser::cddl_from_str;
 ///
 /// let input = r#"myrule = int"#;
-/// let _ = cddl_from_str(&mut lexer_from_str(input), input, true);
+/// let _ = cddl_from_str(input, true);
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(feature = "std")]
-pub fn cddl_from_str<'a>(
-  lexer: &'a mut Lexer<'a>,
-  input: &'a str,
-  print_stderr: bool,
-) -> std::result::Result<CDDL<'a>, String> {
-  match Parser::new(lexer.iter(), input).map_err(|e| e.to_string()) {
+pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDDL, String> {
+  match Parser::new(input, Box::new(lexer::lexer_from_str(input).iter())).map_err(|e| e.to_string())
+  {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c),
       Err(Error::INCREMENTAL) => {
@@ -3359,6 +3353,30 @@ pub fn cddl_from_str<'a>(
       Err(e) => Err(e.to_string()),
     },
     Err(e) => Err(e),
+  }
+}
+
+impl<'a> CDDL<'a> {
+  /// Parses CDDL from a byte slice
+  pub fn from_slice(input: &'a [u8]) -> std::result::Result<CDDL, String> {
+    let str_input = std::str::from_utf8(input).map_err(|e| e.to_string())?;
+
+    match Parser::new(str_input, Box::new(lexer::Lexer::from_slice(input).iter()))
+      .map_err(|e| e.to_string())
+    {
+      Ok(mut p) => match p.parse_cddl() {
+        Ok(c) => Ok(c),
+        Err(Error::INCREMENTAL) => {
+          if let Ok(Some(e)) = p.report_errors(true) {
+            return Err(e);
+          }
+
+          Err(Error::INCREMENTAL.to_string())
+        }
+        Err(e) => Err(e.to_string()),
+      },
+      Err(e) => Err(e),
+    }
   }
 }
 
