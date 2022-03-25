@@ -552,7 +552,7 @@ pub mod lexer;
 /// Parser for CDDL
 pub mod parser;
 /// Basic REPL for CDDL lexing
-#[cfg(not_target_arch = "wasm32")]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod repl;
 /// CDDL tokens for lexing
 pub mod token;
