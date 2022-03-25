@@ -57,7 +57,12 @@ impl CDDL<'_> {
   pub fn validate(
     &self,
     document: &[u8],
-    #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
+    #[cfg(feature = "additional-controls")]
+    #[cfg(not(target_arch = "wasm32"))]
+    enabled_features: Option<&[&str]>,
+    #[cfg(feature = "additional-controls")]
+    #[cfg(target_arch = "wasm32")]
+    enabled_features: Option<Box<[JsValue]>>,
   ) -> Result<(), Box<dyn Error>> {
     if std::str::from_utf8(document).is_ok() {
       let json =
@@ -107,8 +112,8 @@ pub fn validate_json_from_str(
   json: &str,
   enabled_features: Option<Box<[JsValue]>>,
 ) -> std::result::Result<JsValue, JsValue> {
-  let mut l = Lexer::new(cddl);
-  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let mut p = Parser::new(cddl, Box::new(crate::lexer::lexer_from_str(cddl).iter()))
+    .map_err(|e| JsValue::from(e.to_string()))?;
   let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
   if !p.errors.is_empty() {
     return Err(
@@ -221,8 +226,8 @@ pub fn validate_cbor_from_slice(
   cbor_slice: &[u8],
   enabled_features: Option<Box<[JsValue]>>,
 ) -> std::result::Result<JsValue, JsValue> {
-  let mut l = Lexer::new(cddl);
-  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let mut p = Parser::new(cddl, Box::new(crate::lexer::lexer_from_str(cddl).iter()))
+    .map_err(|e| JsValue::from(e.to_string()))?;
   let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
   if !p.errors.is_empty() {
     return Err(
@@ -1050,16 +1055,18 @@ pub fn format_regex(input: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+  #![cfg(not(target_arch = "wasm32"))]
+
   use super::*;
 
   #[test]
   fn validate() {
     let cddl_schema = cddl_from_str(
       r#"
-      foo = {
-        bar: tstr
-      }
-      "#,
+  foo = {
+    bar: tstr
+  }
+  "#,
       true,
     )
     .unwrap();

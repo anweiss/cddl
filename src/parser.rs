@@ -3318,8 +3318,6 @@ impl<'a> Parser<'a> {
 ///
 /// # Arguments
 ///
-/// * `lexer` - A mutable reference to a `lexer::Lexer`. Can be created from
-///   `cddl::lexer_from_str()`
 /// * `input` - A string slice with the CDDL text input
 /// * `print_stderr` - When true, print any errors to stderr
 ///
@@ -3358,7 +3356,9 @@ pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDD
 
 impl<'a> CDDL<'a> {
   /// Parses CDDL from a byte slice
-  pub fn from_slice(input: &'a [u8]) -> std::result::Result<CDDL, String> {
+  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(feature = "std")]
+  pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL, String> {
     let str_input = std::str::from_utf8(input).map_err(|e| e.to_string())?;
 
     match Parser::new(str_input, Box::new(lexer::Lexer::from_slice(input).iter()))
@@ -3367,7 +3367,31 @@ impl<'a> CDDL<'a> {
       Ok(mut p) => match p.parse_cddl() {
         Ok(c) => Ok(c),
         Err(Error::INCREMENTAL) => {
-          if let Ok(Some(e)) = p.report_errors(true) {
+          if let Ok(Some(e)) = p.report_errors(false) {
+            return Err(e);
+          }
+
+          Err(Error::INCREMENTAL.to_string())
+        }
+        Err(e) => Err(e.to_string()),
+      },
+      Err(e) => Err(e),
+    }
+  }
+
+  /// Parses CDDL from a byte slice
+  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(not(feature = "std"))]
+  pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL, String> {
+    let str_input = std::str::from_utf8(input).map_err(|e| e.to_string())?;
+
+    match Parser::new(str_input, Box::new(lexer::Lexer::from_slice(input).iter()))
+      .map_err(|e| e.to_string())
+    {
+      Ok(mut p) => match p.parse_cddl() {
+        Ok(c) => Ok(c),
+        Err(Error::INCREMENTAL) => {
+          if let Some(e) = p.report_errors() {
             return Err(e);
           }
 
@@ -3391,19 +3415,17 @@ impl<'a> CDDL<'a> {
 /// # Example
 ///
 /// ```
-/// use cddl::{parser::cddl_from_str, lexer_from_str};
+/// use cddl::cddl_from_str;
 ///
 /// let input = r#"myrule = int"#;
 ///
-/// let _ = cddl_from_str(&mut lexer_from_str(input), input);
+/// let _ = cddl_from_str(input);
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(not(feature = "std"))]
-pub fn cddl_from_str<'a>(
-  lexer: &'a mut Lexer<'a>,
-  input: &'a str,
-) -> std::result::Result<CDDL<'a>, String> {
-  match Parser::new(lexer.iter(), input).map_err(|e| e.to_string()) {
+pub fn cddl_from_str<'a>(input: &'a str) -> std::result::Result<CDDL<'a>, String> {
+  match Parser::new(input, Box::new(lexer::lexer_from_str(input).iter())).map_err(|e| e.to_string())
+  {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c),
       Err(Error::INCREMENTAL) => {
@@ -3446,7 +3468,7 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
     msg: ErrorMsg,
   }
 
-  match Parser::new(Lexer::new(input).iter(), input) {
+  match Parser::new(input, Box::new(lexer::Lexer::new(input).iter())) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => JsValue::from_serde(&c).map_err(|e| JsValue::from(e.to_string())),
       Err(Error::INCREMENTAL) => {

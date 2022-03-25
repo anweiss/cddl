@@ -647,6 +647,7 @@ fn verify_cddl() -> Result<()> {
 }
 
 #[test]
+#[cfg(not_target_arch = "wasm32")]
 fn cri_reference() -> std::result::Result<(), String> {
   let cddl = indoc!(
     r#"
