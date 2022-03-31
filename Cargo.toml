@@ -69,11 +69,6 @@ required-features = ["std", "json", "cbor"]
 path = "src/bin/cli.rs"
 test = false
 
-[[test]]
-name = "cddl"
-required-features = ["std", "ast-span", "ast-comments", "json", "cbor"]
-path = "tests/cddl.rs"
-
 [profile.release]
 opt-level = "s"
 lto = true
