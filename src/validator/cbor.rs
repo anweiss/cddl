@@ -353,12 +353,13 @@ impl<'a> CBORValidator<'a> {
       is_root: false,
     }
   }
+}
 
-  /// Validate
-  pub fn validate<T: std::fmt::Debug + 'static>(&mut self) -> std::result::Result<(), Error<T>>
-  where
-    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
-  {
+impl<'a, T: std::fmt::Debug + 'static> Validator<'a, cbor::Error<T>> for CBORValidator<'a>
+where
+  cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+{
+  fn validate(&mut self) -> std::result::Result<(), cbor::Error<T>> {
     for r in self.cddl.rules.iter() {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {

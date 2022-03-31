@@ -5,7 +5,6 @@ use std::marker::PhantomData;
 
 use cddl::{
   ast::*,
-  cddl_from_str,
   lexer::Lexer,
   parser::{Error, Parser, Result},
 };
