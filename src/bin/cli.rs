@@ -47,7 +47,8 @@ struct Validate {
   #[clap(
     short = 'f',
     long = "features",
-    help = "Optional features to enable during validation"
+    help = "Optional features to enable during validation",
+    use_value_delimiter = true
   )]
   features: Option<Vec<String>>,
   #[clap(
