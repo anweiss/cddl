@@ -94,14 +94,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
       }
 
-      if let Some(e) = p.extension() {
-        if e.to_string_lossy() != "cddl" {
-          error!("File \"{}\" must have the \".cddl\" extension", file);
-
-          return Ok(());
-        }
-      }
-
       let file_content = fs::read_to_string(file)?;
       cddl_from_str(&file_content, true).map(|_| ())?;
 
@@ -110,17 +102,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     Commands::CompileJson { file } => {
       let p = Path::new(file);
       if !p.exists() {
-        error!("CDDL document {:?} does not exist", p);
+        error!("JSON document {:?} does not exist", p);
 
         return Ok(());
-      }
-
-      if let Some(e) = p.extension() {
-        if e.to_string_lossy() != "json" {
-          error!("File \"{}\" must have the \".json\" extension", file);
-
-          return Ok(());
-        }
       }
 
       let file = File::open(file)?;
@@ -158,17 +142,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
       }
 
-      if let Some(e) = p.extension() {
-        if e.to_string_lossy() != "cddl" {
-          error!(
-            "File \"{}\" must have the \".cddl\" extension",
-            validate.cddl
-          );
-
-          return Ok(());
-        }
-      }
-
       let cddl_str = fs::read_to_string(&validate.cddl)?;
 
       if let Some(files) = &validate.json {
@@ -204,7 +177,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         for file in files {
           let p = Path::new(file);
           if !p.exists() {
-            error!("File {:?} does not exist", p);
+            error!("CBOR binary file {:?} does not exist", p);
 
             continue;
           }
