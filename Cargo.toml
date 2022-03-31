@@ -69,12 +69,6 @@ required-features = ["std", "json", "cbor"]
 path = "src/bin/cli.rs"
 test = false
 
-[[bin]]
-name = "repl"
-required-features = ["std"]
-path = "src/bin/repl.rs"
-test = false
-
 [[test]]
 name = "cddl"
 required-features = ["std", "ast-span", "ast-comments", "json", "cbor"]
