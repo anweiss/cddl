@@ -446,7 +446,7 @@ impl<'a> JSONValidator<'a> {
             } else if !allow_empty_array {
               self.add_error(format!("expected value {} at index {}", value, idx));
             }
-          } else {
+          } else if !self.is_multi_type_choice {
             self.add_error(format!("expected value {}, got {}", value, self.json));
           }
         }
@@ -643,6 +643,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       // / integer ]), collect all errors and filter after the fact
       if matches!(self.json, Value::Array(_)) {
         let error_count = self.errors.len();
+
         self.visit_type_choice(type_choice)?;
 
         #[cfg(feature = "additional-controls")]

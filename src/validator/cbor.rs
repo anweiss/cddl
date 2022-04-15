@@ -3484,7 +3484,7 @@ where
               } else if !allow_empty_array {
                 self.add_error(format!("expected value {} at index {}", value, idx));
               }
-            } else {
+            } else if !self.is_multi_type_choice {
               self.add_error(format!("expected value {}, got {:?}", value, self.cbor));
             }
           }
@@ -3667,8 +3667,8 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut jv = CBORValidator::new(&cddl, cbor, Some(&["cbor"]));
-    jv.validate()?;
+    let mut cv = CBORValidator::new(&cddl, cbor, Some(&["cbor"]));
+    cv.validate()?;
 
     Ok(())
   }
