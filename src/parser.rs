@@ -3512,7 +3512,7 @@ pub fn format_cddl_from_str(input: &str) -> result::Result<String, JsValue> {
     msg: ErrorMsg,
   }
 
-  match Parser::new(Lexer::new(input).iter(), input) {
+  match Parser::new(input, Box::new(lexer::Lexer::new(input).iter())) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(c) => Ok(c.to_string()),
       Err(Error::INCREMENTAL) => {
