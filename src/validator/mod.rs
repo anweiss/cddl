@@ -29,7 +29,7 @@ use serde::de::Deserialize;
 #[cfg(target_arch = "wasm32")]
 use crate::{
   error::ErrorMsg,
-  lexer::{Lexer, Position},
+  lexer::Position,
   parser::{self, Parser},
 };
 #[cfg(target_arch = "wasm32")]

@@ -1,6 +1,6 @@
 # cddl-rs
 
-[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Publish packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.9.0-beta.1&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22) [![Build and Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22) [![Active Development](https://img.shields.io/badge/Maintenance%20Level-Actively%20Developed-brightgreen.svg)](https://gist.github.com/cheerfulstoic/d107229326a01ff0f333a1d3476e068d)
+[![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Publish packages](https://github.com/anweiss/cddl/workflows/Publish%20packages/badge.svg?branch=0.9.0&event=release)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Publish+packages%22) [![Build and Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22) [![Active Development](https://img.shields.io/badge/Maintenance%20Level-Actively%20Developed-brightgreen.svg)](https://gist.github.com/cheerfulstoic/d107229326a01ff0f333a1d3476e068d)
 
 > This crate was originally developed as a personal learning exercise for getting acquainted with Rust and parsing in general. There are likely more performant and stable libraries out there for parsing CDDL. While there are some examples of this crate being used in production, careful consideration should be made prior to using this crate as such.
 
@@ -88,7 +88,7 @@ cat reputon.cbor | cddl validate --cddl reputon.cddl --stdin
 or using Docker:
 
 ```sh
-docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.9.0-beta.1 validate --cddl reputon.cddl --stdin < reputon.json
+docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.9.0 validate --cddl reputon.cddl --stdin < reputon.json
 ```
 
 ## Website
@@ -133,7 +133,7 @@ Simply add the dependency to `Cargo.toml`:
 
 ```toml
 [dependencies]
-cddl = "0.9.0-beta.1"
+cddl = "0.9.0"
 ```
 
 Both JSON and CBOR validation require `std`.
@@ -381,7 +381,7 @@ Only the lexer and parser can be used in a `no_std` context provided that a heap
 
 ```toml
 [dependencies]
-cddl = { version = "0.9.0-beta.1", default-features = false }
+cddl = { version = "0.9.0", default-features = false }
 ```
 
 Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling and diagnostics.
