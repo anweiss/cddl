@@ -844,8 +844,7 @@ mod tests {
       "#
     );
 
-    let mut l = lexer_from_str(cddl_str);
-    let cddl = cddl_from_str(&mut l, cddl_str, true)?;
+    let cddl = cddl_from_str(cddl_str, true)?;
 
     assert_eq!(
       cat_operation(
@@ -882,8 +881,7 @@ mod tests {
       "#
     );
 
-    let mut l = lexer_from_str(cddl_str);
-    let cddl = cddl_from_str(&mut l, cddl_str, true)?;
+    let cddl = cddl_from_str(cddl_str, true)?;
 
     assert_eq!(
       cat_operation(

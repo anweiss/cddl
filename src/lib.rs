@@ -112,16 +112,10 @@
 //! docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
 //! ```
 //!
-//! You can validate JSON documents:
+//! You can validate JSON documents and/or CBOR binary files:
 //!
 //! ```sh
-//! cddl validate --cddl <FILE.cddl> --json [FILE.json]...
-//! ```
-//!
-//! You can validate CBOR files:
-//!
-//! ```sh
-//! cddl validate --cddl <FILE.cddl> --cbor [FILE.cbor]...
+//! cddl validate [OPTIONS] --cddl <CDDL> <--stdin|--json <JSON>...|--cbor <CBOR>...>
 //! ```
 //!
 //! It also supports validating files from STDIN (if it detects the input as
@@ -224,10 +218,10 @@
 //! ### Parsing CDDL
 //!
 //! ```rust
-//! use cddl::{lexer_from_str, parser::cddl_from_str};
+//! use cddl::cddl_from_str;
 //!
 //! let input = r#"myrule = int"#;
-//! assert!(cddl_from_str(&mut lexer_from_str(input), input, true).is_ok())
+//! assert!(cddl_from_str(input, true).is_ok())
 //! ```
 //!
 //! ### Validating JSON
@@ -551,8 +545,6 @@ pub mod error;
 pub mod lexer;
 /// Parser for CDDL
 pub mod parser;
-/// Basic REPL for CDDL lexing
-pub mod repl;
 /// CDDL tokens for lexing
 pub mod token;
 /// Validators for JSON and CBOR data structures

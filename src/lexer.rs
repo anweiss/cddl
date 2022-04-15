@@ -278,7 +278,7 @@ pub struct Lexer<'a> {
 
 /// Iterator over a lexer
 pub struct LexerIter<'a> {
-  l: &'a mut Lexer<'a>,
+  l: Lexer<'a>,
 }
 
 /// Iterated lexer token item
@@ -319,8 +319,15 @@ impl<'a> Lexer<'a> {
     }
   }
 
+  /// Creates a Lexer from a byte slice
+  pub fn from_slice(input: &[u8]) -> Lexer {
+    let str_input = std::str::from_utf8(input).unwrap();
+
+    Lexer::new(str_input)
+  }
+
   /// Returns an iterator over a lexer
-  pub fn iter(&'a mut self) -> LexerIter<'a> {
+  pub fn iter(self) -> LexerIter<'a> {
     LexerIter { l: self }
   }
 

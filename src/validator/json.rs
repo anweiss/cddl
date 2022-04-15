@@ -2634,8 +2634,7 @@ mod tests {
     );
     let json = r#"{ "test": 10 }"#;
 
-    let mut lexer = lexer_from_str(cddl);
-    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
     if let Err(e) = &cddl {
       println!("{}", e);
     }
@@ -2661,8 +2660,7 @@ mod tests {
 
     let json = r#""v""#;
 
-    let mut lexer = lexer_from_str(cddl);
-    let cddl = cddl_from_str(&mut lexer, cddl, true).map_err(json::Error::CDDLParsing);
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
     if let Err(e) = &cddl {
       println!("{}", e);
     }

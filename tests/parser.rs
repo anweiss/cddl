@@ -5,9 +5,7 @@ use std::marker::PhantomData;
 
 use cddl::{
   ast::*,
-  cddl_from_str,
   lexer::Lexer,
-  lexer_from_str,
   parser::{Error, Parser, Result},
 };
 use indoc::indoc;
@@ -30,7 +28,7 @@ fn verify_cddl() -> Result<()> {
       "#
   );
 
-  match Parser::new(Lexer::new(input).iter(), input) {
+  match Parser::new(input, Box::new(Lexer::new(input).iter())) {
     Ok(mut p) => match p.parse_cddl() {
       Ok(cddl) => {
         let expected_output = CDDL {
@@ -648,6 +646,7 @@ fn verify_cddl() -> Result<()> {
 }
 
 #[test]
+#[cfg(not_target_arch = "wasm32")]
 fn cri_reference() -> std::result::Result<(), String> {
   let cddl = indoc!(
     r#"
@@ -669,8 +668,7 @@ fn cri_reference() -> std::result::Result<(), String> {
     "#
   );
 
-  let mut l = lexer_from_str(cddl);
-  let c_ast = cddl_from_str(&mut l, cddl, true)?;
+  let c_ast = cddl_from_str(cddl, true)?;
 
   println!("{}", c_ast);
 

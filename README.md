@@ -8,7 +8,7 @@ A Rust implementation of the Concise data definition language (CDDL). CDDL is an
 
 This crate includes a handwritten parser and lexer for CDDL, and its development has been heavily inspired by the techniques outlined in Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
-This crate supports validation of both CBOR and JSON data structures. An extremely basic REPL is included as well. This crate's minimum supported Rust version (MSRV) is 1.56.0.
+This crate supports validation of both CBOR and JSON data structures. The minimum supported Rust version (MSRV) is 1.56.0.
 
 Also bundled into this repository is a basic language server implementation and extension for Visual Studio Code for editing CDDL. The implementation is backed by the compiled WebAssembly target included in this crate.
 
@@ -18,7 +18,6 @@ Also bundled into this repository is a basic language server implementation and 
 - [x] Verify conformance of CDDL documents against RFC 8610
 - [x] Validate CBOR data structures
 - [x] Validate JSON documents
-- [x] Basic REPL
 - [ ] Generate dummy JSON from conformant CDDL
 - [x] As close to zero-copy as possible
 - [x] Compile WebAssembly target for browser and Node.js
@@ -73,16 +72,10 @@ If using Docker:
 docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
 ```
 
-You can validate JSON documents:
+You can validate JSON documents and/or CBOR binary files:
 
 ```sh
-cddl validate --cddl <FILE.cddl> --json [FILE.json]...
-```
-
-You can validate CBOR files:
-
-```sh
-cddl validate --cddl <FILE.cddl> --cbor [FILE.cbor]...
+cddl validate [OPTIONS] --cddl <CDDL> <--stdin|--json <JSON>...|--cbor <CBOR>...>
 ```
 
 It also supports validating files from STDIN (if it detects the input as valid UTF-8, it will attempt to validate the input as JSON, otherwise it will treat it as CBOR):
@@ -172,10 +165,10 @@ Enable validation support for the additional control operators defined in [RFC 9
 ### Parsing CDDL
 
 ```rust
-use cddl::{lexer_from_str, parser::cddl_from_str};
+use cddl::parser::cddl_from_str;
 
 let input = r#"myrule = int"#;
-assert!(cddl_from_str(&mut lexer_from_str(input), input, true).is_ok())
+assert!(cddl_from_str(input, true).is_ok())
 ```
 
 ### Validating JSON
