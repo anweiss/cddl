@@ -9,7 +9,7 @@ use std::{
   io::Read,
 };
 
-static KNOWN_BAD: &'static [&'static str] = &[
+static KNOWN_BAD: &[&str] = &[
   "bad_context.json",
   "example2.json",
   "example2.cbor",

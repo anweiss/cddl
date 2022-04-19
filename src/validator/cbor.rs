@@ -413,9 +413,13 @@ where
       }
     }
 
-    let error_count = self.errors.len();
+    let type_choice_alternates = type_choice_alternates_from_ident(self.cddl, &tr.name);
+    if !type_choice_alternates.is_empty() {
+      self.is_multi_type_choice = true;
+    }
 
-    for t in type_choice_alternates_from_ident(self.cddl, &tr.name) {
+    let error_count = self.errors.len();
+    for t in type_choice_alternates {
       let cur_errors = self.errors.len();
       self.visit_type(t)?;
       if self.errors.len() == cur_errors {
@@ -427,7 +431,7 @@ where
       }
     }
 
-    Ok(())
+    self.visit_type(&tr.value)
   }
 
   fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> visitor::Result<Error<T>> {
@@ -447,9 +451,13 @@ where
       }
     }
 
-    let error_count = self.errors.len();
+    let group_choice_alternates = group_choice_alternates_from_ident(self.cddl, &gr.name);
+    if !group_choice_alternates.is_empty() {
+      self.is_multi_group_choice = true;
+    }
 
-    for ge in group_choice_alternates_from_ident(self.cddl, &gr.name) {
+    let error_count = self.errors.len();
+    for ge in group_choice_alternates {
       let cur_errors = self.errors.len();
       self.visit_group_entry(ge)?;
       if self.errors.len() == cur_errors {
@@ -461,7 +469,7 @@ where
       }
     }
 
-    Ok(())
+    self.visit_group_entry(&gr.entry)
   }
 
   fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<Error<T>> {
@@ -693,33 +701,42 @@ where
                 self.array_errors = Some(errors)
               }
             }
-          } else if let Some(idx) = self.group_entry_idx.take() {
-            if let Some(v) = a.get(idx) {
-              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-              let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
-              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-              let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
-              #[cfg(not(feature = "additional-controls"))]
-              let mut cv = CBORValidator::new(self.cddl, v.clone());
-
-              cv.generic_rules = self.generic_rules.clone();
-              cv.eval_generic_rule = self.eval_generic_rule;
-              cv.is_multi_type_choice = self.is_multi_type_choice;
-              cv.ctrl = self.ctrl.clone();
-              cv.cbor_location
-                .push_str(&format!("{}/{}", self.cbor_location, idx));
-
-              cv.visit_range(lower, upper, is_inclusive)?;
-
-              self.errors.append(&mut cv.errors);
-            } else if !allow_empty_array {
-              self.add_error(format!("expected array item at index {}", idx));
-            }
           } else {
-            self.add_error(format!(
-              "expected range lower {} upper {} inclusive {}, got {:?}",
-              lower, upper, is_inclusive, self.cbor
-            ));
+            let idx = if !self.is_multi_type_choice {
+              self.group_entry_idx.take()
+            } else {
+              self.group_entry_idx
+            };
+
+            if let Some(idx) = idx {
+              if let Some(v) = a.get(idx) {
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut cv =
+                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+                #[cfg(not(feature = "additional-controls"))]
+                let mut cv = CBORValidator::new(self.cddl, v.clone());
+
+                cv.generic_rules = self.generic_rules.clone();
+                cv.eval_generic_rule = self.eval_generic_rule;
+                cv.is_multi_type_choice = self.is_multi_type_choice;
+                cv.ctrl = self.ctrl.clone();
+                cv.cbor_location
+                  .push_str(&format!("{}/{}", self.cbor_location, idx));
+
+                cv.visit_range(lower, upper, is_inclusive)?;
+
+                self.errors.append(&mut cv.errors);
+              } else if !allow_empty_array {
+                self.add_error(format!("expected array item at index {}", idx));
+              }
+            } else if !self.is_multi_type_choice {
+              self.add_error(format!(
+                "expected range lower {} upper {} inclusive {}, got {:?}",
+                lower, upper, is_inclusive, self.cbor
+              ));
+            }
           }
         }
         Err(errors) => {
@@ -1707,34 +1724,42 @@ where
                     self.array_errors = Some(errors)
                   }
                 }
-              } else if let Some(idx) = self.group_entry_idx.take() {
-                if let Some(v) = a.get(idx) {
-                  #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-                  let mut cv =
-                    CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
-                  #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-                  let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
-                  #[cfg(not(feature = "additional-controls"))]
-                  let mut cv = CBORValidator::new(self.cddl, v.clone());
-
-                  cv.generic_rules = self.generic_rules.clone();
-                  cv.eval_generic_rule = self.eval_generic_rule;
-                  cv.ctrl = self.ctrl.clone();
-                  cv.is_multi_type_choice = self.is_multi_type_choice;
-                  cv.cbor_location
-                    .push_str(&format!("{}/{}", self.cbor_location, idx));
-
-                  cv.visit_group(group)?;
-
-                  self.errors.append(&mut cv.errors);
-                } else if !allow_empty_array {
-                  self.add_error(format!("expected map object {} at index {}", group, idx));
-                }
               } else {
-                self.add_error(format!(
-                  "expected map object {}, got {:?}",
-                  group, self.cbor
-                ));
+                let idx = if !self.is_multi_type_choice {
+                  self.group_entry_idx.take()
+                } else {
+                  self.group_entry_idx
+                };
+
+                if let Some(idx) = idx {
+                  if let Some(v) = a.get(idx) {
+                    #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                    let mut cv =
+                      CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                    #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                    let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+                    #[cfg(not(feature = "additional-controls"))]
+                    let mut cv = CBORValidator::new(self.cddl, v.clone());
+
+                    cv.generic_rules = self.generic_rules.clone();
+                    cv.eval_generic_rule = self.eval_generic_rule;
+                    cv.ctrl = self.ctrl.clone();
+                    cv.is_multi_type_choice = self.is_multi_type_choice;
+                    cv.cbor_location
+                      .push_str(&format!("{}/{}", self.cbor_location, idx));
+
+                    cv.visit_group(group)?;
+
+                    self.errors.append(&mut cv.errors);
+                  } else if !allow_empty_array {
+                    self.add_error(format!("expected map object {} at index {}", group, idx));
+                  }
+                } else if !self.is_multi_type_choice {
+                  self.add_error(format!(
+                    "expected map object {}, got {:?}",
+                    group, self.cbor
+                  ));
+                }
               }
             }
             Err(errors) => {
@@ -1939,6 +1964,24 @@ where
             cv.visit_rule(rule)?;
 
             self.errors.append(&mut cv.errors);
+
+            return Ok(());
+          }
+        }
+
+        let type_choice_alternates = type_choice_alternates_from_ident(self.cddl, ident);
+        if !type_choice_alternates.is_empty() {
+          self.is_multi_type_choice = true;
+        }
+
+        let error_count = self.errors.len();
+        for t in type_choice_alternates {
+          let cur_errors = self.errors.len();
+          self.visit_type(t)?;
+          if self.errors.len() == cur_errors {
+            for _ in 0..self.errors.len() - error_count {
+              self.errors.pop();
+            }
 
             return Ok(());
           }
@@ -2399,31 +2442,39 @@ where
                   self.array_errors = Some(errors)
                 }
               }
-            } else if let Some(idx) = self.group_entry_idx.take() {
-              if let Some(v) = a.get(idx) {
-                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-                let mut cv =
-                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
-                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-                let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
-                #[cfg(not(feature = "additional-controls"))]
-                let mut cv = CBORValidator::new(self.cddl, v.clone());
-
-                cv.generic_rules = self.generic_rules.clone();
-                cv.eval_generic_rule = self.eval_generic_rule;
-                cv.is_multi_type_choice = self.is_multi_type_choice;
-                cv.ctrl = self.ctrl.clone();
-                cv.cbor_location
-                  .push_str(&format!("{}/{}", self.cbor_location, idx));
-
-                cv.visit_identifier(ident)?;
-
-                self.errors.append(&mut cv.errors);
-              } else if !allow_empty_array {
-                self.add_error(format!("expected type {} at index {}", ident, idx));
-              }
             } else {
-              self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
+              let idx = if !self.is_multi_type_choice {
+                self.group_entry_idx.take()
+              } else {
+                self.group_entry_idx
+              };
+
+              if let Some(idx) = idx {
+                if let Some(v) = a.get(idx) {
+                  #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                  let mut cv =
+                    CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                  let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+                  #[cfg(not(feature = "additional-controls"))]
+                  let mut cv = CBORValidator::new(self.cddl, v.clone());
+
+                  cv.generic_rules = self.generic_rules.clone();
+                  cv.eval_generic_rule = self.eval_generic_rule;
+                  cv.is_multi_type_choice = self.is_multi_type_choice;
+                  cv.ctrl = self.ctrl.clone();
+                  cv.cbor_location
+                    .push_str(&format!("{}/{}", self.cbor_location, idx));
+
+                  cv.visit_identifier(ident)?;
+
+                  self.errors.append(&mut cv.errors);
+                } else if !allow_empty_array {
+                  self.add_error(format!("expected type {} at index {}", ident, idx));
+                }
+              } else if !self.is_multi_type_choice {
+                self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
+              }
             }
           }
           Err(errors) => {
@@ -3098,6 +3149,42 @@ where
       }
     }
 
+    let type_choice_alternates = type_choice_alternates_from_ident(self.cddl, &entry.name);
+    if !type_choice_alternates.is_empty() {
+      self.is_multi_type_choice = true;
+    }
+
+    let error_count = self.errors.len();
+    for t in type_choice_alternates {
+      let cur_errors = self.errors.len();
+      self.visit_type(t)?;
+      if self.errors.len() == cur_errors {
+        for _ in 0..self.errors.len() - error_count {
+          self.errors.pop();
+        }
+
+        return Ok(());
+      }
+    }
+
+    let error_count = self.errors.len();
+    let group_choice_alternates = group_choice_alternates_from_ident(self.cddl, &entry.name);
+    if !group_choice_alternates.is_empty() {
+      self.is_multi_group_choice = true;
+    }
+
+    for ge in group_choice_alternates {
+      let cur_errors = self.errors.len();
+      self.visit_group_entry(ge)?;
+      if self.errors.len() == cur_errors {
+        for _ in 0..self.errors.len() - error_count {
+          self.errors.pop();
+        }
+
+        return Ok(());
+      }
+    }
+
     walk_type_groupname_entry(self, entry)?;
     self.type_group_name_entry = None;
 
@@ -3461,31 +3548,39 @@ where
                   self.array_errors = Some(errors)
                 }
               }
-            } else if let Some(idx) = self.group_entry_idx.take() {
-              if let Some(v) = a.get(idx) {
-                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-                let mut cv =
-                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
-                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-                let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
-                #[cfg(not(feature = "additional-controls"))]
-                let mut cv = CBORValidator::new(self.cddl, v.clone());
+            } else {
+              let idx = if !self.is_multi_type_choice {
+                self.group_entry_idx.take()
+              } else {
+                self.group_entry_idx
+              };
 
-                cv.generic_rules = self.generic_rules.clone();
-                cv.eval_generic_rule = self.eval_generic_rule;
-                cv.ctrl = self.ctrl.clone();
-                cv.is_multi_type_choice = self.is_multi_type_choice;
-                cv.cbor_location
-                  .push_str(&format!("{}/{}", self.cbor_location, idx));
+              if let Some(idx) = idx {
+                if let Some(v) = a.get(idx) {
+                  #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                  let mut cv =
+                    CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                  #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                  let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+                  #[cfg(not(feature = "additional-controls"))]
+                  let mut cv = CBORValidator::new(self.cddl, v.clone());
 
-                cv.visit_value(value)?;
+                  cv.generic_rules = self.generic_rules.clone();
+                  cv.eval_generic_rule = self.eval_generic_rule;
+                  cv.ctrl = self.ctrl.clone();
+                  cv.is_multi_type_choice = self.is_multi_type_choice;
+                  cv.cbor_location
+                    .push_str(&format!("{}/{}", self.cbor_location, idx));
 
-                self.errors.append(&mut cv.errors);
-              } else if !allow_empty_array {
-                self.add_error(format!("expected value {} at index {}", value, idx));
+                  cv.visit_value(value)?;
+
+                  self.errors.append(&mut cv.errors);
+                } else if !allow_empty_array {
+                  self.add_error(format!("expected value {} at index {}", value, idx));
+                }
+              } else if !self.is_multi_type_choice {
+                self.add_error(format!("expected value {}, got {:?}", value, self.cbor));
               }
-            } else if !self.is_multi_type_choice {
-              self.add_error(format!("expected value {}, got {:?}", value, self.cbor));
             }
           }
           Err(errors) => {
@@ -3586,6 +3681,7 @@ pub fn token_value_into_cbor_value(value: token::Value) -> ciborium::value::Valu
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
   use super::*;
+  use ciborium::cbor;
   use indoc::indoc;
 
   #[cfg(not(feature = "additional-controls"))]
@@ -3668,6 +3764,31 @@ mod tests {
     let cddl = cddl.unwrap();
 
     let mut cv = CBORValidator::new(&cddl, cbor, Some(&["cbor"]));
+    cv.validate()?;
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_type_choice_alternate() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        tester = [ $vals ]
+        $vals /= 12
+        $vals /= 13
+      "#
+    );
+
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let cbor = ciborium::cbor!([13]).unwrap();
+
+    let cddl = cddl.unwrap();
+
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
     cv.validate()?;
 
     Ok(())

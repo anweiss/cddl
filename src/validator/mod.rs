@@ -462,7 +462,9 @@ pub fn type_choice_alternates_from_ident<'a>(
     .rules
     .iter()
     .filter_map(|r| match r {
-      Rule::Type { rule, .. } if &rule.name == ident => Some(&rule.value),
+      Rule::Type { rule, .. } if &rule.name == ident && rule.is_type_choice_alternate => {
+        Some(&rule.value)
+      }
       _ => None,
     })
     .collect::<Vec<_>>()
@@ -477,7 +479,9 @@ pub fn group_choice_alternates_from_ident<'a>(
     .rules
     .iter()
     .filter_map(|r| match r {
-      Rule::Group { rule, .. } if &rule.name == ident => Some(&rule.entry),
+      Rule::Group { rule, .. } if &rule.name == ident && rule.is_group_choice_alternate => {
+        Some(&rule.entry)
+      }
       _ => None,
     })
     .collect::<Vec<_>>()
