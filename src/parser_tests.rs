@@ -84,7 +84,7 @@ mod tests {
       params: vec![
         GenericParam {
           param: Identifier {
-            ident: "t".into(),
+            ident: "t",
             socket: None,
             span: (1, 2, 1),
           },
@@ -93,7 +93,7 @@ mod tests {
         },
         GenericParam {
           param: Identifier {
-            ident: "v".into(),
+            ident: "v",
             socket: None,
             span: (4, 5, 1),
           },
@@ -296,7 +296,7 @@ mod tests {
                   type1: Type1 {
                     type2: Type2::Typename {
                       ident: Identifier {
-                        ident: "tchoice1".into(),
+                        ident: "tchoice1",
                         socket: None,
                         span: (2, 10, 1),
                       },
@@ -314,7 +314,7 @@ mod tests {
                   type1: Type1 {
                     type2: Type2::Typename {
                       ident: Identifier {
-                        ident: "tchoice2".into(),
+                        ident: "tchoice2",
                         socket: None,
                         span: (13, 21, 1),
                       },
@@ -426,7 +426,7 @@ mod tests {
       Type1 {
         type2: Type2::Typename {
           ident: Identifier {
-            ident: "my..lower".into(),
+            ident: "my..lower",
             socket: None,
             span: (0, 9, 1),
           },
@@ -440,7 +440,7 @@ mod tests {
           },
           type2: Type2::Typename {
             ident: Identifier {
-              ident: "upper".into(),
+              ident: "upper",
               socket: None,
               span: (14, 19, 1),
             },
@@ -456,7 +456,7 @@ mod tests {
       Type1 {
         type2: Type2::Typename {
           ident: Identifier {
-            ident: "target".into(),
+            ident: "target",
             socket: None,
             span: (0, 6, 1),
           },
@@ -470,7 +470,7 @@ mod tests {
           },
           type2: Type2::Typename {
             ident: Identifier {
-              ident: "controller".into(),
+              ident: "controller",
               socket: None,
               span: (11, 21, 1),
             },
@@ -491,7 +491,7 @@ mod tests {
                 type1: Type1 {
                   type2: Type2::Typename {
                     ident: Identifier {
-                      ident: "text".into(),
+                      ident: "text",
                       socket: None,
                       span: (2, 6, 1),
                     },
@@ -509,7 +509,7 @@ mod tests {
                 type1: Type1 {
                   type2: Type2::Typename {
                     ident: Identifier {
-                      ident: "tstr".into(),
+                      ident: "tstr",
                       socket: None,
                       span: (9, 13, 1),
                     },
@@ -584,7 +584,7 @@ mod tests {
       },
       Type2::Typename {
         ident: Identifier {
-          ident: "message".into(),
+          ident: "message",
           socket: None,
           span: (0, 7, 1),
         },
@@ -623,7 +623,7 @@ mod tests {
       },
       Type2::Typename {
         ident: Identifier {
-          ident: "tcp-option".into(),
+          ident: "tcp-option",
           socket: Some(SocketPlug::GROUP),
           span: (0, 12, 1),
         },
@@ -632,7 +632,7 @@ mod tests {
       },
       Type2::Unwrap {
         ident: Identifier {
-          ident: "group1".into(),
+          ident: "group1",
           socket: None,
           span: (1, 7, 1),
         },
@@ -647,7 +647,7 @@ mod tests {
             type1: Type1 {
               type2: Type2::Typename {
                 ident: Identifier {
-                  ident: "tstr".into(),
+                  ident: "tstr",
                   socket: None,
                   span: (7, 11, 1),
                 },
@@ -688,7 +688,7 @@ mod tests {
                     _a: PhantomData::default(),
                   }),
                   name: Identifier {
-                    ident: "reputon".into(),
+                    ident: "reputon",
                     socket: None,
                     span: (4, 11, 1),
                   },
@@ -725,7 +725,7 @@ mod tests {
                     _a: PhantomData::default(),
                   }),
                   name: Identifier {
-                    ident: "reputon".into(),
+                    ident: "reputon",
                     socket: None,
                     span: (3, 10, 1),
                   },
@@ -752,7 +752,7 @@ mod tests {
       },
       Type2::ChoiceFromGroup {
         ident: Identifier {
-          ident: "groupname".into(),
+          ident: "groupname",
           socket: None,
           span: (1, 10, 1),
         },
@@ -768,7 +768,7 @@ mod tests {
                 ge: TypeGroupnameEntry {
                   occur: None,
                   name: Identifier {
-                    ident: "inlinegroup".into(),
+                    ident: "inlinegroup",
                     socket: None,
                     span: (3, 14, 1),
                   },
@@ -826,7 +826,7 @@ mod tests {
                       type1: Type1 {
                         type2: Type2::Typename {
                           ident: Identifier {
-                            ident: "int".into(),
+                            ident: "int",
                             socket: None,
                             span: (24, 27, 1),
                           },
@@ -876,7 +876,7 @@ mod tests {
                             occur: None,
                             member_key: Some(MemberKey::Bareword {
                               ident: Identifier {
-                                ident: "a".into(),
+                                ident: "a",
                                 socket: None,
                                 span: (4, 5, 1),
                               },
@@ -889,7 +889,7 @@ mod tests {
                                 type1: Type1 {
                                   type2: Type2::Typename {
                                     ident: Identifier {
-                                      ident: "int".into(),
+                                      ident: "int",
                                       socket: None,
                                       span: (7, 10, 1),
                                     },
@@ -922,7 +922,7 @@ mod tests {
                             occur: None,
                             member_key: Some(MemberKey::Bareword {
                               ident: Identifier {
-                                ident: "b".into(),
+                                ident: "b",
                                 socket: None,
                                 span: (12, 13, 1),
                               },
@@ -935,7 +935,7 @@ mod tests {
                                 type1: Type1 {
                                   type2: Type2::Typename {
                                     ident: Identifier {
-                                      ident: "tstr".into(),
+                                      ident: "tstr",
                                       socket: None,
                                       span: (15, 19, 1),
                                     },
@@ -1034,7 +1034,7 @@ mod tests {
                                         _a: PhantomData::default(),
                                       }),
                                       name: Identifier {
-                                        ident: "file-entry".into(),
+                                        ident: "file-entry",
                                         socket: None,
                                         span: (5, 15, 1),
                                       },
@@ -1099,7 +1099,7 @@ mod tests {
                                         _a: PhantomData::default(),
                                       }),
                                       name: Identifier {
-                                        ident: "directory-entry".into(),
+                                        ident: "directory-entry",
                                         socket: None,
                                         span: (21, 36, 1),
                                       },
@@ -1164,7 +1164,7 @@ mod tests {
                     ge: TypeGroupnameEntry {
                       occur: None,
                       name: Identifier {
-                        ident: "int".into(),
+                        ident: "int",
                         socket: None,
                         span: (2, 5, 1),
                       },
@@ -1185,7 +1185,7 @@ mod tests {
                     ge: TypeGroupnameEntry {
                       occur: None,
                       name: Identifier {
-                        ident: "int".into(),
+                        ident: "int",
                         socket: None,
                         span: (7, 10, 1),
                       },
@@ -1212,7 +1212,7 @@ mod tests {
                     ge: TypeGroupnameEntry {
                       occur: None,
                       name: Identifier {
-                        ident: "int".into(),
+                        ident: "int",
                         socket: None,
                         span: (14, 17, 1),
                       },
@@ -1233,7 +1233,7 @@ mod tests {
                     ge: TypeGroupnameEntry {
                       occur: None,
                       name: Identifier {
-                        ident: "tstr".into(),
+                        ident: "tstr",
                         socket: None,
                         span: (19, 23, 1),
                       },
@@ -1269,7 +1269,7 @@ mod tests {
                   ge: TypeGroupnameEntry {
                     occur: None,
                     name: Identifier {
-                      ident: "int".into(),
+                      ident: "int",
                       socket: None,
                       span: (2, 5, 1),
                     },
@@ -1290,7 +1290,7 @@ mod tests {
                   ge: TypeGroupnameEntry {
                     occur: None,
                     name: Identifier {
-                      ident: "int".into(),
+                      ident: "int",
                       socket: None,
                       span: (7, 10, 1),
                     },
@@ -1311,7 +1311,7 @@ mod tests {
                   ge: TypeGroupnameEntry {
                     occur: None,
                     name: Identifier {
-                      ident: "int".into(),
+                      ident: "int",
                       socket: None,
                       span: (12, 15, 1),
                     },
@@ -1332,7 +1332,7 @@ mod tests {
                   ge: TypeGroupnameEntry {
                     occur: None,
                     name: Identifier {
-                      ident: "tstr".into(),
+                      ident: "tstr",
                       socket: None,
                       span: (17, 21, 1),
                     },
@@ -1394,7 +1394,7 @@ mod tests {
             t1: Box::from(Type1 {
               type2: Type2::Typename {
                 ident: Identifier {
-                  ident: "type1".into(),
+                  ident: "type1",
                   socket: None,
                   span: (2, 7, 1),
                 },
@@ -1437,7 +1437,7 @@ mod tests {
           occur: None,
           member_key: Some(MemberKey::Bareword {
             ident: Identifier {
-              ident: "type1".into(),
+              ident: "type1",
               socket: None,
               span: (0, 5, 1),
             },
@@ -1450,7 +1450,7 @@ mod tests {
               type1: Type1 {
                 type2: Type2::Typename {
                   ident: Identifier {
-                    ident: "type2".into(),
+                    ident: "type2",
                     socket: None,
                     span: (7, 12, 1),
                   },
@@ -1475,7 +1475,7 @@ mod tests {
         ge: TypeGroupnameEntry {
           occur: None,
           name: Identifier {
-            ident: "typename".into(),
+            ident: "typename",
             socket: None,
             span: (0, 8, 1),
           },
@@ -1503,7 +1503,7 @@ mod tests {
               type1: Type1 {
                 type2: Type2::Typename {
                   ident: Identifier {
-                    ident: "addrdistr".into(),
+                    ident: "addrdistr",
                     socket: None,
                     span: (5, 14, 1),
                   },
@@ -1538,7 +1538,7 @@ mod tests {
               type1: Type1 {
                 type2: Type2::Typename {
                   ident: Identifier {
-                    ident: "finite_set".into(),
+                    ident: "finite_set",
                     socket: None,
                     span: (3, 13, 1),
                   },
@@ -1547,7 +1547,7 @@ mod tests {
                       arg: Box::from(Type1 {
                         type2: Type2::Typename {
                           ident: Identifier {
-                            ident: "transaction_input".into(),
+                            ident: "transaction_input",
                             socket: None,
                             span: (14, 31, 1),
                           },
@@ -1597,7 +1597,7 @@ mod tests {
                         ge: TypeGroupnameEntry {
                           occur: None,
                           name: Identifier {
-                            ident: "credential".into(),
+                            ident: "credential",
                             socket: None,
                             span: (3, 13, 1),
                           },
@@ -1637,7 +1637,7 @@ mod tests {
               type1: Type1 {
                 type2: Type2::Typename {
                   ident: Identifier {
-                    ident: "coin".into(),
+                    ident: "coin",
                     socket: None,
                     span: (18, 22, 1),
                   },
@@ -1687,7 +1687,7 @@ mod tests {
         t1: Box::from(Type1 {
           type2: Type2::Typename {
             ident: Identifier {
-              ident: "type1".into(),
+              ident: "type1",
               socket: None,
               span: (0, 5, 1),
             },
@@ -1759,7 +1759,7 @@ mod tests {
       },
       MemberKey::Bareword {
         ident: Identifier {
-          ident: "mybareword".into(),
+          ident: "mybareword",
           socket: None,
           span: (0, 10, 1),
         },
@@ -1769,7 +1769,7 @@ mod tests {
       },
       MemberKey::Bareword {
         ident: Identifier {
-          ident: "my..bareword".into(),
+          ident: "my..bareword",
           socket: None,
           span: (0, 12, 1),
         },

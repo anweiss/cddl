@@ -36,7 +36,7 @@ fn verify_cddl() -> Result<()> {
             Rule::Type {
               rule: TypeRule {
                 name: Identifier {
-                  ident: "myrule".into(),
+                  ident: "myrule",
                   socket: None,
                   span: (0, 6, 1),
                 },
@@ -47,7 +47,7 @@ fn verify_cddl() -> Result<()> {
                     type1: Type1 {
                       type2: Type2::Typename {
                         ident: Identifier {
-                          ident: "secondrule".into(),
+                          ident: "secondrule",
                           socket: None,
                           span: (9, 19, 1),
                         },
@@ -73,7 +73,7 @@ fn verify_cddl() -> Result<()> {
             Rule::Type {
               rule: TypeRule {
                 name: Identifier {
-                  ident: "myrange".into(),
+                  ident: "myrange",
                   socket: None,
                   span: (20, 27, 2),
                 },
@@ -93,7 +93,7 @@ fn verify_cddl() -> Result<()> {
                         },
                         type2: Type2::Typename {
                           ident: Identifier {
-                            ident: "upper".into(),
+                            ident: "upper",
                             socket: None,
                             span: (34, 39, 2),
                           },
@@ -120,7 +120,7 @@ fn verify_cddl() -> Result<()> {
             Rule::Type {
               rule: TypeRule {
                 name: Identifier {
-                  ident: "upper".into(),
+                  ident: "upper",
                   socket: None,
                   span: (40, 45, 3),
                 },
@@ -166,7 +166,7 @@ fn verify_cddl() -> Result<()> {
             Rule::Group {
               rule: Box::from(GroupRule {
                 name: Identifier {
-                  ident: "gr".into(),
+                  ident: "gr",
                   socket: None,
                   span: (58, 60, 4),
                 },
@@ -189,7 +189,7 @@ fn verify_cddl() -> Result<()> {
                           ge: TypeGroupnameEntry {
                             occur: None,
                             name: Identifier {
-                              ident: "test".into(),
+                              ident: "test",
                               socket: None,
                               span: (68, 72, 4),
                             },
@@ -223,7 +223,7 @@ fn verify_cddl() -> Result<()> {
             Rule::Type {
               rule: TypeRule {
                 name: Identifier {
-                  ident: "messages".into(),
+                  ident: "messages",
                   socket: None,
                   span: (75, 83, 5),
                 },
@@ -234,7 +234,7 @@ fn verify_cddl() -> Result<()> {
                     type1: Type1 {
                       type2: Type2::Typename {
                         ident: Identifier {
-                          ident: "message".into(),
+                          ident: "message",
                           socket: None,
                           span: (86, 93, 5),
                         },
@@ -290,7 +290,7 @@ fn verify_cddl() -> Result<()> {
             Rule::Type {
               rule: TypeRule {
                 name: Identifier {
-                  ident: "message".into(),
+                  ident: "message",
                   socket: None,
                   span: (111, 118, 6),
                 },
@@ -298,7 +298,7 @@ fn verify_cddl() -> Result<()> {
                   params: vec![
                     GenericParam {
                       param: Identifier {
-                        ident: "t".into(),
+                        ident: "t",
                         socket: None,
                         span: (119, 120, 6),
                       },
@@ -307,7 +307,7 @@ fn verify_cddl() -> Result<()> {
                     },
                     GenericParam {
                       param: Identifier {
-                        ident: "v".into(),
+                        ident: "v",
                         socket: None,
                         span: (122, 123, 6),
                       },
@@ -331,7 +331,7 @@ fn verify_cddl() -> Result<()> {
                                     occur: None,
                                     member_key: Some(MemberKey::Bareword {
                                       ident: Identifier {
-                                        ident: "type".into(),
+                                        ident: "type",
                                         socket: None,
                                         span: (128, 132, 6),
                                       },
@@ -372,7 +372,7 @@ fn verify_cddl() -> Result<()> {
                                     occur: None,
                                     member_key: Some(MemberKey::Bareword {
                                       ident: Identifier {
-                                        ident: "value".into(),
+                                        ident: "value",
                                         socket: None,
                                         span: (137, 142, 6),
                                       },
@@ -385,7 +385,7 @@ fn verify_cddl() -> Result<()> {
                                         type1: Type1 {
                                           type2: Type2::Typename {
                                             ident: Identifier {
-                                              ident: "v".into(),
+                                              ident: "v",
                                               socket: None,
                                               span: (144, 145, 6),
                                             },
@@ -440,7 +440,7 @@ fn verify_cddl() -> Result<()> {
             Rule::Type {
               rule: TypeRule {
                 name: Identifier {
-                  ident: "color".into(),
+                  ident: "color",
                   socket: None,
                   span: (147, 152, 7),
                 },
@@ -451,7 +451,7 @@ fn verify_cddl() -> Result<()> {
                     type1: Type1 {
                       type2: Type2::ChoiceFromGroup {
                         ident: Identifier {
-                          ident: "colors".into(),
+                          ident: "colors",
                           socket: None,
                           span: (156, 162, 7),
                         },
@@ -477,7 +477,7 @@ fn verify_cddl() -> Result<()> {
             Rule::Group {
               rule: Box::from(GroupRule {
                 name: Identifier {
-                  ident: "colors".into(),
+                  ident: "colors",
                   socket: None,
                   span: (163, 169, 8),
                 },
@@ -493,7 +493,7 @@ fn verify_cddl() -> Result<()> {
                             occur: None,
                             member_key: Some(MemberKey::Bareword {
                               ident: Identifier {
-                                ident: "red".into(),
+                                ident: "red",
                                 socket: None,
                                 span: (174, 177, 8),
                               },
@@ -546,7 +546,7 @@ fn verify_cddl() -> Result<()> {
             Rule::Type {
               rule: TypeRule {
                 name: Identifier {
-                  ident: "test".into(),
+                  ident: "test",
                   socket: None,
                   span: (187, 191, 9),
                 },
@@ -562,7 +562,7 @@ fn verify_cddl() -> Result<()> {
                               type1: Type1 {
                                 type2: Type2::Typename {
                                   ident: Identifier {
-                                    ident: "int".into(),
+                                    ident: "int",
                                     socket: None,
                                     span: (196, 199, 9),
                                   },
@@ -580,7 +580,7 @@ fn verify_cddl() -> Result<()> {
                               type1: Type1 {
                                 type2: Type2::Typename {
                                   ident: Identifier {
-                                    ident: "float".into(),
+                                    ident: "float",
                                     socket: None,
                                     span: (202, 207, 9),
                                   },
