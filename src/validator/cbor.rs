@@ -698,12 +698,12 @@ where
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
                   self.add_error(format!(
-                    "expecting array with length per occurrence {}",
+                    "expected array with length per occurrence {}",
                     occur,
                   ));
                 } else {
                   self.add_error(format!(
-                    "expecting array with length {}, got {}",
+                    "expected array with length {}, got {}",
                     ec.count, len
                   ));
                 }
@@ -2824,7 +2824,7 @@ where
           .is_some()
         {
           self.add_error(format!(
-            "expecting object value of type {}, got object",
+            "expected object value of type {}, got object",
             ident.ident
           ));
           return Ok(());

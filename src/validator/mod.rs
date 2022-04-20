@@ -913,12 +913,12 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
         for ec in entry_counts.iter() {
           if let Some(occur) = &ec.entry_occurrence {
             errors.push(format!(
-              "expecting array with length per occurrence {}",
+              "expected array with length per occurrence {}",
               occur,
             ));
           } else {
             errors.push(format!(
-              "expecting array with length {}, got {}",
+              "expected array with length {}, got {}",
               ec.count, len
             ));
           }
@@ -974,7 +974,13 @@ pub fn entry_counts_from_group_choice(cddl: &CDDL, group_choice: &GroupChoice) -
           count +=
             entry_counts_from_group_choice(cddl, &GroupChoice::new(vec![gr.entry.clone()])).count;
         } else {
-          count += 1;
+          let beginning_count = count;
+
+          count += group_choice_alternates_from_ident(cddl, &ge.name).len() as u64;
+
+          if count == beginning_count {
+            count += 1;
+          }
         }
       }
     }

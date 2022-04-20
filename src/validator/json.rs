@@ -1973,7 +1973,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           .is_some()
         {
           self.add_error(format!(
-            "expecting object value of type {}, got object",
+            "expected object value of type {}, got object",
             ident.ident
           ));
           return Ok(());
@@ -2526,6 +2526,40 @@ mod tests {
     );
 
     let json = r#"15"#;
+
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
+
+    let cddl = cddl.unwrap();
+
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    jv.validate()?;
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_group_choice_alternate_in_array(
+  ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        tester = [$$val]
+        $$val //= (
+          type: 10,
+          data: uint
+        )
+        $$val //= (
+          type: 11,
+          data: tstr
+        )
+      "#
+    );
+
+    let json = r#"[11, "Str"]"#;
 
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
     if let Err(e) = &cddl {
