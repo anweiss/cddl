@@ -9,8 +9,8 @@ mod control;
 
 use crate::{
   ast::{
-    GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type2, TypeChoice, TypeRule,
-    CDDL,
+    Group, GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type2, TypeChoice,
+    TypeRule, CDDL,
   },
   token::*,
   visitor::Visitor,
@@ -1055,6 +1055,56 @@ pub fn format_regex(input: &str) -> Option<String> {
   formatted_regex = formatted_regex.replace("?<", "?P<");
 
   Some(formatted_regex)
+}
+
+#[allow(missing_docs)]
+pub enum ArrayItemToken<'a> {
+  Value(&'a Value<'a>),
+  Range(&'a Type2<'a>, &'a Type2<'a>, bool),
+  Group(&'a Group<'a>),
+  Identifier(&'a Identifier<'a>),
+}
+
+#[allow(missing_docs)]
+impl ArrayItemToken<'_> {
+  pub fn error_msg(&self, idx: Option<usize>) -> String {
+    match self {
+      ArrayItemToken::Value(value) => {
+        if let Some(idx) = idx {
+          format!("expected value {} at index {}", value, idx)
+        } else {
+          format!("expected value {}", value)
+        }
+      }
+      ArrayItemToken::Range(lower, upper, is_inclusive) => {
+        if let Some(idx) = idx {
+          format!(
+            "expected range lower {} upper {} inclusive {} at index {}",
+            lower, upper, is_inclusive, idx
+          )
+        } else {
+          format!(
+            "expected range lower {} upper {} inclusive {}",
+            lower, upper, is_inclusive
+          )
+        }
+      }
+      ArrayItemToken::Group(group) => {
+        if let Some(idx) = idx {
+          format!("expected map object {} at index {}", group, idx)
+        } else {
+          format!("expected map object {}", group)
+        }
+      }
+      ArrayItemToken::Identifier(ident) => {
+        if let Some(idx) = idx {
+          format!("expected type {} at index {}", ident, idx)
+        } else {
+          format!("expected type {}", ident)
+        }
+      }
+    }
+  }
 }
 
 #[cfg(test)]
