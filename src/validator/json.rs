@@ -857,7 +857,9 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
     upper: &Type2,
     is_inclusive: bool,
   ) -> visitor::Result<Error> {
-    self.validate_array_items(&ArrayItemToken::Range(lower, upper, is_inclusive))?;
+    if matches!(&self.json, Value::Array(_)) {
+      return self.validate_array_items(&ArrayItemToken::Range(lower, upper, is_inclusive));
+    }
 
     match lower {
       Type2::IntValue { value: l, .. } => match upper {
