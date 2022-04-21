@@ -687,7 +687,7 @@ where
     if self.is_ctrl_map_equality {
       if let Some(t) = &self.ctrl {
         if let Value::Map(m) = &self.cbor {
-          let entry_counts = entry_counts_from_group_choices(self.cddl, &g.group_choices);
+          let entry_counts = entry_counts_from_group(self.cddl, g);
           let len = m.len();
           if let Token::EQ | Token::NE = t {
             if !validate_entry_count(&entry_counts, len) {
@@ -1047,7 +1047,7 @@ where
           }
           Type2::Array { group, .. } => {
             if let Value::Array(_) = &self.cbor {
-              let entry_counts = entry_counts_from_group_choices(self.cddl, &group.group_choices);
+              let entry_counts = entry_counts_from_group(self.cddl, group);
               self.entry_counts = Some(entry_counts);
               self.visit_type2(controller)?;
               self.entry_counts = None;
@@ -1703,7 +1703,7 @@ where
             return Ok(());
           }
 
-          let entry_counts = entry_counts_from_group_choices(self.cddl, &group.group_choices);
+          let entry_counts = entry_counts_from_group(self.cddl, group);
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
@@ -1728,7 +1728,7 @@ where
         Value::Map(m) if self.is_member_key => {
           let current_location = self.cbor_location.clone();
 
-          let entry_counts = entry_counts_from_group_choices(self.cddl, &group.group_choices);
+          let entry_counts = entry_counts_from_group(self.cddl, group);
           self.entry_counts = Some(entry_counts);
 
           for (k, v) in m.iter() {
@@ -3493,6 +3493,38 @@ mod tests {
     }
 
     let cbor = ciborium::cbor!([13]).unwrap();
+
+    let cddl = cddl.unwrap();
+
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    cv.validate()?;
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_group_choice_alternate_in_array(
+  ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        tester = [$$val]
+        $$val //= (
+          type: 10,
+          data: uint
+        )
+        $$val //= (
+          type: 11,
+          data: tstr
+        )
+      "#
+    );
+
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let cbor = ciborium::cbor!([11, "test"]).unwrap();
 
     let cddl = cddl.unwrap();
 

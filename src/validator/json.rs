@@ -754,7 +754,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
     if self.is_ctrl_map_equality {
       if let Some(t) = &self.ctrl {
         if let Value::Object(o) = &self.json {
-          let entry_counts = entry_counts_from_group_choices(self.cddl, &g.group_choices);
+          let entry_counts = entry_counts_from_group(self.cddl, g);
 
           let len = o.len();
           if let Token::EQ = t {
@@ -1151,7 +1151,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
         Type2::Array { group, .. } => {
           if let Value::Array(_) = &self.json {
-            let entry_counts = entry_counts_from_group_choices(self.cddl, &group.group_choices);
+            let entry_counts = entry_counts_from_group(self.cddl, group);
             self.entry_counts = Some(entry_counts);
             self.visit_type2(controller)?;
             self.entry_counts = None;
@@ -1561,7 +1561,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             return Ok(());
           }
 
-          let entry_counts = entry_counts_from_group_choices(self.cddl, &group.group_choices);
+          let entry_counts = entry_counts_from_group(self.cddl, group);
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
