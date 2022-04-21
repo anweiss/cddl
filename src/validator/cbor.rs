@@ -687,11 +687,7 @@ where
     if self.is_ctrl_map_equality {
       if let Some(t) = &self.ctrl {
         if let Value::Map(m) = &self.cbor {
-          let mut entry_counts = Vec::new();
-          for gc in g.group_choices.iter() {
-            let count = entry_counts_from_group_choice(self.cddl, gc);
-            entry_counts.push(count);
-          }
+          let entry_counts = entry_counts_from_group_choices(self.cddl, &g.group_choices);
           let len = m.len();
           if let Token::EQ | Token::NE = t {
             if !validate_entry_count(&entry_counts, len) {
@@ -1051,11 +1047,7 @@ where
           }
           Type2::Array { group, .. } => {
             if let Value::Array(_) = &self.cbor {
-              let mut entry_counts = Vec::new();
-              for gc in group.group_choices.iter() {
-                let count = entry_counts_from_group_choice(self.cddl, gc);
-                entry_counts.push(count);
-              }
+              let entry_counts = entry_counts_from_group_choices(self.cddl, &group.group_choices);
               self.entry_counts = Some(entry_counts);
               self.visit_type2(controller)?;
               self.entry_counts = None;
@@ -1711,12 +1703,7 @@ where
             return Ok(());
           }
 
-          let mut entry_counts = Vec::new();
-          for gc in group.group_choices.iter() {
-            let count = entry_counts_from_group_choice(self.cddl, gc);
-            entry_counts.push(count);
-          }
-
+          let entry_counts = entry_counts_from_group_choices(self.cddl, &group.group_choices);
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
@@ -1741,12 +1728,7 @@ where
         Value::Map(m) if self.is_member_key => {
           let current_location = self.cbor_location.clone();
 
-          let mut entry_counts = Vec::new();
-          for gc in group.group_choices.iter() {
-            let count = entry_counts_from_group_choice(self.cddl, gc);
-            entry_counts.push(count);
-          }
-
+          let entry_counts = entry_counts_from_group_choices(self.cddl, &group.group_choices);
           self.entry_counts = Some(entry_counts);
 
           for (k, v) in m.iter() {

@@ -939,57 +939,71 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 /// of entries in arrays, but may be useful in other contexts. The occurrence is
 /// only captured for the second element of the CDDL array to avoid ambiguity in
 /// non-homogenous array definitions
-pub fn entry_counts_from_group_choice(cddl: &CDDL, group_choice: &GroupChoice) -> EntryCount {
-  let mut count = 0;
-  let mut entry_occurrence = None;
+pub fn entry_counts_from_group_choices(
+  cddl: &CDDL,
+  group_choices: &[GroupChoice],
+) -> Vec<EntryCount> {
+  let mut entry_counts = Vec::new();
 
-  for (idx, ge) in group_choice.group_entries.iter().enumerate() {
-    match &ge.0 {
-      GroupEntry::ValueMemberKey { ge, .. } => {
-        if idx == 1 {
-          if let Some(occur) = &ge.occur {
-            entry_occurrence = Some(occur.occur.clone())
+  for gc in group_choices.iter() {
+    let mut count = 0;
+    let mut entry_occurrence = None;
+
+    for (idx, ge) in gc.group_entries.iter().enumerate() {
+      match &ge.0 {
+        GroupEntry::ValueMemberKey { ge, .. } => {
+          if idx == 1 {
+            if let Some(occur) = &ge.occur {
+              entry_occurrence = Some(occur.occur.clone())
+            }
           }
-        }
 
-        count += 1;
-      }
-      GroupEntry::InlineGroup { group, occur, .. } => {
-        if idx == 1 {
-          if let Some(occur) = occur {
-            entry_occurrence = Some(occur.occur.clone())
+          count += 1;
+        }
+        GroupEntry::InlineGroup { group, occur, .. } => {
+          if idx == 1 {
+            if let Some(occur) = occur {
+              entry_occurrence = Some(occur.occur.clone())
+            }
           }
+
+          entry_counts.append(&mut entry_counts_from_group_choices(
+            cddl,
+            &group.group_choices,
+          ));
         }
-        for gc in group.group_choices.iter() {
-          count += entry_counts_from_group_choice(cddl, gc).count;
-        }
-      }
-      GroupEntry::TypeGroupname { ge, .. } => {
-        if idx == 1 {
-          if let Some(occur) = &ge.occur {
-            entry_occurrence = Some(occur.occur.clone())
+        GroupEntry::TypeGroupname { ge, .. } => {
+          if idx == 1 {
+            if let Some(occur) = &ge.occur {
+              entry_occurrence = Some(occur.occur.clone())
+            }
           }
-        }
-        if let Some(gr) = group_rule_from_ident(cddl, &ge.name) {
-          count +=
-            entry_counts_from_group_choice(cddl, &GroupChoice::new(vec![gr.entry.clone()])).count;
-        } else {
-          let beginning_count = count;
-
-          count += group_choice_alternates_from_ident(cddl, &ge.name).len() as u64;
-
-          if count == beginning_count {
+          if let Some(gr) = group_rule_from_ident(cddl, &ge.name) {
+            entry_counts.append(&mut entry_counts_from_group_choices(
+              cddl,
+              &[GroupChoice::new(vec![gr.entry.clone()])],
+            ));
+          } else if group_choice_alternates_from_ident(cddl, &ge.name).is_empty() {
             count += 1;
+          } else {
+            for ge in group_choice_alternates_from_ident(cddl, &ge.name).into_iter() {
+              entry_counts.append(&mut entry_counts_from_group_choices(
+                cddl,
+                &[GroupChoice::new(vec![ge.clone()])],
+              ));
+            }
           }
         }
       }
     }
+
+    entry_counts.push(EntryCount {
+      count,
+      entry_occurrence,
+    });
   }
 
-  EntryCount {
-    count,
-    entry_occurrence,
-  }
+  entry_counts
 }
 
 /// Validate the number of entries given an array of possible valid entry counts

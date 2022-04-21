@@ -754,11 +754,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
     if self.is_ctrl_map_equality {
       if let Some(t) = &self.ctrl {
         if let Value::Object(o) = &self.json {
-          let mut entry_counts = Vec::new();
-          for gc in g.group_choices.iter() {
-            let count = entry_counts_from_group_choice(self.cddl, gc);
-            entry_counts.push(count);
-          }
+          let entry_counts = entry_counts_from_group_choices(self.cddl, &g.group_choices);
+
           let len = o.len();
           if let Token::EQ = t {
             if !validate_entry_count(&entry_counts, len) {
@@ -1154,11 +1151,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
         Type2::Array { group, .. } => {
           if let Value::Array(_) = &self.json {
-            let mut entry_counts = Vec::new();
-            for gc in group.group_choices.iter() {
-              let count = entry_counts_from_group_choice(self.cddl, gc);
-              entry_counts.push(count);
-            }
+            let entry_counts = entry_counts_from_group_choices(self.cddl, &group.group_choices);
             self.entry_counts = Some(entry_counts);
             self.visit_type2(controller)?;
             self.entry_counts = None;
@@ -1568,12 +1561,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             return Ok(());
           }
 
-          let mut entry_counts = Vec::new();
-          for gc in group.group_choices.iter() {
-            let count = entry_counts_from_group_choice(self.cddl, gc);
-            entry_counts.push(count);
-          }
-
+          let entry_counts = entry_counts_from_group_choices(self.cddl, &group.group_choices);
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
@@ -2550,7 +2538,8 @@ mod tests {
         tester = [$$val]
         $$val //= (
           type: 10,
-          data: uint
+          data: uint,
+          t: 11
         )
         $$val //= (
           type: 11,
@@ -2559,7 +2548,7 @@ mod tests {
       "#
     );
 
-    let json = r#"[11, "Str"]"#;
+    let json = r#"[10, 11, 11]"#;
 
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
     if let Err(e) = &cddl {
