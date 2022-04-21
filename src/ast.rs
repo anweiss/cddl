@@ -1837,6 +1837,7 @@ impl<'a> From<GroupEntry<'a>> for Group<'a> {
   fn from(ge: GroupEntry<'a>) -> Self {
     Group {
       group_choices: vec![GroupChoice::new(vec![ge])],
+      #[cfg(feature = "ast-span")]
       span: Span::default(),
     }
   }
