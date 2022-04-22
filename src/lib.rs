@@ -66,11 +66,11 @@
 //!
 //! ## CLI
 //!
-//! A CLI is available for various platforms. The tool supports parsing of
-//! `.cddl` files for verifying conformance against RFC 8610. It can also be
-//! used to validate `.json` documents and `.cbor` binary files against `.cddl`
-//! documents. Detailed information about the JSON and CBOR validation
-//! implementation can be found in the sections below.
+//! A CLI is available for various platforms. The tool supports parsing of CDDL
+//! files for verifying conformance against RFC 8610. It can also be used to
+//! validate JSON documents and CBOR binary files against CDDL documents.
+//! Detailed information about the JSON and CBOR validation implementation can
+//! be found in the sections below.
 //!
 //! ### Installation
 //!
@@ -105,8 +105,8 @@
 //! > Replace `<version>` with an appropriate
 //! > [release](https://github.com/anweiss/cddl/releases) tag. Requires use of
 //! > the `--volume` argument for mounting `.cddl` documents into the container
-//! > when executing the command. `.json` or `.cbor` files can either be
-//! > included in the volume mount or passed into the command via STDIN.
+//! > when executing the command. JSON or CBOR files can either be included in
+//! > the volume mount or passed into the command via STDIN.
 //!
 //! ```sh
 //! docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
