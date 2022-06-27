@@ -940,6 +940,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 /// only captured for the second element of the CDDL array to avoid ambiguity in
 /// non-homogenous array definitions
 pub fn entry_counts_from_group(cddl: &CDDL, group: &Group) -> Vec<EntryCount> {
+  // Each EntryCount is associated with a group choice in the given group
   let mut entry_counts = Vec::new();
 
   for gc in group.group_choices.iter() {
@@ -964,7 +965,7 @@ pub fn entry_counts_from_group(cddl: &CDDL, group: &Group) -> Vec<EntryCount> {
             }
           }
 
-          entry_counts.append(&mut entry_counts_from_group(cddl, group));
+          entry_counts = entry_counts_from_group(cddl, group);
         }
         GroupEntry::TypeGroupname { ge, .. } => {
           if idx == 1 {
@@ -972,8 +973,21 @@ pub fn entry_counts_from_group(cddl: &CDDL, group: &Group) -> Vec<EntryCount> {
               entry_occurrence = Some(occur.occur.clone())
             }
           }
+
           if let Some(gr) = group_rule_from_ident(cddl, &ge.name) {
-            entry_counts.append(&mut entry_counts_from_group(cddl, &gr.entry.clone().into()));
+            if let GroupEntry::InlineGroup { group, .. } = &gr.entry {
+              if group.group_choices.len() == 1 {
+                count += if let Some(ec) = entry_counts_from_group(cddl, group).first() {
+                  ec.count
+                } else {
+                  0
+                };
+              } else {
+                entry_counts.append(&mut entry_counts_from_group(cddl, group));
+              }
+            } else {
+              entry_counts.append(&mut entry_counts_from_group(cddl, &gr.entry.clone().into()));
+            }
           } else if group_choice_alternates_from_ident(cddl, &ge.name).is_empty() {
             count += 1;
           } else {
@@ -1066,6 +1080,7 @@ pub fn format_regex(input: &str) -> Option<String> {
 }
 
 #[allow(missing_docs)]
+#[derive(Debug)]
 pub enum ArrayItemToken<'a> {
   Value(&'a Value<'a>),
   Range(&'a Type2<'a>, &'a Type2<'a>, bool),
