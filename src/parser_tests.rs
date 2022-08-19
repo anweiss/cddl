@@ -1865,4 +1865,64 @@ mod tests {
 
     Ok(())
   }
+
+  #[test]
+  fn verify_comment() -> Result<()> {
+    let input = indoc!(
+      r#"
+        ; test
+        myrule = 1234
+      "#
+    );
+
+    let expected_output = CDDL {
+      rules: vec![
+        Rule::Type {
+          rule: TypeRule {
+            name: Identifier {
+              ident: "myrule".into(),
+              socket: None,
+              span: (7, 13, 2),
+            },
+            generic_params: None,
+            is_type_choice_alternate: false,
+            value: Type {
+              type_choices: vec![TypeChoice {
+                type1: Type1 {
+                  type2: Type2::UintValue {
+                    value: 1234,
+                    span: (16, 20, 2),
+                  },
+                  operator: None,
+                  comments_after_type: None,
+                  span: (16, 20, 2),
+                },
+                comments_before_type: None,
+                comments_after_type: None,
+              }],
+
+              span: (16, 20, 2),
+            },
+            comments_before_assignt: None,
+            comments_after_assignt: None,
+          },
+          comments_after_rule: None,
+          span: (7, 20, 2),
+        },
+      ],
+      comments: Some(
+        Comments(
+          vec![
+            " test"
+          ]
+        )
+      ),
+    };
+
+    let parser = Parser::new(input, Box::new(Lexer::new(input).iter()))?.parse_cddl()?;
+    assert_eq!(parser, expected_output);
+    assert_eq!(parser.to_string(), expected_output.to_string());
+
+    Ok(())
+  }
 }

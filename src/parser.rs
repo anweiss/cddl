@@ -296,7 +296,7 @@ impl<'a> Parser<'a> {
     let mut comments: Option<Comments> = None;
 
     while let Token::COMMENT(_comment) = self.cur_token {
-      #[cfg(feature = "lsp")]
+      #[cfg(not(feature = "lsp"))]
       comments.get_or_insert(Comments::default()).0.push(_comment);
 
       self.next_token()?;
