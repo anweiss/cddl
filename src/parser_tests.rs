@@ -1870,8 +1870,16 @@ mod tests {
   fn verify_comment() -> Result<()> {
     let input = indoc!(
       r#"
-        ; test
-        myrule = 1234
+        ; general_comment
+
+        myrule =
+          ; comments_after_assignt
+          1234
+          ; comments_after_type
+          /
+          ; comments_before_type
+          456
+        ; comments_after_rule
       "#
     );
 
@@ -1880,40 +1888,73 @@ mod tests {
         Rule::Type {
           rule: TypeRule {
             name: Identifier {
-              ident: "myrule".into(),
+              ident: "myrule",
               socket: None,
-              span: (7, 13, 2),
+              span: (19, 25, 3),
             },
             generic_params: None,
             is_type_choice_alternate: false,
             value: Type {
-              type_choices: vec![TypeChoice {
-                type1: Type1 {
-                  type2: Type2::UintValue {
-                    value: 1234,
-                    span: (16, 20, 2),
+              type_choices: vec![
+                TypeChoice {
+                  type1: Type1 {
+                    type2: Type2::UintValue {
+                      value: 1234,
+                      span: (57, 61, 5),
+                    },
+                    operator: None,
+                    comments_after_type: Some(Comments(
+                      vec![
+                        " comments_after_type"
+                      ]
+                    )),
+                    span: (57, 61, 5),
                   },
-                  operator: None,
+                  comments_before_type: None,
                   comments_after_type: None,
-                  span: (16, 20, 2),
+              },
+                TypeChoice {
+                  type1: Type1 {
+                    type2: Type2::UintValue {
+                      value: 456,
+                      span: (117, 120, 9),
+                    },
+                    operator: None,
+                    comments_after_type: None,
+                    span: (117, 120, 9),
+                  },
+                  comments_before_type: Some(Comments(
+                    vec![
+                      " comments_before_type"
+                    ]
+                  )),
+                  comments_after_type: None,
                 },
-                comments_before_type: None,
-                comments_after_type: None,
-              }],
+              ],
 
-              span: (16, 20, 2),
+              span: (57, 120, 5),
             },
             comments_before_assignt: None,
-            comments_after_assignt: None,
+            comments_after_assignt: Some(Comments(
+              vec![
+                " comments_after_assignt"
+              ]
+            )),
           },
-          comments_after_rule: None,
-          span: (7, 20, 2),
+          comments_after_rule: Some(
+            Comments(
+              vec![
+                " comments_after_rule"
+              ]
+            )
+          ),
+          span: (19, 120, 3),
         },
       ],
       comments: Some(
         Comments(
           vec![
-            " test"
+            " general_comment"
           ]
         )
       ),
