@@ -1940,4 +1940,291 @@ mod tests {
 
     Ok(())
   }
+
+  #[test]
+  fn group_choice_comments() -> Result<()> {
+    let input = indoc!(
+      r#"
+        block = [
+            ; comments_before_group
+            ; comments_before_grpchoice1
+            0, text
+            //
+            ; comments_before_grpchoice2
+            1, bytes
+        ]
+      "#
+    );
+
+    let expected_output = CDDL {
+      rules: vec![
+        Rule::Type {
+          rule: TypeRule {
+            name: Identifier {
+              ident: "block",
+              socket: None,
+              span: (
+                0,
+                5,
+                1,
+              ),
+            },
+            generic_params: None,
+            is_type_choice_alternate: false,
+            value: Type {
+              type_choices: vec![
+                TypeChoice {
+                  type1: Type1 {
+                    type2: Type2::Array {
+                      group: Group {
+                        group_choices: vec![
+                          GroupChoice {
+                            group_entries: vec![
+                              (
+                                GroupEntry::ValueMemberKey {
+                                  ge: Box::from(ValueMemberKeyEntry {
+                                    occur: None,
+                                    member_key: None,
+                                    entry_type: Type {
+                                      type_choices: vec![
+                                        TypeChoice {
+                                          type1: Type1 {
+                                            type2: Type2::UintValue {
+                                              value: 0,
+                                              span: (
+                                                75,
+                                                76,
+                                                4,
+                                              ),
+                                            },
+                                            operator: None,
+                                            span: (
+                                              75,
+                                              76,
+                                              4,
+                                            ),
+                                            comments_after_type: None,
+                                          },
+                                          comments_before_type: None,
+                                          comments_after_type: None,
+                                        },
+                                      ],
+                                      span: (
+                                        75,
+                                        76,
+                                        4,
+                                      ),
+                                    },
+                                  }),
+                                  span: (
+                                    75,
+                                    77,
+                                    4,
+                                  ),
+                                  leading_comments: None,
+                                  trailing_comments: None,
+                                },
+                                OptionalComma {
+                                  optional_comma: true,
+                                  trailing_comments: None,
+                                  _a: PhantomData,
+                                },
+                              ),
+                              (
+                                GroupEntry::TypeGroupname {
+                                  ge: TypeGroupnameEntry {
+                                      occur: None,
+                                      name: Identifier {
+                                          ident: "text",
+                                          socket: None,
+                                          span: (
+                                            78,
+                                            82,
+                                            4,
+                                          ),
+                                      },
+                                      generic_args: None,
+                                  },
+                                  span: (
+                                    78,
+                                    82,
+                                    4,
+                                  ),
+                                  leading_comments: None,
+                                  trailing_comments: None,
+                                },
+                                OptionalComma {
+                                    optional_comma: false,
+                                    trailing_comments: None,
+                                    _a: PhantomData,
+                                },
+                              ),
+                            ],
+                            span: (
+                                9,
+                                82,
+                                1,
+                            ),
+                            comments_before_grpchoice: Some(
+                              Comments(
+                                vec![
+                                  " comments_before_grpchoice1",
+                                ],
+                              ),
+                            ),
+                          },
+                          GroupChoice {
+                            group_entries: vec![
+                              (
+                                GroupEntry::ValueMemberKey {
+                                  ge: Box::from(ValueMemberKeyEntry {
+                                    occur: None,
+                                    member_key: None,
+                                    entry_type: Type {
+                                      type_choices: vec![
+                                        TypeChoice {
+                                          type1: Type1 {
+                                            type2: Type2::UintValue {
+                                              value: 1,
+                                              span: (
+                                                127,
+                                                128,
+                                                7,
+                                              ),
+                                            },
+                                            operator: None,
+                                            span: (
+                                              127,
+                                              128,
+                                              7,
+                                            ),
+                                            comments_after_type: None,
+                                          },
+                                          comments_before_type: None,
+                                          comments_after_type: None,
+                                        },
+                                      ],
+                                      span: (
+                                        127,
+                                        128,
+                                        7,
+                                      ),
+                                    },
+                                  }),
+                                  span: (
+                                    127,
+                                    129,
+                                    7,
+                                  ),
+                                  leading_comments: None,
+                                  trailing_comments: None,
+                                },
+                                OptionalComma {
+                                  optional_comma: true,
+                                  trailing_comments: None,
+                                  _a: PhantomData,
+                                },
+                              ),
+                              (
+                                GroupEntry::TypeGroupname {
+                                  ge: TypeGroupnameEntry {
+                                    occur: None,
+                                    name: Identifier {
+                                      ident: "bytes",
+                                      socket: None,
+                                      span: (
+                                        130,
+                                        135,
+                                        7,
+                                      ),
+                                    },
+                                    generic_args: None,
+                                  },
+                                  span: (
+                                    130,
+                                    135,
+                                    7,
+                                  ),
+                                  leading_comments: None,
+                                  trailing_comments: None,
+                                },
+                                OptionalComma {
+                                  optional_comma: false,
+                                  trailing_comments: None,
+                                  _a: PhantomData,
+                                },
+                              ),
+                            ],
+                            span: (
+                              127,
+                              135,
+                              5,
+                            ),
+                            comments_before_grpchoice: Some(
+                              Comments(
+                                vec![
+                                  " comments_before_grpchoice2",
+                                ],
+                              ),
+                            ),
+                          },
+                        ],
+                        span: (
+                          9,
+                          135,
+                          1,
+                        ),
+                      },
+                      span: (
+                        8,
+                        137,
+                        1,
+                      ),
+                      comments_before_group: Some(
+                        Comments(
+                          vec![
+                            " comments_before_group",
+                          ],
+                        ),
+                      ),
+                      comments_after_group: None,
+                    },
+                    operator: None,
+                    span: (
+                      8,
+                      137,
+                      1,
+                    ),
+                    comments_after_type: None,
+                  },
+                  comments_before_type: None,
+                  comments_after_type: None,
+                },
+              ],
+              span: (
+                8,
+                137,
+                1,
+              ),
+            },
+            comments_before_assignt: None,
+            comments_after_assignt: None,
+          },
+          span: (
+            0,
+            137,
+            1,
+          ),
+          comments_after_rule: None,
+        },
+      ],
+      comments: None,
+    };
+
+    let parser = Parser::new(input, Box::new(Lexer::new(input).iter()))?.parse_cddl()?;
+    assert_eq!(parser, expected_output);
+    assert_eq!(parser.to_string(), expected_output.to_string());
+
+    Ok(())
+  }
 }
