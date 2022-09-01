@@ -1867,7 +1867,7 @@ mod tests {
   }
 
   #[test]
-  fn verify_comment() -> Result<()> {
+  fn simple_type_choice_comments() -> Result<()> {
     let input = indoc!(
       r#"
         ; general_comment
@@ -1878,7 +1878,7 @@ mod tests {
           ; comments_after_type
           /
           ; comments_before_type
-          456
+          456 ; comments_after_type2
         ; comments_after_rule
       "#
     );
@@ -1915,7 +1915,13 @@ mod tests {
                     span: (117, 120, 9),
                   },
                   operator: None,
-                  comments_after_type: None,
+                  comments_after_type: Some(
+                    Comments(
+                      vec![
+                        " comments_after_type2"
+                      ]
+                    )
+                  ),
                   span: (117, 120, 9),
                 },
                 comments_before_type: Some(Comments(vec![" comments_before_type"])),
@@ -1932,6 +1938,165 @@ mod tests {
         span: (19, 120, 3),
       }],
       comments: Some(Comments(vec![" general_comment"])),
+    };
+
+    let parser = Parser::new(input, Box::new(Lexer::new(input).iter()))?.parse_cddl()?;
+    assert_eq!(parser, expected_output);
+    assert_eq!(parser.to_string(), expected_output.to_string());
+
+    Ok(())
+  }
+
+  #[test]
+  fn simple_group_comments() -> Result<()> {
+    let input = indoc!(
+      r#"
+        address = [
+          bytes, ; @name address
+          uint   ; @name checksum
+        ]
+      "#
+    );
+
+    let expected_output = CDDL {
+      rules: vec![
+        Rule::Type {
+          rule: TypeRule {
+            name: Identifier {
+              ident: "address",
+              socket: None,
+              span: (
+                0,
+                7,
+                1,
+              ),
+            },
+            generic_params: None,
+            is_type_choice_alternate: false,
+            value: Type {
+              type_choices: vec![
+                TypeChoice {
+                  type1: Type1 {
+                    type2: Type2::Array {
+                      group: Group {
+                        group_choices: vec![
+                          GroupChoice {
+                            group_entries: vec![
+                              (
+                                GroupEntry::TypeGroupname {
+                                  ge: TypeGroupnameEntry {
+                                    name: Identifier {
+                                      ident: "bytes",
+                                      socket: None,
+                                      span: (14,19,2),
+                                    },
+                                    occur: None,
+                                    generic_args: None,
+                                  },
+                                  span: (
+                                    14,
+                                    20,
+                                    2,
+                                  ),
+                                  leading_comments: None,
+                                  trailing_comments: None,
+                                },
+                                OptionalComma {
+                                  optional_comma: true,
+                                  trailing_comments: Some(
+                                    Comments(
+                                      vec![
+                                        " @name address",
+                                      ],
+                                    ),
+                                  ),
+                                  _a: PhantomData,
+                                },
+                              ),
+                              (
+                                GroupEntry::TypeGroupname {
+                                  ge: TypeGroupnameEntry {
+                                    name: Identifier {
+                                      ident: "uint",
+                                      socket: None,
+                                      span: (39, 43, 3),
+                                    },
+                                    occur: None,
+                                    generic_args: None,
+                                  },
+                                  span: (
+                                    39,
+                                    43,
+                                    3
+                                  ),
+                                  leading_comments: None,
+                                  trailing_comments: Some(
+                                    Comments(
+                                      vec![
+                                        " @name checksum",
+                                      ],
+                                    ),
+                                  ),
+                                },
+                                OptionalComma {
+                                  optional_comma: false,
+                                  trailing_comments: None,
+                                  _a: PhantomData,
+                                },
+                              ),
+                            ],
+                            span: (
+                              11,
+                              43,
+                              1
+                            ),
+                            comments_before_grpchoice: None,
+                          },
+                        ],
+                        span: (
+                          11,
+                          43,
+                          1
+                        ),
+                      },
+                      span: (
+                        10,
+                        64,
+                        1,
+                      ),
+                      comments_before_group: None,
+                      comments_after_group: None,
+                    },
+                    operator: None,
+                    span: (
+                      10,
+                      64,
+                      1,
+                    ),
+                    comments_after_type: None,
+                  },
+                  comments_before_type: None,
+                  comments_after_type: None,
+                },
+              ],
+              span: (
+                10,
+                64,
+                1,
+              ),
+            },
+            comments_before_assignt: None,
+            comments_after_assignt: None,
+          },
+          span: (
+            0,
+            64,
+            1,
+          ),
+          comments_after_rule: None,
+        },
+      ],
+      comments: None,
     };
 
     let parser = Parser::new(input, Box::new(Lexer::new(input).iter()))?.parse_cddl()?;
@@ -2229,7 +2394,7 @@ mod tests {
   }
 
   #[test]
-  fn type_choice_comments() -> Result<()> {
+  fn group_type_choice_comments() -> Result<()> {
     let input = indoc!(
       r#"
         block =

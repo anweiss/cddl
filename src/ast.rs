@@ -638,9 +638,36 @@ pub struct Type<'a> {
 }
 
 impl<'a> Type<'a> {
+  /// take all the comments after a type
+  /// this is useful if the type is consumed to build another type object
   #[cfg(feature = "ast-comments")]
   #[doc(hidden)]
-  pub fn comments_after_type(&mut self) -> Option<Comments<'a>> {
+  pub fn take_comments_after_type(&mut self) -> Option<Comments<'a>> {
+    if let Some(TypeChoice {
+      type1: Type1 {
+        comments_after_type,
+        ..
+      },
+      ..
+    }) = self.type_choices.last_mut()
+    {
+      if let Some(comments) = comments_after_type {
+        if comments.any_non_newline() {
+          return comments_after_type.take();
+        }
+      }
+    }
+
+    None
+  }
+}
+
+impl<'a> Type<'a> {
+  /// leave the first comment after a type as part of its parent
+  /// and subsequent comments are considered after the type
+  #[cfg(feature = "ast-comments")]
+  #[doc(hidden)]
+  pub fn split_comments_after_type(&mut self) -> Option<Comments<'a>> {
     if let Some(TypeChoice {
       type1: Type1 {
         comments_after_type,
