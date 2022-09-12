@@ -56,7 +56,7 @@ impl<T: std::fmt::Debug> fmt::Display for Error<T> {
       Error::CBORParsing(error) => write!(f, "error parsing cbor: {}", error),
       Error::JSONParsing(error) => write!(f, "error parsing json string: {}", error),
       Error::CDDLParsing(error) => write!(f, "error parsing CDDL: {}", error),
-      Error::UTF8Parsing(error) => write!(f, "error pasing utf8: {}", error),
+      Error::UTF8Parsing(error) => write!(f, "error parsing utf8: {}", error),
     }
   }
 }
@@ -1181,7 +1181,7 @@ where
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
           #[cfg(feature = "ast-span")]
-          if let Some(Occur::Optional(_)) = self.occurrence.take() {
+          if let Some(Occur::Optional { .. }) = self.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {:?}",
               controller, self.cbor
@@ -2167,7 +2167,7 @@ where
         }
       },
       #[cfg(feature = "ast-span")]
-      Type2::Any(_) => Ok(()),
+      Type2::Any { .. } => Ok(()),
       #[cfg(not(feature = "ast-span"))]
       Type2::Any => Ok(()),
       _ => {
@@ -3413,7 +3413,7 @@ where
           let _ = write!(self.cbor_location, "/{}", value);
 
           None
-        } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
+        } else if let Some(Occur::Optional { .. }) | Some(Occur::ZeroOrMore { .. }) =
           &self.occurrence.take()
         {
           self.advance_to_next_entry = true;

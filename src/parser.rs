@@ -1734,11 +1734,11 @@ impl<'a> Parser<'a> {
             ),
           }),
           #[cfg(feature = "ast-span")]
-          _ => Ok(Type2::Any((
+          _ => Ok(Type2::Any { span: (
             begin_type2_range,
             self.lexer_position.range.1,
             begin_type2_line,
-          ))),
+          )}),
           #[cfg(not(feature = "ast-span"))]
           _ => Ok(Type2::Any),
         }
@@ -3183,11 +3183,11 @@ impl<'a> Parser<'a> {
 
         Ok(Some(Occurrence {
           #[cfg(feature = "ast-span")]
-          occur: Occur::Optional((
+          occur: Occur::Optional { span: (
             self.parser_position.range.0,
             self.parser_position.range.1,
             self.parser_position.line,
-          )),
+          )},
           #[cfg(not(feature = "ast-span"))]
           occur: Occur::Optional,
           #[cfg(feature = "ast-comments")]
@@ -3210,11 +3210,11 @@ impl<'a> Parser<'a> {
 
         Ok(Some(Occurrence {
           #[cfg(feature = "ast-span")]
-          occur: Occur::OneOrMore((
+          occur: Occur::OneOrMore { span: (
             self.parser_position.range.0,
             self.parser_position.range.1,
             self.parser_position.line,
-          )),
+          )},
           #[cfg(not(feature = "ast-span"))]
           occur: Occur::OneOrMore,
           #[cfg(feature = "ast-comments")]
@@ -3244,11 +3244,11 @@ impl<'a> Parser<'a> {
           #[cfg(feature = "ast-span")]
           {
             self.parser_position.range = self.lexer_position.range;
-            Occur::ZeroOrMore((
+            Occur::ZeroOrMore { span: (
               self.parser_position.range.0,
               self.parser_position.range.1,
               self.parser_position.line,
-            ))
+            )}
           }
 
           #[cfg(not(feature = "ast-span"))]
