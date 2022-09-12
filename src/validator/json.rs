@@ -499,7 +499,7 @@ impl<'a> JSONValidator<'a> {
           self.json_location.push_str(&format!("/{}", t));
 
           return Ok(());
-        } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
+        } else if let Some(Occur::Optional { .. }) | Some(Occur::ZeroOrMore { .. }) =
           &self.occurrence.take()
         {
           self.advance_to_next_entry = true;
@@ -1266,7 +1266,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
           #[cfg(feature = "ast-span")]
-          if let Some(Occur::Optional(_)) = self.occurrence.take() {
+          if let Some(Occur::Optional { .. }) = self.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {}",
               controller, self.json
@@ -1775,7 +1775,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         Ok(())
       }
       #[cfg(feature = "ast-span")]
-      Type2::Any(_) => Ok(()),
+      Type2::Any { .. } => Ok(()),
       #[cfg(not(feature = "ast-span"))]
       Type2::Any => Ok(()),
       _ => {
@@ -1897,8 +1897,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       Value::Object(o) => {
         if let Some(occur) = &self.occurrence {
           #[cfg(feature = "ast-span")]
-          if let Occur::ZeroOrMore(_) | Occur::OneOrMore(_) = occur {
-            if let Occur::OneOrMore(_) = occur {
+          if let Occur::ZeroOrMore { .. } | Occur::OneOrMore { .. } = occur {
+            if let Occur::OneOrMore { .. } = occur {
               if o.is_empty() {
                 self.add_error(format!(
                   "object cannot be empty, one or more entries with key type {} required",

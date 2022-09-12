@@ -5,6 +5,9 @@ pub mod cbor;
 /// JSON validation implementation
 pub mod json;
 
+/// parent visitor implementation
+mod parent_visitor;
+
 mod control;
 
 use crate::{
@@ -831,7 +834,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 ) -> std::result::Result<(bool, bool), Vec<String>> {
   let mut iter_items = false;
   #[cfg(feature = "ast-span")]
-  let allow_empty_array = matches!(occurrence, Some(Occur::Optional(_)));
+  let allow_empty_array = matches!(occurrence, Some(Occur::Optional { .. }));
   #[cfg(not(feature = "ast-span"))]
   let allow_empty_array = matches!(occurrence, Some(Occur::Optional));
 
@@ -839,11 +842,11 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 
   match occurrence {
     #[cfg(feature = "ast-span")]
-    Some(Occur::ZeroOrMore(_)) => iter_items = true,
+    Some(Occur::ZeroOrMore { .. }) => iter_items = true,
     #[cfg(not(feature = "ast-span"))]
     Some(Occur::ZeroOrMore) => iter_items = true,
     #[cfg(feature = "ast-span")]
-    Some(Occur::OneOrMore(_)) => {
+    Some(Occur::OneOrMore { .. }) => {
       if values.is_empty() {
         errors.push("array must have at least one item".to_string());
       } else {
@@ -882,7 +885,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
       iter_items = true;
     }
     #[cfg(feature = "ast-span")]
-    Some(Occur::Optional(_)) => {
+    Some(Occur::Optional { .. }) => {
       if values.len() > 1 {
         errors.push("array must have 0 or 1 items".to_string());
       }
@@ -1014,11 +1017,11 @@ pub fn validate_entry_count(valid_entry_counts: &[EntryCount], num_entries: usiz
     num_entries == ec.count as usize
       || match ec.entry_occurrence {
         #[cfg(feature = "ast-span")]
-        Some(Occur::ZeroOrMore(_)) | Some(Occur::Optional(_)) => true,
+        Some(Occur::ZeroOrMore { .. }) | Some(Occur::Optional { .. }) => true,
         #[cfg(not(feature = "ast-span"))]
         Some(Occur::ZeroOrMore) | Some(Occur::Optional) => true,
         #[cfg(feature = "ast-span")]
-        Some(Occur::OneOrMore(_)) if num_entries > 0 => true,
+        Some(Occur::OneOrMore { .. } ) if num_entries > 0 => true,
         #[cfg(not(feature = "ast-span"))]
         Some(Occur::OneOrMore) if num_entries > 0 => true,
         Some(Occur::Exact { lower, upper, .. }) => {

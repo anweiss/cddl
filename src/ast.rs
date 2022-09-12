@@ -75,6 +75,10 @@ pub struct CDDL<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments: Option<Comments<'a>>,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<()>, // always None
 }
 
 impl<'a> fmt::Display for CDDL<'a> {
@@ -214,6 +218,11 @@ impl<'a> From<Token<'a>> for Identifier<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum RuleParent<'a> {
+  CDDL(&'a CDDL<'a>),
+}
+
 /// Type or group expression
 ///
 /// ```abnf
@@ -236,6 +245,10 @@ pub enum Rule<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_rule: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<RuleParent>,
   },
   /// Group expression
   Group {
@@ -249,6 +262,10 @@ pub enum Rule<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_rule: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<RuleParent>,
   },
 }
 
@@ -377,6 +394,11 @@ impl<'a> Rule<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum TypeRuleParent<'a> {
+  Rule(&'a Rule<'a>)
+}
+
 /// Type expression
 ///
 /// ```abnf
@@ -403,6 +425,10 @@ pub struct TypeRule<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_assignt: Option<Comments<'a>>,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<TypeRuleParent<'a>>,
 }
 
 impl<'a> fmt::Display for TypeRule<'a> {
@@ -435,6 +461,11 @@ impl<'a> fmt::Display for TypeRule<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum GroupRuleParent<'a> {
+  Rule(&'a Rule<'a>)
+}
+
 /// Group expression
 ///
 /// ```abnf
@@ -461,6 +492,10 @@ pub struct GroupRule<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_assigng: Option<Comments<'a>>,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<GroupRuleParent<'a>>,
 }
 
 impl<'a> fmt::Display for GroupRule<'a> {
@@ -493,6 +528,12 @@ impl<'a> fmt::Display for GroupRule<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum GenericParamsParent<'a> {
+  TypeRule(&'a TypeRule<'a>),
+  GroupRule(&'a GroupRule<'a>),
+}
+
 /// Generic parameters
 ///
 /// ```abnf
@@ -506,6 +547,15 @@ pub struct GenericParams<'a> {
   /// Span
   #[cfg(feature = "ast-span")]
   pub span: Span,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<GenericParamsParent<'a>>,
+}
+
+#[cfg(feature = "ast-parent")]
+pub enum GenericParamParent<'a> {
+  GenericParams(&'a GenericParams<'a>),
 }
 
 /// Generic parameter
@@ -523,6 +573,10 @@ pub struct GenericParam<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_ident: Option<Comments<'a>>,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<GenericParamParent<'a>>,
 }
 
 impl<'a> fmt::Display for GenericParams<'a> {
@@ -552,6 +606,12 @@ impl<'a> fmt::Display for GenericParams<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum GenericArgsParent<'a> {
+  Type2(&'a Type2<'a>),
+  TypeGroupnameEntry(&'a TypeGroupnameEntry<'a>)
+}
+
 /// Generic arguments
 ///
 /// ```abnf
@@ -565,6 +625,10 @@ pub struct GenericArgs<'a> {
   /// Span
   #[cfg(feature = "ast-span")]
   pub span: Span,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<GenericArgsParent<'a>>,
 }
 
 impl<'a> GenericArgs<'a> {
@@ -576,6 +640,11 @@ impl<'a> GenericArgs<'a> {
       span: (0, 0, 0),
     }
   }
+}
+
+#[cfg(feature = "ast-parent")]
+pub enum GenericArgParent<'a> {
+  GenericArgs(&'a GenericArgs<'a>),
 }
 
 /// Generic argument
@@ -593,6 +662,10 @@ pub struct GenericArg<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_type: Option<Comments<'a>>,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<GenericArgParent<'a>>,
 }
 
 impl<'a> fmt::Display for GenericArgs<'a> {
@@ -622,6 +695,13 @@ impl<'a> fmt::Display for GenericArgs<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum TypeParent<'a> {
+  TypeRule(&'a TypeRule<'a>),
+  Type2(&'a Type2<'a>),
+  ValueMemberKeyEntry(&'a ValueMemberKeyEntry<'a>)
+}
+
 /// Type choices
 ///
 /// ```abnf
@@ -635,6 +715,10 @@ pub struct Type<'a> {
   /// Span
   #[cfg(feature = "ast-span")]
   pub span: Span,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<TypeParent<'a>>,
 }
 
 impl<'a> Type<'a> {
@@ -660,6 +744,11 @@ impl<'a> Type<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum TypeChoiceParent<'a> {
+  Type(&'a Type<'a>),
+}
+
 /// Type choice
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
@@ -675,6 +764,10 @@ pub struct TypeChoice<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_type: Option<Comments<'a>>,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<TypeChoiceParent<'a>>,
 }
 
 impl<'a> fmt::Display for Type<'a> {
@@ -761,6 +854,13 @@ impl<'a> Type<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum Type1Parent<'a> {
+  Type(&'a Type<'a>),
+  GenericArg(&'a GenericArg<'a>),
+  MemberKey(&'a MemberKey<'a>),
+}
+
 /// Type with optional range or control operator
 ///
 /// ```abnf
@@ -781,6 +881,10 @@ pub struct Type1<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_type: Option<Comments<'a>>,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<Type1Parent<'a>>,
 }
 
 impl<'a> From<Value<'a>> for Type1<'a> {
@@ -836,6 +940,11 @@ impl<'a> From<Value<'a>> for Type1<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum OperatorParent<'a> {
+  Type1(&'a Type1<'a>),
+}
+
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 /// Range or control operator
@@ -853,6 +962,10 @@ pub struct Operator<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_operator: Option<Comments<'a>>,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<OperatorParent<'a>>,
 }
 
 impl<'a> fmt::Display for Type1<'a> {
@@ -905,6 +1018,11 @@ impl<'a> fmt::Display for Type1<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum RangeCtlOpParent<'a> {
+  Operator(&'a Operator<'a>),
+}
+
 /// Range or control operator
 ///
 /// ```abnf
@@ -921,6 +1039,10 @@ pub enum RangeCtlOp<'a> {
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<RangeCtlOpParent<'a>>,
   },
   /// Control operator
   CtlOp {
@@ -929,6 +1051,10 @@ pub enum RangeCtlOp<'a> {
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<RangeCtlOpParent<'a>>,
   },
 }
 
@@ -945,6 +1071,12 @@ impl<'a> fmt::Display for RangeCtlOp<'a> {
       RangeCtlOp::CtlOp { ctrl, .. } => write!(f, "{}", ctrl),
     }
   }
+}
+
+#[cfg(feature = "ast-parent")]
+pub enum Type2Parent<'a> {
+  Type1(&'a Type1<'a>),
+  Operator(&'a Operator<'a>),
 }
 
 /// Type
@@ -972,6 +1104,10 @@ pub enum Type2<'a> {
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Unsigned integer value
@@ -981,6 +1117,10 @@ pub enum Type2<'a> {
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Float value
@@ -990,6 +1130,10 @@ pub enum Type2<'a> {
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Text string value (enclosed by '"')
@@ -999,6 +1143,10 @@ pub enum Type2<'a> {
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// UTF-8 encoded byte string (enclosed by '')
@@ -1008,6 +1156,10 @@ pub enum Type2<'a> {
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Base 16 encoded prefixed byte string
@@ -1017,6 +1169,10 @@ pub enum Type2<'a> {
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Base 64 encoded (URL safe) prefixed byte string
@@ -1026,6 +1182,10 @@ pub enum Type2<'a> {
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Type name identifier with optional generic arguments
@@ -1037,6 +1197,10 @@ pub enum Type2<'a> {
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Parenthesized type expression (for operator precedence)
@@ -1055,6 +1219,10 @@ pub enum Type2<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_type: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Map expression
@@ -1073,6 +1241,10 @@ pub enum Type2<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_group: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Array expression
@@ -1091,6 +1263,10 @@ pub enum Type2<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_group: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Unwrapped group
@@ -1107,6 +1283,10 @@ pub enum Type2<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Enumeration expression over an inline group
@@ -1129,6 +1309,10 @@ pub enum Type2<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_group: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Enumeration expression over previously defined group
@@ -1145,6 +1329,10 @@ pub enum Type2<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Tagged data item where the first element is an optional tag and the second
@@ -1166,6 +1354,10 @@ pub enum Type2<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_type: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Data item of a major type with optional data constraint
@@ -1177,15 +1369,22 @@ pub enum Type2<'a> {
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>,
   },
 
   /// Any data item
-  #[cfg(feature = "ast-span")]
-  Any(Span),
-
-  /// Any data item
-  #[cfg(not(feature = "ast-span"))]
-  Any,
+  Any {
+    /// Span
+    #[cfg(feature = "ast-span")]
+    span: Span,
+    
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<Type2Parent<'a>>, 
+  },
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -1500,10 +1699,7 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", mt)
       }
-      #[cfg(feature = "ast-span")]
-      Type2::Any(_) => write!(f, "#"),
-      #[cfg(not(feature = "ast-span"))]
-      Type2::Any => write!(f, "#"),
+      Type2::Any { .. } => write!(f, "#"),
     }
   }
 }
@@ -1817,6 +2013,12 @@ pub fn type_from_token(token: Token) -> Type {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum GroupParent<'a> {
+  Type2(&'a Type2<'a>),
+  GroupEntry(&'a GroupEntry<'a>),
+}
+
 /// Group choices
 ///
 /// ```abnf
@@ -1831,6 +2033,10 @@ pub struct Group<'a> {
   /// Span
   #[cfg(feature = "ast-span")]
   pub span: Span,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<GroupParent<'a>>,
 }
 
 impl<'a> From<GroupEntry<'a>> for Group<'a> {
@@ -1919,6 +2125,11 @@ impl<'a> fmt::Display for Group<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum GroupChoiceParent<'a> {
+  Group(&'a Group<'a>),
+}
+
 /// Group entries
 ///
 /// ```abnf
@@ -1943,6 +2154,10 @@ pub struct GroupChoice<'a> {
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_grpchoice: Option<Comments<'a>>,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<GroupChoiceParent<'a>>,
 }
 
 impl<'a> GroupChoice<'a> {
@@ -2159,6 +2374,13 @@ impl<'a> fmt::Display for GroupChoice<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum GroupEntryParent<'a> {
+  GroupChoice(&'a GroupChoice<'a>),
+  GroupRule(&'a GroupRule<'a>),
+}
+
+
 /// Group entry
 ///
 /// ```abnf
@@ -2186,6 +2408,10 @@ pub enum GroupEntry<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     trailing_comments: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<GroupEntryParent<'a>>,
   },
 
   /// Group entry from a named group or type
@@ -2205,6 +2431,10 @@ pub enum GroupEntry<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     trailing_comments: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<GroupEntryParent<'a>>,
   },
 
   /// Parenthesized group with optional occurrence indicator
@@ -2225,6 +2455,10 @@ pub enum GroupEntry<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_group: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<GroupEntryParent<'a>>,
   },
 }
 
@@ -2242,6 +2476,11 @@ impl<'a> GroupEntry<'a> {
       } if comments.any_non_newline()
     )
   }
+}
+
+#[cfg(feature = "ast-parent")]
+pub enum OptionalCommaParent<'a> {
+  GroupChoice(&'a GroupChoice<'a>),
 }
 
 /// Optional comma
@@ -2438,6 +2677,13 @@ impl<'a> fmt::Display for GroupEntry<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum OccurrenceParent<'a> {
+  ValueMemberKeyEntry(&'a ValueMemberKeyEntry<'a>),
+  TypeGroupnameEntry(&'a TypeGroupnameEntry<'a>),
+  GroupEntry(&'a GroupEntry<'a>),
+}
+
 /// Occurrence indicator
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
@@ -2452,6 +2698,10 @@ pub struct Occurrence<'a> {
 
   #[doc(hidden)]
   pub _a: PhantomData<&'a ()>,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<OccurrenceParent<'a>>,
 }
 
 impl<'a> fmt::Display for Occurrence<'a> {
@@ -2470,6 +2720,11 @@ impl<'a> fmt::Display for Occurrence<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum ValueMemberKeyEntryParent<'a> {
+  GroupEntry(&'a GroupEntry<'a>),
+}
+
 /// Value group entry type with optional occurrence indicator and optional
 /// member key
 ///
@@ -2486,6 +2741,10 @@ pub struct ValueMemberKeyEntry<'a> {
   /// Entry type
   #[cfg_attr(target_arch = "wasm32", serde(borrow))]
   pub entry_type: Type<'a>,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<ValueMemberKeyEntryParent<'a>>,
 }
 
 impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
@@ -2506,6 +2765,11 @@ impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum TypeGroupnameEntryParent<'a> {
+  GroupEntry(&'a GroupEntry<'a>),
+}
+
 /// Group entry from a named type or group
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
@@ -2517,6 +2781,10 @@ pub struct TypeGroupnameEntry<'a> {
   pub name: Identifier<'a>,
   /// Optional generic arguments
   pub generic_args: Option<GenericArgs<'a>>,
+
+  #[cfg(feature = "ast-parent")]
+  #[serde(skip)]
+  pub parent: Option<TypeGroupnameEntryParent<'a>>,
 }
 
 impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
@@ -2535,6 +2803,11 @@ impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
 
     write!(f, "{}", tge_str)
   }
+}
+
+#[cfg(feature = "ast-parent")]
+pub enum MemberKeyParent<'a> {
+  ValueMemberKeyEntry(&'a ValueMemberKeyEntry<'a>),
 }
 
 /// Member key
@@ -2569,6 +2842,10 @@ pub enum MemberKey<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_arrowmap: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<MemberKeyParent<'a>>,
   },
 
   /// Bareword string type
@@ -2588,6 +2865,10 @@ pub enum MemberKey<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_colon: Option<Comments<'a>>,
+    
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<MemberKeyParent<'a>>,
   },
 
   /// Value type
@@ -2607,6 +2888,10 @@ pub enum MemberKey<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_colon: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<MemberKeyParent<'a>>,
   },
 
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -2617,6 +2902,10 @@ pub enum MemberKey<'a> {
     comments_before_type_or_group: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
     comments_after_type_or_group: Option<Comments<'a>>,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<MemberKeyParent<'a>>,
   },
 }
 
@@ -2778,6 +3067,11 @@ impl<'a> fmt::Display for MemberKey<'a> {
   }
 }
 
+#[cfg(feature = "ast-parent")]
+pub enum OccurParent<'a> {
+  Occurrence(&'a Occurrence<'a>),
+}
+
 /// Occurrence indicator
 /// ```abnf
 /// occur = [uint] "*" [uint]
@@ -2797,40 +3091,50 @@ pub enum Occur {
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
+
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<OccurParent<'a>>,
   },
 
   /// Occurrence indicator in the form *, allowing zero or more occurrences
-  #[cfg(feature = "ast-span")]
-  ZeroOrMore(Span),
+  ZeroOrMore {
+    /// Span
+    #[cfg(feature = "ast-span")]
+    span: Span,
 
-  /// Occurrence indicator in the form *, allowing zero or more occurrences
-  #[cfg(not(feature = "ast-span"))]
-  ZeroOrMore,
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<OccurParent<'a>>,
+  },
 
   /// Occurrence indicator in the form +, allowing one or more occurrences
-  #[cfg(feature = "ast-span")]
-  OneOrMore(Span),
+  OneOrMore {
+    /// Span
+    #[cfg(feature = "ast-span")]
+    span: Span,
 
-  #[cfg(not(feature = "ast-span"))]
-  /// Occurrence indicator in the form +, allowing one or more occurrences
-  OneOrMore,
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<OccurParent<'a>>,
+  },
 
   /// Occurrence indicator in the form ?, allowing an optional occurrence
-  #[cfg(feature = "ast-span")]
-  Optional(Span),
+  Optional {
+    /// Span
+    #[cfg(feature = "ast-span")]
+    span: Span,
 
-  /// Occurrence indicator in the form ?, allowing an optional occurrence
-  #[cfg(not(feature = "ast-span"))]
-  Optional,
+    #[cfg(feature = "ast-parent")]
+    #[serde(skip)]
+    pub parent: Option<OccurParent<'a>>,
+  },
 }
 
 impl fmt::Display for Occur {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      #[cfg(feature = "ast-span")]
-      Occur::ZeroOrMore(_) => write!(f, "*"),
-      #[cfg(not(feature = "ast-span"))]
-      Occur::ZeroOrMore => write!(f, "*"),
+      Occur::ZeroOrMore { .. } => write!(f, "*"),
       Occur::Exact { lower, upper, .. } => {
         if let Some(li) = lower {
           if let Some(ui) = upper {
@@ -2846,14 +3150,8 @@ impl fmt::Display for Occur {
 
         write!(f, "*")
       }
-      #[cfg(feature = "ast-span")]
-      Occur::OneOrMore(_) => write!(f, "+"),
-      #[cfg(not(feature = "ast-span"))]
-      Occur::OneOrMore => write!(f, "+"),
-      #[cfg(feature = "ast-span")]
-      Occur::Optional(_) => write!(f, "?"),
-      #[cfg(not(feature = "ast-span"))]
-      Occur::Optional => write!(f, "?"),
+      Occur::OneOrMore { .. } => write!(f, "+"),
+      Occur::Optional { .. } => write!(f, "?"),
     }
   }
 }

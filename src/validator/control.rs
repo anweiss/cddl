@@ -599,7 +599,7 @@ fn dedent_bytes(source: &[u8], is_utf8_byte_string: bool) -> Result<Vec<u8>, Str
 }
 
 /// Numeric addition of target and controller. The Vec return type is to
-/// accomodate more than one type choice in the controller
+/// accommodate more than one type choice in the controller
 pub fn plus_operation<'a>(
   cddl: &CDDL,
   target: &Type2,
