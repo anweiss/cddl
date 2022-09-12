@@ -2228,7 +2228,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             Some(Token::LE) if i <= *v as u64 => None,
             Some(Token::GT) if i > *v as u64 => None,
             Some(Token::GE) if i >= *v as u64 => None,
-            Some(Token::SIZE) if i < 256u64.pow(*v as u32) => None,
+            Some(Token::SIZE) => match 256u128.checked_pow(*v as u32) {
+              Some(n) if (i as u128) < n => None,
+              _ => Some(format!("expected value .size {}, got {}", v, n)),
+            },
             #[cfg(feature = "additional-controls")]
             Some(Token::PLUS) => {
               if i == *v as u64 {
@@ -2579,6 +2582,35 @@ mod tests {
     );
 
     let json = r#"[10, 1]"#;
+
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
+
+    let cddl = cddl.unwrap();
+
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    jv.validate()?;
+
+    Ok(())
+  }
+
+  #[test]
+  fn size_control_validation_error() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        start = Record
+        Record = {
+          id: Id
+        }
+        Id = uint .size 8
+      "#
+    );
+
+    let json = r#"{ "id": 5 }"#;
 
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
     if let Err(e) = &cddl {

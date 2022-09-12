@@ -3060,7 +3060,10 @@ where
           Some(Token::LE) if i128::from(*i) <= *v as i128 => None,
           Some(Token::GT) if i128::from(*i) > *v as i128 => None,
           Some(Token::GE) if i128::from(*i) >= *v as i128 => None,
-          Some(Token::SIZE) if i128::from(*i) < 256i128.pow(*v as u32) => None,
+          Some(Token::SIZE) => match 256i128.checked_pow(*v as u32) {
+            Some(n) if i128::from(*i) < n => None,
+            _ => Some(format!("expected value .size {}, got {:?}", v, i)),
+          },
           Some(Token::BITS) => {
             if let Some(sv) = 1u32.checked_shl(*v as u32) {
               if (i128::from(*i) & sv as i128) != 0 {
