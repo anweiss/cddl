@@ -349,6 +349,7 @@ impl<'a> Parser<'a> {
         Ok(r) => {
           let rule_exists =
             |existing_rule: &Rule| r.name() == existing_rule.name() && !r.is_choice_alternate();
+
           if c.rules.iter().any(rule_exists) {
             #[cfg(feature = "ast-span")]
             {
@@ -558,6 +559,45 @@ impl<'a> Parser<'a> {
     #[cfg(not(feature = "ast-comments"))]
     self.advance_newline()?;
 
+    // If token is group socket or rule is a group plug alternative, parse
+    // as group rule
+    if matches!(self.cur_token, Token::IDENT(_, Some(SocketPlug::GROUP)))
+      || is_group_choice_alternate
+    {
+      let ge = self.parse_grpent(true)?;
+
+      #[cfg(feature = "ast-comments")]
+      let comments_after_rule = self.collect_comments()?;
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
+
+      #[cfg(feature = "ast-span")]
+      let span = (
+        begin_rule_range,
+        self.parser_position.range.1,
+        begin_rule_line,
+      );
+
+      self.current_rule_generic_param_idents = None;
+
+      return Ok(Rule::Group {
+        rule: Box::from(GroupRule {
+          name: ident,
+          generic_params: gp,
+          is_group_choice_alternate,
+          entry: ge,
+          #[cfg(feature = "ast-comments")]
+          comments_before_assigng: comments_before_assign,
+          #[cfg(feature = "ast-comments")]
+          comments_after_assigng: comments_after_assign,
+        }),
+        #[cfg(feature = "ast-comments")]
+        comments_after_rule,
+        #[cfg(feature = "ast-span")]
+        span,
+      });
+    }
+
     match self.cur_token {
       // Check for an occurrence indicator of uint followed by an asterisk '*'
       Token::VALUE(token::Value::UINT(_)) => {
@@ -744,6 +784,7 @@ impl<'a> Parser<'a> {
       _ => {
         // If type rule is an unwrap type, advance token after parsing type
         let advance_token = matches!(self.cur_token, Token::UNWRAP);
+
         #[cfg(feature = "ast-comments")]
         let mut t = self.parse_type(None)?;
         #[cfg(not(feature = "ast-comments"))]

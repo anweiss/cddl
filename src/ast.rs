@@ -1833,6 +1833,16 @@ pub struct Group<'a> {
   pub span: Span,
 }
 
+impl<'a> From<GroupEntry<'a>> for Group<'a> {
+  fn from(ge: GroupEntry<'a>) -> Self {
+    Group {
+      group_choices: vec![GroupChoice::new(vec![ge])],
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    }
+  }
+}
+
 impl<'a> fmt::Display for Group<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut group_str = String::new();

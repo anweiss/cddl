@@ -8,7 +8,7 @@ A Rust implementation of the Concise data definition language (CDDL). CDDL is an
 
 This crate includes a handwritten parser and lexer for CDDL, and its development has been heavily inspired by the techniques outlined in Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
-This crate supports validation of both CBOR and JSON data structures. The minimum supported Rust version (MSRV) is 1.56.0.
+This crate supports validation of both CBOR and JSON data structures. The minimum supported Rust version (MSRV) is 1.56.1.
 
 Also bundled into this repository is a basic language server implementation and extension for Visual Studio Code for editing CDDL. The implementation is backed by the compiled WebAssembly target included in this crate.
 
@@ -36,7 +36,7 @@ Rust is a systems programming language designed around safety and is ideally-sui
 
 ## CLI
 
-A CLI is available for various platforms. The tool supports parsing of `.cddl` files for verifying conformance against RFC 8610. It can also be used to validate `.json` documents and `.cbor` binary files against `.cddl` documents. Detailed information about the JSON and CBOR validation implementation can be found in the sections below.
+A CLI is available for various platforms. The tool supports parsing of CDDL files for verifying conformance against RFC 8610. It can also be used to validate JSON documents and CBOR binary files against CDDL documents. Detailed information about the JSON and CBOR validation implementation can be found in the sections below.
 
 ### Installation
 
@@ -66,7 +66,7 @@ cddl help
 
 If using Docker:
 
-> Replace `<version>` with an appropriate [release](https://github.com/anweiss/cddl/releases) tag. Requires use of the `--volume` argument for mounting `.cddl` documents into the container when executing the command. `.json` or `.cbor` files can either be included in the volume mount or passed into the command via STDIN.
+> Replace `<version>` with an appropriate [release](https://github.com/anweiss/cddl/releases) tag. Requires use of the `--volume` argument for mounting CDDL documents into the container when executing the command. JSON or CBOR files can either be included in the volume mount or passed into the command via STDIN.
 
 ```sh
 docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
