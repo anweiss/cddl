@@ -47,7 +47,6 @@ crossterm = { version = "0.23.1", optional = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.6"
 wasm-bindgen = { version = "0.2.75", features = ["serde-serialize"], optional = true }
-wee_alloc = { version = "0.4.5", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.25"
