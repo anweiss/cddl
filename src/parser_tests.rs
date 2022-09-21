@@ -1865,4 +1865,79 @@ mod tests {
 
     Ok(())
   }
+
+  #[test]
+  fn verify_comment() -> Result<()> {
+    let input = indoc!(
+      r#"
+        ; general_comment
+
+        myrule =
+          ; comments_after_assignt
+          1234
+          ; comments_after_type
+          /
+          ; comments_before_type
+          456
+        ; comments_after_rule
+      "#
+    );
+
+    let expected_output = CDDL {
+      rules: vec![Rule::Type {
+        rule: TypeRule {
+          name: Identifier {
+            ident: "myrule",
+            socket: None,
+            span: (19, 25, 3),
+          },
+          generic_params: None,
+          is_type_choice_alternate: false,
+          value: Type {
+            type_choices: vec![
+              TypeChoice {
+                type1: Type1 {
+                  type2: Type2::UintValue {
+                    value: 1234,
+                    span: (57, 61, 5),
+                  },
+                  operator: None,
+                  comments_after_type: Some(Comments(vec![" comments_after_type"])),
+                  span: (57, 61, 5),
+                },
+                comments_before_type: None,
+                comments_after_type: None,
+              },
+              TypeChoice {
+                type1: Type1 {
+                  type2: Type2::UintValue {
+                    value: 456,
+                    span: (117, 120, 9),
+                  },
+                  operator: None,
+                  comments_after_type: None,
+                  span: (117, 120, 9),
+                },
+                comments_before_type: Some(Comments(vec![" comments_before_type"])),
+                comments_after_type: None,
+              },
+            ],
+
+            span: (57, 120, 5),
+          },
+          comments_before_assignt: None,
+          comments_after_assignt: Some(Comments(vec![" comments_after_assignt"])),
+        },
+        comments_after_rule: Some(Comments(vec![" comments_after_rule"])),
+        span: (19, 120, 3),
+      }],
+      comments: Some(Comments(vec![" general_comment"])),
+    };
+
+    let parser = Parser::new(input, Box::new(Lexer::new(input).iter()))?.parse_cddl()?;
+    assert_eq!(parser, expected_output);
+    assert_eq!(parser.to_string(), expected_output.to_string());
+
+    Ok(())
+  }
 }
