@@ -1922,6 +1922,61 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
               return Ok(());
             }
+          } else if let Occur::Exact { lower, upper, .. } = occur {
+            if is_ident_string_data_type(self.cddl, ident) {
+              let values_to_validate = o
+                .iter()
+                .filter_map(|(k, v)| match &self.validated_keys {
+                  Some(keys) if !keys.contains(k) => Some(v.clone()),
+                  Some(_) => None,
+                  None => Some(v.clone()),
+                })
+                .collect::<Vec<_>>();
+
+              if let Some(lower) = lower {
+                if let Some(upper) = upper {
+                  if values_to_validate.len() < *lower || values_to_validate.len() > *upper {
+                    if lower == upper {
+                      self.add_error(format!(
+                        "object must contain exactly {} entries of key of type {}",
+                        lower, ident,
+                      ));
+                    } else {
+                      self.add_error(format!(
+                        "object must contain between {} and {} entries of key of type {}",
+                        lower, upper, ident,
+                      ));
+                    }
+
+                    return Ok(());
+                  }
+                }
+
+                if values_to_validate.len() < *lower {
+                  self.add_error(format!(
+                    "object must contain at least {} entries of key of type {}",
+                    lower, ident,
+                  ));
+
+                  return Ok(());
+                }
+              }
+
+              if let Some(upper) = upper {
+                if values_to_validate.len() > *upper {
+                  self.add_error(format!(
+                    "object must contain no more than {} entries of key of type {}",
+                    upper, ident,
+                  ));
+
+                  return Ok(());
+                }
+              }
+
+              self.values_to_validate = Some(values_to_validate);
+
+              return Ok(());
+            }
           }
 
           #[cfg(not(feature = "ast-span"))]
@@ -1945,6 +2000,61 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                   None => Some(v.clone()),
                 })
                 .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+
+              return Ok(());
+            }
+          } else if let Occur::Exact { lower, upper } = occur {
+            if is_ident_string_data_type(self.cddl, ident) {
+              let values_to_validate = o
+                .iter()
+                .filter_map(|(k, v)| match &self.validated_keys {
+                  Some(keys) if !keys.contains(k) => Some(v.clone()),
+                  Some(_) => None,
+                  None => Some(v.clone()),
+                })
+                .collect::<Vec<_>>();
+
+              if let Some(lower) = lower {
+                if let Some(upper) = upper {
+                  if values_to_validate.len() < *lower || values_to_validate.len() > *upper {
+                    if lower == upper {
+                      self.add_error(format!(
+                        "object must contain exactly {} entries of key of type {}",
+                        lower, ident,
+                      ));
+                    } else {
+                      self.add_error(format!(
+                        "object must contain between {} and {} entries of key of type {}",
+                        lower, upper, ident,
+                      ));
+                    }
+
+                    return Ok(());
+                  }
+                }
+
+                if values_to_validate.len() < *lower {
+                  self.add_error(format!(
+                    "object must contain at least {} entries of key of type {}",
+                    lower, ident,
+                  ));
+
+                  return Ok(());
+                }
+              }
+
+              if let Some(upper) = upper {
+                if values_to_validate.len() > *upper {
+                  self.add_error(format!(
+                    "object must contain no more than {} entries of key of type {}",
+                    upper, ident,
+                  ));
+
+                  return Ok(());
+                }
+              }
 
               self.values_to_validate = Some(values_to_validate);
 
@@ -2623,6 +2733,31 @@ mod tests {
 
     let mut jv = JSONValidator::new(&cddl, json, None);
     jv.validate()?;
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_occurrences_in_object() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        limited = { 3* tstr => tstr }
+      "#
+    );
+
+    let json = r#"{ "A": "B" }"#;
+
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
+
+    let cddl = cddl.unwrap();
+
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    jv.validate().unwrap();
 
     Ok(())
   }
