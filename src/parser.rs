@@ -1416,7 +1416,13 @@ impl<'a> Parser<'a> {
         {
           comments_before_grpchoice
             .as_mut()
-            .and_then(|comments| if comments.0.len() > 1 { Some(comments.0.remove(0)) } else { None })
+            .and_then(|comments| {
+              if comments.0.len() > 1 {
+                Some(comments.0.remove(0))
+              } else {
+                None
+              }
+            })
             .map(|comment| Comments(vec![comment]))
         } else {
           None
@@ -1467,7 +1473,13 @@ impl<'a> Parser<'a> {
         {
           comments_before_grpchoice
             .as_mut()
-            .and_then(|comments| if comments.0.len() > 1 { Some(comments.0.remove(0)) } else { None })
+            .and_then(|comments| {
+              if comments.0.len() > 1 {
+                Some(comments.0.remove(0))
+              } else {
+                None
+              }
+            })
             .map(|comment| Comments(vec![comment]))
         } else {
           None

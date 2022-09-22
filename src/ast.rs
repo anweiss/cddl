@@ -677,9 +677,11 @@ impl<'a> Type<'a> {
     }) = self.type_choices.last_mut()
     {
       return match comments_after_type.as_mut() {
-        Some(comments) if comments.any_non_newline() && comments.0.len() > 1 => Some(Comments(comments.0.drain(1..).collect())),
-        _ => None
-      }
+        Some(comments) if comments.any_non_newline() && comments.0.len() > 1 => {
+          Some(Comments(comments.0.drain(1..).collect()))
+        }
+        _ => None,
+      };
     }
 
     None
