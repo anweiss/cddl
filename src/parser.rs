@@ -3577,7 +3577,7 @@ pub fn format_cddl_from_str(input: &str) -> result::Result<String, JsValue> {
       Err(Error::INCREMENTAL) => {
         if !p.errors.is_empty() {
           return Err(
-            JsValue::from_serde(
+            serde_wasm_bindgen::to_value(
               &p.errors
                 .iter()
                 .filter_map(|e| {
