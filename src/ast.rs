@@ -2,7 +2,10 @@
 extern crate console_error_panic_hook;
 
 use super::token::{ByteValue, RangeValue, SocketPlug, Token, Value};
-use std::{fmt, marker::PhantomData};
+use std::{
+  fmt::{self, Write},
+  marker::PhantomData,
+};
 
 #[cfg(feature = "std")]
 use std::borrow::Cow;
@@ -51,7 +54,7 @@ impl<'a> fmt::Display for Comments<'a> {
       if *comment == "\n" {
         comment_str.push('\n')
       } else {
-        comment_str.push_str(&format!(";{}\n", comment));
+        let _ = writeln!(comment_str, ";{}", comment);
       }
     }
 
@@ -99,15 +102,15 @@ impl<'a> fmt::Display for CDDL<'a> {
         cddl_output.push_str(&rule.to_string());
         previous_comments_after_rule = true;
       } else if idx == self.rules.len() - 1 || rule.has_single_line_type() {
-        cddl_output.push_str(&format!("{}\n", rule.to_string().trim_end()));
+        let _ = writeln!(cddl_output, "{}", rule.to_string().trim_end());
         previous_single_line_type = true;
         previous_comments_after_rule = false;
       } else if previous_single_line_type && !previous_comments_after_rule {
-        cddl_output.push_str(&format!("\n{}\n\n", rule.to_string().trim_end()));
+        let _ = write!(cddl_output, "\n{}\n\n", rule.to_string().trim_end());
         previous_single_line_type = false;
         previous_comments_after_rule = false;
       } else {
-        cddl_output.push_str(&format!("{}\n\n", rule.to_string().trim_end()));
+        let _ = write!(cddl_output, "{}\n\n", rule.to_string().trim_end());
         previous_comments_after_rule = false;
       }
     }
@@ -115,13 +118,13 @@ impl<'a> fmt::Display for CDDL<'a> {
     #[cfg(not(feature = "ast-comments"))]
     for (idx, rule) in self.rules.iter().enumerate() {
       if idx == self.rules.len() - 1 || rule.has_single_line_type() {
-        cddl_output.push_str(&format!("{}\n", rule.to_string().trim_end()));
+        let _ = writeln!(cddl_output, "{}", rule.to_string().trim_end());
         previous_single_line_type = true;
       } else if previous_single_line_type {
-        cddl_output.push_str(&format!("\n{}\n\n", rule.to_string().trim_end()));
+        let _ = write!(cddl_output, "\n{}\n\n", rule.to_string().trim_end());
         previous_single_line_type = false;
       } else {
-        cddl_output.push_str(&format!("{}\n\n", rule.to_string().trim_end()));
+        let _ = write!(cddl_output, "{}\n\n", rule.to_string().trim_end());
       }
     }
 
@@ -324,7 +327,7 @@ impl<'a> fmt::Display for Rule<'a> {
             if let Some(&"\n") = comments.0.first() {
               rule_str.push_str(&comments.to_string());
             } else {
-              rule_str.push_str(&format!(" {}", comments));
+              let _ = write!(rule_str, " {}", comments);
             }
           }
         }
@@ -347,7 +350,7 @@ impl<'a> fmt::Display for Rule<'a> {
             if let Some(&"\n") = comments.0.first() {
               rule_str.push_str(&comments.to_string());
             } else {
-              rule_str.push_str(&format!(" {}", comments));
+              let _ = write!(rule_str, " {}", comments);
             }
           }
         }
@@ -727,9 +730,9 @@ impl<'a> fmt::Display for Type<'a> {
       }
 
       if self.type_choices.len() > 2 {
-        type_str.push_str(&format!("\n\t/ {}", tc.type1));
+        let _ = write!(type_str, "\n\t/ {}", tc.type1);
       } else {
-        type_str.push_str(&format!(" / {}", tc.type1));
+        let _ = write!(type_str, " / {}", tc.type1);
       }
 
       #[cfg(feature = "ast-comments")]
@@ -914,7 +917,7 @@ impl<'a> fmt::Display for Type1<'a> {
       t1_str.push_str(&o.type2.to_string());
     } else if let Some(comments) = &self.comments_after_type {
       if comments.any_non_newline() {
-        t1_str.push_str(&format!(" {}", comments));
+        let _ = write!(t1_str, " {}", comments);
       }
     }
 
@@ -1259,7 +1262,7 @@ impl<'a> fmt::Display for Type2<'a> {
         #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_before_type {
           if comments.any_non_newline() {
-            pt_str.push_str(&format!(" {}\t", comments));
+            let _ = write!(pt_str, " {}\t", comments);
             pt_str.push_str(pt.to_string().trim_start());
           } else {
             pt_str.push_str(&pt.to_string());
@@ -1299,7 +1302,7 @@ impl<'a> fmt::Display for Type2<'a> {
         if let Some(comments) = comments_before_group {
           if comments.any_non_newline() {
             non_newline_comments_before_group = true;
-            t2_str.push_str(&format!(" {}\t", comments));
+            let _ = write!(t2_str, " {}\t", comments);
             t2_str.push_str(group.to_string().trim_start());
           } else {
             t2_str.push_str(&group.to_string());
@@ -1357,16 +1360,16 @@ impl<'a> fmt::Display for Type2<'a> {
             for (idx, comment) in comments.0.iter().enumerate() {
               if *comment != "\n" {
                 if idx == 0 {
-                  t2_str.push_str(&format!(" ;{}", comment));
+                  let _ = write!(t2_str, " ;{}", comment);
                 } else {
-                  t2_str.push_str(&format!("\t;{}\n", comment));
+                  let _ = writeln!(t2_str, "\t;{}", comment);
                 }
               } else {
                 t2_str.push('\n');
               }
             }
 
-            t2_str.push_str(&format!("\t{}", group.to_string().trim_start()));
+            let _ = write!(t2_str, "\t{}", group.to_string().trim_start());
           } else {
             t2_str.push_str(&group.to_string());
           }
@@ -1416,7 +1419,7 @@ impl<'a> fmt::Display for Type2<'a> {
         }
 
         if let Some(args) = generic_args {
-          t2_str.push_str(&format!("{}{}", ident, args));
+          let _ = write!(t2_str, "{}{}", ident, args);
         } else {
           t2_str.push_str(&ident.to_string());
         }
@@ -1477,7 +1480,7 @@ impl<'a> fmt::Display for Type2<'a> {
         }
 
         if let Some(ga) = generic_args {
-          t2_str.push_str(&format!("{}{}", ident, ga));
+          let _ = write!(t2_str, "{}{}", ident, ga);
         } else {
           t2_str.push_str(&ident.to_string());
         }
@@ -1496,7 +1499,7 @@ impl<'a> fmt::Display for Type2<'a> {
         let mut t2_str = String::from("#6");
 
         if let Some(tag_uint) = tag {
-          t2_str.push_str(&format!(".{}", tag_uint));
+          let _ = write!(t2_str, ".{}", tag_uint);
         }
 
         t2_str.push('(');
@@ -1504,7 +1507,7 @@ impl<'a> fmt::Display for Type2<'a> {
         #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_before_type {
           if comments.any_non_newline() {
-            t2_str.push_str(&format!(" {}", comments));
+            let _ = write!(t2_str, " {}", comments);
           }
         }
 
@@ -1513,7 +1516,7 @@ impl<'a> fmt::Display for Type2<'a> {
         #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_type {
           if comments.any_non_newline() {
-            t2_str.push_str(&format!(" {}", comments));
+            let _ = write!(t2_str, " {}", comments);
           }
         }
 
@@ -1937,9 +1940,9 @@ impl<'a> fmt::Display for Group<'a> {
       }
 
       if self.group_choices.len() <= 2 {
-        group_str.push_str(&format!("// {} ", gc_str));
+        let _ = write!(group_str, "// {} ", gc_str);
       } else {
-        group_str.push_str(&format!("\t// {}\n", gc_str));
+        let _ = writeln!(group_str, "\t// {}", gc_str);
       }
     }
 
@@ -2031,10 +2034,11 @@ impl<'a> fmt::Display for GroupChoice<'a> {
     let mut gc_str = String::new();
 
     if self.group_entries.len() == 1 {
-      gc_str.push_str(&format!(
+      let _ = write!(
+        gc_str,
         " {}{}",
         self.group_entries[0].0, self.group_entries[0].1
-      ));
+      );
 
       #[cfg(feature = "ast-comments")]
       if !self.group_entries[0].1.has_trailing_comments() {
@@ -2122,23 +2126,24 @@ impl<'a> fmt::Display for GroupChoice<'a> {
       if entries_with_comment_before_comma.iter().any(|e| e.1) {
         if idx == 0 {
           if entries_with_comment_before_comma[idx].1 {
-            gc_str.push_str(&format!("{}", ge.0));
+            let _ = write!(gc_str, "{}", ge.0);
           } else {
-            gc_str.push_str(&format!("{}\n", ge.0));
+            let _ = writeln!(gc_str, "{}", ge.0);
           }
         } else if entries_with_comment_before_comma[idx].1 {
-          gc_str.push_str(&format!(", {}", ge.0));
+          let _ = write!(gc_str, ", {}", ge.0);
         } else if idx != self.group_entries.len() - 1 {
-          gc_str.push_str(&format!(", {}\n", ge.0.to_string().trim_end()));
+          let _ = writeln!(gc_str, ", {}", ge.0.to_string().trim_end());
         } else {
-          gc_str.push_str(&format!(", {}", ge.0.to_string().trim_end()));
+          let _ = write!(gc_str, ", {}", ge.0.to_string().trim_end());
         }
       } else {
-        gc_str.push_str(&format!(
+        let _ = write!(
+          gc_str,
           "{}{}",
           ge.0.to_string().trim_end(),
           ge.1.to_string().trim_end()
-        ));
+        );
 
         // if idx != self.group_entries.len() - 1 {
         //   gc_str.push_str(",");
@@ -2151,11 +2156,12 @@ impl<'a> fmt::Display for GroupChoice<'a> {
 
       #[cfg(not(feature = "ast-comments"))]
       {
-        gc_str.push_str(&format!(
+        let _ = write!(
+          gc_str,
           "{}{}",
           ge.0.to_string().trim_end(),
           ge.1.to_string().trim_end()
-        ));
+        );
 
         // if idx != self.group_entries.len() - 1 {
         //   gc_str.push_str(",");
@@ -2307,13 +2313,13 @@ impl<'a> fmt::Display for OptionalComma<'a> {
 
         for (idx, &comment) in comments.0.iter().enumerate() {
           if idx == 0 && comment != "\n" {
-            optcomma_str.push_str(&format!(";{}\n", comment));
+            let _ = writeln!(optcomma_str, ";{}", comment);
           } else if idx == 0 {
             optcomma_str.push_str(comment);
           } else if comment != "\n" {
-            optcomma_str.push_str(&format!("\t;{}\n", comment));
+            let _ = writeln!(optcomma_str, "\t;{}", comment);
           } else {
-            optcomma_str.push_str(&format!("\t{}", comment));
+            let _ = write!(optcomma_str, "\t{}", comment);
           }
         }
       }
@@ -2357,7 +2363,7 @@ impl<'a> fmt::Display for GroupEntry<'a> {
         #[cfg(feature = "ast-comments")]
         if let Some(comments) = trailing_comments {
           if comments.any_non_newline() {
-            ge_str.push_str(&format!(" {}", comments));
+            let _ = write!(ge_str, " {}", comments);
           }
         }
 
@@ -2383,7 +2389,7 @@ impl<'a> fmt::Display for GroupEntry<'a> {
         #[cfg(feature = "ast-comments")]
         if let Some(comments) = trailing_comments {
           if comments.any_non_newline() {
-            ge_str.push_str(&format!(" {}", comments));
+            let _ = write!(ge_str, " {}", comments);
           }
         }
 
@@ -2401,7 +2407,7 @@ impl<'a> fmt::Display for GroupEntry<'a> {
         let mut ge_str = String::new();
 
         if let Some(o) = occur {
-          ge_str.push_str(&format!("{} ", o.occur));
+          let _ = write!(ge_str, "{} ", o.occur);
 
           #[cfg(feature = "ast-comments")]
           if let Some(comments) = &o.comments {
@@ -2419,14 +2425,14 @@ impl<'a> fmt::Display for GroupEntry<'a> {
           if comments.any_non_newline() {
             non_newline_comments_before_group = true;
 
-            ge_str.push_str(&format!(" {}", comments));
+            let _ = write!(ge_str, " {}", comments);
 
             if !group
               .group_choices
               .iter()
               .all(|gc| gc.group_entries.is_empty())
             {
-              ge_str.push_str(&format!("\t{}", group.to_string().trim_start()));
+              let _ = write!(ge_str, "\t{}", group.to_string().trim_start());
             }
           } else {
             ge_str.push_str(&group.to_string());
@@ -2521,11 +2527,11 @@ impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
     let mut vmke_str = String::new();
 
     if let Some(o) = &self.occur {
-      vmke_str.push_str(&format!("{} ", o));
+      let _ = write!(vmke_str, "{} ", o);
     }
 
     if let Some(mk) = &self.member_key {
-      vmke_str.push_str(&format!("{} ", mk));
+      let _ = write!(vmke_str, "{} ", mk);
     }
 
     vmke_str.push_str(&self.entry_type.to_string());
@@ -2552,7 +2558,7 @@ impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
     let mut tge_str = String::new();
 
     if let Some(o) = &self.occur {
-      tge_str.push_str(&format!("{} ", o));
+      let _ = write!(tge_str, "{} ", o);
     }
 
     tge_str.push_str(&self.name.to_string());
@@ -2694,7 +2700,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
         #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_arrowmap {
           if comments.any_non_newline() {
-            mk_str.push_str(&format!(" {}", comments));
+            let _ = write!(mk_str, " {}", comments);
           }
         }
 
@@ -2713,7 +2719,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
         #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments {
           if comments.any_non_newline() {
-            mk_str.push_str(&format!(" {}", comments));
+            let _ = write!(mk_str, " {}", comments);
           }
         }
 
@@ -2722,7 +2728,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
         #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_colon {
           if comments.any_non_newline() {
-            mk_str.push_str(&format!(" {}", comments));
+            let _ = write!(mk_str, " {}", comments);
           }
         }
 
@@ -2741,7 +2747,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
         #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments {
           if comments.any_non_newline() {
-            mk_str.push_str(&format!(" {}", comments));
+            let _ = write!(mk_str, " {}", comments);
           }
         }
 
@@ -2750,7 +2756,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
         #[cfg(feature = "ast-comments")]
         if let Some(comments) = comments_after_colon {
           if comments.any_non_newline() {
-            mk_str.push_str(&format!(" {}", comments));
+            let _ = write!(mk_str, " {}", comments);
           }
         }
 

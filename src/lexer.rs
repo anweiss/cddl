@@ -1015,11 +1015,11 @@ fn is_ealpha(ch: char) -> bool {
 }
 
 fn is_digit(ch: char) -> bool {
-  ch.is_digit(10)
+  ch.is_ascii_hexdigit()
 }
 
 fn is_hexdigit(ch: char) -> bool {
-  ch.is_digit(16)
+  ch.is_ascii_hexdigit()
 }
 
 #[cfg(test)]

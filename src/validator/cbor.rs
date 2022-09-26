@@ -9,7 +9,12 @@ use crate::{
   visitor::{self, *},
 };
 
-use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
+use std::{
+  borrow::Cow,
+  collections::HashMap,
+  convert::TryFrom,
+  fmt::{self, Write},
+};
 
 use chrono::{TimeZone, Utc};
 use ciborium::value::Value;
@@ -44,7 +49,7 @@ impl<T: std::fmt::Debug> fmt::Display for Error<T> {
       Error::Validation(errors) => {
         let mut error_str = String::new();
         for e in errors.iter() {
-          error_str.push_str(&format!("{}\n", e));
+          let _ = writeln!(error_str, "{}", e);
         }
         write!(f, "{}", error_str)
       }
@@ -97,7 +102,7 @@ impl fmt::Display for ValidationError {
       error_str.push_str(" type choice in group to choice enumeration");
     }
     if let Some(entry) = &self.type_group_name_entry {
-      error_str.push_str(&format!(" group entry associated with rule \"{}\"", entry));
+      let _ = write!(error_str, " group entry associated with rule \"{}\"", entry);
     }
 
     write!(
@@ -368,7 +373,7 @@ impl<'a> CBORValidator<'a> {
       }
 
       match validate_array_occurrence(
-        self.occurrence.as_ref().take(),
+        self.occurrence.as_ref(),
         self.entry_counts.as_ref().map(|ec| &ec[..]),
         a,
       ) {
@@ -392,8 +397,7 @@ impl<'a> CBORValidator<'a> {
               cv.eval_generic_rule = self.eval_generic_rule;
               cv.ctrl = self.ctrl.clone();
               cv.is_multi_type_choice = self.is_multi_type_choice;
-              cv.cbor_location
-                .push_str(&format!("{}/{}", self.cbor_location, idx));
+              let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
 
               match token {
                 ArrayItemToken::Value(value) => cv.visit_value(value)?,
@@ -446,8 +450,7 @@ impl<'a> CBORValidator<'a> {
                 cv.eval_generic_rule = self.eval_generic_rule;
                 cv.is_multi_type_choice = self.is_multi_type_choice;
                 cv.ctrl = self.ctrl.clone();
-                cv.cbor_location
-                  .push_str(&format!("{}/{}", self.cbor_location, idx));
+                let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
 
                 match token {
                   ArrayItemToken::Value(value) => cv.visit_value(value)?,
@@ -2593,7 +2596,7 @@ where
               .get_or_insert(vec![k.clone()])
               .push(k.clone());
             self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{:?}", v));
+            let _ = write!(self.cbor_location, "/{:?}", v);
           } else {
             self.add_error(format!("map requires entry key of type {}", ident));
           }
@@ -2608,7 +2611,7 @@ where
               .get_or_insert(vec![k.clone()])
               .push(k.clone());
             self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{:?}", v));
+            let _ = write!(self.cbor_location, "/{:?}", v);
           } else {
             self.add_error(format!("map requires entry key of type {}", ident));
           }
@@ -2622,7 +2625,7 @@ where
               .get_or_insert(vec![k.clone()])
               .push(k.clone());
             self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{:?}", v));
+            let _ = write!(self.cbor_location, "/{:?}", v);
           } else {
             self.add_error(format!("map requires entry key of type {}", ident));
           }
@@ -2636,7 +2639,7 @@ where
               .get_or_insert(vec![k.clone()])
               .push(k.clone());
             self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{:?}", v));
+            let _ = write!(self.cbor_location, "/{:?}", v);
           } else {
             self.add_error(format!("map requires entry key of type {}", ident));
           }
@@ -2650,7 +2653,7 @@ where
               .get_or_insert(vec![k.clone()])
               .push(k.clone());
             self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{:?}", v));
+            let _ = write!(self.cbor_location, "/{:?}", v);
           } else {
             self.add_error(format!("map requires entry key of type {}", ident));
           }
@@ -2664,7 +2667,7 @@ where
               .get_or_insert(vec![k.clone()])
               .push(k.clone());
             self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{:?}", v));
+            let _ = write!(self.cbor_location, "/{:?}", v);
           } else {
             self.add_error(format!("map requires entry key of type {}", ident));
           }
@@ -3193,7 +3196,7 @@ where
         {
           self.validated_keys.get_or_insert(vec![k.clone()]).push(k);
           self.object_value = Some(v.clone());
-          self.cbor_location.push_str(&format!("/{}", value));
+          let _ = write!(self.cbor_location, "/{}", value);
 
           None
         } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =

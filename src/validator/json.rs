@@ -9,7 +9,12 @@ use crate::{
   visitor::{self, *},
 };
 
-use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
+use std::{
+  borrow::Cow,
+  collections::HashMap,
+  convert::TryFrom,
+  fmt::{self, Write},
+};
 
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
@@ -41,7 +46,7 @@ impl fmt::Display for Error {
       Error::Validation(errors) => {
         let mut error_str = String::new();
         for e in errors.iter() {
-          error_str.push_str(&format!("{}\n", e));
+          let _ = writeln!(error_str, "{}", e);
         }
         write!(f, "{}", error_str)
       }
@@ -108,7 +113,7 @@ impl fmt::Display for ValidationError {
       error_str.push_str(" type choice in group to choice enumeration");
     }
     if let Some(entry) = &self.type_group_name_entry {
-      error_str.push_str(&format!(" group entry associated with rule \"{}\"", entry));
+      let _ = write!(error_str, " group entry associated with rule \"{}\"", entry);
     }
 
     if self.json_location.is_empty() {
@@ -374,7 +379,7 @@ impl<'a> JSONValidator<'a> {
       }
 
       match validate_array_occurrence(
-        self.occurrence.as_ref().take(),
+        self.occurrence.as_ref(),
         self.entry_counts.as_ref().map(|ec| &ec[..]),
         a,
       ) {
@@ -398,8 +403,7 @@ impl<'a> JSONValidator<'a> {
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.is_multi_type_choice = self.is_multi_type_choice;
               jv.ctrl = self.ctrl.clone();
-              jv.json_location
-                .push_str(&format!("{}/{}", self.json_location, idx));
+              let _ = write!(jv.json_location, "{}/{}", self.json_location, idx);
 
               match token {
                 ArrayItemToken::Value(value) => jv.visit_value(value)?,
@@ -444,8 +448,7 @@ impl<'a> JSONValidator<'a> {
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.is_multi_type_choice = self.is_multi_type_choice;
               jv.ctrl = self.ctrl.clone();
-              jv.json_location
-                .push_str(&format!("{}/{}", self.json_location, idx));
+              let _ = write!(jv.json_location, "{}/{}", self.json_location, idx);
 
               match token {
                 ArrayItemToken::Value(value) => jv.visit_value(value)?,
@@ -496,7 +499,7 @@ impl<'a> JSONValidator<'a> {
             .get_or_insert(vec![t.to_string()])
             .push(t.to_string());
           self.object_value = Some(v.clone());
-          self.json_location.push_str(&format!("/{}", t));
+          let _ = write!(self.json_location, "/{}", t);
 
           return Ok(());
         } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =

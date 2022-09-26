@@ -3482,7 +3482,7 @@ impl<'a> CDDL<'a> {
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(not(feature = "std"))]
-pub fn cddl_from_str<'a>(input: &'a str) -> std::result::Result<CDDL<'a>, String> {
+pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL, String> {
   match Parser::new(input, Box::new(lexer::lexer_from_str(input).iter())).map_err(|e| e.to_string())
   {
     Ok(mut p) => match p.parse_cddl() {

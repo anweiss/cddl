@@ -466,7 +466,7 @@ impl std::str::FromStr for SocketPlug {
   }
 }
 
-impl<'a> fmt::Display for SocketPlug {
+impl fmt::Display for SocketPlug {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       SocketPlug::TYPE => write!(f, "$"),

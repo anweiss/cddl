@@ -303,10 +303,10 @@ pub fn validate_cbor_from_slice(
 
 /// Find non-choice alternate rule from a given identifier
 pub fn rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&'a Rule<'a>> {
-  cddl.rules.iter().find_map(|r| match r {
-    Rule::Type { rule, .. } if rule.name == *ident && !rule.is_type_choice_alternate => Some(r),
-    Rule::Group { rule, .. } if rule.name == *ident && !rule.is_group_choice_alternate => Some(r),
-    _ => None,
+  cddl.rules.iter().find(|r| match r {
+    Rule::Type { rule, .. } if rule.name == *ident && !rule.is_type_choice_alternate => true,
+    Rule::Group { rule, .. } if rule.name == *ident && !rule.is_group_choice_alternate => true,
+    _ => false,
   })
 }
 
