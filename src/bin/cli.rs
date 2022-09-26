@@ -11,6 +11,7 @@ use clap::{ArgGroup, Args, Parser, Subcommand};
 use simplelog::*;
 use std::{
   error::Error,
+  fmt::Write,
   fs::{self, File},
   io::{self, BufReader, Read},
   path::Path,
@@ -126,9 +127,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut feature_str = String::from("enabled features: [");
         for (idx, feature) in enabled_features.iter().enumerate() {
           if idx == 0 {
-            feature_str.push_str(&format!("\"{}\"", feature));
+            let _ = write!(feature_str, "\"{}\"", feature);
           } else {
-            feature_str.push_str(&format!(", \"{}\"", feature));
+            let _ = write!(feature_str, ", \"{}\"", feature);
           }
         }
         feature_str.push(']');

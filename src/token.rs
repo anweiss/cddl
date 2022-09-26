@@ -404,7 +404,7 @@ impl<'a> From<&'a str> for Value<'a> {
 
 /// Byte string values
 #[cfg_attr(target_arch = "wasm32", derive(Serialize, Deserialize))]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ByteValue<'a> {
   /// Unprefixed byte string value
   UTF8(Cow<'a, [u8]>),
@@ -438,7 +438,7 @@ impl<'a> fmt::Display for ByteValue<'a> {
 
 /// Socket/plug prefix
 #[cfg_attr(target_arch = "wasm32", derive(Serialize, Deserialize))]
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SocketPlug {
   /// Type socket `$`
   TYPE,
@@ -466,7 +466,7 @@ impl std::str::FromStr for SocketPlug {
   }
 }
 
-impl<'a> fmt::Display for SocketPlug {
+impl fmt::Display for SocketPlug {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       SocketPlug::TYPE => write!(f, "$"),

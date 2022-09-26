@@ -3482,7 +3482,7 @@ impl<'a> CDDL<'a> {
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(not(feature = "std"))]
-pub fn cddl_from_str<'a>(input: &'a str) -> std::result::Result<CDDL<'a>, String> {
+pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL, String> {
   match Parser::new(input, Box::new(lexer::lexer_from_str(input).iter())).map_err(|e| e.to_string())
   {
     Ok(mut p) => match p.parse_cddl() {
@@ -3529,11 +3529,11 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
 
   match Parser::new(input, Box::new(lexer::Lexer::new(input).iter())) {
     Ok(mut p) => match p.parse_cddl() {
-      Ok(c) => JsValue::from_serde(&c).map_err(|e| JsValue::from(e.to_string())),
+      Ok(c) => serde_wasm_bindgen::to_value(&c).map_err(|e| JsValue::from(e.to_string())),
       Err(Error::INCREMENTAL) => {
         if !p.errors.is_empty() {
           return Err(
-            JsValue::from_serde(
+            serde_wasm_bindgen::to_value(
               &p.errors
                 .iter()
                 .filter_map(|e| {

@@ -9,7 +9,12 @@ use crate::{
   visitor::{self, *},
 };
 
-use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
+use std::{
+  borrow::Cow,
+  collections::HashMap,
+  convert::TryFrom,
+  fmt::{self, Write},
+};
 
 use chrono::{TimeZone, Utc};
 use ciborium::value::Value;
@@ -44,7 +49,7 @@ impl<T: std::fmt::Debug> fmt::Display for Error<T> {
       Error::Validation(errors) => {
         let mut error_str = String::new();
         for e in errors.iter() {
-          error_str.push_str(&format!("{}\n", e));
+          let _ = writeln!(error_str, "{}", e);
         }
         write!(f, "{}", error_str)
       }
@@ -97,7 +102,7 @@ impl fmt::Display for ValidationError {
       error_str.push_str(" type choice in group to choice enumeration");
     }
     if let Some(entry) = &self.type_group_name_entry {
-      error_str.push_str(&format!(" group entry associated with rule \"{}\"", entry));
+      let _ = write!(error_str, " group entry associated with rule \"{}\"", entry);
     }
 
     write!(
@@ -368,7 +373,7 @@ impl<'a> CBORValidator<'a> {
       }
 
       match validate_array_occurrence(
-        self.occurrence.as_ref().take(),
+        self.occurrence.as_ref(),
         self.entry_counts.as_ref().map(|ec| &ec[..]),
         a,
       ) {
@@ -392,8 +397,7 @@ impl<'a> CBORValidator<'a> {
               cv.eval_generic_rule = self.eval_generic_rule;
               cv.ctrl = self.ctrl.clone();
               cv.is_multi_type_choice = self.is_multi_type_choice;
-              cv.cbor_location
-                .push_str(&format!("{}/{}", self.cbor_location, idx));
+              let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
 
               match token {
                 ArrayItemToken::Value(value) => cv.visit_value(value)?,
@@ -446,8 +450,7 @@ impl<'a> CBORValidator<'a> {
                 cv.eval_generic_rule = self.eval_generic_rule;
                 cv.is_multi_type_choice = self.is_multi_type_choice;
                 cv.ctrl = self.ctrl.clone();
-                cv.cbor_location
-                  .push_str(&format!("{}/{}", self.cbor_location, idx));
+                let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
 
                 match token {
                   ArrayItemToken::Value(value) => cv.visit_value(value)?,
@@ -2293,6 +2296,184 @@ where
       Value::Array(_) => self.validate_array_items(&ArrayItemToken::Identifier(ident)),
       Value::Map(m) => {
         if let Some(occur) = &self.occurrence {
+          let mut errors = Vec::new();
+
+          if is_ident_string_data_type(self.cddl, ident) {
+            let values_to_validate = m
+              .iter()
+              .filter_map(|(k, v)| {
+                if let Some(keys) = &self.validated_keys {
+                  if !keys.contains(k) {
+                    if matches!(k, Value::Text(_)) {
+                      Some(v.clone())
+                    } else {
+                      errors.push(format!("key of type {} required, got {:?}", ident, k));
+                      None
+                    }
+                  } else {
+                    None
+                  }
+                } else if matches!(k, Value::Text(_)) {
+                  Some(v.clone())
+                } else {
+                  errors.push(format!("key of type {} required, got {:?}", ident, k));
+                  None
+                }
+              })
+              .collect::<Vec<_>>();
+
+            self.values_to_validate = Some(values_to_validate);
+          }
+
+          if is_ident_integer_data_type(self.cddl, ident) {
+            let mut errors = Vec::new();
+            let values_to_validate = m
+              .iter()
+              .filter_map(|(k, v)| {
+                if let Some(keys) = &self.validated_keys {
+                  if !keys.contains(k) {
+                    if matches!(k, Value::Integer(_)) {
+                      Some(v.clone())
+                    } else {
+                      errors.push(format!("key of type {} required, got {:?}", ident, k));
+                      None
+                    }
+                  } else {
+                    None
+                  }
+                } else if matches!(k, Value::Integer(_)) {
+                  Some(v.clone())
+                } else {
+                  errors.push(format!("key of type {} required, got {:?}", ident, k));
+                  None
+                }
+              })
+              .collect::<Vec<_>>();
+
+            self.values_to_validate = Some(values_to_validate);
+          }
+
+          if is_ident_bool_data_type(self.cddl, ident) {
+            let mut errors = Vec::new();
+            let values_to_validate = m
+              .iter()
+              .filter_map(|(k, v)| {
+                if let Some(keys) = &self.validated_keys {
+                  if !keys.contains(k) {
+                    if matches!(k, Value::Bool(_)) {
+                      Some(v.clone())
+                    } else {
+                      errors.push(format!("key of type {} required, got {:?}", ident, k));
+                      None
+                    }
+                  } else {
+                    None
+                  }
+                } else if matches!(k, Value::Bool(_)) {
+                  Some(v.clone())
+                } else {
+                  errors.push(format!("key of type {} required, got {:?}", ident, k));
+                  None
+                }
+              })
+              .collect::<Vec<_>>();
+
+            self.values_to_validate = Some(values_to_validate);
+          }
+
+          if is_ident_byte_string_data_type(self.cddl, ident) {
+            let mut errors = Vec::new();
+            let values_to_validate = m
+              .iter()
+              .filter_map(|(k, v)| {
+                if let Some(keys) = &self.validated_keys {
+                  if !keys.contains(k) {
+                    if matches!(k, Value::Bytes(_)) {
+                      Some(v.clone())
+                    } else {
+                      errors.push(format!("key of type {} required, got {:?}", ident, k));
+                      None
+                    }
+                  } else {
+                    None
+                  }
+                } else if matches!(k, Value::Bytes(_)) {
+                  Some(v.clone())
+                } else {
+                  errors.push(format!("key of type {} required, got {:?}", ident, k));
+                  None
+                }
+              })
+              .collect::<Vec<_>>();
+
+            self.values_to_validate = Some(values_to_validate);
+          }
+
+          if is_ident_null_data_type(self.cddl, ident) {
+            let mut errors = Vec::new();
+            let values_to_validate = m
+              .iter()
+              .filter_map(|(k, v)| {
+                if let Some(keys) = &self.validated_keys {
+                  if !keys.contains(k) {
+                    if matches!(k, Value::Null) {
+                      Some(v.clone())
+                    } else {
+                      errors.push(format!("key of type {} required, got {:?}", ident, k));
+                      None
+                    }
+                  } else {
+                    None
+                  }
+                } else if matches!(k, Value::Null) {
+                  Some(v.clone())
+                } else {
+                  errors.push(format!("key of type {} required, got {:?}", ident, k));
+                  None
+                }
+              })
+              .collect::<Vec<_>>();
+
+            self.values_to_validate = Some(values_to_validate);
+          }
+
+          if is_ident_float_data_type(self.cddl, ident) {
+            let mut errors = Vec::new();
+            let values_to_validate = m
+              .iter()
+              .filter_map(|(k, v)| {
+                if let Some(keys) = &self.validated_keys {
+                  if !keys.contains(k) {
+                    if matches!(k, Value::Float(_)) {
+                      Some(v.clone())
+                    } else {
+                      errors.push(format!("key of type {} required, got {:?}", ident, k));
+                      None
+                    }
+                  } else {
+                    None
+                  }
+                } else if matches!(k, Value::Float(_)) {
+                  Some(v.clone())
+                } else {
+                  errors.push(format!("key of type {} required, got {:?}", ident, k));
+                  None
+                }
+              })
+              .collect::<Vec<_>>();
+
+            self.values_to_validate = Some(values_to_validate);
+          }
+
+          // If key validation error occurs, return early before checking occurrences
+          if !errors.is_empty() {
+            for e in errors.into_iter() {
+              self.add_error(e);
+            }
+
+            return Ok(());
+          }
+
           #[cfg(feature = "ast-span")]
           if let Occur::ZeroOrMore(_) | Occur::OneOrMore(_) = occur {
             if let Occur::OneOrMore(_) = occur {
@@ -2304,200 +2485,46 @@ where
                 return Ok(());
               }
             }
-
-            if is_ident_string_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Text(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
+          } else if let Occur::Exact { lower, upper, .. } = occur {
+            if let Some(values_to_validate) = &self.values_to_validate {
+              if let Some(lower) = lower {
+                if let Some(upper) = upper {
+                  if values_to_validate.len() < *lower || values_to_validate.len() > *upper {
+                    if lower == upper {
+                      self.add_error(format!(
+                        "object must contain exactly {} entries of key of type {}",
+                        lower, ident,
+                      ));
                     } else {
-                      None
+                      self.add_error(format!(
+                        "object must contain between {} and {} entries of key of type {}",
+                        lower, upper, ident,
+                      ));
                     }
-                  } else if matches!(k, Value::Text(_)) {
-                    Some(v.clone())
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
 
-              self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
+                    return Ok(());
+                  }
+                }
+
+                if values_to_validate.len() < *lower {
+                  self.add_error(format!(
+                    "object must contain at least {} entries of key of type {}",
+                    lower, ident,
+                  ));
+
+                  return Ok(());
+                }
               }
 
-              return Ok(());
-            }
+              if let Some(upper) = upper {
+                if values_to_validate.len() > *upper {
+                  self.add_error(format!(
+                    "object must contain no more than {} entries of key of type {}",
+                    upper, ident,
+                  ));
 
-            if is_ident_integer_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Integer(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Integer(_)) {
-                    Some(v.clone())
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
-              }
-
-              return Ok(());
-            }
-
-            if is_ident_bool_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Bool(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Bool(_)) {
-                    Some(v.clone())
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
-              }
-
-              return Ok(());
-            }
-
-            if is_ident_byte_string_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Bytes(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Bytes(_)) {
-                    Some(v.clone())
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
-              }
-
-              return Ok(());
-            }
-
-            if is_ident_null_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Null) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Null) {
-                    Some(v.clone())
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
-              }
-
-              return Ok(());
-            }
-
-            if is_ident_float_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Float(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Float(_)) {
-                    Some(v.clone())
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
+                  return Ok(());
+                }
               }
 
               return Ok(());
@@ -2507,208 +2534,54 @@ where
           #[cfg(not(feature = "ast-span"))]
           if let Occur::ZeroOrMore | Occur::OneOrMore = occur {
             if let Occur::OneOrMore = occur {
-              if m.is_empty() {
+              if o.is_empty() {
                 self.add_error(format!(
-                  "map cannot be empty, one or more entries with key type {} required",
+                  "object cannot be empty, one or more entries with key type {} required",
                   ident
                 ));
                 return Ok(());
               }
             }
-
-            if is_ident_string_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Text(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
+          } else if let Occur::Exact { lower, upper } = occur {
+            if let Some(values_to_validate) = &self.values_to_validate {
+              if let Some(lower) = lower {
+                if let Some(upper) = upper {
+                  if values_to_validate.len() < *lower || values_to_validate.len() > *upper {
+                    if lower == upper {
+                      self.add_error(format!(
+                        "object must contain exactly {} entries of key of type {}",
+                        lower, ident,
+                      ));
                     } else {
-                      None
+                      self.add_error(format!(
+                        "object must contain between {} and {} entries of key of type {}",
+                        lower, upper, ident,
+                      ));
                     }
-                  } else if matches!(k, Value::Text(_)) {
-                    Some(v.clone())
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
 
-              self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
+                    return Ok(());
+                  }
+                }
+
+                if values_to_validate.len() < *lower {
+                  self.add_error(format!(
+                    "object must contain at least {} entries of key of type {}",
+                    lower, ident,
+                  ));
+
+                  return Ok(());
+                }
               }
 
-              return Ok(());
-            }
+              if let Some(upper) = upper {
+                if values_to_validate.len() > *upper {
+                  self.add_error(format!(
+                    "object must contain no more than {} entries of key of type {}",
+                    upper, ident,
+                  ));
 
-            if is_ident_integer_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Integer(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Integer(_)) {
-                    Some(v.clone())
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
-              }
-
-              return Ok(());
-            }
-
-            if is_ident_bool_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Bool(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Bool(_)) {
-                    Some(v.clone())
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
-              }
-
-              return Ok(());
-            }
-
-            if is_ident_byte_string_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Bytes(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Bytes(_)) {
-                    Some(v.clone())
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
-              }
-
-              return Ok(());
-            }
-
-            if is_ident_null_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Null) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Null) {
-                    Some(v.clone())
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
-              }
-
-              return Ok(());
-            }
-
-            if is_ident_float_data_type(self.cddl, ident) {
-              let mut errors = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Float(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Float(_)) {
-                    Some(v.clone())
-                  } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self.values_to_validate = Some(values_to_validate);
-              for e in errors.into_iter() {
-                self.add_error(e);
+                  return Ok(());
+                }
               }
 
               return Ok(());
@@ -2723,7 +2596,7 @@ where
               .get_or_insert(vec![k.clone()])
               .push(k.clone());
             self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{:?}", v));
+            let _ = write!(self.cbor_location, "/{:?}", v);
           } else {
             self.add_error(format!("map requires entry key of type {}", ident));
           }
@@ -2738,7 +2611,7 @@ where
               .get_or_insert(vec![k.clone()])
               .push(k.clone());
             self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{:?}", v));
+            let _ = write!(self.cbor_location, "/{:?}", v);
           } else {
             self.add_error(format!("map requires entry key of type {}", ident));
           }
@@ -2752,7 +2625,7 @@ where
               .get_or_insert(vec![k.clone()])
               .push(k.clone());
             self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{:?}", v));
+            let _ = write!(self.cbor_location, "/{:?}", v);
           } else {
             self.add_error(format!("map requires entry key of type {}", ident));
           }
@@ -2766,7 +2639,7 @@ where
               .get_or_insert(vec![k.clone()])
               .push(k.clone());
             self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{:?}", v));
+            let _ = write!(self.cbor_location, "/{:?}", v);
           } else {
             self.add_error(format!("map requires entry key of type {}", ident));
           }
@@ -2780,7 +2653,7 @@ where
               .get_or_insert(vec![k.clone()])
               .push(k.clone());
             self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{:?}", v));
+            let _ = write!(self.cbor_location, "/{:?}", v);
           } else {
             self.add_error(format!("map requires entry key of type {}", ident));
           }
@@ -2794,7 +2667,7 @@ where
               .get_or_insert(vec![k.clone()])
               .push(k.clone());
             self.object_value = Some(v.clone());
-            self.cbor_location.push_str(&format!("/{:?}", v));
+            let _ = write!(self.cbor_location, "/{:?}", v);
           } else {
             self.add_error(format!("map requires entry key of type {}", ident));
           }
@@ -3323,7 +3196,7 @@ where
         {
           self.validated_keys.get_or_insert(vec![k.clone()]).push(k);
           self.object_value = Some(v.clone());
-          self.cbor_location.push_str(&format!("/{}", value));
+          let _ = write!(self.cbor_location, "/{}", value);
 
           None
         } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
