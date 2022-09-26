@@ -1897,38 +1897,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         Ok(())
       }
       Value::Array(_) => self.validate_array_items(&ArrayItemToken::Identifier(ident)),
-      Value::Object(o) => match &self.occurrence {
-        #[cfg(feature = "ast-span")]
-        Some(Occur::Optional(_)) | None => {
-          if token::lookup_ident(ident.ident)
-            .in_standard_prelude()
-            .is_some()
-          {
-            self.add_error(format!(
-              "expected object value of type {}, got object",
-              ident.ident
-            ));
-            return Ok(());
-          }
-
-          self.visit_value(&token::Value::TEXT(ident.ident.into()))
-        }
-        #[cfg(not(feature = "ast-span"))]
-        Some(Occur::Optional) | None => {
-          if token::lookup_ident(ident.ident)
-            .in_standard_prelude()
-            .is_some()
-          {
-            self.add_error(format!(
-              "expected object value of type {}, got object",
-              ident.ident
-            ));
-            return Ok(());
-          }
-
-          self.visit_value(&token::Value::TEXT(ident.ident.into()))
-        }
-        Some(occur) => {
+      Value::Object(o) => {
+        if let Some(occur) = &self.occurrence {
           if is_ident_string_data_type(self.cddl, ident) {
             let values_to_validate = o
               .iter()
@@ -2055,6 +2025,9 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               return Ok(());
             }
           }
+
+          return Ok(());
+        }
 
           Ok(())
         }
