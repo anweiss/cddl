@@ -1867,7 +1867,7 @@ mod tests {
   }
 
   #[test]
-  fn verify_comment() -> Result<()> {
+  fn simple_type_choice_comments() -> Result<()> {
     let input = indoc!(
       r#"
         ; general_comment
@@ -1878,7 +1878,7 @@ mod tests {
           ; comments_after_type
           /
           ; comments_before_type
-          456
+          456 ; comments_after_type2
         ; comments_after_rule
       "#
     );
@@ -1915,7 +1915,7 @@ mod tests {
                     span: (117, 120, 9),
                   },
                   operator: None,
-                  comments_after_type: None,
+                  comments_after_type: Some(Comments(vec![" comments_after_type2"])),
                   span: (117, 120, 9),
                 },
                 comments_before_type: Some(Comments(vec![" comments_before_type"])),
@@ -1932,6 +1932,491 @@ mod tests {
         span: (19, 120, 3),
       }],
       comments: Some(Comments(vec![" general_comment"])),
+    };
+
+    let parser = Parser::new(input, Box::new(Lexer::new(input).iter()))?.parse_cddl()?;
+    assert_eq!(parser, expected_output);
+    assert_eq!(parser.to_string(), expected_output.to_string());
+
+    Ok(())
+  }
+
+  #[test]
+  fn simple_group_comments() -> Result<()> {
+    let input = indoc!(
+      r#"
+        address = [
+          bytes, ; @name address
+          uint   ; @name checksum
+        ]
+      "#
+    );
+
+    let expected_output = CDDL {
+      rules: vec![Rule::Type {
+        rule: TypeRule {
+          name: Identifier {
+            ident: "address",
+            socket: None,
+            span: (0, 7, 1),
+          },
+          generic_params: None,
+          is_type_choice_alternate: false,
+          value: Type {
+            type_choices: vec![TypeChoice {
+              type1: Type1 {
+                type2: Type2::Array {
+                  group: Group {
+                    group_choices: vec![GroupChoice {
+                      group_entries: vec![
+                        (
+                          GroupEntry::TypeGroupname {
+                            ge: TypeGroupnameEntry {
+                              name: Identifier {
+                                ident: "bytes",
+                                socket: None,
+                                span: (14, 19, 2),
+                              },
+                              occur: None,
+                              generic_args: None,
+                            },
+                            span: (14, 20, 2),
+                            leading_comments: None,
+                            trailing_comments: None,
+                          },
+                          OptionalComma {
+                            optional_comma: true,
+                            trailing_comments: Some(Comments(vec![" @name address"])),
+                            _a: PhantomData,
+                          },
+                        ),
+                        (
+                          GroupEntry::TypeGroupname {
+                            ge: TypeGroupnameEntry {
+                              name: Identifier {
+                                ident: "uint",
+                                socket: None,
+                                span: (39, 43, 3),
+                              },
+                              occur: None,
+                              generic_args: None,
+                            },
+                            span: (39, 43, 3),
+                            leading_comments: None,
+                            trailing_comments: Some(Comments(vec![" @name checksum"])),
+                          },
+                          OptionalComma {
+                            optional_comma: false,
+                            trailing_comments: None,
+                            _a: PhantomData,
+                          },
+                        ),
+                      ],
+                      span: (11, 43, 1),
+                      comments_before_grpchoice: None,
+                    }],
+                    span: (11, 43, 1),
+                  },
+                  span: (10, 64, 1),
+                  comments_before_group: None,
+                  comments_after_group: None,
+                },
+                operator: None,
+                span: (10, 64, 1),
+                comments_after_type: None,
+              },
+              comments_before_type: None,
+              comments_after_type: None,
+            }],
+            span: (10, 64, 1),
+          },
+          comments_before_assignt: None,
+          comments_after_assignt: None,
+        },
+        span: (0, 64, 1),
+        comments_after_rule: None,
+      }],
+      comments: None,
+    };
+
+    let parser = Parser::new(input, Box::new(Lexer::new(input).iter()))?.parse_cddl()?;
+    assert_eq!(parser, expected_output);
+    assert_eq!(parser.to_string(), expected_output.to_string());
+
+    Ok(())
+  }
+
+  #[test]
+  fn group_choice_comments() -> Result<()> {
+    let input = indoc!(
+      r#"
+        block = [
+            ; comments_before_group
+            ; comments_before_grpchoice1
+            0, text
+            //
+            ; comments_before_grpchoice2
+            1, bytes
+        ]
+      "#
+    );
+
+    let expected_output = CDDL {
+      rules: vec![Rule::Type {
+        rule: TypeRule {
+          name: Identifier {
+            ident: "block",
+            socket: None,
+            span: (0, 5, 1),
+          },
+          generic_params: None,
+          is_type_choice_alternate: false,
+          value: Type {
+            type_choices: vec![TypeChoice {
+              type1: Type1 {
+                type2: Type2::Array {
+                  group: Group {
+                    group_choices: vec![
+                      GroupChoice {
+                        group_entries: vec![
+                          (
+                            GroupEntry::ValueMemberKey {
+                              ge: Box::from(ValueMemberKeyEntry {
+                                occur: None,
+                                member_key: None,
+                                entry_type: Type {
+                                  type_choices: vec![TypeChoice {
+                                    type1: Type1 {
+                                      type2: Type2::UintValue {
+                                        value: 0,
+                                        span: (75, 76, 4),
+                                      },
+                                      operator: None,
+                                      span: (75, 76, 4),
+                                      comments_after_type: None,
+                                    },
+                                    comments_before_type: None,
+                                    comments_after_type: None,
+                                  }],
+                                  span: (75, 76, 4),
+                                },
+                              }),
+                              span: (75, 77, 4),
+                              leading_comments: None,
+                              trailing_comments: None,
+                            },
+                            OptionalComma {
+                              optional_comma: true,
+                              trailing_comments: None,
+                              _a: PhantomData,
+                            },
+                          ),
+                          (
+                            GroupEntry::TypeGroupname {
+                              ge: TypeGroupnameEntry {
+                                occur: None,
+                                name: Identifier {
+                                  ident: "text",
+                                  socket: None,
+                                  span: (78, 82, 4),
+                                },
+                                generic_args: None,
+                              },
+                              span: (78, 82, 4),
+                              leading_comments: None,
+                              trailing_comments: None,
+                            },
+                            OptionalComma {
+                              optional_comma: false,
+                              trailing_comments: None,
+                              _a: PhantomData,
+                            },
+                          ),
+                        ],
+                        span: (9, 82, 1),
+                        comments_before_grpchoice: Some(Comments(vec![
+                          " comments_before_grpchoice1",
+                        ])),
+                      },
+                      GroupChoice {
+                        group_entries: vec![
+                          (
+                            GroupEntry::ValueMemberKey {
+                              ge: Box::from(ValueMemberKeyEntry {
+                                occur: None,
+                                member_key: None,
+                                entry_type: Type {
+                                  type_choices: vec![TypeChoice {
+                                    type1: Type1 {
+                                      type2: Type2::UintValue {
+                                        value: 1,
+                                        span: (127, 128, 7),
+                                      },
+                                      operator: None,
+                                      span: (127, 128, 7),
+                                      comments_after_type: None,
+                                    },
+                                    comments_before_type: None,
+                                    comments_after_type: None,
+                                  }],
+                                  span: (127, 128, 7),
+                                },
+                              }),
+                              span: (127, 129, 7),
+                              leading_comments: None,
+                              trailing_comments: None,
+                            },
+                            OptionalComma {
+                              optional_comma: true,
+                              trailing_comments: None,
+                              _a: PhantomData,
+                            },
+                          ),
+                          (
+                            GroupEntry::TypeGroupname {
+                              ge: TypeGroupnameEntry {
+                                occur: None,
+                                name: Identifier {
+                                  ident: "bytes",
+                                  socket: None,
+                                  span: (130, 135, 7),
+                                },
+                                generic_args: None,
+                              },
+                              span: (130, 135, 7),
+                              leading_comments: None,
+                              trailing_comments: None,
+                            },
+                            OptionalComma {
+                              optional_comma: false,
+                              trailing_comments: None,
+                              _a: PhantomData,
+                            },
+                          ),
+                        ],
+                        span: (127, 135, 5),
+                        comments_before_grpchoice: Some(Comments(vec![
+                          " comments_before_grpchoice2",
+                        ])),
+                      },
+                    ],
+                    span: (9, 135, 1),
+                  },
+                  span: (8, 137, 1),
+                  comments_before_group: Some(Comments(vec![" comments_before_group"])),
+                  comments_after_group: None,
+                },
+                operator: None,
+                span: (8, 137, 1),
+                comments_after_type: None,
+              },
+              comments_before_type: None,
+              comments_after_type: None,
+            }],
+            span: (8, 137, 1),
+          },
+          comments_before_assignt: None,
+          comments_after_assignt: None,
+        },
+        span: (0, 137, 1),
+        comments_after_rule: None,
+      }],
+      comments: None,
+    };
+
+    let parser = Parser::new(input, Box::new(Lexer::new(input).iter()))?.parse_cddl()?;
+    assert_eq!(parser, expected_output);
+    assert_eq!(parser.to_string(), expected_output.to_string());
+
+    Ok(())
+  }
+
+  #[test]
+  fn group_type_choice_comments() -> Result<()> {
+    let input = indoc!(
+      r#"
+        block =
+          [0, bytes] ; @name comments_after_type1
+          /
+          [1, bytes] ; @name comments_after_type2
+        ; @name comments_after_type3
+      "#
+    );
+
+    let expected_output = CDDL {
+      rules: vec![Rule::Type {
+        rule: TypeRule {
+          name: Identifier {
+            ident: "block",
+            socket: None,
+            span: (0, 5, 1),
+          },
+          generic_params: None,
+          is_type_choice_alternate: false,
+          value: Type {
+            type_choices: vec![
+              TypeChoice {
+                type1: Type1 {
+                  type2: Type2::Array {
+                    group: Group {
+                      group_choices: vec![GroupChoice {
+                        group_entries: vec![
+                          (
+                            GroupEntry::ValueMemberKey {
+                              ge: Box::from(ValueMemberKeyEntry {
+                                occur: None,
+                                member_key: None,
+                                entry_type: Type {
+                                  type_choices: vec![TypeChoice {
+                                    type1: Type1 {
+                                      type2: Type2::UintValue {
+                                        value: 0,
+                                        span: (11, 12, 2),
+                                      },
+                                      operator: None,
+                                      span: (11, 12, 2),
+                                      comments_after_type: None,
+                                    },
+                                    comments_before_type: None,
+                                    comments_after_type: None,
+                                  }],
+                                  span: (11, 12, 2),
+                                },
+                              }),
+                              span: (11, 13, 2),
+                              leading_comments: None,
+                              trailing_comments: None,
+                            },
+                            OptionalComma {
+                              optional_comma: true,
+                              trailing_comments: None,
+                              _a: PhantomData,
+                            },
+                          ),
+                          (
+                            GroupEntry::TypeGroupname {
+                              ge: TypeGroupnameEntry {
+                                occur: None,
+                                name: Identifier {
+                                  ident: "bytes",
+                                  socket: None,
+                                  span: (14, 19, 2),
+                                },
+                                generic_args: None,
+                              },
+                              span: (14, 19, 2),
+                              leading_comments: None,
+                              trailing_comments: None,
+                            },
+                            OptionalComma {
+                              optional_comma: false,
+                              trailing_comments: None,
+                              _a: PhantomData,
+                            },
+                          ),
+                        ],
+                        span: (11, 19, 2),
+                        comments_before_grpchoice: None,
+                      }],
+                      span: (11, 19, 2),
+                    },
+                    span: (10, 20, 2),
+                    comments_before_group: None,
+                    comments_after_group: None,
+                  },
+                  operator: None,
+                  span: (10, 20, 2),
+                  comments_after_type: Some(Comments(vec![" @name comments_after_type1"])),
+                },
+                comments_before_type: None,
+                comments_after_type: None,
+              },
+              TypeChoice {
+                type1: Type1 {
+                  type2: Type2::Array {
+                    group: Group {
+                      group_choices: vec![GroupChoice {
+                        group_entries: vec![
+                          (
+                            GroupEntry::ValueMemberKey {
+                              ge: Box::from(ValueMemberKeyEntry {
+                                occur: None,
+                                member_key: None,
+                                entry_type: Type {
+                                  type_choices: vec![TypeChoice {
+                                    type1: Type1 {
+                                      type2: Type2::UintValue {
+                                        value: 1,
+                                        span: (57, 58, 4),
+                                      },
+                                      operator: None,
+                                      span: (57, 58, 4),
+                                      comments_after_type: None,
+                                    },
+                                    comments_before_type: None,
+                                    comments_after_type: None,
+                                  }],
+                                  span: (57, 58, 4),
+                                },
+                              }),
+                              span: (57, 59, 4),
+                              leading_comments: None,
+                              trailing_comments: None,
+                            },
+                            OptionalComma {
+                              optional_comma: true,
+                              trailing_comments: None,
+                              _a: PhantomData,
+                            },
+                          ),
+                          (
+                            GroupEntry::TypeGroupname {
+                              ge: TypeGroupnameEntry {
+                                occur: None,
+                                name: Identifier {
+                                  ident: "bytes",
+                                  socket: None,
+                                  span: (60, 65, 4),
+                                },
+                                generic_args: None,
+                              },
+                              span: (60, 65, 4),
+                              leading_comments: None,
+                              trailing_comments: None,
+                            },
+                            OptionalComma {
+                              optional_comma: false,
+                              trailing_comments: None,
+                              _a: PhantomData,
+                            },
+                          ),
+                        ],
+                        span: (57, 65, 4),
+                        comments_before_grpchoice: None,
+                      }],
+                      span: (57, 65, 4),
+                    },
+                    span: (56, 66, 4),
+                    comments_before_group: None,
+                    comments_after_group: None,
+                  },
+                  operator: None,
+                  span: (56, 66, 4),
+                  comments_after_type: Some(Comments(vec![" @name comments_after_type2"])),
+                },
+                comments_before_type: None,
+                comments_after_type: None,
+              },
+            ],
+            span: (10, 66, 2),
+          },
+          comments_before_assignt: None,
+          comments_after_assignt: None,
+        },
+        span: (0, 66, 1),
+        comments_after_rule: Some(Comments(vec![" @name comments_after_type3"])),
+      }],
+      comments: None,
     };
 
     let parser = Parser::new(input, Box::new(Lexer::new(input).iter()))?.parse_cddl()?;
