@@ -1896,6 +1896,19 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       Value::Array(_) => self.validate_array_items(&ArrayItemToken::Identifier(ident)),
       Value::Object(o) => {
         if let Some(occur) = &self.occurrence {
+          if is_ident_string_data_type(self.cddl, ident) {
+            let values_to_validate = o
+              .iter()
+              .filter_map(|(k, v)| match &self.validated_keys {
+                Some(keys) if !keys.contains(k) => Some(v.clone()),
+                Some(_) => None,
+                None => Some(v.clone()),
+              })
+              .collect::<Vec<_>>();
+
+            self.values_to_validate = Some(values_to_validate);
+          }
+
           #[cfg(feature = "ast-span")]
           if let Occur::ZeroOrMore(_) | Occur::OneOrMore(_) = occur {
             if let Occur::OneOrMore(_) = occur {
@@ -1907,32 +1920,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 return Ok(());
               }
             }
-
-            if is_ident_string_data_type(self.cddl, ident) {
-              let values_to_validate = o
-                .iter()
-                .filter_map(|(k, v)| match &self.validated_keys {
-                  Some(keys) if !keys.contains(k) => Some(v.clone()),
-                  Some(_) => None,
-                  None => Some(v.clone()),
-                })
-                .collect::<Vec<_>>();
-
-              self.values_to_validate = Some(values_to_validate);
-
-              return Ok(());
-            }
           } else if let Occur::Exact { lower, upper, .. } = occur {
-            if is_ident_string_data_type(self.cddl, ident) {
-              let values_to_validate = o
-                .iter()
-                .filter_map(|(k, v)| match &self.validated_keys {
-                  Some(keys) if !keys.contains(k) => Some(v.clone()),
-                  Some(_) => None,
-                  None => Some(v.clone()),
-                })
-                .collect::<Vec<_>>();
-
+            if let Some(values_to_validate) = &self.values_to_validate {
               if let Some(lower) = lower {
                 if let Some(upper) = upper {
                   if values_to_validate.len() < *lower || values_to_validate.len() > *upper {
@@ -1972,8 +1961,6 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                   return Ok(());
                 }
               }
-
-              self.values_to_validate = Some(values_to_validate);
 
               return Ok(());
             }
@@ -1990,32 +1977,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 return Ok(());
               }
             }
-
-            if is_ident_string_data_type(self.cddl, ident) {
-              let values_to_validate = o
-                .iter()
-                .filter_map(|(k, v)| match &self.validated_keys {
-                  Some(keys) if !keys.contains(k) => Some(v.clone()),
-                  Some(_) => None,
-                  None => Some(v.clone()),
-                })
-                .collect::<Vec<_>>();
-
-              self.values_to_validate = Some(values_to_validate);
-
-              return Ok(());
-            }
           } else if let Occur::Exact { lower, upper } = occur {
-            if is_ident_string_data_type(self.cddl, ident) {
-              let values_to_validate = o
-                .iter()
-                .filter_map(|(k, v)| match &self.validated_keys {
-                  Some(keys) if !keys.contains(k) => Some(v.clone()),
-                  Some(_) => None,
-                  None => Some(v.clone()),
-                })
-                .collect::<Vec<_>>();
-
+            if let Some(values_to_validate) = &self.values_to_validate {
               if let Some(lower) = lower {
                 if let Some(upper) = upper {
                   if values_to_validate.len() < *lower || values_to_validate.len() > *upper {
@@ -2056,11 +2019,11 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 }
               }
 
-              self.values_to_validate = Some(values_to_validate);
-
               return Ok(());
             }
           }
+
+          return Ok(());
         }
 
         if token::lookup_ident(ident.ident)
@@ -2741,7 +2704,7 @@ mod tests {
   fn validate_occurrences_in_object() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cddl = indoc!(
       r#"
-        limited = { 3* tstr => tstr }
+        limited = { 1* tstr => tstr }
       "#
     );
 
