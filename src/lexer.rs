@@ -1015,7 +1015,7 @@ fn is_ealpha(ch: char) -> bool {
 }
 
 fn is_digit(ch: char) -> bool {
-  ch.is_ascii_hexdigit()
+  ch.is_ascii_digit()
 }
 
 fn is_hexdigit(ch: char) -> bool {
