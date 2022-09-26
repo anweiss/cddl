@@ -26,7 +26,7 @@ use alloc::{
 pub type Span = (usize, usize, usize);
 
 #[cfg(feature = "ast-comments")]
-#[derive(Default, Debug, PartialEq, Clone)]
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
 #[doc(hidden)]
 pub struct Comments<'a>(pub Vec<&'a str>);
 
@@ -943,7 +943,7 @@ impl<'a> fmt::Display for Type1<'a> {
 /// ctlop = "." id
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum RangeCtlOp<'a> {
   /// Range operator
   RangeOp {
@@ -2819,7 +2819,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
 ///       / "?"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Occur {
   /// Occurrence indicator in the form n*m, where n is an optional lower limit
   /// and m is an optional upper limit

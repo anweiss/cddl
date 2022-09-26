@@ -117,7 +117,7 @@ pub fn validate_json_from_str(
   let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
   if !p.errors.is_empty() {
     return Err(
-      JsValue::from_serde(
+      serde_wasm_bindgen::to_value(
         &p.errors
           .iter()
           .filter_map(|e| {
@@ -231,7 +231,7 @@ pub fn validate_cbor_from_slice(
   let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
   if !p.errors.is_empty() {
     return Err(
-      JsValue::from_serde(
+      serde_wasm_bindgen::to_value(
         &p.errors
           .iter()
           .filter_map(|e| {
