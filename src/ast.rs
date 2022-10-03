@@ -513,7 +513,7 @@ pub struct GenericParams<'a> {
 
 /// Generic parameter
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GenericParam<'a> {
   /// Generic parameter
   pub param: Identifier<'a>,
@@ -2280,7 +2280,7 @@ impl<'a> GroupEntry<'a> {
 
 /// Optional comma
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OptionalComma<'a> {
   /// Optional comma
   pub optional_comma: bool,
@@ -2474,7 +2474,7 @@ impl<'a> fmt::Display for GroupEntry<'a> {
 
 /// Occurrence indicator
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Occurrence<'a> {
   /// Occurrence indicator
   pub occur: Occur,
