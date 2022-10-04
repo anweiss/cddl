@@ -8,6 +8,11 @@ pub type Result<T> = std::result::Result<(), T>;
 
 /// CDDL AST visitor
 pub trait Visitor<'a, E: Error> {
+  /// Visit CDDL
+  fn visit_cddl(&mut self, cddl: &CDDL<'a>) -> Result<E> {
+    walk_cddl(self, cddl)
+  }
+
   /// Visit rule
   fn visit_rule(&mut self, rule: &Rule<'a>) -> Result<E> {
     walk_rule(self, rule)
@@ -123,19 +128,39 @@ pub trait Visitor<'a, E: Error> {
   }
 
   /// Visit genericargs
-  fn visit_genericargs(&mut self, args: &GenericArgs<'a>) -> Result<E> {
-    walk_genericargs(self, args)
+  fn visit_generic_args(&mut self, args: &GenericArgs<'a>) -> Result<E> {
+    walk_generic_args(self, args)
   }
 
   /// Visit genericarg
-  fn visit_genericarg(&mut self, arg: &GenericArg<'a>) -> Result<E> {
-    walk_genericarg(self, arg)
+  fn visit_generic_arg(&mut self, arg: &GenericArg<'a>) -> Result<E> {
+    walk_generic_arg(self, arg)
   }
 
+  fn visit_generic_params(&mut self, params: &GenericParams<'a>) -> Result<E> {
+    walk_generic_params(self, params)
+  }
+
+  fn visit_generic_param(&mut self, param: &GenericParam<'a>) -> Result<E> {
+    walk_generic_param(self, param)
+  }
   /// Visit nonmemberkey
   fn visit_nonmemberkey(&mut self, nmk: &NonMemberKey<'a>) -> Result<E> {
     walk_nonmemberkey(self, nmk)
   }
+}
+
+/// Walk CDDL
+pub fn walk_cddl<'a, E, V>(visitor: &mut V, cddl: &CDDL<'a>) -> Result<E>
+where
+  E: Error,
+  V: Visitor<'a, E> + ?Sized,
+{
+  for rule in cddl.rules.iter() {
+    visitor.visit_rule(rule)?;
+  }
+
+  Ok(())
 }
 
 /// Walk rule
@@ -256,7 +281,7 @@ where
       ..
     } => {
       if let Some(ga) = generic_args {
-        visitor.visit_genericargs(ga)?;
+        visitor.visit_generic_args(ga)?;
       }
 
       visitor.visit_identifier(ident)
@@ -270,7 +295,7 @@ where
       ..
     } => {
       if let Some(ga) = generic_args {
-        visitor.visit_genericargs(ga)?;
+        visitor.visit_generic_args(ga)?;
       }
 
       visitor.visit_identifier(ident)
@@ -368,7 +393,7 @@ where
   }
 
   if let Some(ga) = &entry.generic_args {
-    visitor.visit_genericargs(ga)?;
+    visitor.visit_generic_args(ga)?;
   }
 
   visitor.visit_identifier(&entry.name)
@@ -406,25 +431,47 @@ where
 }
 
 /// Walk genericargs
-pub fn walk_genericargs<'a, E, V>(visitor: &mut V, args: &GenericArgs<'a>) -> Result<E>
+pub fn walk_generic_args<'a, E, V>(visitor: &mut V, args: &GenericArgs<'a>) -> Result<E>
 where
   E: Error,
   V: Visitor<'a, E> + ?Sized,
 {
   for arg in args.args.iter() {
-    visitor.visit_genericarg(arg)?;
+    visitor.visit_generic_arg(arg)?;
   }
 
   Ok(())
 }
 
 /// Walk genericarg
-pub fn walk_genericarg<'a, E, V>(visitor: &mut V, arg: &GenericArg<'a>) -> Result<E>
+pub fn walk_generic_arg<'a, E, V>(visitor: &mut V, arg: &GenericArg<'a>) -> Result<E>
 where
   E: Error,
   V: Visitor<'a, E> + ?Sized,
 {
   visitor.visit_type1(&arg.arg)
+}
+
+/// Walk genericparams
+pub fn walk_generic_params<'a, E, V>(visitor: &mut V, params: &GenericParams<'a>) -> Result<E>
+where
+  E: Error,
+  V: Visitor<'a, E> + ?Sized,
+{
+  for param in params.params.iter() {
+    visitor.visit_generic_param(param)?;
+  }
+
+  Ok(())
+}
+
+/// Walk genericparams
+pub fn walk_generic_param<'a, E, V>(visitor: &mut V, param: &GenericParam<'a>) -> Result<E>
+where
+  E: Error,
+  V: Visitor<'a, E> + ?Sized,
+{
+  visitor.visit_identifier(&param.param)
 }
 
 /// Walk nonmemberkey
