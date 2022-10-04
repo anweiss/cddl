@@ -5,7 +5,10 @@
 #[macro_use]
 extern crate log;
 
-use cddl::{cddl_from_str, validate_cbor_from_slice, validate_json_from_str};
+use cddl::{
+  cddl_from_str, parser::root_type_name_from_cddl_str, validate_cbor_from_slice,
+  validate_json_from_str,
+};
 use clap::{ArgGroup, Args, Parser, Subcommand};
 
 use simplelog::*;
@@ -146,6 +149,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
       let cddl_str = fs::read_to_string(&validate.cddl)?;
 
+      info!(
+        "Root type for validation: {}",
+        root_type_name_from_cddl_str(&cddl_str)?
+      );
+
       if let Some(files) = &validate.json {
         for file in files {
           let p = Path::new(file);
@@ -165,7 +173,7 @@ fn main() -> Result<(), Box<dyn Error>> {
           let r = validate_json_from_str(&cddl_str, &fs::read_to_string(file)?);
 
           match r {
-            Ok(()) => {
+            Ok(_) => {
               info!("Validation of {:?} is successful", p);
             }
             Err(e) => {
@@ -193,7 +201,7 @@ fn main() -> Result<(), Box<dyn Error>> {
           let c = validate_cbor_from_slice(&cddl_str, &data);
 
           match c {
-            Ok(()) => {
+            Ok(_) => {
               info!("Validation of {:?} is successful", p);
             }
             Err(e) => {
@@ -216,7 +224,7 @@ fn main() -> Result<(), Box<dyn Error>> {
           let r = validate_json_from_str(&cddl_str, json);
 
           match r {
-            Ok(()) => {
+            Ok(_) => {
               info!("Validation from stdin is successful");
             }
             Err(e) => {
@@ -230,7 +238,7 @@ fn main() -> Result<(), Box<dyn Error>> {
           let c = validate_cbor_from_slice(&cddl_str, &data);
 
           match c {
-            Ok(()) => {
+            Ok(_) => {
               info!("Validation from stdin is successful");
             }
             Err(e) => {
