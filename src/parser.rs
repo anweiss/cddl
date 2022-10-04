@@ -3413,6 +3413,24 @@ pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDD
   }
 }
 
+/// Identify root type name from CDDL input string
+#[cfg(feature = "std")]
+#[cfg(not(target_arch = "wasm32"))]
+pub fn root_type_name_from_cddl_str(input: &str) -> std::result::Result<String, String> {
+  let cddl = cddl_from_str(input, false)?;
+
+  for r in cddl.rules.iter() {
+    // First type rule is root
+    if let Rule::Type { rule, .. } = r {
+      if rule.generic_params.is_none() {
+        return Ok(rule.name.to_string());
+      }
+    }
+  }
+
+  Err("cddl spec contains no root type".to_string())
+}
+
 impl<'a> CDDL<'a> {
   /// Parses CDDL from a byte slice
   #[cfg(not(target_arch = "wasm32"))]
