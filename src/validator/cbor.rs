@@ -2297,7 +2297,7 @@ where
       Value::Map(m) => {
         match &self.occurrence {
           #[cfg(feature = "ast-span")]
-          Some(Occur::Optional(_)) | None => {
+          Some(Occur::Optional { .. }) | None => {
             if is_ident_string_data_type(self.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Text(_))) {
                 self
@@ -2675,8 +2675,8 @@ where
             }
 
             #[cfg(feature = "ast-span")]
-            if let Occur::ZeroOrMore(_) | Occur::OneOrMore(_) = occur {
-              if let Occur::OneOrMore(_) = occur {
+            if let Occur::ZeroOrMore { .. } | Occur::OneOrMore { .. } = occur {
+              if let Occur::OneOrMore { .. } = occur {
                 if m.is_empty() {
                   self.add_error(format!(
                     "map cannot be empty, one or more entries with key type {} required",
