@@ -189,7 +189,12 @@ fn main() -> Result<(), Box<dyn Error>> {
               info!("Validation of {:?} is successful", p);
             }
             Err(e) => {
-              error!(cli.ci, "Validation of {:?} failed: {}", p, e.to_string().trim_end());
+              error!(
+                cli.ci,
+                "Validation of {:?} failed: {}",
+                p,
+                e.to_string().trim_end()
+              );
             }
           }
         }
@@ -217,7 +222,12 @@ fn main() -> Result<(), Box<dyn Error>> {
               info!("Validation of {:?} is successful", p);
             }
             Err(e) => {
-              error!(cli.ci, "Validation of {:?} failed: {}", p, e.to_string().trim_end());
+              error!(
+                cli.ci,
+                "Validation of {:?} failed: {}",
+                p,
+                e.to_string().trim_end()
+              );
             }
           }
         }
@@ -240,7 +250,11 @@ fn main() -> Result<(), Box<dyn Error>> {
               info!("Validation from stdin is successful");
             }
             Err(e) => {
-              error!(cli.ci, "Validation from stdin failed: {}", e.to_string().trim_end());
+              error!(
+                cli.ci,
+                "Validation from stdin failed: {}",
+                e.to_string().trim_end()
+              );
             }
           }
         } else {
@@ -254,7 +268,11 @@ fn main() -> Result<(), Box<dyn Error>> {
               info!("Validation from stdin is successful");
             }
             Err(e) => {
-              error!(cli.ci, "Validation from stdin failed: {}", e.to_string().trim_end());
+              error!(
+                cli.ci,
+                "Validation from stdin failed: {}",
+                e.to_string().trim_end()
+              );
             }
           }
         }
