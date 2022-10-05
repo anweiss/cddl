@@ -942,7 +942,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 /// entries in arrays, but may be useful in other contexts. The occurrence is
 /// only captured for the second element of the CDDL array to avoid ambiguity in
 /// non-homogenous array definitions
-pub fn entry_counts_from_group(cddl: &CDDL, group: &Group) -> Vec<EntryCount> {
+pub fn entry_counts_from_group<'a>(cddl: &'a CDDL, group: Group<'a>) -> Vec<EntryCount<'a>> {
   // Each EntryCount is associated with a group choice in the given group
   let mut entry_counts = Vec::new();
 
@@ -968,7 +968,7 @@ pub fn entry_counts_from_group(cddl: &CDDL, group: &Group) -> Vec<EntryCount> {
             }
           }
 
-          entry_counts = entry_counts_from_group(cddl, group);
+          entry_counts = entry_counts_from_group(cddl, group.clone());
         }
         GroupEntry::TypeGroupname { ge, .. } => {
           if idx == 1 {
@@ -980,22 +980,22 @@ pub fn entry_counts_from_group(cddl: &CDDL, group: &Group) -> Vec<EntryCount> {
           if let Some(gr) = group_rule_from_ident(cddl, &ge.name) {
             if let GroupEntry::InlineGroup { group, .. } = &gr.entry {
               if group.group_choices.len() == 1 {
-                count += if let Some(ec) = entry_counts_from_group(cddl, group).first() {
+                count += if let Some(ec) = entry_counts_from_group(cddl, group.clone()).first() {
                   ec.count
                 } else {
                   0
                 };
               } else {
-                entry_counts.append(&mut entry_counts_from_group(cddl, group));
+                entry_counts.append(&mut entry_counts_from_group(cddl, group.clone()));
               }
             } else {
-              entry_counts.append(&mut entry_counts_from_group(cddl, &gr.entry.clone().into()));
+              entry_counts.append(&mut entry_counts_from_group(cddl, gr.entry.clone().into()));
             }
           } else if group_choice_alternates_from_ident(cddl, &ge.name).is_empty() {
             count += 1;
           } else {
             for ge in group_choice_alternates_from_ident(cddl, &ge.name).into_iter() {
-              entry_counts.append(&mut entry_counts_from_group(cddl, &ge.clone().into()));
+              entry_counts.append(&mut entry_counts_from_group(cddl, ge.clone().into()));
             }
           }
         }
@@ -1021,7 +1021,7 @@ pub fn validate_entry_count(valid_entry_counts: &[EntryCount], num_entries: usiz
         #[cfg(not(feature = "ast-span"))]
         Some(Occur::ZeroOrMore) | Some(Occur::Optional) => true,
         #[cfg(feature = "ast-span")]
-        Some(Occur::OneOrMore { .. } ) if num_entries > 0 => true,
+        Some(Occur::OneOrMore { .. }) if num_entries > 0 => true,
         #[cfg(not(feature = "ast-span"))]
         Some(Occur::OneOrMore) if num_entries > 0 => true,
         Some(Occur::Exact { lower, upper, .. }) => {
@@ -1044,11 +1044,11 @@ pub fn validate_entry_count(valid_entry_counts: &[EntryCount], num_entries: usiz
 
 /// Entry count
 #[derive(Clone, Debug)]
-pub struct EntryCount {
+pub struct EntryCount<'a> {
   /// Count
   pub count: u64,
   /// Optional occurrence
-  pub entry_occurrence: Option<Occur>,
+  pub entry_occurrence: Option<Occur<'a>>,
 }
 
 /// Regex needs to be formatted in a certain way so it can be parsed. See

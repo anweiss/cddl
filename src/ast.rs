@@ -2,6 +2,7 @@
 extern crate console_error_panic_hook;
 
 use super::token::{ByteValue, RangeValue, SocketPlug, Token, Value};
+
 use std::{
   fmt::{self, Write},
   marker::PhantomData,
@@ -10,7 +11,7 @@ use std::{
 #[cfg(feature = "std")]
 use std::borrow::Cow;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "ast-parent"))]
 use serde::{self, Serialize};
 
 #[cfg(not(feature = "std"))]
@@ -26,6 +27,7 @@ use alloc::{
 pub type Span = (usize, usize, usize);
 
 #[cfg(feature = "ast-comments")]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 #[doc(hidden)]
 pub struct Comments<'a>(pub Vec<&'a str>);
@@ -67,7 +69,7 @@ impl<'a> fmt::Display for Comments<'a> {
 /// ```abnf
 /// cddl = S 1*(rule S)
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Default, Debug, PartialEq, Clone)]
 pub struct CDDL<'a> {
   /// Zero or more production rules
@@ -144,7 +146,7 @@ impl<'a> fmt::Display for CDDL<'a> {
 /// EALPHA = ALPHA / "@" / "_" / "$"
 /// DIGIT = %x30-39
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct Identifier<'a> {
   /// Identifier
@@ -222,6 +224,7 @@ impl<'a> From<Token<'a>> for Identifier<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum RuleParent<'a> {
   CDDL(&'a CDDL<'a>),
 }
@@ -232,7 +235,7 @@ pub enum RuleParent<'a> {
 /// rule = typename [genericparm] S assignt S type
 ///     / groupname [genericparm] S assigng S grpent
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Rule<'a> {
   /// Type expression
@@ -251,7 +254,7 @@ pub enum Rule<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<RuleParent>,
+    parent: Option<RuleParent<'a>>,
   },
   /// Group expression
   Group {
@@ -268,7 +271,7 @@ pub enum Rule<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<RuleParent>,
+    parent: Option<RuleParent<'a>>,
   },
 }
 
@@ -398,6 +401,7 @@ impl<'a> Rule<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TypeRuleParent<'a> {
   Rule(&'a Rule<'a>),
 }
@@ -407,7 +411,7 @@ pub enum TypeRuleParent<'a> {
 /// ```abnf
 /// typename [genericparm] S assignt S type
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
 pub struct TypeRule<'a> {
   /// Type name identifier
@@ -465,6 +469,7 @@ impl<'a> fmt::Display for TypeRule<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum GroupRuleParent<'a> {
   Rule(&'a Rule<'a>),
 }
@@ -474,7 +479,7 @@ pub enum GroupRuleParent<'a> {
 /// ```abnf
 /// groupname [genericparm] S assigng S grpent
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
 pub struct GroupRule<'a> {
   /// Group name identifier
@@ -532,6 +537,7 @@ impl<'a> fmt::Display for GroupRule<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum GenericParamsParent<'a> {
   TypeRule(&'a TypeRule<'a>),
   GroupRule(&'a GroupRule<'a>),
@@ -542,7 +548,7 @@ pub enum GenericParamsParent<'a> {
 /// ```abnf
 /// genericparm =  "<" S id S *("," S id S ) ">"
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct GenericParams<'a> {
   /// List of generic parameters
@@ -557,12 +563,13 @@ pub struct GenericParams<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum GenericParamParent<'a> {
   GenericParams(&'a GenericParams<'a>),
 }
 
 /// Generic parameter
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GenericParam<'a> {
   /// Generic parameter
@@ -610,6 +617,7 @@ impl<'a> fmt::Display for GenericParams<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(PartialEq, Clone, Debug)]
 pub enum GenericArgsParent<'a> {
   Type2(&'a Type2<'a>),
   TypeGroupnameEntry(&'a TypeGroupnameEntry<'a>),
@@ -620,7 +628,7 @@ pub enum GenericArgsParent<'a> {
 /// ```abnf
 /// genericarg = "<" S type1 S *("," S type1 S )  ">"
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericArgs<'a> {
   /// Generic arguments
@@ -641,17 +649,20 @@ impl<'a> GenericArgs<'a> {
       args: Vec::new(),
       #[cfg(feature = "ast-span")]
       span: (0, 0, 0),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }
   }
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum GenericArgParent<'a> {
   GenericArgs(&'a GenericArgs<'a>),
 }
 
 /// Generic argument
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericArg<'a> {
   /// Generic argument
@@ -699,6 +710,7 @@ impl<'a> fmt::Display for GenericArgs<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(PartialEq, Clone, Debug)]
 pub enum TypeParent<'a> {
   TypeRule(&'a TypeRule<'a>),
   Type2(&'a Type2<'a>),
@@ -710,7 +722,7 @@ pub enum TypeParent<'a> {
 /// ```abnf
 /// type = type1 *(S "/" S  type1)
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type<'a> {
   /// Type choices
@@ -776,7 +788,7 @@ impl<'a> Type<'a> {
 }
 
 /// Type choice
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 
 pub struct TypeChoice<'a> {
@@ -846,6 +858,8 @@ impl<'a> Type<'a> {
             ident,
             generic_args,
             span,
+            #[cfg(feature = "ast-parent")]
+            parent,
           } = &tc.type1.type2
           {
             return Some((ident.clone(), generic_args.clone(), *span));
@@ -881,6 +895,7 @@ impl<'a> Type<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Type1Parent<'a> {
   Type(&'a Type<'a>),
   GenericArg(&'a GenericArg<'a>),
@@ -892,7 +907,7 @@ pub enum Type1Parent<'a> {
 /// ```abnf
 /// type1 = type2 [S (rangeop / ctlop) S type2]
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type1<'a> {
   /// Type
@@ -922,36 +937,50 @@ impl<'a> From<Value<'a>> for Type1<'a> {
         value,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       Value::INT(value) => Type2::IntValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       Value::FLOAT(value) => Type2::FloatValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       Value::UINT(value) => Type2::UintValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       Value::BYTE(ByteValue::B16(value)) => Type2::B16ByteString {
         value,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       Value::BYTE(ByteValue::B64(value)) => Type2::B64ByteString {
         value,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       Value::BYTE(ByteValue::UTF8(value)) => Type2::UTF8ByteString {
         value,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
     };
 
@@ -962,16 +991,19 @@ impl<'a> From<Value<'a>> for Type1<'a> {
       operator: None,
       #[cfg(feature = "ast-comments")]
       comments_after_type: None,
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }
   }
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum OperatorParent<'a> {
   Type1(&'a Type1<'a>),
 }
 
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 /// Range or control operator
 pub struct Operator<'a> {
@@ -1045,6 +1077,8 @@ impl<'a> fmt::Display for Type1<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[cfg_attr(feature = "std", derive(Serialize))]
+#[derive(Debug, PartialEq, Clone)]
 pub enum RangeCtlOpParent<'a> {
   Operator(&'a Operator<'a>),
 }
@@ -1055,8 +1089,8 @@ pub enum RangeCtlOpParent<'a> {
 /// rangeop = "..." / ".."
 /// ctlop = "." id
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "std", derive(Serialize))]
+#[derive(Debug, PartialEq, Clone)]
 pub enum RangeCtlOp<'a> {
   /// Range operator
   RangeOp {
@@ -1068,7 +1102,7 @@ pub enum RangeCtlOp<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<RangeCtlOpParent<'a>>,
+    parent: Option<RangeCtlOpParent<'a>>,
   },
   /// Control operator
   CtlOp {
@@ -1080,7 +1114,7 @@ pub enum RangeCtlOp<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<RangeCtlOpParent<'a>>,
+    parent: Option<RangeCtlOpParent<'a>>,
   },
 }
 
@@ -1100,6 +1134,7 @@ impl<'a> fmt::Display for RangeCtlOp<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Type2Parent<'a> {
   Type1(&'a Type1<'a>),
   Operator(&'a Operator<'a>),
@@ -1120,7 +1155,7 @@ pub enum Type2Parent<'a> {
 ///     / "#" DIGIT ["." uint]                ; major/ai
 ///     / "#"                                 ; any
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type2<'a> {
   /// Integer value
@@ -1133,7 +1168,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Unsigned integer value
@@ -1146,7 +1181,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Float value
@@ -1159,7 +1194,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Text string value (enclosed by '"')
@@ -1172,7 +1207,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// UTF-8 encoded byte string (enclosed by '')
@@ -1185,7 +1220,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Base 16 encoded prefixed byte string
@@ -1198,7 +1233,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Base 64 encoded (URL safe) prefixed byte string
@@ -1211,7 +1246,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Type name identifier with optional generic arguments
@@ -1226,7 +1261,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Parenthesized type expression (for operator precedence)
@@ -1248,7 +1283,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Map expression
@@ -1270,7 +1305,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Array expression
@@ -1292,7 +1327,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Unwrapped group
@@ -1312,7 +1347,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Enumeration expression over an inline group
@@ -1338,7 +1373,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Enumeration expression over previously defined group
@@ -1358,7 +1393,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Tagged data item where the first element is an optional tag and the second
@@ -1383,7 +1418,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Data item of a major type with optional data constraint
@@ -1398,7 +1433,7 @@ pub enum Type2<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<Type2Parent<'a>>,
+    parent: Option<Type2Parent<'a>>,
   },
 
   /// Any data item
@@ -1746,21 +1781,29 @@ impl<'a> From<RangeValue<'a>> for Type2<'a> {
         generic_args: None,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       RangeValue::INT(value) => Type2::IntValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       RangeValue::UINT(value) => Type2::UintValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       RangeValue::FLOAT(value) => Type2::FloatValue {
         value,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
     }
   }
@@ -1776,9 +1819,13 @@ impl<'a> From<Type1<'a>> for Type2<'a> {
           comments_after_type: None,
           #[cfg(feature = "ast-comments")]
           comments_before_type: None,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         }],
         #[cfg(feature = "ast-span")]
         span: Span::default(),
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       #[cfg(feature = "ast-comments")]
       comments_after_type: None,
@@ -1786,6 +1833,8 @@ impl<'a> From<Type1<'a>> for Type2<'a> {
       comments_before_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }
   }
 }
@@ -1796,6 +1845,8 @@ impl<'a> From<usize> for Type2<'a> {
       value,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }
   }
 }
@@ -1806,6 +1857,8 @@ impl<'a> From<isize> for Type2<'a> {
       value,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }
   }
 }
@@ -1816,6 +1869,8 @@ impl<'a> From<f64> for Type2<'a> {
       value,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }
   }
 }
@@ -1826,6 +1881,8 @@ impl<'a> From<String> for Type2<'a> {
       value: value.into(),
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }
   }
 }
@@ -1837,6 +1894,8 @@ impl<'a> From<&'a str> for Type2<'a> {
       value: value.as_bytes().into(),
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }
   }
 }
@@ -1848,16 +1907,22 @@ impl<'a> From<ByteValue<'a>> for Type2<'a> {
         value,
         #[cfg(feature = "ast-span")]
         span: Span::default(),
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       ByteValue::B16(value) => Type2::B16ByteString {
         value,
         #[cfg(feature = "ast-span")]
         span: Span::default(),
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       ByteValue::B64(value) => Type2::B64ByteString {
         value,
         #[cfg(feature = "ast-span")]
         span: Span::default(),
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
     }
   }
@@ -1875,6 +1940,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_before_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::TIME => Some(Type2::TaggedData {
       tag: Some(1),
@@ -1885,6 +1952,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::BIGUINT => Some(Type2::TaggedData {
       tag: Some(2),
@@ -1895,6 +1964,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::BIGNINT => Some(Type2::TaggedData {
       tag: Some(3),
@@ -1905,6 +1976,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::DECFRAC => unimplemented!(),
     Token::BIGFLOAT => unimplemented!(),
@@ -1917,6 +1990,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::EB64LEGACY => Some(Type2::TaggedData {
       tag: Some(22),
@@ -1927,6 +2002,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::EB16 => Some(Type2::TaggedData {
       tag: Some(23),
@@ -1937,6 +2014,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::ENCODEDCBOR => Some(Type2::TaggedData {
       tag: Some(24),
@@ -1947,6 +2026,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::URI => Some(Type2::TaggedData {
       tag: Some(32),
@@ -1957,6 +2038,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::B64URL => Some(Type2::TaggedData {
       tag: Some(33),
@@ -1967,6 +2050,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::B64LEGACY => Some(Type2::TaggedData {
       tag: Some(34),
@@ -1977,6 +2062,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::REGEXP => Some(Type2::TaggedData {
       tag: Some(35),
@@ -1987,6 +2074,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::MIMEMESSAGE => Some(Type2::TaggedData {
       tag: Some(36),
@@ -1997,6 +2086,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     Token::CBORANY => Some(Type2::TaggedData {
       tag: Some(55799),
@@ -2007,6 +2098,8 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       comments_after_type: None,
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }),
     _ => None,
   }
@@ -2027,19 +2120,28 @@ pub fn type_from_token(token: Token) -> Type {
           generic_args: None,
           #[cfg(feature = "ast-span")]
           span: Span::default(),
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         },
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       },
       #[cfg(feature = "ast-comments")]
       comments_after_type: None,
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }],
     #[cfg(feature = "ast-span")]
     span: Span::default(),
+    #[cfg(feature = "ast-parent")]
+    parent: None,
   }
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum GroupParent<'a> {
   Type2(&'a Type2<'a>),
   GroupEntry(&'a GroupEntry<'a>),
@@ -2050,7 +2152,7 @@ pub enum GroupParent<'a> {
 /// ```abnf
 /// group = grpchoice * (S "//" S grpchoice)
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Group<'a> {
   /// Group choices
@@ -2071,6 +2173,8 @@ impl<'a> From<GroupEntry<'a>> for Group<'a> {
       group_choices: vec![GroupChoice::new(vec![ge])],
       #[cfg(feature = "ast-span")]
       span: Span::default(),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }
   }
 }
@@ -2152,6 +2256,7 @@ impl<'a> fmt::Display for Group<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum GroupChoiceParent<'a> {
   Group(&'a Group<'a>),
 }
@@ -2163,7 +2268,7 @@ pub enum GroupChoiceParent<'a> {
 /// ```
 ///
 /// If tuple is true, then entry is marked by a trailing comma
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct GroupChoice<'a> {
   /// Group entries where the second item in the tuple indicates where or not a
@@ -2199,6 +2304,8 @@ impl<'a> GroupChoice<'a> {
       span: Span::default(),
       #[cfg(feature = "ast-comments")]
       comments_before_grpchoice: None,
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     }
   }
 
@@ -2404,6 +2511,7 @@ impl<'a> fmt::Display for GroupChoice<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum GroupEntryParent<'a> {
   GroupChoice(&'a GroupChoice<'a>),
   GroupRule(&'a GroupRule<'a>),
@@ -2416,7 +2524,7 @@ pub enum GroupEntryParent<'a> {
 ///       / [occur S] groupname [genericarg]  ; preempted by above
 ///       / [occur S] "(" S group S ")"
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum GroupEntry<'a> {
   /// Value group entry type
@@ -2439,7 +2547,7 @@ pub enum GroupEntry<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<GroupEntryParent<'a>>,
+    parent: Option<GroupEntryParent<'a>>,
   },
 
   /// Group entry from a named group or type
@@ -2462,7 +2570,7 @@ pub enum GroupEntry<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<GroupEntryParent<'a>>,
+    parent: Option<GroupEntryParent<'a>>,
   },
 
   /// Parenthesized group with optional occurrence indicator
@@ -2486,7 +2594,7 @@ pub enum GroupEntry<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<GroupEntryParent<'a>>,
+    parent: Option<GroupEntryParent<'a>>,
   },
 }
 
@@ -2512,7 +2620,7 @@ pub enum OptionalCommaParent<'a> {
 }
 
 /// Optional comma
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OptionalComma<'a> {
   /// Optional comma
@@ -2706,6 +2814,7 @@ impl<'a> fmt::Display for GroupEntry<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum OccurrenceParent<'a> {
   ValueMemberKeyEntry(&'a ValueMemberKeyEntry<'a>),
   TypeGroupnameEntry(&'a TypeGroupnameEntry<'a>),
@@ -2713,11 +2822,11 @@ pub enum OccurrenceParent<'a> {
 }
 
 /// Occurrence indicator
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Occurrence<'a> {
   /// Occurrence indicator
-  pub occur: Occur,
+  pub occur: Occur<'a>,
 
   #[cfg(feature = "ast-comments")]
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -2749,6 +2858,7 @@ impl<'a> fmt::Display for Occurrence<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ValueMemberKeyEntryParent<'a> {
   GroupEntry(&'a GroupEntry<'a>),
 }
@@ -2759,7 +2869,7 @@ pub enum ValueMemberKeyEntryParent<'a> {
 /// ```abnf
 /// [occur S] [memberkey S] type
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueMemberKeyEntry<'a> {
   /// Optional occurrence indicator
@@ -2794,12 +2904,13 @@ impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TypeGroupnameEntryParent<'a> {
   GroupEntry(&'a GroupEntry<'a>),
 }
 
 /// Group entry from a named type or group
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeGroupnameEntry<'a> {
   /// Optional occurrence indicator
@@ -2834,6 +2945,7 @@ impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum MemberKeyParent<'a> {
   ValueMemberKeyEntry(&'a ValueMemberKeyEntry<'a>),
 }
@@ -2844,7 +2956,7 @@ pub enum MemberKeyParent<'a> {
 ///           / bareword S ":"
 ///           / value S ":"
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum MemberKey<'a> {
   /// Type expression
@@ -2873,7 +2985,7 @@ pub enum MemberKey<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<MemberKeyParent<'a>>,
+    parent: Option<MemberKeyParent<'a>>,
   },
 
   /// Bareword string type
@@ -2896,7 +3008,7 @@ pub enum MemberKey<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<MemberKeyParent<'a>>,
+    parent: Option<MemberKeyParent<'a>>,
   },
 
   /// Value type
@@ -2919,7 +3031,7 @@ pub enum MemberKey<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<MemberKeyParent<'a>>,
+    parent: Option<MemberKeyParent<'a>>,
   },
 
   #[cfg_attr(target_arch = "wasm32", serde(skip))]
@@ -2933,10 +3045,11 @@ pub enum MemberKey<'a> {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<MemberKeyParent<'a>>,
+    parent: Option<MemberKeyParent<'a>>,
   },
 }
 
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 #[doc(hidden)]
 pub enum NonMemberKey<'a> {
@@ -3051,6 +3164,8 @@ impl<'a> fmt::Display for MemberKey<'a> {
         comments_before_type_or_group,
         #[cfg(feature = "ast-comments")]
         comments_after_type_or_group,
+        #[cfg(feature = "ast-parent")]
+        parent,
       } => {
         let mut nmk_str = String::new();
 
@@ -3074,6 +3189,8 @@ impl<'a> fmt::Display for MemberKey<'a> {
         comments_before_type_or_group,
         #[cfg(feature = "ast-comments")]
         comments_after_type_or_group,
+        #[cfg(feature = "ast-parent")]
+        parent,
       } => {
         let mut nmk_str = String::new();
 
@@ -3096,6 +3213,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
 }
 
 #[cfg(feature = "ast-parent")]
+#[derive(Debug, PartialEq, Clone)]
 pub enum OccurParent<'a> {
   Occurrence(&'a Occurrence<'a>),
 }
@@ -3106,9 +3224,9 @@ pub enum OccurParent<'a> {
 ///       / "+"
 ///       / "?"
 /// ```
-#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Occur {
+pub enum Occur<'a> {
   /// Occurrence indicator in the form n*m, where n is an optional lower limit
   /// and m is an optional upper limit
   Exact {
@@ -3122,7 +3240,7 @@ pub enum Occur {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<OccurParent<'a>>,
+    parent: Option<OccurParent<'a>>,
   },
 
   /// Occurrence indicator in the form *, allowing zero or more occurrences
@@ -3133,7 +3251,7 @@ pub enum Occur {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<OccurParent<'a>>,
+    parent: Option<OccurParent<'a>>,
   },
 
   /// Occurrence indicator in the form +, allowing one or more occurrences
@@ -3144,7 +3262,7 @@ pub enum Occur {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<OccurParent<'a>>,
+    parent: Option<OccurParent<'a>>,
   },
 
   /// Occurrence indicator in the form ?, allowing an optional occurrence
@@ -3155,11 +3273,11 @@ pub enum Occur {
 
     #[cfg(feature = "ast-parent")]
     #[serde(skip)]
-    pub parent: Option<OccurParent<'a>>,
+    parent: Option<OccurParent<'a>>,
   },
 }
 
-impl fmt::Display for Occur {
+impl<'a> fmt::Display for Occur<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Occur::ZeroOrMore { .. } => write!(f, "*"),
@@ -3199,11 +3317,15 @@ mod tests {
           occur: None,
           name: Identifier::from("entry1"),
           generic_args: None,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         },
         leading_comments: None,
         trailing_comments: None,
         #[cfg(feature = "ast-span")]
         span: (0, 0, 0),
+        #[cfg(feature = "ast-parent")]
+        parent: None
       }
       .to_string(),
       "entry1".to_string()
@@ -3226,6 +3348,8 @@ mod tests {
                     comments_after_colon: None,
                     #[cfg(feature = "ast-span")]
                     span: (0, 0, 0),
+                    #[cfg(feature = "ast-parent")]
+                    parent: None,
                   }),
                   entry_type: Type {
                     type_choices: vec![TypeChoice {
@@ -3234,23 +3358,35 @@ mod tests {
                           value: "value1".into(),
                           #[cfg(feature = "ast-span")]
                           span: (0, 0, 0),
+                          #[cfg(feature = "ast-parent")]
+                          parent: None,
                         },
                         operator: None,
                         comments_after_type: None,
                         #[cfg(feature = "ast-span")]
                         span: (0, 0, 0),
+                        #[cfg(feature = "ast-parent")]
+                        parent: None,
                       },
                       comments_before_type: None,
                       comments_after_type: None,
+                      #[cfg(feature = "ast-parent")]
+                      parent: None,
                     }],
                     #[cfg(feature = "ast-span")]
                     span: (0, 0, 0),
+                    #[cfg(feature = "ast-parent")]
+                    parent: None,
                   },
+                  #[cfg(feature = "ast-parent")]
+                  parent: None,
                 }),
                 leading_comments: None,
                 trailing_comments: None,
                 #[cfg(feature = "ast-span")]
                 span: (0, 0, 0),
+                #[cfg(feature = "ast-parent")]
+                parent: None,
               },
               OptionalComma {
                 optional_comma: true,
@@ -3268,6 +3404,8 @@ mod tests {
                     comments_after_colon: None,
                     #[cfg(feature = "ast-span")]
                     span: (0, 0, 0),
+                    #[cfg(feature = "ast-parent")]
+                    parent: None,
                   }),
                   entry_type: Type {
                     type_choices: vec![TypeChoice {
@@ -3276,23 +3414,35 @@ mod tests {
                           value: "value2".into(),
                           #[cfg(feature = "ast-span")]
                           span: (0, 0, 0),
+                          #[cfg(feature = "ast-parent")]
+                          parent: None,
                         },
                         operator: None,
                         comments_after_type: None,
                         #[cfg(feature = "ast-span")]
                         span: (0, 0, 0),
+                        #[cfg(feature = "ast-parent")]
+                        parent: None,
                       },
                       comments_before_type: None,
                       comments_after_type: None,
+                      #[cfg(feature = "ast-parent")]
+                      parent: None,
                     }],
                     #[cfg(feature = "ast-span")]
                     span: (0, 0, 0),
+                    #[cfg(feature = "ast-parent")]
+                    parent: None,
                   },
+                  #[cfg(feature = "ast-parent")]
+                  parent: None,
                 }),
                 leading_comments: None,
                 trailing_comments: None,
                 #[cfg(feature = "ast-span")]
                 span: (0, 0, 0),
+                #[cfg(feature = "ast-parent")]
+                parent: None,
               },
               OptionalComma {
                 optional_comma: true,
@@ -3304,9 +3454,13 @@ mod tests {
           comments_before_grpchoice: None,
           #[cfg(feature = "ast-span")]
           span: (0, 0, 0),
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         }],
         #[cfg(feature = "ast-span")]
         span: (0, 0, 0),
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       }
       .to_string(),
       " key1: \"value1\", key2: \"value2\", ".to_string()

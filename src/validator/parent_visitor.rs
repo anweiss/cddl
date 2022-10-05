@@ -1,3 +1,5 @@
+#![cfg(feature = "ast-parent")]
+
 use crate::{
   ast::*,
   token::{self, Token},
@@ -92,13 +94,13 @@ impl ValidationError {
   }
 }
 
-type Rule = u16; // TODO
+type RulePointer = u16; // TODO
 
 /// validator type
 #[derive(Clone)]
 pub struct ParentValidator<'a> {
   cddl: &'a CDDL<'a>,
-  stack: Vec<Rule>,
+  stack: Vec<RulePointer>,
   errors: Vec<ValidationError>,
   cddl_location: String,
 }
@@ -115,8 +117,12 @@ impl<'a> ParentValidator<'a> {
 }
 
 impl<'a> Visitor<'a, Error> for ParentValidator<'a> {
+  /// Visit rule
+  fn visit_rule(&mut self, rule: &Rule) -> visitor::Result<Error> {
+    Ok(())
+  }
+
   fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<Error> {
-    // self.visit_gener
     Ok(())
   }
 

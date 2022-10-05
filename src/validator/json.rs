@@ -161,7 +161,7 @@ pub struct JSONValidator<'a> {
   cddl_location: String,
   json_location: String,
   // Occurrence indicator detected in current state of AST evaluation
-  occurrence: Option<Occur>,
+  occurrence: Option<Occur<'a>>,
   // Current group entry index detected in current state of AST evaluation
   group_entry_idx: Option<usize>,
   // JSON object value hoisted from previous state of AST evaluation
@@ -193,7 +193,7 @@ pub struct JSONValidator<'a> {
   // fails as detected during the current state of AST evaluation
   advance_to_next_entry: bool,
   is_ctrl_map_equality: bool,
-  entry_counts: Option<Vec<EntryCount>>,
+  entry_counts: Option<Vec<EntryCount<'a>>>,
   // Collect map entry keys that have already been validated
   validated_keys: Option<Vec<String>>,
   // Collect map entry values that have yet to be validated
@@ -748,7 +748,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
     if self.is_ctrl_map_equality {
       if let Some(t) = &self.ctrl {
         if let Value::Object(o) = &self.json {
-          let entry_counts = entry_counts_from_group(self.cddl, g);
+          let entry_counts = entry_counts_from_group(self.cddl, g.clone());
 
           let len = o.len();
           if let Token::EQ = t {
@@ -1151,7 +1151,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
         Type2::Array { group, .. } => {
           if let Value::Array(_) = &self.json {
-            let entry_counts = entry_counts_from_group(self.cddl, group);
+            let entry_counts = entry_counts_from_group(self.cddl, group.clone());
             self.entry_counts = Some(entry_counts);
             self.visit_type2(controller)?;
             self.entry_counts = None;
@@ -1561,7 +1561,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             return Ok(());
           }
 
-          let entry_counts = entry_counts_from_group(self.cddl, group);
+          let entry_counts = entry_counts_from_group(self.cddl, group.clone());
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
@@ -2498,7 +2498,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<Error> {
+  fn visit_occurrence(&mut self, o: &Occurrence<'a>) -> visitor::Result<Error> {
     self.occurrence = Some(o.occur.clone());
 
     Ok(())

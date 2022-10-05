@@ -53,12 +53,13 @@ wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-test = "0.3.25"
 
 [features]
-default = ["std", "ast-span", "ast-comments", "json", "cbor", "additional-controls"]
+default = ["std", "ast-span", "ast-comments", "json", "cbor", "additional-controls", "ast-parent"]
 std = ["base16/alloc", "base64/alloc", "serde_json", "ciborium", "serde", "chrono", "wasm-bindgen", "serde-wasm-bindgen", "clap", "crossterm", "uriparse", "base64-url", "regex-syntax"]
 lsp = ["std"]
 additional-controls = []
 ast-span = []
 ast-comments = []
+ast-parent = []
 json = ["std"]
 cbor = ["std"]
 web = ["ast-span", "wasm-bindgen", "serde-wasm-bindgen", "serde"]

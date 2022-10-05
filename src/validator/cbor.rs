@@ -142,7 +142,7 @@ pub struct CBORValidator<'a> {
   cddl_location: String,
   cbor_location: String,
   // Occurrence indicator detected in current state of AST evaluation
-  occurrence: Option<Occur>,
+  occurrence: Option<Occur<'a>>,
   // Current group entry index detected in current state of AST evaluation
   group_entry_idx: Option<usize>,
   // cbor object value hoisted from previous state of AST evaluation
@@ -175,7 +175,7 @@ pub struct CBORValidator<'a> {
   advance_to_next_entry: bool,
   // Is validation checking for map quality
   is_ctrl_map_equality: bool,
-  entry_counts: Option<Vec<EntryCount>>,
+  entry_counts: Option<Vec<EntryCount<'a>>>,
   // Collect map entry keys that have already been validated
   validated_keys: Option<Vec<Value>>,
   // Collect map entry values that have yet to be validated
@@ -690,7 +690,7 @@ where
     if self.is_ctrl_map_equality {
       if let Some(t) = &self.ctrl {
         if let Value::Map(m) = &self.cbor {
-          let entry_counts = entry_counts_from_group(self.cddl, g);
+          let entry_counts = entry_counts_from_group(self.cddl, g.clone());
           let len = m.len();
           if let Token::EQ | Token::NE = t {
             if !validate_entry_count(&entry_counts, len) {
@@ -1050,7 +1050,7 @@ where
           }
           Type2::Array { group, .. } => {
             if let Value::Array(_) = &self.cbor {
-              let entry_counts = entry_counts_from_group(self.cddl, group);
+              let entry_counts = entry_counts_from_group(self.cddl, group.clone());
               self.entry_counts = Some(entry_counts);
               self.visit_type2(controller)?;
               self.entry_counts = None;
@@ -1706,7 +1706,7 @@ where
             return Ok(());
           }
 
-          let entry_counts = entry_counts_from_group(self.cddl, group);
+          let entry_counts = entry_counts_from_group(self.cddl, group.clone());
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
@@ -1731,7 +1731,7 @@ where
         Value::Map(m) if self.is_member_key => {
           let current_location = self.cbor_location.clone();
 
-          let entry_counts = entry_counts_from_group(self.cddl, group);
+          let entry_counts = entry_counts_from_group(self.cddl, group.clone());
           self.entry_counts = Some(entry_counts);
 
           for (k, v) in m.iter() {
@@ -3452,7 +3452,7 @@ where
     Ok(())
   }
 
-  fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<Error<T>> {
+  fn visit_occurrence(&mut self, o: &Occurrence<'a>) -> visitor::Result<Error<T>> {
     self.occurrence = Some(o.occur.clone());
 
     Ok(())

@@ -590,11 +590,15 @@ impl<'a> Parser<'a> {
           comments_before_assigng: comments_before_assign,
           #[cfg(feature = "ast-comments")]
           comments_after_assigng: comments_after_assign,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         }),
         #[cfg(feature = "ast-comments")]
         comments_after_rule,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       });
     }
 
@@ -628,11 +632,15 @@ impl<'a> Parser<'a> {
               comments_before_assigng: comments_before_assign,
               #[cfg(feature = "ast-comments")]
               comments_after_assigng: comments_after_assign,
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             }),
             #[cfg(feature = "ast-comments")]
             comments_after_rule,
             #[cfg(feature = "ast-span")]
             span,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           })
         } else {
           #[cfg(feature = "ast-comments")]
@@ -669,11 +677,15 @@ impl<'a> Parser<'a> {
               comments_before_assignt: comments_before_assign,
               #[cfg(feature = "ast-comments")]
               comments_after_assignt: comments_after_assign,
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             },
             #[cfg(feature = "ast-comments")]
             comments_after_rule,
             #[cfg(feature = "ast-span")]
             span,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           })
         }
       }
@@ -728,6 +740,8 @@ impl<'a> Parser<'a> {
                             self.parser_position.range.1,
                             begin_rule_line,
                           ),
+                          #[cfg(feature = "ast-parent")]
+                          parent: None,
                         }))?;
 
                         #[cfg(feature = "ast-span")]
@@ -747,11 +761,15 @@ impl<'a> Parser<'a> {
                             comments_before_assignt: comments_before_assign,
                             #[cfg(feature = "ast-comments")]
                             comments_after_assignt: comments_after_assign,
+                            #[cfg(feature = "ast-parent")]
+                            parent: None,
                           },
                           #[cfg(feature = "ast-comments")]
                           comments_after_rule,
                           #[cfg(feature = "ast-span")]
                           span: (begin_rule_range, end_rule_range, begin_rule_line),
+                          #[cfg(feature = "ast-parent")]
+                          parent: None,
                         });
                       }
                     }
@@ -774,11 +792,15 @@ impl<'a> Parser<'a> {
             comments_before_assigng: comments_before_assign,
             #[cfg(feature = "ast-comments")]
             comments_after_assigng: comments_after_assign,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }),
           #[cfg(feature = "ast-comments")]
           comments_after_rule,
           #[cfg(feature = "ast-span")]
           span: (begin_rule_range, end_rule_range, begin_rule_line),
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         })
       }
       _ => {
@@ -838,11 +860,15 @@ impl<'a> Parser<'a> {
             comments_before_assignt: comments_before_assign,
             #[cfg(feature = "ast-comments")]
             comments_after_assignt: comments_after_assign,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           },
           #[cfg(feature = "ast-comments")]
           comments_after_rule,
           #[cfg(feature = "ast-span")]
           span,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         })
       }
     }
@@ -882,6 +908,8 @@ impl<'a> Parser<'a> {
             comments_before_ident,
             #[cfg(feature = "ast-comments")]
             comments_after_ident,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           });
 
           if !self.cur_token_is(Token::COMMA) && !self.cur_token_is(Token::RANGLEBRACKET) {
@@ -984,6 +1012,8 @@ impl<'a> Parser<'a> {
         arg: Box::from(t1),
         #[cfg(feature = "ast-comments")]
         comments_after_type: trailing_comments,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       });
 
       if let Token::COMMA = self.cur_token {
@@ -1042,6 +1072,8 @@ impl<'a> Parser<'a> {
       type_choices: Vec::new(),
       #[cfg(feature = "ast-span")]
       span: (begin_type_range, 0, self.parser_position.line),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     };
 
     #[cfg(feature = "ast-comments")]
@@ -1049,6 +1081,8 @@ impl<'a> Parser<'a> {
       type1: self.parse_type1(parenthesized_type)?,
       comments_before_type: None,
       comments_after_type: None,
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     };
 
     #[cfg(not(feature = "ast-comments"))]
@@ -1078,6 +1112,8 @@ impl<'a> Parser<'a> {
         comments_before_type,
         comments_after_type: None,
         type1: self.parse_type1(None)?,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       };
 
       #[cfg(not(feature = "ast-comments"))]
@@ -1118,6 +1154,8 @@ impl<'a> Parser<'a> {
       comments_after_type,
       #[cfg(feature = "ast-span")]
       span,
+      #[cfg(feature = "ast-parent")]
+      parent,
     }) = parenthesized_type
     {
       #[cfg(feature = "ast-span")]
@@ -1134,6 +1172,8 @@ impl<'a> Parser<'a> {
         comments_after_type,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent,
       }
     } else {
       self.parse_type2()?
@@ -1162,6 +1202,8 @@ impl<'a> Parser<'a> {
           is_inclusive: *i,
           #[cfg(feature = "ast-span")]
           span,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         })
       }
       _ => token::control_str_from_token(&self.cur_token).map(|ctrl| {
@@ -1174,6 +1216,8 @@ impl<'a> Parser<'a> {
           ctrl,
           #[cfg(feature = "ast-span")]
           span,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         }
       }),
     };
@@ -1212,11 +1256,15 @@ impl<'a> Parser<'a> {
             #[cfg(feature = "ast-comments")]
             comments_after_operator,
             type2: t2,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }),
           #[cfg(feature = "ast-comments")]
           comments_after_type: None,
           #[cfg(feature = "ast-span")]
           span,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         })
       }
       None => Ok(Type1 {
@@ -1226,6 +1274,8 @@ impl<'a> Parser<'a> {
         comments_after_type,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       }),
     }
   }
@@ -1253,27 +1303,37 @@ impl<'a> Parser<'a> {
             value: t.clone(),
             #[cfg(feature = "ast-span")]
             span,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }),
           token::Value::INT(i) => Ok(Type2::IntValue {
             value: *i,
             #[cfg(feature = "ast-span")]
             span,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }),
           token::Value::UINT(ui) => Ok(Type2::UintValue {
             value: *ui,
             #[cfg(feature = "ast-span")]
             span,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }),
           token::Value::FLOAT(f) => Ok(Type2::FloatValue {
             value: *f,
             #[cfg(feature = "ast-span")]
             span,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }),
           token::Value::BYTE(token::ByteValue::UTF8(Cow::Borrowed(utf8))) => {
             Ok(Type2::UTF8ByteString {
               value: Cow::Borrowed(utf8),
               #[cfg(feature = "ast-span")]
               span,
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             })
           }
           token::Value::BYTE(token::ByteValue::UTF8(Cow::Owned(utf8))) => {
@@ -1281,6 +1341,8 @@ impl<'a> Parser<'a> {
               value: Cow::Owned(utf8.to_owned()),
               #[cfg(feature = "ast-span")]
               span,
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             })
           }
           token::Value::BYTE(token::ByteValue::B16(Cow::Borrowed(b16))) => {
@@ -1288,24 +1350,32 @@ impl<'a> Parser<'a> {
               value: Cow::Borrowed(b16),
               #[cfg(feature = "ast-span")]
               span,
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             })
           }
           token::Value::BYTE(token::ByteValue::B16(Cow::Owned(b16))) => Ok(Type2::B16ByteString {
             value: Cow::Owned(b16.to_owned()),
             #[cfg(feature = "ast-span")]
             span,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }),
           token::Value::BYTE(token::ByteValue::B64(Cow::Borrowed(b64))) => {
             Ok(Type2::B64ByteString {
               value: Cow::Borrowed(b64),
               #[cfg(feature = "ast-span")]
               span,
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             })
           }
           token::Value::BYTE(token::ByteValue::B64(Cow::Owned(b64))) => Ok(Type2::B64ByteString {
             value: Cow::Owned(b64.to_owned()),
             #[cfg(feature = "ast-span")]
             span,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }),
         }
       }
@@ -1330,6 +1400,8 @@ impl<'a> Parser<'a> {
             generic_args: Some(ga),
             #[cfg(feature = "ast-span")]
             span: (begin_type2_range, end_type2_range, begin_type2_line),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           });
         }
 
@@ -1348,6 +1420,8 @@ impl<'a> Parser<'a> {
             self.parser_position.range.1,
             self.parser_position.line,
           ),
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         })
       }
 
@@ -1391,6 +1465,8 @@ impl<'a> Parser<'a> {
             self.parser_position.range.1,
             self.parser_position.line,
           ),
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         })
       }
 
@@ -1448,6 +1524,8 @@ impl<'a> Parser<'a> {
           span,
           #[cfg(feature = "ast-comments")]
           comments_after_group,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         })
       }
 
@@ -1505,6 +1583,8 @@ impl<'a> Parser<'a> {
           comments_after_group,
           #[cfg(feature = "ast-span")]
           span,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         })
       }
 
@@ -1536,6 +1616,8 @@ impl<'a> Parser<'a> {
               generic_args: Some(self.parse_genericargs()?),
               #[cfg(feature = "ast-span")]
               span: (0, 0, 0),
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             });
           }
 
@@ -1546,6 +1628,8 @@ impl<'a> Parser<'a> {
             generic_args: None,
             #[cfg(feature = "ast-span")]
             span: (0, 0, 0),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           });
         }
 
@@ -1603,6 +1687,8 @@ impl<'a> Parser<'a> {
                 self.parser_position.range.1,
                 begin_type2_line,
               ),
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             })
           }
           Token::IDENT(ident, socket) => {
@@ -1623,6 +1709,8 @@ impl<'a> Parser<'a> {
                   self.parser_position.range.1,
                   begin_type2_line,
                 ),
+                #[cfg(feature = "ast-parent")]
+                parent: None,
               });
             }
 
@@ -1642,6 +1730,8 @@ impl<'a> Parser<'a> {
                 self.parser_position.range.1,
                 begin_type2_line,
               ),
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             })
           }
           _ => {
@@ -1720,6 +1810,8 @@ impl<'a> Parser<'a> {
                 self.parser_position.range.1,
                 begin_type2_line,
               ),
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             })
           }
           // Tagged data of a major type
@@ -1732,13 +1824,19 @@ impl<'a> Parser<'a> {
               self.lexer_position.range.1,
               begin_type2_line,
             ),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }),
           #[cfg(feature = "ast-span")]
-          _ => Ok(Type2::Any { span: (
-            begin_type2_range,
-            self.lexer_position.range.1,
-            begin_type2_line,
-          )}),
+          _ => Ok(Type2::Any {
+            span: (
+              begin_type2_range,
+              self.lexer_position.range.1,
+              begin_type2_line,
+            ),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
+          }),
           #[cfg(not(feature = "ast-span"))]
           _ => Ok(Type2::Any),
         }
@@ -1767,6 +1865,8 @@ impl<'a> Parser<'a> {
                 self.parser_position.range.1,
                 self.parser_position.line,
               ),
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             })
           }
           None => {
@@ -1834,6 +1934,8 @@ impl<'a> Parser<'a> {
       group_choices: Vec::new(),
       #[cfg(feature = "ast-span")]
       span: (begin_group_range, 0, self.lexer_position.line),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     };
 
     group.group_choices.push(self.parse_grpchoice()?);
@@ -1870,6 +1972,8 @@ impl<'a> Parser<'a> {
       comments_before_grpchoice: None,
       #[cfg(feature = "ast-span")]
       span: (self.lexer_position.range.0, 0, self.lexer_position.line),
+      #[cfg(feature = "ast-parent")]
+      parent: None,
     };
 
     if let Token::GCHOICE = &self.cur_token {
@@ -2059,6 +2163,8 @@ impl<'a> Parser<'a> {
         comments_after_group,
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       });
     }
 
@@ -2079,6 +2185,8 @@ impl<'a> Parser<'a> {
         comments_before_type_or_group,
         #[cfg(feature = "ast-comments")]
         comments_after_type_or_group,
+        #[cfg(feature = "ast-parent")]
+        parent,
       }) => {
         #[cfg(feature = "ast-span")]
         if let Token::COMMA = &self.cur_token {
@@ -2109,12 +2217,16 @@ impl<'a> Parser<'a> {
               occur,
               name,
               generic_args,
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             },
             #[cfg(feature = "ast-comments")]
             leading_comments: comments_before_type_or_group,
             #[cfg(feature = "ast-comments")]
             trailing_comments,
             span,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           });
         }
 
@@ -2200,6 +2312,8 @@ impl<'a> Parser<'a> {
             occur,
             member_key: None,
             entry_type,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }),
           #[cfg(feature = "ast-comments")]
           leading_comments: comments_before_type_or_group,
@@ -2207,6 +2321,8 @@ impl<'a> Parser<'a> {
           trailing_comments,
           #[cfg(feature = "ast-span")]
           span,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         })
       }
       Some(MemberKey::NonMemberKey {
@@ -2215,6 +2331,8 @@ impl<'a> Parser<'a> {
         comments_before_type_or_group,
         #[cfg(feature = "ast-comments")]
         comments_after_type_or_group,
+        #[cfg(feature = "ast-parent")]
+        parent,
       }) => {
         #[cfg(feature = "ast-span")]
         if let Token::COMMA = &self.cur_token {
@@ -2230,6 +2348,8 @@ impl<'a> Parser<'a> {
           comments_before_group: comments_before_type_or_group,
           #[cfg(feature = "ast-comments")]
           comments_after_group: comments_after_type_or_group,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         })
       }
       member_key @ Some(_) => {
@@ -2290,6 +2410,8 @@ impl<'a> Parser<'a> {
             occur,
             member_key,
             entry_type,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }),
           #[cfg(feature = "ast-comments")]
           leading_comments: None,
@@ -2297,6 +2419,8 @@ impl<'a> Parser<'a> {
           trailing_comments,
           #[cfg(feature = "ast-span")]
           span,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         })
       }
       None => {
@@ -2353,12 +2477,16 @@ impl<'a> Parser<'a> {
               occur,
               name,
               generic_args,
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             },
             #[cfg(feature = "ast-comments")]
             leading_comments: None,
             #[cfg(feature = "ast-comments")]
             trailing_comments,
             span,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           });
         }
 
@@ -2438,6 +2566,8 @@ impl<'a> Parser<'a> {
             occur,
             member_key: None,
             entry_type,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }),
           #[cfg(feature = "ast-comments")]
           leading_comments: None,
@@ -2445,6 +2575,8 @@ impl<'a> Parser<'a> {
           trailing_comments,
           #[cfg(feature = "ast-span")]
           span,
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         })
       }
     }
@@ -2532,12 +2664,16 @@ impl<'a> Parser<'a> {
             generic_args: None,
             #[cfg(feature = "ast-span")]
             span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           },
           operator: None,
           #[cfg(feature = "ast-comments")]
           comments_after_type: None,
           #[cfg(feature = "ast-span")]
           span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         }),
         #[cfg(feature = "ast-comments")]
         comments_before_cut,
@@ -2552,6 +2688,8 @@ impl<'a> Parser<'a> {
           end_memberkey_range,
           begin_memberkey_line,
         ),
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       };
 
       self.next_token()?;
@@ -2580,12 +2718,16 @@ impl<'a> Parser<'a> {
             generic_args: None,
             #[cfg(feature = "ast-span")]
             span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           },
           operator: None,
           #[cfg(feature = "ast-comments")]
           comments_after_type: None,
           #[cfg(feature = "ast-span")]
           span: (begin_memberkey_range, end_t1_range, begin_memberkey_line),
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         }),
         #[cfg(feature = "ast-comments")]
         comments_before_cut,
@@ -2600,6 +2742,8 @@ impl<'a> Parser<'a> {
           end_memberkey_range,
           begin_memberkey_line,
         ),
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       };
 
       self.next_token()?;
@@ -2632,6 +2776,8 @@ impl<'a> Parser<'a> {
           self.parser_position.range.1,
           begin_memberkey_line,
         ),
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       })
     };
 
@@ -2737,6 +2883,8 @@ impl<'a> Parser<'a> {
               end_memberkey_range,
               begin_memberkey_line,
             ),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           })
         } else {
           #[cfg(feature = "ast-comments")]
@@ -2777,6 +2925,8 @@ impl<'a> Parser<'a> {
               self.parser_position.range.1,
               begin_memberkey_line,
             ),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           })
         };
 
@@ -2888,6 +3038,8 @@ impl<'a> Parser<'a> {
             comments_before_type_or_group,
             #[cfg(feature = "ast-comments")]
             comments_after_type_or_group,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }));
         }
 
@@ -2944,6 +3096,8 @@ impl<'a> Parser<'a> {
                   closing_parend_index,
                   begin_memberkey_line,
                 ),
+                #[cfg(feature = "ast-parent")]
+                parent: None,
               },
               #[cfg(feature = "ast-comments")]
               comments_after_type: comments_before_cut.clone(),
@@ -2954,6 +3108,8 @@ impl<'a> Parser<'a> {
                 closing_parend_index,
                 begin_memberkey_line,
               ),
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             }),
             #[cfg(feature = "ast-comments")]
             comments_before_cut,
@@ -2968,6 +3124,8 @@ impl<'a> Parser<'a> {
               end_memberkey_range,
               begin_memberkey_line,
             ),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           });
 
           return Ok(t1);
@@ -3000,6 +3158,8 @@ impl<'a> Parser<'a> {
                   closing_parend_index,
                   begin_memberkey_line,
                 ),
+                #[cfg(feature = "ast-parent")]
+                parent: None,
               },
               #[cfg(feature = "ast-comments")]
               comments_after_type: comments_before_cut.clone(),
@@ -3010,6 +3170,8 @@ impl<'a> Parser<'a> {
                 closing_parend_index,
                 begin_memberkey_line,
               ),
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             }),
             #[cfg(feature = "ast-comments")]
             comments_before_cut,
@@ -3024,6 +3186,8 @@ impl<'a> Parser<'a> {
               self.lexer_position.range.0,
               begin_memberkey_line,
             ),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           })
         } else {
           Some(MemberKey::NonMemberKey {
@@ -3035,11 +3199,15 @@ impl<'a> Parser<'a> {
                 self.parser_position.range.1,
                 begin_memberkey_line,
               ),
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             }),
             #[cfg(feature = "ast-comments")]
             comments_before_type_or_group,
             #[cfg(feature = "ast-comments")]
             comments_after_type_or_group,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           })
         };
 
@@ -3095,6 +3263,8 @@ impl<'a> Parser<'a> {
               end_memberkey_range,
               begin_memberkey_line,
             ),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }));
         }
 
@@ -3126,6 +3296,8 @@ impl<'a> Parser<'a> {
               self.parser_position.range.1,
               begin_memberkey_line,
             ),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           })
         } else {
           Some(MemberKey::NonMemberKey {
@@ -3136,6 +3308,8 @@ impl<'a> Parser<'a> {
                 #[cfg(feature = "ast-comments")]
                 comments_after_type: None,
                 type1: t1,
+                #[cfg(feature = "ast-parent")]
+                parent: None,
               }],
               #[cfg(feature = "ast-span")]
               span: (
@@ -3143,11 +3317,15 @@ impl<'a> Parser<'a> {
                 self.parser_position.range.1,
                 begin_memberkey_line,
               ),
+              #[cfg(feature = "ast-parent")]
+              parent: None,
             }),
             #[cfg(feature = "ast-comments")]
             comments_before_type_or_group: None,
             #[cfg(feature = "ast-comments")]
             comments_after_type_or_group: comments_before_cut,
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           })
         };
 
@@ -3183,16 +3361,22 @@ impl<'a> Parser<'a> {
 
         Ok(Some(Occurrence {
           #[cfg(feature = "ast-span")]
-          occur: Occur::Optional { span: (
-            self.parser_position.range.0,
-            self.parser_position.range.1,
-            self.parser_position.line,
-          )},
+          occur: Occur::Optional {
+            span: (
+              self.parser_position.range.0,
+              self.parser_position.range.1,
+              self.parser_position.line,
+            ),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
+          },
           #[cfg(not(feature = "ast-span"))]
           occur: Occur::Optional,
           #[cfg(feature = "ast-comments")]
           comments,
           _a: PhantomData::default(),
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         }))
       }
       Token::ONEORMORE => {
@@ -3210,16 +3394,22 @@ impl<'a> Parser<'a> {
 
         Ok(Some(Occurrence {
           #[cfg(feature = "ast-span")]
-          occur: Occur::OneOrMore { span: (
-            self.parser_position.range.0,
-            self.parser_position.range.1,
-            self.parser_position.line,
-          )},
+          occur: Occur::OneOrMore {
+            span: (
+              self.parser_position.range.0,
+              self.parser_position.range.1,
+              self.parser_position.line,
+            ),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
+          },
           #[cfg(not(feature = "ast-span"))]
           occur: Occur::OneOrMore,
           #[cfg(feature = "ast-comments")]
           comments,
           _a: PhantomData::default(),
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         }))
       }
       Token::ASTERISK => {
@@ -3239,16 +3429,22 @@ impl<'a> Parser<'a> {
               self.parser_position.range.1,
               self.parser_position.line,
             ),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           }
         } else {
           #[cfg(feature = "ast-span")]
           {
             self.parser_position.range = self.lexer_position.range;
-            Occur::ZeroOrMore { span: (
-              self.parser_position.range.0,
-              self.parser_position.range.1,
-              self.parser_position.line,
-            )}
+            Occur::ZeroOrMore {
+              span: (
+                self.parser_position.range.0,
+                self.parser_position.range.1,
+                self.parser_position.line,
+              ),
+              #[cfg(feature = "ast-parent")]
+              parent: None,
+            }
           }
 
           #[cfg(not(feature = "ast-span"))]
@@ -3271,6 +3467,8 @@ impl<'a> Parser<'a> {
           #[cfg(feature = "ast-comments")]
           comments,
           _a: PhantomData::default(),
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         }))
       }
       Token::VALUE(_) => {
@@ -3333,10 +3531,14 @@ impl<'a> Parser<'a> {
               self.parser_position.range.1,
               begin_occur_line,
             ),
+            #[cfg(feature = "ast-parent")]
+            parent: None,
           },
           #[cfg(feature = "ast-comments")]
           comments,
           _a: PhantomData::default(),
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         }))
       }
       _ => Ok(None),

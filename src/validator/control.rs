@@ -862,6 +862,8 @@ mod tests {
         value: "foo\n  bar\n  baz\n".into(),
         #[cfg(feature = "ast-span")]
         span: Span::default(),
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       }],
     );
 
@@ -892,6 +894,8 @@ mod tests {
           generic_args: None,
           #[cfg(feature = "ast-span")]
           span: Span::default(),
+          #[cfg(feature = "ast-parent")]
+          parent: None,
         },
         true,
       )?,
@@ -899,6 +903,8 @@ mod tests {
         value: "foo\nbar\nbaz\n".into(),
         #[cfg(feature = "ast-span")]
         span: Span::default(),
+        #[cfg(feature = "ast-parent")]
+        parent: None,
       }]
     );
 
