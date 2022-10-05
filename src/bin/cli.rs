@@ -23,6 +23,10 @@ use std::{
 #[derive(Parser)]
 #[clap(author, version, about = "Tool for verifying conformance of CDDL definitions against RFC 8610 and for validating JSON documents and CBOR binary files", long_about = None)]
 struct Cli {
+  /// Enable CI mode, failing if files cannot be found or other edge cases.
+  #[clap(long)]
+  ci: bool,
+
   #[clap(subcommand)]
   command: Commands,
 }
@@ -78,6 +82,15 @@ struct Validate {
   stdin: bool,
 }
 
+macro_rules! error {
+    ($ci: expr, $($args: tt)+ ) => {
+      log::error!($($args)+);
+      if $ci {
+        return Err(format!($($args)+).into());
+      }
+    };
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
   TermLogger::init(
     LevelFilter::Info,
@@ -94,8 +107,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     Commands::CompileCddl { file } => {
       let p = Path::new(file);
       if !p.exists() {
-        error!("CDDL document {:?} does not exist", p);
-
+        error!(cli.ci, "CDDL document {:?} does not exist", p);
         return Ok(());
       }
 
@@ -107,7 +119,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     Commands::CompileJson { file } => {
       let p = Path::new(file);
       if !p.exists() {
-        error!("JSON document {:?} does not exist", p);
+        error!(cli.ci, "JSON document {:?} does not exist", p);
 
         return Ok(());
       }
@@ -142,7 +154,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
       let p = Path::new(&validate.cddl);
       if !p.exists() {
-        error!("CDDL document {:?} does not exist", p);
+        error!(cli.ci, "CDDL document {:?} does not exist", p);
 
         return Ok(());
       }
@@ -158,7 +170,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         for file in files {
           let p = Path::new(file);
           if !p.exists() {
-            error!("File {:?} does not exist", p);
+            error!(cli.ci, "File {:?} does not exist", p);
 
             continue;
           }
@@ -177,7 +189,12 @@ fn main() -> Result<(), Box<dyn Error>> {
               info!("Validation of {:?} is successful", p);
             }
             Err(e) => {
-              error!("Validation of {:?} failed: {}", p, e.to_string().trim_end());
+              error!(
+                cli.ci,
+                "Validation of {:?} failed: {}",
+                p,
+                e.to_string().trim_end()
+              );
             }
           }
         }
@@ -187,7 +204,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         for file in files {
           let p = Path::new(file);
           if !p.exists() {
-            error!("CBOR binary file {:?} does not exist", p);
+            error!(cli.ci, "CBOR binary file {:?} does not exist", p);
 
             continue;
           }
@@ -205,7 +222,12 @@ fn main() -> Result<(), Box<dyn Error>> {
               info!("Validation of {:?} is successful", p);
             }
             Err(e) => {
-              error!("Validation of {:?} failed: {}", p, e.to_string().trim_end());
+              error!(
+                cli.ci,
+                "Validation of {:?} failed: {}",
+                p,
+                e.to_string().trim_end()
+              );
             }
           }
         }
@@ -228,7 +250,11 @@ fn main() -> Result<(), Box<dyn Error>> {
               info!("Validation from stdin is successful");
             }
             Err(e) => {
-              error!("Validation from stdin failed: {}", e.to_string().trim_end());
+              error!(
+                cli.ci,
+                "Validation from stdin failed: {}",
+                e.to_string().trim_end()
+              );
             }
           }
         } else {
@@ -242,7 +268,11 @@ fn main() -> Result<(), Box<dyn Error>> {
               info!("Validation from stdin is successful");
             }
             Err(e) => {
-              error!("Validation from stdin failed: {}", e.to_string().trim_end());
+              error!(
+                cli.ci,
+                "Validation from stdin failed: {}",
+                e.to_string().trim_end()
+              );
             }
           }
         }
