@@ -597,8 +597,6 @@ impl<'a> Parser<'a> {
         comments_after_rule,
         #[cfg(feature = "ast-span")]
         span,
-        #[cfg(feature = "ast-parent")]
-        parent: None,
       });
     }
 
@@ -639,8 +637,6 @@ impl<'a> Parser<'a> {
             comments_after_rule,
             #[cfg(feature = "ast-span")]
             span,
-            #[cfg(feature = "ast-parent")]
-            parent: None,
           })
         } else {
           #[cfg(feature = "ast-comments")]
@@ -684,8 +680,6 @@ impl<'a> Parser<'a> {
             comments_after_rule,
             #[cfg(feature = "ast-span")]
             span,
-            #[cfg(feature = "ast-parent")]
-            parent: None,
           })
         }
       }
@@ -768,8 +762,6 @@ impl<'a> Parser<'a> {
                           comments_after_rule,
                           #[cfg(feature = "ast-span")]
                           span: (begin_rule_range, end_rule_range, begin_rule_line),
-                          #[cfg(feature = "ast-parent")]
-                          parent: None,
                         });
                       }
                     }
@@ -799,8 +791,6 @@ impl<'a> Parser<'a> {
           comments_after_rule,
           #[cfg(feature = "ast-span")]
           span: (begin_rule_range, end_rule_range, begin_rule_line),
-          #[cfg(feature = "ast-parent")]
-          parent: None,
         })
       }
       _ => {
@@ -867,8 +857,6 @@ impl<'a> Parser<'a> {
           comments_after_rule,
           #[cfg(feature = "ast-span")]
           span,
-          #[cfg(feature = "ast-parent")]
-          parent: None,
         })
       }
     }

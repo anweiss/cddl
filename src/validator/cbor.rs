@@ -482,7 +482,7 @@ impl<'a> CBORValidator<'a> {
   }
 }
 
-impl<'a, T: std::fmt::Debug + 'static> Validator<'a, cbor::Error<T>> for CBORValidator<'a>
+impl<'a, 'b, T: std::fmt::Debug + 'static> Validator<'a, 'b, cbor::Error<T>> for CBORValidator<'a>
 where
   cbor::Error<T>: From<cbor::Error<std::io::Error>>,
 {
@@ -519,7 +519,7 @@ where
   }
 }
 
-impl<'a, T: std::fmt::Debug + 'static> Visitor<'a, Error<T>> for CBORValidator<'a>
+impl<'a, 'b, T: std::fmt::Debug + 'static> Visitor<'a, 'b, Error<T>> for CBORValidator<'a>
 where
   cbor::Error<T>: From<cbor::Error<std::io::Error>>,
 {

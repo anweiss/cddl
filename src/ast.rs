@@ -251,10 +251,6 @@ pub enum Rule<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_rule: Option<Comments<'a>>,
-
-    #[cfg(feature = "ast-parent")]
-    #[serde(skip)]
-    parent: Option<RuleParent<'a>>,
   },
   /// Group expression
   Group {
@@ -268,10 +264,6 @@ pub enum Rule<'a> {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_rule: Option<Comments<'a>>,
-
-    #[cfg(feature = "ast-parent")]
-    #[serde(skip)]
-    parent: Option<RuleParent<'a>>,
   },
 }
 
@@ -403,7 +395,7 @@ impl<'a> Rule<'a> {
 #[cfg(feature = "ast-parent")]
 #[derive(Debug, PartialEq, Clone)]
 pub enum TypeRuleParent<'a> {
-  Rule(&'a Rule<'a>),
+  Rule(Box<Rule<'a>>),
 }
 
 /// Type expression
@@ -471,7 +463,7 @@ impl<'a> fmt::Display for TypeRule<'a> {
 #[cfg(feature = "ast-parent")]
 #[derive(Debug, PartialEq, Clone)]
 pub enum GroupRuleParent<'a> {
-  Rule(&'a Rule<'a>),
+  Rule(Box<Rule<'a>>),
 }
 
 /// Group expression

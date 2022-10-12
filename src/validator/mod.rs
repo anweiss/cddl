@@ -50,7 +50,7 @@ struct ParserError {
   msg: ErrorMsg,
 }
 
-trait Validator<'a, E: Error>: Visitor<'a, E> {
+trait Validator<'a, 'b, E: Error>: Visitor<'a, 'b, E> {
   fn validate(&mut self) -> std::result::Result<(), E>;
   fn add_error(&mut self, reason: String);
 }

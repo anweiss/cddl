@@ -545,7 +545,7 @@ impl<'a> JSONValidator<'a> {
   }
 }
 
-impl<'a> Validator<'a, Error> for JSONValidator<'a> {
+impl<'a, 'b> Validator<'a, 'b, Error> for JSONValidator<'a> {
   /// Validate
   fn validate(&mut self) -> std::result::Result<(), Error> {
     for r in self.cddl.rules.iter() {
@@ -580,7 +580,7 @@ impl<'a> Validator<'a, Error> for JSONValidator<'a> {
   }
 }
 
-impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
+impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
   fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<Error> {
     if let Some(gp) = &tr.generic_params {
       if let Some(gr) = self

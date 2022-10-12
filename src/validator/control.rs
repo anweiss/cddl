@@ -12,7 +12,10 @@ use pest_meta;
 
 /// Retrieve all text strings and byte string literals from a given rule
 /// identifier. Used for proposed .cat control operator.
-pub fn string_literals_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec<&'a Type2<'a>> {
+pub fn string_literals_from_ident<'a>(
+  cddl: &'a CDDL<'a>,
+  ident: &Identifier,
+) -> Vec<&'a Type2<'a>> {
   let mut literals = Vec::new();
   for r in cddl.rules.iter() {
     if let Rule::Type { rule, .. } = r {
@@ -38,7 +41,7 @@ pub fn string_literals_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec
 
 /// Retrieve all numeric values from a given rule identifier. Used for
 /// proposed .cat control operator.
-pub fn numeric_values_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec<&'a Type2<'a>> {
+pub fn numeric_values_from_ident<'a>(cddl: &'a CDDL<'a>, ident: &Identifier) -> Vec<&'a Type2<'a>> {
   let mut literals = Vec::new();
   for r in cddl.rules.iter() {
     if let Rule::Type { rule, .. } = r {
@@ -65,7 +68,7 @@ pub fn numeric_values_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec<
 /// Concatenate target and controller. The Vec return type is to accomodate more
 /// than one type choice in the controller.
 pub fn cat_operation<'a>(
-  cddl: &CDDL,
+  cddl: &'a CDDL<'a>,
   target: &Type2,
   controller: &Type2,
   is_dedent: bool,
@@ -601,7 +604,7 @@ fn dedent_bytes(source: &[u8], is_utf8_byte_string: bool) -> Result<Vec<u8>, Str
 /// Numeric addition of target and controller. The Vec return type is to
 /// accommodate more than one type choice in the controller
 pub fn plus_operation<'a>(
-  cddl: &CDDL,
+  cddl: &'a CDDL<'a>,
   target: &Type2,
   controller: &Type2,
 ) -> Result<Vec<Type2<'a>>, String> {
@@ -802,7 +805,7 @@ pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
 /// return type is to accomodate more than one type choice in the controller.
 #[cfg(feature = "additional-controls")]
 pub fn abnf_from_complex_controller<'a>(
-  cddl: &'a CDDL,
+  cddl: &'a CDDL<'a>,
   controller: &Type,
 ) -> Result<Vec<Type2<'a>>, String> {
   if let Some(tc) = controller.type_choices.first() {
