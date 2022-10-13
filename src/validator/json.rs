@@ -161,7 +161,7 @@ pub struct JSONValidator<'a> {
   cddl_location: String,
   json_location: String,
   // Occurrence indicator detected in current state of AST evaluation
-  occurrence: Option<Occur<'a>>,
+  occurrence: Option<Occur>,
   // Current group entry index detected in current state of AST evaluation
   group_entry_idx: Option<usize>,
   // JSON object value hoisted from previous state of AST evaluation
@@ -193,7 +193,7 @@ pub struct JSONValidator<'a> {
   // fails as detected during the current state of AST evaluation
   advance_to_next_entry: bool,
   is_ctrl_map_equality: bool,
-  entry_counts: Option<Vec<EntryCount<'a>>>,
+  entry_counts: Option<Vec<EntryCount>>,
   // Collect map entry keys that have already been validated
   validated_keys: Option<Vec<String>>,
   // Collect map entry values that have yet to be validated

@@ -142,7 +142,7 @@ pub struct CBORValidator<'a> {
   cddl_location: String,
   cbor_location: String,
   // Occurrence indicator detected in current state of AST evaluation
-  occurrence: Option<Occur<'a>>,
+  occurrence: Option<Occur>,
   // Current group entry index detected in current state of AST evaluation
   group_entry_idx: Option<usize>,
   // cbor object value hoisted from previous state of AST evaluation
@@ -175,7 +175,7 @@ pub struct CBORValidator<'a> {
   advance_to_next_entry: bool,
   // Is validation checking for map quality
   is_ctrl_map_equality: bool,
-  entry_counts: Option<Vec<EntryCount<'a>>>,
+  entry_counts: Option<Vec<EntryCount>>,
   // Collect map entry keys that have already been validated
   validated_keys: Option<Vec<Value>>,
   // Collect map entry values that have yet to be validated

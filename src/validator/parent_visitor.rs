@@ -2,12 +2,11 @@
 
 use crate::{
   ast::*,
-  token::{self, Token},
-  validator::group_choice_alternates_from_ident,
+  token::{ByteValue, Value},
   visitor::{self, *},
 };
 
-use std::{borrow::Cow, collections::HashMap, convert::TryFrom, fmt};
+use std::{borrow::Cow, fmt};
 
 /// validation Result
 pub type Result = std::result::Result<(), Error>;
@@ -33,51 +32,6 @@ impl std::error::Error for Error {
       _ => None,
     }
   }
-}
-
-/// JSON validation error
-#[derive(Clone, Debug)]
-pub struct ValidationError {
-  /// Error message
-  pub reason: String,
-}
-
-impl fmt::Display for ValidationError {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    let mut error_str = String::from("error validating");
-    write!(f, "{}: {}", error_str, self.reason)
-  }
-}
-
-impl std::error::Error for ValidationError {
-  fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-    None
-  }
-}
-
-impl ValidationError {
-  fn from_validator(pv: &ParentVisitor, reason: String) -> Self {
-    ValidationError { reason }
-  }
-}
-
-type RulePointer = u16; // TODO
-
-#[derive(Clone, Debug, PartialEq)]
-enum CDDLType<'a, 'b: 'a> {
-  CDDL(&'b CDDL<'a>),
-  Rule(&'b Rule<'a>),
-  TypeRule(&'b TypeRule<'a>),
-  GroupRule(&'b GroupRule<'a>),
-  GenericParams(&'b GenericParams<'a>),
-  GenericParam(&'b GenericParam<'a>),
-  GroupEntry(&'b GroupEntry<'a>),
-  Identifier(&'b Identifier<'a>),
-  Type(&'b Type<'a>),
-  TypeChoice(&'b TypeChoice<'a>),
-  Type1(&'b Type1<'a>),
-  Type2(&'b Type2<'a>),
-  Operator(&'b Operator<'a>),
 }
 
 #[derive(Debug, Default, Clone)]
@@ -122,7 +76,6 @@ impl<'a, 'b: 'a> Node<'a, 'b> {
 // #[derive(Clone)]
 pub struct ParentVisitor<'a, 'b: 'a> {
   cddl: &'a CDDL<'a>,
-  errors: Vec<ValidationError>,
   arena_tree: ArenaTree<'a, 'b>,
 }
 
@@ -130,7 +83,6 @@ impl<'a, 'b: 'a> ParentVisitor<'a, 'b> {
   pub fn new(cddl: &'a CDDL<'a>) -> Self {
     ParentVisitor {
       cddl,
-      errors: Vec::default(),
       arena_tree: ArenaTree {
         arena: Vec::default(),
       },
@@ -283,156 +235,309 @@ impl<'a, 'b: 'a> Visitor<'a, 'b, Error> for ParentVisitor<'a, 'b> {
     let parent = self.arena_tree.node(CDDLType::Type2(t2));
 
     match t2 {
-      Type2::IntValue {
-        value,
-        span,
-        parent,
-      } => todo!(),
-      Type2::UintValue {
-        value,
-        span,
-        parent,
-      } => todo!(),
-      Type2::FloatValue {
-        value,
-        span,
-        parent,
-      } => todo!(),
-      Type2::TextValue {
-        value,
-        span,
-        parent,
-      } => todo!(),
-      Type2::UTF8ByteString {
-        value,
-        span,
-        parent,
-      } => todo!(),
-      Type2::B16ByteString {
-        value,
-        span,
-        parent,
-      } => todo!(),
-      Type2::B64ByteString {
-        value,
-        span,
-        parent,
-      } => todo!(),
+      Type2::IntValue { value, .. } => {
+        let child = self.arena_tree.node(CDDLType::Value(Value::INT(*value)));
+        self.insert(parent, child)?;
+      }
+      Type2::UintValue { value, .. } => {
+        let child = self.arena_tree.node(CDDLType::Value(Value::UINT(*value)));
+        self.insert(parent, child)?;
+      }
+      Type2::FloatValue { value, .. } => {
+        let child = self.arena_tree.node(CDDLType::Value(Value::FLOAT(*value)));
+        self.insert(parent, child)?;
+      }
+      Type2::TextValue { value, .. } => {
+        let child = self
+          .arena_tree
+          .node(CDDLType::Value(Value::TEXT(Cow::Borrowed(value))));
+        self.insert(parent, child)?;
+      }
+      Type2::UTF8ByteString { value, .. } => {
+        let child = self
+          .arena_tree
+          .node(CDDLType::Value(Value::BYTE(ByteValue::UTF8(
+            Cow::Borrowed(value),
+          ))));
+        self.insert(parent, child)?;
+      }
+      Type2::B16ByteString { value, .. } => {
+        let child = self
+          .arena_tree
+          .node(CDDLType::Value(Value::BYTE(ByteValue::B16(Cow::Borrowed(
+            value,
+          )))));
+        self.insert(parent, child)?;
+      }
+      Type2::B64ByteString { value, .. } => {
+        let child = self
+          .arena_tree
+          .node(CDDLType::Value(Value::BYTE(ByteValue::B64(Cow::Borrowed(
+            value,
+          )))));
+        self.insert(parent, child)?;
+      }
       Type2::Typename {
         ident,
         generic_args,
-        span,
-        parent,
-      } => todo!(),
-      Type2::ParenthesizedType {
-        pt,
-        span,
-        comments_before_type,
-        comments_after_type,
-        parent,
-      } => todo!(),
-      Type2::Map {
-        group,
-        span,
-        comments_before_group,
-        comments_after_group,
-        parent,
-      } => todo!(),
-      Type2::Array {
-        group,
-        span,
-        comments_before_group,
-        comments_after_group,
-        parent,
-      } => todo!(),
-      Type2::Unwrap {
-        ident,
-        generic_args,
-        span,
-        comments,
-        parent,
-      } => todo!(),
-      Type2::ChoiceFromInlineGroup {
-        group,
-        span,
-        comments,
-        comments_before_group,
-        comments_after_group,
-        parent,
-      } => todo!(),
+        ..
+      } => {
+        let child = self.arena_tree.node(CDDLType::Identifier(ident));
+        self.insert(parent, child)?;
+
+        if let Some(generic_args) = generic_args {
+          let child = self.arena_tree.node(CDDLType::GenericArgs(generic_args));
+          self.insert(parent, child)?;
+
+          self.visit_generic_args(generic_args)?;
+        }
+      }
+      Type2::ParenthesizedType { pt, .. } => {
+        let child = self.arena_tree.node(CDDLType::Type(pt));
+        self.insert(parent, child)?;
+
+        self.visit_type(pt)?;
+      }
+      Type2::Map { group, .. } => {
+        let child = self.arena_tree.node(CDDLType::Group(group));
+        self.insert(parent, child)?;
+
+        self.visit_group(group)?;
+      }
+      Type2::Array { group, .. } => {
+        let child = self.arena_tree.node(CDDLType::Group(group));
+        self.insert(parent, child)?;
+
+        self.visit_group(group)?;
+      }
+      Type2::Unwrap { ident, .. } => {
+        let child = self.arena_tree.node(CDDLType::Identifier(ident));
+        self.insert(parent, child)?;
+
+        self.visit_identifier(ident)?;
+      }
+      Type2::ChoiceFromInlineGroup { group, .. } => {
+        let child = self.arena_tree.node(CDDLType::Group(group));
+        self.insert(parent, child)?;
+
+        self.visit_group(group)?;
+      }
       Type2::ChoiceFromGroup {
         ident,
         generic_args,
-        span,
-        comments,
-        parent,
-      } => todo!(),
-      Type2::TaggedData {
-        tag,
-        t,
-        span,
-        comments_before_type,
-        comments_after_type,
-        parent,
-      } => todo!(),
-      Type2::DataMajorType {
-        mt,
-        constraint,
-        span,
-        parent,
-      } => todo!(),
-      Type2::Any { span, parent } => todo!(),
+        ..
+      } => {
+        let child = self.arena_tree.node(CDDLType::Identifier(ident));
+        self.insert(parent, child)?;
+
+        if let Some(generic_args) = generic_args {
+          let child = self.arena_tree.node(CDDLType::GenericArgs(generic_args));
+          self.insert(parent, child)?;
+
+          self.visit_generic_args(generic_args)?;
+        }
+      }
+      Type2::TaggedData { t, .. } => {
+        let child = self.arena_tree.node(CDDLType::Type(t));
+        self.insert(parent, child)?;
+
+        self.visit_type(t)?;
+      }
+      _ => (),
     }
+
+    Ok(())
   }
 
   fn visit_group(&mut self, g: &'b Group<'a>) -> visitor::Result<Error> {
-    walk_group(self, g)
+    let parent = self.arena_tree.node(CDDLType::Group(g));
+
+    for gc in g.group_choices.iter() {
+      let child = self.arena_tree.node(CDDLType::GroupChoice(gc));
+      self.insert(parent, child)?;
+
+      self.visit_group_choice(gc)?;
+    }
+
+    Ok(())
   }
 
   fn visit_group_choice(&mut self, gc: &'b GroupChoice<'a>) -> visitor::Result<Error> {
-    walk_group_choice(self, gc)
+    let parent = self.arena_tree.node(CDDLType::GroupChoice(gc));
+
+    for (ge, _) in gc.group_entries.iter() {
+      let child = self.arena_tree.node(CDDLType::GroupEntry(ge));
+      self.insert(parent, child)?;
+
+      self.visit_group_entry(ge)?;
+    }
+
+    Ok(())
   }
 
   fn visit_group_entry(&mut self, entry: &'b GroupEntry<'a>) -> visitor::Result<Error> {
-    walk_group_entry(self, entry)
+    let parent = self.arena_tree.node(CDDLType::GroupEntry(entry));
+
+    match entry {
+      GroupEntry::ValueMemberKey { ge, .. } => {
+        let child = self.arena_tree.node(CDDLType::ValueMemberKeyEntry(ge));
+        self.insert(parent, child)?;
+
+        self.visit_value_member_key_entry(ge)?;
+      }
+      GroupEntry::TypeGroupname { ge, .. } => {
+        let child = self.arena_tree.node(CDDLType::TypeGroupnameEntry(ge));
+        self.insert(parent, child)?;
+
+        self.visit_type_groupname_entry(ge)?;
+      }
+      GroupEntry::InlineGroup { occur, group, .. } => {
+        if let Some(occur) = occur {
+          let child = self.arena_tree.node(CDDLType::Occurrence(occur));
+          self.insert(parent, child)?;
+
+          self.visit_occurrence(occur)?;
+        }
+
+        let child = self.arena_tree.node(CDDLType::Group(group));
+        self.insert(parent, child)?;
+
+        self.visit_group(group)?;
+      }
+    }
+
+    Ok(())
   }
 
   fn visit_value_member_key_entry(
     &mut self,
     entry: &'b ValueMemberKeyEntry<'a>,
   ) -> visitor::Result<Error> {
-    walk_value_member_key_entry(self, entry)
+    let parent = self.arena_tree.node(CDDLType::ValueMemberKeyEntry(entry));
+
+    if let Some(occur) = &entry.occur {
+      let child = self.arena_tree.node(CDDLType::Occurrence(occur));
+      self.insert(parent, child)?;
+
+      self.visit_occurrence(occur)?;
+    }
+
+    if let Some(mk) = &entry.member_key {
+      let child = self.arena_tree.node(CDDLType::MemberKey(mk));
+      self.insert(parent, child)?;
+
+      self.visit_memberkey(mk)?;
+    }
+
+    let child = self.arena_tree.node(CDDLType::Type(&entry.entry_type));
+    self.insert(parent, child)?;
+
+    self.visit_type(&entry.entry_type)
   }
 
   fn visit_type_groupname_entry(
     &mut self,
     entry: &'b TypeGroupnameEntry<'a>,
   ) -> visitor::Result<Error> {
-    walk_type_groupname_entry(self, entry)
+    let parent = self.arena_tree.node(CDDLType::TypeGroupnameEntry(entry));
+
+    if let Some(o) = &entry.occur {
+      let child = self.arena_tree.node(CDDLType::Occurrence(o));
+      self.insert(parent, child)?;
+
+      self.visit_occurrence(o)?;
+    }
+
+    if let Some(ga) = &entry.generic_args {
+      let child = self.arena_tree.node(CDDLType::GenericArgs(ga));
+      self.insert(parent, child)?;
+
+      self.visit_generic_args(ga)?;
+    }
+
+    let child = self.arena_tree.node(CDDLType::Identifier(&entry.name));
+    self.insert(parent, child)?;
+
+    self.visit_identifier(&entry.name)
   }
 
   fn visit_inline_group_entry(
     &mut self,
-    occur: Option<&Occurrence<'a>>,
+    occur: Option<&'b Occurrence<'a>>,
     g: &'b Group<'a>,
   ) -> visitor::Result<Error> {
-    walk_inline_group_entry(self, occur, g)
+    let parent = self.arena_tree.node(CDDLType::Group(g));
+
+    if let Some(o) = occur {
+      self.visit_occurrence(o)?;
+    }
+
+    for gc in g.group_choices.iter() {
+      let child = self.arena_tree.node(CDDLType::GroupChoice(gc));
+      self.insert(parent, child)?;
+    }
+
+    self.visit_group(g)
   }
 
-  fn visit_occurrence(&mut self, _o: &Occurrence<'a>) -> visitor::Result<Error> {
+  fn visit_occurrence(&mut self, o: &'b Occurrence<'a>) -> visitor::Result<Error> {
+    let parent = self.arena_tree.node(CDDLType::Occurrence(o));
+    let child = self.arena_tree.node(CDDLType::Occur(o.occur));
+    self.insert(parent, child)?;
+
     Ok(())
   }
 
   fn visit_memberkey(&mut self, mk: &'b MemberKey<'a>) -> visitor::Result<Error> {
-    walk_memberkey(self, mk)
+    let parent = self.arena_tree.node(CDDLType::MemberKey(mk));
+
+    match mk {
+      MemberKey::Type1 { t1, .. } => {
+        let child = self.arena_tree.node(CDDLType::Type1(t1));
+        self.insert(parent, child)?;
+
+        self.visit_type1(t1)
+      }
+      MemberKey::Bareword { ident, .. } => {
+        let child = self.arena_tree.node(CDDLType::Identifier(ident));
+        self.insert(parent, child)?;
+
+        self.visit_identifier(ident)
+      }
+      MemberKey::Value { value, .. } => {
+        let child = self.arena_tree.node(CDDLType::Value(value.to_owned()));
+        self.insert(parent, child)?;
+
+        self.visit_value(value)
+      }
+      MemberKey::NonMemberKey { non_member_key, .. } => {
+        let child = self.arena_tree.node(CDDLType::NonMemberKey(non_member_key));
+        self.insert(parent, child)?;
+
+        self.visit_nonmemberkey(non_member_key)
+      }
+    }
   }
 
   fn visit_generic_args(&mut self, args: &'b GenericArgs<'a>) -> visitor::Result<Error> {
-    walk_generic_args(self, args)
+    let parent = self.arena_tree.node(CDDLType::GenericArgs(args));
+
+    for arg in args.args.iter() {
+      let child = self.arena_tree.node(CDDLType::GenericArg(arg));
+      self.insert(parent, child)?;
+
+      self.visit_generic_arg(arg)?;
+    }
+
+    Ok(())
   }
 
   fn visit_generic_arg(&mut self, arg: &'b GenericArg<'a>) -> visitor::Result<Error> {
-    walk_generic_arg(self, arg)
+    let parent = self.arena_tree.node(CDDLType::GenericArg(arg));
+    let child = self.arena_tree.node(CDDLType::Type1(&arg.arg));
+    self.insert(parent, child)?;
+
+    self.visit_type1(&arg.arg)
   }
 
   fn visit_generic_params(&mut self, params: &'b GenericParams<'a>) -> visitor::Result<Error> {
@@ -448,12 +553,31 @@ impl<'a, 'b: 'a> Visitor<'a, 'b, Error> for ParentVisitor<'a, 'b> {
     Ok(())
   }
 
-  fn visit_generic_param(&mut self, param: &GenericParam<'a>) -> visitor::Result<Error> {
-    walk_generic_param(self, param)
+  fn visit_generic_param(&mut self, param: &'b GenericParam<'a>) -> visitor::Result<Error> {
+    let parent = self.arena_tree.node(CDDLType::GenericParam(param));
+    let child = self.arena_tree.node(CDDLType::Identifier(&param.param));
+    self.insert(parent, child)?;
+
+    self.visit_identifier(&param.param)
   }
 
   fn visit_nonmemberkey(&mut self, nmk: &'b NonMemberKey<'a>) -> visitor::Result<Error> {
-    walk_nonmemberkey(self, nmk)
+    let parent = self.arena_tree.node(CDDLType::NonMemberKey(nmk));
+
+    match nmk {
+      NonMemberKey::Group(group) => {
+        let child = self.arena_tree.node(CDDLType::Group(group));
+        self.insert(parent, child)?;
+
+        self.visit_group(group)
+      }
+      NonMemberKey::Type(t) => {
+        let child = self.arena_tree.node(CDDLType::Type(t));
+        self.insert(parent, child)?;
+
+        self.visit_type(t)
+      }
+    }
   }
 }
 

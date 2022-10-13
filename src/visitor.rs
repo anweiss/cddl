@@ -111,14 +111,14 @@ pub trait Visitor<'a, 'b, E: Error> {
   /// Visit inline group entry
   fn visit_inline_group_entry(
     &mut self,
-    occur: Option<&Occurrence<'a>>,
+    occur: Option<&'b Occurrence<'a>>,
     g: &'b Group<'a>,
   ) -> Result<E> {
     walk_inline_group_entry(self, occur, g)
   }
 
   /// Visit occurrences
-  fn visit_occurrence(&mut self, _o: &Occurrence<'a>) -> Result<E> {
+  fn visit_occurrence(&mut self, _o: &'b Occurrence<'a>) -> Result<E> {
     Ok(())
   }
 
@@ -143,7 +143,7 @@ pub trait Visitor<'a, 'b, E: Error> {
   }
 
   /// visit genericparam
-  fn visit_generic_param(&mut self, param: &GenericParam<'a>) -> Result<E> {
+  fn visit_generic_param(&mut self, param: &'b GenericParam<'a>) -> Result<E> {
     walk_generic_param(self, param)
   }
   /// Visit nonmemberkey
@@ -412,7 +412,7 @@ where
 /// Walk inline group entry
 pub fn walk_inline_group_entry<'a, 'b, E, V>(
   visitor: &mut V,
-  occur: Option<&Occurrence<'a>>,
+  occur: Option<&'b Occurrence<'a>>,
   g: &'b Group<'a>,
 ) -> Result<E>
 where
@@ -463,7 +463,10 @@ where
 }
 
 /// Walk genericparams
-pub fn walk_generic_params<'a, 'b, E, V>(visitor: &mut V, params: &GenericParams<'a>) -> Result<E>
+pub fn walk_generic_params<'a, 'b, E, V>(
+  visitor: &mut V,
+  params: &'b GenericParams<'a>,
+) -> Result<E>
 where
   E: Error,
   V: Visitor<'a, 'b, E> + ?Sized,

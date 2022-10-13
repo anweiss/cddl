@@ -942,7 +942,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 /// entries in arrays, but may be useful in other contexts. The occurrence is
 /// only captured for the second element of the CDDL array to avoid ambiguity in
 /// non-homogenous array definitions
-pub fn entry_counts_from_group<'a>(cddl: &'a CDDL, group: Group<'a>) -> Vec<EntryCount<'a>> {
+pub fn entry_counts_from_group<'a>(cddl: &'a CDDL, group: Group<'a>) -> Vec<EntryCount> {
   // Each EntryCount is associated with a group choice in the given group
   let mut entry_counts = Vec::new();
 
@@ -1044,11 +1044,11 @@ pub fn validate_entry_count(valid_entry_counts: &[EntryCount], num_entries: usiz
 
 /// Entry count
 #[derive(Clone, Debug)]
-pub struct EntryCount<'a> {
+pub struct EntryCount {
   /// Count
   pub count: u64,
   /// Optional occurrence
-  pub entry_occurrence: Option<Occur<'a>>,
+  pub entry_occurrence: Option<Occur>,
 }
 
 /// Regex needs to be formatted in a certain way so it can be parsed. See
