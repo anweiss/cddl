@@ -2056,9 +2056,6 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
             }
           }
 
-          return Ok(());
-        }
-
           Ok(())
         }
       },
@@ -2498,8 +2495,8 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
     Ok(())
   }
 
-  fn visit_occurrence(&mut self, o: &Occurrence<'a>) -> visitor::Result<Error> {
-    self.occurrence = Some(o.occur);
+  fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<Error> {
+    self.occurrence = Some(o.occur.clone());
 
     Ok(())
   }
