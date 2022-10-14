@@ -112,7 +112,7 @@ impl<'a, 'b: 'a> CDDLType<'a, 'b> {
     for node in visitor.arena_tree.arena.iter() {
       if self == &node.val {
         if let Some(parent_idx) = node.parent {
-          if let Some(parent) = visitor.arena_tree.arena.iter().nth(parent_idx) {
+          if let Some(parent) = visitor.arena_tree.arena.get(parent_idx) {
             return Some(&parent.val);
           }
         }

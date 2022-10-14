@@ -525,7 +525,9 @@ impl<'a> JSONValidator<'a> {
           self.json_location.push_str(&format!("/{}", t));
 
           return Ok(());
-        } else if let Some(Occur::Optional) | Some(Occur::ZeroOrMore) = &self.occurrence.take() {
+        } else if let Some(Occur::Optional {}) | Some(Occur::ZeroOrMore {}) =
+          &self.occurrence.take()
+        {
           self.advance_to_next_entry = true;
           return Ok(());
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
@@ -748,7 +750,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
     if self.is_ctrl_map_equality {
       if let Some(t) = &self.ctrl {
         if let Value::Object(o) = &self.json {
-          let entry_counts = entry_counts_from_group(self.cddl, g.clone());
+          let entry_counts = entry_counts_from_group(self.cddl, g);
 
           let len = o.len();
           if let Token::EQ = t {
@@ -1151,7 +1153,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
         }
         Type2::Array { group, .. } => {
           if let Value::Array(_) = &self.json {
-            let entry_counts = entry_counts_from_group(self.cddl, group.clone());
+            let entry_counts = entry_counts_from_group(self.cddl, group);
             self.entry_counts = Some(entry_counts);
             self.visit_type2(controller)?;
             self.entry_counts = None;
@@ -1276,7 +1278,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
             ));
           }
           #[cfg(not(feature = "ast-span"))]
-          if let Some(Occur::Optional) = self.occurrence.take() {
+          if let Some(Occur::Optional {}) = self.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {}",
               controller, self.json
@@ -1561,7 +1563,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
             return Ok(());
           }
 
-          let entry_counts = entry_counts_from_group(self.cddl, group.clone());
+          let entry_counts = entry_counts_from_group(self.cddl, group);
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
@@ -1780,7 +1782,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
       #[cfg(feature = "ast-span")]
       Type2::Any { .. } => Ok(()),
       #[cfg(not(feature = "ast-span"))]
-      Type2::Any => Ok(()),
+      Type2::Any {} => Ok(()),
       _ => {
         self.add_error(format!(
           "unsupported data type for validating JSON, got {}",
@@ -1914,7 +1916,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
           self.visit_value(&token::Value::TEXT(ident.ident.into()))
         }
         #[cfg(not(feature = "ast-span"))]
-        Some(Occur::Optional) | None => {
+        Some(Occur::Optional {}) | None => {
           if token::lookup_ident(ident.ident)
             .in_standard_prelude()
             .is_some()
@@ -2000,8 +2002,8 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
           }
 
           #[cfg(not(feature = "ast-span"))]
-          if let Occur::ZeroOrMore | Occur::OneOrMore = occur {
-            if let Occur::OneOrMore = occur {
+          if let Occur::ZeroOrMore {} | Occur::OneOrMore {} = occur {
+            if let Occur::OneOrMore {} = occur {
               if o.is_empty() {
                 self.add_error(format!(
                   "object cannot be empty, one or more entries with key type {} required",
@@ -2496,7 +2498,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
   }
 
   fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<Error> {
-    self.occurrence = Some(o.occur.clone());
+    self.occurrence = Some(o.occur);
 
     Ok(())
   }

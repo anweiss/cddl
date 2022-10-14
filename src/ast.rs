@@ -121,6 +121,7 @@ impl<'a> fmt::Display for Comments<'a> {
 /// ```abnf
 /// cddl = S 1*(rule S)
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Default, Debug, PartialEq, Clone)]
 pub struct CDDL<'a> {
   /// Zero or more production rules
@@ -193,6 +194,7 @@ impl<'a> fmt::Display for CDDL<'a> {
 /// EALPHA = ALPHA / "@" / "_" / "$"
 /// DIGIT = %x30-39
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct Identifier<'a> {
   /// Identifier
@@ -275,6 +277,7 @@ impl<'a> From<Token<'a>> for Identifier<'a> {
 /// rule = typename [genericparm] S assignt S type
 ///     / groupname [genericparm] S assigng S grpent
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Rule<'a> {
   /// Type expression
@@ -436,6 +439,7 @@ impl<'a> Rule<'a> {
 /// ```abnf
 /// typename [genericparm] S assignt S type
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
 pub struct TypeRule<'a> {
   /// Type name identifier
@@ -493,6 +497,7 @@ impl<'a> fmt::Display for TypeRule<'a> {
 /// ```abnf
 /// groupname [genericparm] S assigng S grpent
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Clone)]
 pub struct GroupRule<'a> {
   /// Group name identifier
@@ -550,6 +555,7 @@ impl<'a> fmt::Display for GroupRule<'a> {
 /// ```abnf
 /// genericparm =  "<" S id S *("," S id S ) ">"
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct GenericParams<'a> {
   /// List of generic parameters
@@ -560,6 +566,7 @@ pub struct GenericParams<'a> {
 }
 
 /// Generic parameter
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GenericParam<'a> {
   /// Generic parameter
@@ -607,6 +614,7 @@ impl<'a> fmt::Display for GenericParams<'a> {
 /// ```abnf
 /// genericarg = "<" S type1 S *("," S type1 S )  ">"
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericArgs<'a> {
   /// Generic arguments
@@ -628,6 +636,7 @@ impl<'a> GenericArgs<'a> {
 }
 
 /// Generic argument
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericArg<'a> {
   /// Generic argument
@@ -675,6 +684,7 @@ impl<'a> fmt::Display for GenericArgs<'a> {
 /// ```abnf
 /// type = type1 *(S "/" S  type1)
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type<'a> {
   /// Type choices
@@ -736,6 +746,7 @@ impl<'a> Type<'a> {
 }
 
 /// Type choice
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeChoice<'a> {
   /// Type choice
@@ -839,6 +850,7 @@ impl<'a> Type<'a> {
 /// ```abnf
 /// type1 = type2 [S (rangeop / ctlop) S type2]
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type1<'a> {
   /// Type
@@ -909,6 +921,7 @@ impl<'a> From<Value<'a>> for Type1<'a> {
 }
 
 /// Range or control operator
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Operator<'a> {
   /// Operator
@@ -982,6 +995,7 @@ impl<'a> fmt::Display for Type1<'a> {
 /// rangeop = "..." / ".."
 /// ctlop = "." id
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum RangeCtlOp<'a> {
   /// Range operator
@@ -1032,6 +1046,7 @@ impl<'a> fmt::Display for RangeCtlOp<'a> {
 ///     / "#" DIGIT ["." uint]                ; major/ai
 ///     / "#"                                 ; any
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type2<'a> {
   /// Integer value
@@ -1887,6 +1902,7 @@ pub fn type_from_token(token: Token) -> Type {
 /// ```abnf
 /// group = grpchoice * (S "//" S grpchoice)
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Group<'a> {
   /// Group choices
@@ -1990,6 +2006,7 @@ impl<'a> fmt::Display for Group<'a> {
 /// ```
 ///
 /// If tuple is true, then entry is marked by a trailing comma
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct GroupChoice<'a> {
   /// Group entries where the second item in the tuple indicates where or not a
@@ -2232,6 +2249,7 @@ impl<'a> fmt::Display for GroupChoice<'a> {
 ///       / [occur S] groupname [genericarg]  ; preempted by above
 ///       / [occur S] "(" S group S ")"
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum GroupEntry<'a> {
   /// Value group entry type
@@ -2310,6 +2328,7 @@ impl<'a> GroupEntry<'a> {
 }
 
 /// Optional comma
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OptionalComma<'a> {
   /// Optional comma
@@ -2503,6 +2522,7 @@ impl<'a> fmt::Display for GroupEntry<'a> {
 }
 
 /// Occurrence indicator
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Occurrence<'a> {
   /// Occurrence indicator
@@ -2539,6 +2559,7 @@ impl<'a> fmt::Display for Occurrence<'a> {
 /// ```abnf
 /// [occur S] [memberkey S] type
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueMemberKeyEntry<'a> {
   /// Optional occurrence indicator
@@ -2569,6 +2590,7 @@ impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
 }
 
 /// Group entry from a named type or group
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeGroupnameEntry<'a> {
   /// Optional occurrence indicator
@@ -2604,6 +2626,7 @@ impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
 ///           / bareword S ":"
 ///           / value S ":"
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum MemberKey<'a> {
   /// Type expression
@@ -2844,6 +2867,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
 ///       / "+"
 ///       / "?"
 /// ```
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum Occur {
   /// Occurrence indicator in the form n*m, where n is an optional lower limit

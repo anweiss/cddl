@@ -690,7 +690,7 @@ where
     if self.is_ctrl_map_equality {
       if let Some(t) = &self.ctrl {
         if let Value::Map(m) = &self.cbor {
-          let entry_counts = entry_counts_from_group(self.cddl, g.clone());
+          let entry_counts = entry_counts_from_group(self.cddl, g);
           let len = m.len();
           if let Token::EQ | Token::NE = t {
             if !validate_entry_count(&entry_counts, len) {
@@ -1050,7 +1050,7 @@ where
           }
           Type2::Array { group, .. } => {
             if let Value::Array(_) = &self.cbor {
-              let entry_counts = entry_counts_from_group(self.cddl, group.clone());
+              let entry_counts = entry_counts_from_group(self.cddl, group);
               self.entry_counts = Some(entry_counts);
               self.visit_type2(controller)?;
               self.entry_counts = None;
@@ -1188,7 +1188,7 @@ where
             ));
           }
           #[cfg(not(feature = "ast-span"))]
-          if let Some(Occur::Optional) = self.occurrence.take() {
+          if let Some(Occur::Optional {}) = self.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {:?}",
               controller, self.cbor
@@ -1706,7 +1706,7 @@ where
             return Ok(());
           }
 
-          let entry_counts = entry_counts_from_group(self.cddl, group.clone());
+          let entry_counts = entry_counts_from_group(self.cddl, group);
           self.entry_counts = Some(entry_counts);
           self.visit_group(group)?;
           self.entry_counts = None;
@@ -1731,7 +1731,7 @@ where
         Value::Map(m) if self.is_member_key => {
           let current_location = self.cbor_location.clone();
 
-          let entry_counts = entry_counts_from_group(self.cddl, group.clone());
+          let entry_counts = entry_counts_from_group(self.cddl, group);
           self.entry_counts = Some(entry_counts);
 
           for (k, v) in m.iter() {
@@ -2169,7 +2169,7 @@ where
       #[cfg(feature = "ast-span")]
       Type2::Any { .. } => Ok(()),
       #[cfg(not(feature = "ast-span"))]
-      Type2::Any => Ok(()),
+      Type2::Any {} => Ok(()),
       _ => {
         self.add_error(format!(
           "unsupported data type for validating cbor, got {}",
@@ -2396,7 +2396,7 @@ where
             self.visit_value(&token::Value::TEXT(ident.ident.into()))
           }
           #[cfg(not(feature = "ast-span"))]
-          Some(Occur::Optiona) | None => {
+          Some(Occur::Optional {}) | None => {
             if is_ident_string_data_type(self.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Text(_))) {
                 self
@@ -2732,9 +2732,9 @@ where
             }
 
             #[cfg(not(feature = "ast-span"))]
-            if let Occur::ZeroOrMore | Occur::OneOrMore = occur {
-              if let Occur::OneOrMore = occur {
-                if o.is_empty() {
+            if let Occur::ZeroOrMore {} | Occur::OneOrMore {} = occur {
+              if let Occur::OneOrMore {} = occur {
+                if m.is_empty() {
                   self.add_error(format!(
                     "object cannot be empty, one or more entries with key type {} required",
                     ident
@@ -3433,7 +3433,9 @@ where
           self.cbor_location.push_str(&format!("/{}", value));
 
           None
-        } else if let Some(Occur::Optional) | Some(Occur::ZeroOrMore) = &self.occurrence.take() {
+        } else if let Some(Occur::Optional {}) | Some(Occur::ZeroOrMore {}) =
+          &self.occurrence.take()
+        {
           self.advance_to_next_entry = true;
           None
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {

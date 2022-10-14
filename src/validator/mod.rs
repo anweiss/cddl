@@ -836,7 +836,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
   #[cfg(feature = "ast-span")]
   let allow_empty_array = matches!(occurrence, Some(Occur::Optional { .. }));
   #[cfg(not(feature = "ast-span"))]
-  let allow_empty_array = matches!(occurrence, Some(Occur::Optional));
+  let allow_empty_array = matches!(occurrence, Some(Occur::Optional {}));
 
   let mut errors = Vec::new();
 
@@ -844,7 +844,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
     #[cfg(feature = "ast-span")]
     Some(Occur::ZeroOrMore { .. }) => iter_items = true,
     #[cfg(not(feature = "ast-span"))]
-    Some(Occur::ZeroOrMore) => iter_items = true,
+    Some(Occur::ZeroOrMore {}) => iter_items = true,
     #[cfg(feature = "ast-span")]
     Some(Occur::OneOrMore { .. }) => {
       if values.is_empty() {
@@ -854,7 +854,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
       }
     }
     #[cfg(not(feature = "ast-span"))]
-    Some(Occur::OneOrMore) => {
+    Some(Occur::OneOrMore {}) => {
       if values.is_empty() {
         errors.push("array must have at least one item".to_string());
       } else {
@@ -893,7 +893,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
       iter_items = false;
     }
     #[cfg(not(feature = "ast-span"))]
-    Some(Occur::Optional) => {
+    Some(Occur::Optional {}) => {
       if values.len() > 1 {
         errors.push("array must have 0 or 1 items".to_string());
       }
@@ -942,7 +942,10 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 /// entries in arrays, but may be useful in other contexts. The occurrence is
 /// only captured for the second element of the CDDL array to avoid ambiguity in
 /// non-homogenous array definitions
-pub fn entry_counts_from_group<'a>(cddl: &'a CDDL, group: Group<'a>) -> Vec<EntryCount> {
+pub fn entry_counts_from_group<'a, 'b: 'a>(
+  cddl: &'a CDDL,
+  group: &'b Group<'a>,
+) -> Vec<EntryCount> {
   // Each EntryCount is associated with a group choice in the given group
   let mut entry_counts = Vec::new();
 
@@ -968,7 +971,7 @@ pub fn entry_counts_from_group<'a>(cddl: &'a CDDL, group: Group<'a>) -> Vec<Entr
             }
           }
 
-          entry_counts = entry_counts_from_group(cddl, group.clone());
+          entry_counts = entry_counts_from_group(cddl, group);
         }
         GroupEntry::TypeGroupname { ge, .. } => {
           if idx == 1 {
@@ -980,22 +983,22 @@ pub fn entry_counts_from_group<'a>(cddl: &'a CDDL, group: Group<'a>) -> Vec<Entr
           if let Some(gr) = group_rule_from_ident(cddl, &ge.name) {
             if let GroupEntry::InlineGroup { group, .. } = &gr.entry {
               if group.group_choices.len() == 1 {
-                count += if let Some(ec) = entry_counts_from_group(cddl, group.clone()).first() {
+                count += if let Some(ec) = entry_counts_from_group(cddl, group).first() {
                   ec.count
                 } else {
                   0
                 };
               } else {
-                entry_counts.append(&mut entry_counts_from_group(cddl, group.clone()));
+                entry_counts.append(&mut entry_counts_from_group(cddl, group));
               }
             } else {
-              entry_counts.append(&mut entry_counts_from_group(cddl, gr.entry.clone().into()));
+              entry_counts.append(&mut entry_counts_from_group(cddl, &gr.entry.clone().into()));
             }
           } else if group_choice_alternates_from_ident(cddl, &ge.name).is_empty() {
             count += 1;
           } else {
             for ge in group_choice_alternates_from_ident(cddl, &ge.name).into_iter() {
-              entry_counts.append(&mut entry_counts_from_group(cddl, ge.clone().into()));
+              entry_counts.append(&mut entry_counts_from_group(cddl, &ge.clone().into()));
             }
           }
         }
@@ -1019,11 +1022,11 @@ pub fn validate_entry_count(valid_entry_counts: &[EntryCount], num_entries: usiz
         #[cfg(feature = "ast-span")]
         Some(Occur::ZeroOrMore { .. }) | Some(Occur::Optional { .. }) => true,
         #[cfg(not(feature = "ast-span"))]
-        Some(Occur::ZeroOrMore) | Some(Occur::Optional) => true,
+        Some(Occur::ZeroOrMore {}) | Some(Occur::Optional {}) => true,
         #[cfg(feature = "ast-span")]
         Some(Occur::OneOrMore { .. }) if num_entries > 0 => true,
         #[cfg(not(feature = "ast-span"))]
-        Some(Occur::OneOrMore) if num_entries > 0 => true,
+        Some(Occur::OneOrMore {}) if num_entries > 0 => true,
         Some(Occur::Exact { lower, upper, .. }) => {
           if let Some(lower) = lower {
             if let Some(upper) = upper {

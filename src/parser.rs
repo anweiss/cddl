@@ -1742,7 +1742,7 @@ impl<'a> Parser<'a> {
             ),
           }),
           #[cfg(not(feature = "ast-span"))]
-          _ => Ok(Type2::Any),
+          _ => Ok(Type2::Any {}),
         }
       }
       _ => {
@@ -3193,7 +3193,7 @@ impl<'a> Parser<'a> {
             ),
           },
           #[cfg(not(feature = "ast-span"))]
-          occur: Occur::Optional,
+          occur: Occur::Optional {},
           #[cfg(feature = "ast-comments")]
           comments,
           _a: PhantomData::default(),
@@ -3222,7 +3222,7 @@ impl<'a> Parser<'a> {
             ),
           },
           #[cfg(not(feature = "ast-span"))]
-          occur: Occur::OneOrMore,
+          occur: Occur::OneOrMore {},
           #[cfg(feature = "ast-comments")]
           comments,
           _a: PhantomData::default(),
@@ -3260,7 +3260,7 @@ impl<'a> Parser<'a> {
           }
 
           #[cfg(not(feature = "ast-span"))]
-          Occur::ZeroOrMore
+          Occur::ZeroOrMore {}
         };
 
         self.next_token()?;
