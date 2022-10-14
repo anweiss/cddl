@@ -955,7 +955,7 @@ pub fn entry_counts_from_group<'a>(cddl: &'a CDDL, group: Group<'a>) -> Vec<Entr
         GroupEntry::ValueMemberKey { ge, .. } => {
           if idx == 1 {
             if let Some(occur) = &ge.occur {
-              entry_occurrence = Some(occur.occur.clone())
+              entry_occurrence = Some(occur.occur)
             }
           }
 
@@ -964,7 +964,7 @@ pub fn entry_counts_from_group<'a>(cddl: &'a CDDL, group: Group<'a>) -> Vec<Entr
         GroupEntry::InlineGroup { group, occur, .. } => {
           if idx == 1 {
             if let Some(occur) = occur {
-              entry_occurrence = Some(occur.occur.clone())
+              entry_occurrence = Some(occur.occur)
             }
           }
 
@@ -973,7 +973,7 @@ pub fn entry_counts_from_group<'a>(cddl: &'a CDDL, group: Group<'a>) -> Vec<Entr
         GroupEntry::TypeGroupname { ge, .. } => {
           if idx == 1 {
             if let Some(occur) = &ge.occur {
-              entry_occurrence = Some(occur.occur.clone())
+              entry_occurrence = Some(occur.occur)
             }
           }
 

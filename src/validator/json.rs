@@ -2499,7 +2499,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
   }
 
   fn visit_occurrence(&mut self, o: &Occurrence<'a>) -> visitor::Result<Error> {
-    self.occurrence = Some(o.occur.clone());
+    self.occurrence = Some(o.occur);
 
     Ok(())
   }

@@ -3453,7 +3453,7 @@ where
   }
 
   fn visit_occurrence(&mut self, o: &Occurrence<'a>) -> visitor::Result<Error<T>> {
-    self.occurrence = Some(o.occur.clone());
+    self.occurrence = Some(o.occur);
 
     Ok(())
   }

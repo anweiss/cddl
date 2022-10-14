@@ -55,6 +55,30 @@ pub enum CDDLType<'a, 'b: 'a> {
   NonMemberKey(&'b NonMemberKey<'a>),
 }
 
+impl<'a, 'b: 'a> From<&'b CDDL<'a>> for CDDLType<'a, 'b> {
+  fn from(cddl: &'b CDDL<'a>) -> Self {
+    CDDLType::CDDL(cddl)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b Rule<'a>> for CDDLType<'a, 'b> {
+  fn from(rule: &'b Rule<'a>) -> Self {
+    CDDLType::Rule(rule)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b TypeRule<'a>> for CDDLType<'a, 'b> {
+  fn from(rule: &'b TypeRule<'a>) -> Self {
+    CDDLType::TypeRule(rule)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b Identifier<'a>> for CDDLType<'a, 'b> {
+  fn from(ident: &'b Identifier<'a>) -> Self {
+    CDDLType::Identifier(ident)
+  }
+}
+
 #[cfg(feature = "ast-comments")]
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 #[doc(hidden)]
@@ -526,7 +550,7 @@ impl<'a> fmt::Display for GroupRule<'a> {
 /// ```abnf
 /// genericparm =  "<" S id S *("," S id S ) ">"
 /// ```
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct GenericParams<'a> {
   /// List of generic parameters
   pub params: Vec<GenericParam<'a>>,
@@ -958,7 +982,7 @@ impl<'a> fmt::Display for Type1<'a> {
 /// rangeop = "..." / ".."
 /// ctlop = "." id
 /// ```
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum RangeCtlOp<'a> {
   /// Range operator
   RangeOp {

@@ -9,7 +9,7 @@ use crate::{
 use std::{borrow::Cow, fmt};
 
 /// validation Result
-pub type Result = std::result::Result<(), Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// validation error
 #[derive(Debug)]
@@ -28,9 +28,7 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {
   fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-    match self {
-      _ => None,
-    }
+    None
   }
 }
 
@@ -75,26 +73,28 @@ impl<'a, 'b: 'a> Node<'a, 'b> {
 /// validator type
 // #[derive(Clone)]
 pub struct ParentVisitor<'a, 'b: 'a> {
-  cddl: &'a CDDL<'a>,
   arena_tree: ArenaTree<'a, 'b>,
 }
 
 impl<'a, 'b: 'a> ParentVisitor<'a, 'b> {
-  pub fn new(cddl: &'a CDDL<'a>) -> Self {
-    ParentVisitor {
-      cddl,
+  pub fn new(cddl: &'a CDDL<'a>) -> Result<Self> {
+    let mut p = ParentVisitor {
       arena_tree: ArenaTree {
         arena: Vec::default(),
       },
-    }
+    };
+
+    p.visit_cddl(cddl)?;
+
+    Ok(p)
   }
 }
 
 impl<'a, 'b: 'a> ParentVisitor<'a, 'b> {
-  fn insert(&mut self, parent: usize, child: usize) -> Result {
+  fn insert(&mut self, parent: usize, child: usize) -> Result<()> {
     match self.arena_tree.arena[child].parent {
       Some(_) => {
-        return Err(Error::Overwrite);
+        // return Err(Error::Overwrite);
       }
       None => {
         self.arena_tree.arena[child].parent = Some(parent);
@@ -104,6 +104,22 @@ impl<'a, 'b: 'a> ParentVisitor<'a, 'b> {
     self.arena_tree.arena[parent].children.push(child);
 
     Ok(())
+  }
+}
+
+impl<'a, 'b: 'a> CDDLType<'a, 'b> {
+  pub fn parent(&self, visitor: &'b ParentVisitor<'a, 'b>) -> Option<&'b CDDLType<'a, 'b>> {
+    for node in visitor.arena_tree.arena.iter() {
+      if self == &node.val {
+        if let Some(parent_idx) = node.parent {
+          if let Some(parent) = visitor.arena_tree.arena.iter().nth(parent_idx) {
+            return Some(&parent.val);
+          }
+        }
+      }
+    }
+
+    None
   }
 }
 
@@ -591,14 +607,28 @@ mod tests {
   use super::*;
 
   #[test]
-  fn testing() {
-    let c = cddl_from_str(
-      r#"a = b
-    b = "test""#,
-      true,
-    )
-    .unwrap();
-    let mut t = ParentVisitor::new(&c);
-    t.visit_cddl(&c).unwrap();
+  fn rule_parent_is_cddl() -> Result<()> {
+    let c = cddl_from_str(r#"a = "myrule""#, true).unwrap();
+    let t = ParentVisitor::new(&c).unwrap();
+    let rule = c.rules.first().unwrap();
+
+    assert_eq!(
+      CDDLType::from(rule).parent(&t).unwrap(),
+      &CDDLType::from(&c)
+    );
+
+    Ok(())
+  }
+
+  #[test]
+  fn type_rule_parent_is_rule() -> Result<()> {
+    let c = cddl_from_str(r#"a = "myrule""#, true).unwrap();
+    let t = ParentVisitor::new(&c).unwrap();
+
+    if let r @ Rule::Type { rule, .. } = c.rules.first().unwrap() {
+      assert_eq!(CDDLType::from(rule).parent(&t).unwrap(), &CDDLType::from(r));
+    }
+
+    Ok(())
   }
 }
