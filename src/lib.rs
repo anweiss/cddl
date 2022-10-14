@@ -201,6 +201,11 @@
 //!
 //! Include comment strings in the AST. Enabled by default.
 //!
+//! **`--feature ast-parent`**
+
+//! Add the `ParentVisitor` implementation so that the AST can be traversed
+//! using parent pointers. Enabled by default.
+//!
 //! **`--feature json`**
 //!
 //! Enable JSON validation. Enabled by default.
