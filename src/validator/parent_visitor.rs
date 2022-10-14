@@ -602,6 +602,8 @@ impl<'a, 'b: 'a> Visitor<'a, 'b, Error> for ParentVisitor<'a, 'b> {
 mod tests {
   #![allow(unused_imports)]
 
+  use core::any::Any;
+
   use crate::cddl_from_str;
 
   use super::*;
@@ -621,12 +623,126 @@ mod tests {
   }
 
   #[test]
-  fn type_rule_parent_is_rule() -> Result<()> {
-    let c = cddl_from_str(r#"a = "myrule""#, true).unwrap();
+  fn type_and_group_rule_parent_is_rule() -> Result<()> {
+    let c = cddl_from_str(
+      r#"
+      a = "myrule"
+      b = ( * tstr )
+    "#,
+      true,
+    )
+    .unwrap();
     let t = ParentVisitor::new(&c).unwrap();
 
     if let r @ Rule::Type { rule, .. } = c.rules.first().unwrap() {
       assert_eq!(CDDLType::from(rule).parent(&t).unwrap(), &CDDLType::from(r));
+    }
+
+    if let r @ Rule::Group { rule, .. } = c.rules.get(1).unwrap() {
+      assert_eq!(
+        CDDLType::from(rule.as_ref()).parent(&t).unwrap(),
+        &CDDLType::from(r)
+      );
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn type_parent_is_type_rule() -> Result<()> {
+    let c = cddl_from_str(r#"a = "myrule""#, true).unwrap();
+    let t = ParentVisitor::new(&c).unwrap();
+
+    if let Rule::Type { rule, .. } = c.rules.first().unwrap() {
+      assert_eq!(
+        CDDLType::from(&rule.value).parent(&t).unwrap(),
+        &CDDLType::from(rule)
+      );
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn type_choice_parent_is_type() -> Result<()> {
+    let c = cddl_from_str(r#"a = "myrule""#, true).unwrap();
+    let t = ParentVisitor::new(&c).unwrap();
+
+    if let Rule::Type { rule, .. } = c.rules.first().unwrap() {
+      assert_eq!(
+        CDDLType::from(rule.value.type_choices.first().unwrap())
+          .parent(&t)
+          .unwrap(),
+        &CDDLType::from(&rule.value)
+      );
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn type1_parent_is_type_choice() -> Result<()> {
+    let c = cddl_from_str(r#"a = "myrule""#, true).unwrap();
+    let t = ParentVisitor::new(&c).unwrap();
+
+    if let Rule::Type { rule, .. } = c.rules.first().unwrap() {
+      assert_eq!(
+        CDDLType::from(&rule.value.type_choices.first().unwrap().type1)
+          .parent(&t)
+          .unwrap(),
+        &CDDLType::from(rule.value.type_choices.first().unwrap())
+      );
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn type2_parent_is_type1() -> Result<()> {
+    let c = cddl_from_str(r#"a = "myrule""#, true).unwrap();
+    let t = ParentVisitor::new(&c).unwrap();
+
+    if let Rule::Type { rule, .. } = c.rules.first().unwrap() {
+      assert_eq!(
+        CDDLType::from(&rule.value.type_choices.first().unwrap().type1.type2)
+          .parent(&t)
+          .unwrap(),
+        &CDDLType::from(&rule.value.type_choices.first().unwrap().type1)
+      );
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn text_value_parent_is_type2() -> Result<()> {
+    let c = cddl_from_str(r#"a = "myrule""#, true).unwrap();
+    let t = ParentVisitor::new(&c).unwrap();
+
+    if let Rule::Type { rule, .. } = c.rules.first().unwrap() {
+      if let t2 @ Type2::TextValue { value, .. } =
+        &rule.value.type_choices.first().unwrap().type1.type2
+      {
+        assert_eq!(
+          CDDLType::from(value).parent(&t).unwrap(),
+          &CDDLType::from(t2)
+        );
+      }
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn group_entry_parent_is_group_rule() -> Result<()> {
+    let c = cddl_from_str(r#"a = ( * tstr )"#, true).unwrap();
+    let t = ParentVisitor::new(&c).unwrap();
+
+    if let Rule::Group { rule, .. } = c.rules.first().unwrap() {
+      assert_eq!(
+        CDDLType::from(&rule.entry).parent(&t).unwrap(),
+        &CDDLType::from(rule.as_ref())
+      );
     }
 
     Ok(())

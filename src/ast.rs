@@ -73,9 +73,51 @@ impl<'a, 'b: 'a> From<&'b TypeRule<'a>> for CDDLType<'a, 'b> {
   }
 }
 
+impl<'a, 'b: 'a> From<&'b GroupRule<'a>> for CDDLType<'a, 'b> {
+  fn from(rule: &'b GroupRule<'a>) -> Self {
+    CDDLType::GroupRule(rule)
+  }
+}
+
 impl<'a, 'b: 'a> From<&'b Identifier<'a>> for CDDLType<'a, 'b> {
   fn from(ident: &'b Identifier<'a>) -> Self {
     CDDLType::Identifier(ident)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b Type<'a>> for CDDLType<'a, 'b> {
+  fn from(t: &'b Type<'a>) -> Self {
+    CDDLType::Type(t)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b TypeChoice<'a>> for CDDLType<'a, 'b> {
+  fn from(tc: &'b TypeChoice<'a>) -> Self {
+    CDDLType::TypeChoice(tc)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b Type1<'a>> for CDDLType<'a, 'b> {
+  fn from(t1: &'b Type1<'a>) -> Self {
+    CDDLType::Type1(t1)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b Type2<'a>> for CDDLType<'a, 'b> {
+  fn from(t2: &'b Type2<'a>) -> Self {
+    CDDLType::Type2(t2)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b Cow<'a, str>> for CDDLType<'a, 'b> {
+  fn from(text_value: &'b Cow<'a, str>) -> Self {
+    CDDLType::Value(Value::TEXT(Cow::Borrowed(text_value)))
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b GroupEntry<'a>> for CDDLType<'a, 'b> {
+  fn from(ge: &'b GroupEntry<'a>) -> Self {
+    CDDLType::GroupEntry(ge)
   }
 }
 
