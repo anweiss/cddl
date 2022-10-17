@@ -127,6 +127,18 @@ impl<'a, 'b: 'a> From<&'b GroupEntry<'a>> for CDDLType<'a, 'b> {
   }
 }
 
+impl<'a, 'b: 'a> From<&'b GenericParams<'a>> for CDDLType<'a, 'b> {
+  fn from(params: &'b GenericParams<'a>) -> Self {
+    CDDLType::GenericParams(params)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b GenericParam<'a>> for CDDLType<'a, 'b> {
+  fn from(param: &'b GenericParam<'a>) -> Self {
+    CDDLType::GenericParam(param)
+  }
+}
+
 #[cfg(feature = "ast-comments")]
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 #[doc(hidden)]

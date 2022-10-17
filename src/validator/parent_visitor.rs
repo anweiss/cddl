@@ -142,6 +142,36 @@ impl<'a, 'b: 'a> Parent<'a, 'b, GroupRule<'a>> for GroupEntry<'a> {
   }
 }
 
+impl<'a, 'b: 'a> Parent<'a, 'b, TypeRule<'a>> for Identifier<'a> {
+  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&TypeRule<'a>> {
+    if let Some(CDDLType::TypeRule(tr)) = CDDLType::from(self).parent(parent_visitor) {
+      return Some(tr);
+    }
+
+    None
+  }
+}
+
+impl<'a, 'b: 'a> Parent<'a, 'b, TypeRule<'a>> for GenericParams<'a> {
+  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&TypeRule<'a>> {
+    if let Some(CDDLType::TypeRule(tr)) = CDDLType::from(self).parent(parent_visitor) {
+      return Some(tr);
+    }
+
+    None
+  }
+}
+
+impl<'a, 'b: 'a> Parent<'a, 'b, GenericParams<'a>> for GenericParam<'a> {
+  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&GenericParams<'a>> {
+    if let Some(CDDLType::GenericParams(params)) = CDDLType::from(self).parent(parent_visitor) {
+      return Some(params);
+    }
+
+    None
+  }
+}
+
 #[derive(Debug, Default, Clone)]
 struct ArenaTree<'a, 'b: 'a> {
   arena: Vec<Node<'a, 'b>>,
@@ -218,7 +248,7 @@ impl<'a, 'b: 'a> ParentVisitor<'a, 'b> {
 }
 
 impl<'a, 'b: 'a> CDDLType<'a, 'b> {
-  pub fn parent(&self, visitor: &'b ParentVisitor<'a, 'b>) -> Option<&'b CDDLType<'a, 'b>> {
+  fn parent(&self, visitor: &'b ParentVisitor<'a, 'b>) -> Option<&'b CDDLType<'a, 'b>> {
     for node in visitor.arena_tree.arena.iter() {
       if self == &node.val {
         if let Some(parent_idx) = node.parent {
@@ -279,7 +309,8 @@ impl<'a, 'b: 'a> Visitor<'a, 'b, Error> for ParentVisitor<'a, 'b> {
     if let Some(params) = &tr.generic_params {
       let child = self.arena_tree.node(CDDLType::GenericParams(params));
       self.insert(parent, child)?;
-      walk_generic_params(self, params)?;
+
+      self.visit_generic_params(params)?;
     }
 
     let child = self.arena_tree.node(CDDLType::Type(&tr.value));
@@ -853,6 +884,56 @@ mod tests {
 
     if let Rule::Group { rule, .. } = cddl.rules.first().unwrap() {
       assert_eq!(rule.entry.parent(&pv).unwrap(), rule.as_ref());
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn type_rule_name_ident_parent_is_type_rule() -> Result<()> {
+    let cddl = cddl_from_str(r#"a = "myrule""#, true).unwrap();
+    let pv = ParentVisitor::new(&cddl).unwrap();
+
+    if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
+      assert_eq!(rule.name.parent(&pv).unwrap(), rule);
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn generic_params_parent_is_type_rule() -> Result<()> {
+    let cddl = cddl_from_str(r#"a<t> = { type: t }"#, true).unwrap();
+    let pv = ParentVisitor::new(&cddl).unwrap();
+
+    if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
+      assert_eq!(
+        rule.generic_params.as_ref().unwrap().parent(&pv).unwrap(),
+        rule
+      );
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn generic_param_parent_is_generic_params() -> Result<()> {
+    let cddl = cddl_from_str(r#"a<t> = { type: t }"#, true).unwrap();
+    let pv = ParentVisitor::new(&cddl).unwrap();
+
+    if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
+      assert_eq!(
+        rule
+          .generic_params
+          .as_ref()
+          .unwrap()
+          .params
+          .first()
+          .unwrap()
+          .parent(&pv)
+          .unwrap(),
+        rule.generic_params.as_ref().unwrap()
+      );
     }
 
     Ok(())
