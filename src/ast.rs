@@ -109,6 +109,12 @@ impl<'a, 'b: 'a> From<&'b Type2<'a>> for CDDLType<'a, 'b> {
   }
 }
 
+impl<'a, 'b: 'a> From<Value<'a>> for CDDLType<'a, 'b> {
+  fn from(value: Value<'a>) -> Self {
+    CDDLType::Value(value)
+  }
+}
+
 impl<'a, 'b: 'a> From<&'b Cow<'a, str>> for CDDLType<'a, 'b> {
   fn from(text_value: &'b Cow<'a, str>) -> Self {
     CDDLType::Value(Value::TEXT(Cow::Borrowed(text_value)))
