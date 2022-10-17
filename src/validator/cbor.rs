@@ -2796,8 +2796,8 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.cbor_location, "/{:?}", v);
-              } else if (!matches!(occur, Occur::ZeroOrMore(_)) && m.is_empty())
-                || (matches!(occur, Occur::ZeroOrMore(_)) && !m.is_empty())
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2813,8 +2813,8 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.cbor_location, "/{:?}", v);
-              } else if (!matches!(occur, Occur::ZeroOrMore(_)) && m.is_empty())
-                || (matches!(occur, Occur::ZeroOrMore(_)) && !m.is_empty())
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2829,8 +2829,8 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.cbor_location, "/{:?}", v);
-              } else if (!matches!(occur, Occur::ZeroOrMore(_)) && m.is_empty())
-                || (matches!(occur, Occur::ZeroOrMore(_)) && !m.is_empty())
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2845,8 +2845,8 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.cbor_location, "/{:?}", v);
-              } else if (!matches!(occur, Occur::ZeroOrMore(_)) && m.is_empty())
-                || (matches!(occur, Occur::ZeroOrMore(_)) && !m.is_empty())
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2861,8 +2861,8 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.cbor_location, "/{:?}", v);
-              } else if (!matches!(occur, Occur::ZeroOrMore(_)) && m.is_empty())
-                || (matches!(occur, Occur::ZeroOrMore(_)) && !m.is_empty())
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2877,8 +2877,8 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.cbor_location, "/{:?}", v);
-              } else if (!matches!(occur, Occur::ZeroOrMore(_)) && m.is_empty())
-                || (matches!(occur, Occur::ZeroOrMore(_)) && !m.is_empty())
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
