@@ -11,7 +11,7 @@ use std::{
 #[cfg(feature = "std")]
 use std::borrow::Cow;
 
-#[cfg(any(target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 use serde::{self, Serialize};
 
 #[cfg(not(feature = "std"))]
@@ -79,6 +79,18 @@ impl<'a, 'b: 'a> From<&'b GroupRule<'a>> for CDDLType<'a, 'b> {
   }
 }
 
+impl<'a, 'b: 'a> From<&'b Group<'a>> for CDDLType<'a, 'b> {
+  fn from(group: &'b Group<'a>) -> Self {
+    CDDLType::Group(group)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b GroupChoice<'a>> for CDDLType<'a, 'b> {
+  fn from(group_choice: &'b GroupChoice<'a>) -> Self {
+    CDDLType::GroupChoice(group_choice)
+  }
+}
+
 impl<'a, 'b: 'a> From<&'b Identifier<'a>> for CDDLType<'a, 'b> {
   fn from(ident: &'b Identifier<'a>) -> Self {
     CDDLType::Identifier(ident)
@@ -136,6 +148,24 @@ impl<'a, 'b: 'a> From<&'b GenericParams<'a>> for CDDLType<'a, 'b> {
 impl<'a, 'b: 'a> From<&'b GenericParam<'a>> for CDDLType<'a, 'b> {
   fn from(param: &'b GenericParam<'a>) -> Self {
     CDDLType::GenericParam(param)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b GenericArgs<'a>> for CDDLType<'a, 'b> {
+  fn from(args: &'b GenericArgs<'a>) -> Self {
+    CDDLType::GenericArgs(args)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b GenericArg<'a>> for CDDLType<'a, 'b> {
+  fn from(arg: &'b GenericArg<'a>) -> Self {
+    CDDLType::GenericArg(arg)
+  }
+}
+
+impl<'a, 'b: 'a> From<&'b Operator<'a>> for CDDLType<'a, 'b> {
+  fn from(operator: &'b Operator<'a>) -> Self {
+    CDDLType::Operator(operator)
   }
 }
 

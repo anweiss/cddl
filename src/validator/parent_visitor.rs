@@ -172,6 +172,46 @@ impl<'a, 'b: 'a> Parent<'a, 'b, GenericParams<'a>> for GenericParam<'a> {
   }
 }
 
+impl<'a, 'b: 'a> Parent<'a, 'b, Type2<'a>> for GenericArgs<'a> {
+  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Type2<'a>> {
+    if let Some(CDDLType::Type2(t2)) = CDDLType::from(self).parent(parent_visitor) {
+      return Some(t2);
+    }
+
+    None
+  }
+}
+
+impl<'a, 'b: 'a> Parent<'a, 'b, GenericArgs<'a>> for GenericArg<'a> {
+  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&GenericArgs<'a>> {
+    if let Some(CDDLType::GenericArgs(args)) = CDDLType::from(self).parent(parent_visitor) {
+      return Some(args);
+    }
+
+    None
+  }
+}
+
+impl<'a, 'b: 'a> Parent<'a, 'b, Type1<'a>> for Operator<'a> {
+  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Type1<'a>> {
+    if let Some(CDDLType::Type1(t1)) = CDDLType::from(self).parent(parent_visitor) {
+      return Some(t1);
+    }
+
+    None
+  }
+}
+
+impl<'a, 'b: 'a> Parent<'a, 'b, Type2<'a>> for Type<'a> {
+  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Type2<'a>> {
+    if let Some(CDDLType::Type2(t2)) = CDDLType::from(self).parent(parent_visitor) {
+      return Some(t2);
+    }
+
+    None
+  }
+}
+
 #[derive(Debug, Default, Clone)]
 struct ArenaTree<'a, 'b: 'a> {
   arena: Vec<Node<'a, 'b>>,
@@ -789,7 +829,8 @@ mod tests {
     let pv = ParentVisitor::new(&cddl).unwrap();
 
     if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
-      assert_eq!(rule.value.parent(&pv).unwrap(), rule);
+      let parent: &TypeRule = rule.value.parent(&pv).unwrap();
+      assert_eq!(parent, rule);
     }
 
     Ok(())
@@ -934,6 +975,54 @@ mod tests {
           .unwrap(),
         rule.generic_params.as_ref().unwrap()
       );
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn generic_args_parent_is_type2() -> Result<()> {
+    let cddl = cddl_from_str(
+      r#"
+        messages = message<"reboot", "now"> / message<"sleep", 1..100>
+      "#,
+      true,
+    )
+    .unwrap();
+    let pv = ParentVisitor::new(&cddl).unwrap();
+
+    if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
+      if let t2 @ Type2::Typename {
+        generic_args: Some(ga),
+        ..
+      } = &rule.value.type_choices.first().unwrap().type1.type2
+      {
+        assert_eq!(ga.parent(&pv).unwrap(), t2);
+      }
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn generic_arg_parent_is_generic_args() -> Result<()> {
+    let cddl = cddl_from_str(
+      r#"
+        messages = message<"reboot", "now"> / message<"sleep", 1..100>
+      "#,
+      true,
+    )
+    .unwrap();
+    let pv = ParentVisitor::new(&cddl).unwrap();
+
+    if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
+      if let Type2::Typename {
+        generic_args: Some(ga),
+        ..
+      } = &rule.value.type_choices.first().unwrap().type1.type2
+      {
+        assert_eq!(ga.args.first().unwrap().parent(&pv).unwrap(), ga);
+      }
     }
 
     Ok(())
