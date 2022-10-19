@@ -32,8 +32,50 @@ impl std::error::Error for Error {
   }
 }
 
+/// Parent trait retrieving the implemented type's parent
 pub trait Parent<'a, 'b: 'a, T> {
+  /// Returns the parent for the AST type
   fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&T>;
+}
+
+macro_rules! impl_parent {
+  ($($parent:ty => ([$($child:ty),+], $p:path)),* $(,)?) => {
+    $(
+      $(
+        impl<'a, 'b: 'a> Parent<'a, 'b, $parent> for $child {
+          fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&$parent> {
+            if let Some($p(value)) = CDDLType::from(self).parent(parent_visitor) {
+              return Some(value);
+            }
+            None
+          }
+        }
+      )*
+    )*
+  };
+}
+
+impl_parent! {
+  CDDL<'a> => ([Rule<'a>], CDDLType::CDDL),
+  Rule<'a> => ([GroupRule<'a>, TypeRule<'a>], CDDLType::Rule),
+  TypeRule<'a> => ([Identifier<'a>, GenericParams<'a>, Type<'a>], CDDLType::TypeRule),
+  GroupRule<'a> => ([Identifier<'a>, GenericParams<'a>, GroupEntry<'a>], CDDLType::GroupRule),
+  Type<'a> => ([TypeChoice<'a>], CDDLType::Type),
+  TypeChoice<'a> => ([Type1<'a>], CDDLType::TypeChoice),
+  Type1<'a> => ([Operator<'a>, Type2<'a>], CDDLType::Type1),
+  Operator<'a> => ([Type2<'a>], CDDLType::Operator),
+  Type2<'a> => ([Identifier<'a>, GenericArgs<'a>, Type<'a>, Group<'a>], CDDLType::Type2),
+  Group<'a> => ([GroupChoice<'a>, Occurrence<'a>], CDDLType::Group),
+  GroupChoice<'a> => ([GroupEntry<'a>], CDDLType::GroupChoice),
+  GroupEntry<'a> => ([ValueMemberKeyEntry<'a>, TypeGroupnameEntry<'a>, Occurrence<'a>, Group<'a>], CDDLType::GroupEntry),
+  ValueMemberKeyEntry<'a> => ([Occurrence<'a>, MemberKey<'a>, Type<'a>], CDDLType::ValueMemberKeyEntry),
+  TypeGroupnameEntry<'a> => ([Occurrence<'a>, GenericArgs<'a>, Identifier<'a>], CDDLType::TypeGroupnameEntry),
+  MemberKey<'a> => ([Type1<'a>, Identifier<'a>, NonMemberKey<'a>], CDDLType::MemberKey),
+  GenericArgs<'a> => ([GenericArg<'a>], CDDLType::GenericArgs),
+  GenericArg<'a> => ([Type1<'a>], CDDLType::GenericArg),
+  GenericParams<'a> => ([GenericParam<'a>], CDDLType::GenericParams),
+  GenericParam<'a> => ([Identifier<'a>], CDDLType::GenericParam),
+  NonMemberKey<'a> => ([Group<'a>, Type<'a>], CDDLType::NonMemberKey),
 }
 
 impl<'a, 'b: 'a> Parent<'a, 'b, ()> for CDDL<'a> {
@@ -42,170 +84,31 @@ impl<'a, 'b: 'a> Parent<'a, 'b, ()> for CDDL<'a> {
   }
 }
 
-impl<'a, 'b: 'a> Parent<'a, 'b, CDDL<'a>> for Rule<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&CDDL<'a>> {
-    if let Some(CDDLType::CDDL(cddl)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(cddl);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, Rule<'a>> for TypeRule<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Rule<'a>> {
-    if let Some(CDDLType::Rule(rule)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(rule);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, Rule<'a>> for GroupRule<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Rule<'a>> {
-    if let Some(CDDLType::Rule(rule)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(rule);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, TypeRule<'a>> for Type<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&TypeRule<'a>> {
-    if let Some(CDDLType::TypeRule(tr)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(tr);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, Type<'a>> for TypeChoice<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Type<'a>> {
-    if let Some(CDDLType::Type(t)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(t);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, TypeChoice<'a>> for Type1<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&TypeChoice<'a>> {
-    if let Some(CDDLType::TypeChoice(tc)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(tc);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, Type1<'a>> for Type2<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Type1<'a>> {
-    if let Some(CDDLType::Type1(t1)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(t1);
-    }
-
-    None
-  }
-}
-
 impl<'a, 'b: 'a> Parent<'a, 'b, Type2<'a>> for Value<'a> {
   fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Type2<'a>> {
-    if let Some(CDDLType::Type2(t2)) = CDDLType::from(self.to_owned()).parent(parent_visitor) {
-      return Some(t2);
+    if let Some(CDDLType::Type2(value)) = CDDLType::from(self.to_owned()).parent(parent_visitor) {
+      return Some(value);
     }
 
     None
   }
 }
 
-impl<'a, 'b: 'a> Parent<'a, 'b, Type2<'a>> for Cow<'a, str> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Type2<'a>> {
-    if let Some(CDDLType::Type2(t2)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(t2);
+impl<'a, 'b: 'a> Parent<'a, 'b, MemberKey<'a>> for Value<'a> {
+  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&MemberKey<'a>> {
+    if let Some(CDDLType::MemberKey(value)) = CDDLType::from(self.to_owned()).parent(parent_visitor)
+    {
+      return Some(value);
     }
 
     None
   }
 }
 
-impl<'a, 'b: 'a> Parent<'a, 'b, GroupRule<'a>> for GroupEntry<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&GroupRule<'a>> {
-    if let Some(CDDLType::GroupRule(gr)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(gr);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, TypeRule<'a>> for Identifier<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&TypeRule<'a>> {
-    if let Some(CDDLType::TypeRule(tr)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(tr);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, TypeRule<'a>> for GenericParams<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&TypeRule<'a>> {
-    if let Some(CDDLType::TypeRule(tr)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(tr);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, GenericParams<'a>> for GenericParam<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&GenericParams<'a>> {
-    if let Some(CDDLType::GenericParams(params)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(params);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, Type2<'a>> for GenericArgs<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Type2<'a>> {
-    if let Some(CDDLType::Type2(t2)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(t2);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, GenericArgs<'a>> for GenericArg<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&GenericArgs<'a>> {
-    if let Some(CDDLType::GenericArgs(args)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(args);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, Type1<'a>> for Operator<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Type1<'a>> {
-    if let Some(CDDLType::Type1(t1)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(t1);
-    }
-
-    None
-  }
-}
-
-impl<'a, 'b: 'a> Parent<'a, 'b, Type2<'a>> for Type<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Type2<'a>> {
-    if let Some(CDDLType::Type2(t2)) = CDDLType::from(self).parent(parent_visitor) {
-      return Some(t2);
+impl<'a, 'b: 'a> Parent<'a, 'b, Occurrence<'a>> for Occur {
+  fn parent(&self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Occurrence<'a>> {
+    if let Some(CDDLType::Occurrence(value)) = CDDLType::from(*self).parent(parent_visitor) {
+      return Some(value);
     }
 
     None
@@ -257,6 +160,7 @@ pub struct ParentVisitor<'a, 'b: 'a> {
 }
 
 impl<'a, 'b: 'a> ParentVisitor<'a, 'b> {
+  /// Creates a new parent visitor given a CDDL reference
   pub fn new(cddl: &'a CDDL<'a>) -> Result<Self> {
     let mut p = ParentVisitor {
       arena_tree: ArenaTree {
@@ -272,13 +176,8 @@ impl<'a, 'b: 'a> ParentVisitor<'a, 'b> {
 
 impl<'a, 'b: 'a> ParentVisitor<'a, 'b> {
   fn insert(&mut self, parent: usize, child: usize) -> Result<()> {
-    match self.arena_tree.arena[child].parent {
-      Some(_) => {
-        // return Err(Error::Overwrite);
-      }
-      None => {
-        self.arena_tree.arena[child].parent = Some(parent);
-      }
+    if let None = self.arena_tree.arena[child].parent {
+      self.arena_tree.arena[child].parent = Some(parent);
     }
 
     self.arena_tree.arena[parent].children.push(child);
@@ -369,7 +268,8 @@ impl<'a, 'b: 'a> Visitor<'a, 'b, Error> for ParentVisitor<'a, 'b> {
     if let Some(params) = &gr.generic_params {
       let child = self.arena_tree.node(CDDLType::GenericParams(params));
       self.insert(parent, child)?;
-      walk_generic_params(self, params)?;
+
+      self.visit_generic_params(params)?;
     }
 
     let child = self.arena_tree.node(CDDLType::GroupEntry(&gr.entry));
@@ -783,9 +683,8 @@ impl<'a, 'b: 'a> Visitor<'a, 'b, Error> for ParentVisitor<'a, 'b> {
 mod tests {
   #![allow(unused_imports)]
 
-  use core::any::Any;
-
   use crate::cddl_from_str;
+  use std::borrow::Borrow;
 
   use super::*;
 
@@ -863,17 +762,16 @@ mod tests {
     let pv = ParentVisitor::new(&cddl).unwrap();
 
     if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
-      assert_eq!(
-        rule
-          .value
-          .type_choices
-          .first()
-          .unwrap()
-          .type1
-          .parent(&pv)
-          .unwrap(),
-        rule.value.type_choices.first().unwrap()
-      );
+      let parent: &TypeChoice = rule
+        .value
+        .type_choices
+        .first()
+        .unwrap()
+        .type1
+        .parent(&pv)
+        .unwrap();
+
+      assert_eq!(parent, rule.value.type_choices.first().unwrap());
     }
 
     Ok(())
@@ -885,18 +783,17 @@ mod tests {
     let pv = ParentVisitor::new(&cddl).unwrap();
 
     if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
-      assert_eq!(
-        rule
-          .value
-          .type_choices
-          .first()
-          .unwrap()
-          .type1
-          .type2
-          .parent(&pv)
-          .unwrap(),
-        &rule.value.type_choices.first().unwrap().type1
-      );
+      let parent: &Type1 = rule
+        .value
+        .type_choices
+        .first()
+        .unwrap()
+        .type1
+        .type2
+        .parent(&pv)
+        .unwrap();
+
+      assert_eq!(parent, &rule.value.type_choices.first().unwrap().type1);
     }
 
     Ok(())
@@ -911,7 +808,10 @@ mod tests {
       if let t2 @ Type2::TextValue { value, .. } =
         &rule.value.type_choices.first().unwrap().type1.type2
       {
-        assert_eq!(value.parent(&pv).unwrap(), t2);
+        let value = Value::from(value.borrow());
+
+        let parent: &Type2 = value.parent(&pv).unwrap();
+        assert_eq!(parent, t2);
       }
     }
 
@@ -924,7 +824,9 @@ mod tests {
     let pv = ParentVisitor::new(&cddl).unwrap();
 
     if let Rule::Group { rule, .. } = cddl.rules.first().unwrap() {
-      assert_eq!(rule.entry.parent(&pv).unwrap(), rule.as_ref());
+      let parent: &GroupRule = rule.entry.parent(&pv).unwrap();
+
+      assert_eq!(parent, rule.as_ref());
     }
 
     Ok(())
@@ -936,7 +838,8 @@ mod tests {
     let pv = ParentVisitor::new(&cddl).unwrap();
 
     if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
-      assert_eq!(rule.name.parent(&pv).unwrap(), rule);
+      let parent: &TypeRule = rule.name.parent(&pv).unwrap();
+      assert_eq!(parent, rule);
     }
 
     Ok(())
@@ -948,10 +851,9 @@ mod tests {
     let pv = ParentVisitor::new(&cddl).unwrap();
 
     if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
-      assert_eq!(
-        rule.generic_params.as_ref().unwrap().parent(&pv).unwrap(),
-        rule
-      );
+      let parent: &TypeRule = rule.generic_params.as_ref().unwrap().parent(&pv).unwrap();
+
+      assert_eq!(parent, rule);
     }
 
     Ok(())
@@ -997,7 +899,9 @@ mod tests {
         ..
       } = &rule.value.type_choices.first().unwrap().type1.type2
       {
-        assert_eq!(ga.parent(&pv).unwrap(), t2);
+        let parent: &Type2 = ga.parent(&pv).unwrap();
+
+        assert_eq!(parent, t2);
       }
     }
 
@@ -1022,6 +926,56 @@ mod tests {
       } = &rule.value.type_choices.first().unwrap().type1.type2
       {
         assert_eq!(ga.args.first().unwrap().parent(&pv).unwrap(), ga);
+      }
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn group_parent_is_type2() -> Result<()> {
+    let cddl = cddl_from_str(
+      r#"
+        a = { b }
+        b = ( * tstr => int )
+      "#,
+      true,
+    )
+    .unwrap();
+    let pv = ParentVisitor::new(&cddl).unwrap();
+
+    if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
+      if let t2 @ Type2::Map { group, .. } = &rule.value.type_choices.first().unwrap().type1.type2 {
+        let parent: &Type2 = group.parent(&pv).unwrap();
+
+        assert_eq!(parent, t2);
+      }
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn identifier_parent_is_type2() -> Result<()> {
+    let cddl = cddl_from_str(
+      r#"
+        terminal-color = &basecolors
+        basecolors = (
+          black: 0,  red: 1,  green: 2,  yellow: 3,
+          blue: 4,  magenta: 5,  cyan: 6,  white: 7,
+        )
+      "#,
+      true,
+    )
+    .unwrap();
+    let pv = ParentVisitor::new(&cddl).unwrap();
+
+    if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
+      if let t2 @ Type2::ChoiceFromGroup { ident, .. } =
+        &rule.value.type_choices.first().unwrap().type1.type2
+      {
+        let parent: &Type2 = ident.parent(&pv).unwrap();
+        assert_eq!(parent, t2);
       }
     }
 

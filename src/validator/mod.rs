@@ -6,7 +6,7 @@ pub mod cbor;
 pub mod json;
 
 /// parent visitor implementation
-mod parent_visitor;
+pub mod parent_visitor;
 
 mod control;
 
@@ -50,8 +50,11 @@ struct ParserError {
   msg: ErrorMsg,
 }
 
-trait Validator<'a, 'b, E: Error>: Visitor<'a, 'b, E> {
+/// Validator trait. Implemented for JSON documents and CBOR binaries
+pub trait Validator<'a, 'b, E: Error>: Visitor<'a, 'b, E> {
+  /// Validate the target
   fn validate(&mut self) -> std::result::Result<(), E>;
+  /// Collect validation errors
   fn add_error(&mut self, reason: String);
 }
 

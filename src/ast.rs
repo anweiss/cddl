@@ -55,118 +55,43 @@ pub enum CDDLType<'a, 'b: 'a> {
   NonMemberKey(&'b NonMemberKey<'a>),
 }
 
-impl<'a, 'b: 'a> From<&'b CDDL<'a>> for CDDLType<'a, 'b> {
-  fn from(cddl: &'b CDDL<'a>) -> Self {
-    CDDLType::CDDL(cddl)
-  }
+macro_rules! cddl_types_from_ast {
+  ($($t:ty => $p:path),* $(,)?) => {
+    $(
+      impl<'a, 'b: 'a> From<$t> for CDDLType<'a, 'b> {
+        fn from(value: $t) -> Self {
+          $p(value)
+        }
+      }
+    )*
+  };
 }
 
-impl<'a, 'b: 'a> From<&'b Rule<'a>> for CDDLType<'a, 'b> {
-  fn from(rule: &'b Rule<'a>) -> Self {
-    CDDLType::Rule(rule)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b TypeRule<'a>> for CDDLType<'a, 'b> {
-  fn from(rule: &'b TypeRule<'a>) -> Self {
-    CDDLType::TypeRule(rule)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b GroupRule<'a>> for CDDLType<'a, 'b> {
-  fn from(rule: &'b GroupRule<'a>) -> Self {
-    CDDLType::GroupRule(rule)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b Group<'a>> for CDDLType<'a, 'b> {
-  fn from(group: &'b Group<'a>) -> Self {
-    CDDLType::Group(group)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b GroupChoice<'a>> for CDDLType<'a, 'b> {
-  fn from(group_choice: &'b GroupChoice<'a>) -> Self {
-    CDDLType::GroupChoice(group_choice)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b Identifier<'a>> for CDDLType<'a, 'b> {
-  fn from(ident: &'b Identifier<'a>) -> Self {
-    CDDLType::Identifier(ident)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b Type<'a>> for CDDLType<'a, 'b> {
-  fn from(t: &'b Type<'a>) -> Self {
-    CDDLType::Type(t)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b TypeChoice<'a>> for CDDLType<'a, 'b> {
-  fn from(tc: &'b TypeChoice<'a>) -> Self {
-    CDDLType::TypeChoice(tc)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b Type1<'a>> for CDDLType<'a, 'b> {
-  fn from(t1: &'b Type1<'a>) -> Self {
-    CDDLType::Type1(t1)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b Type2<'a>> for CDDLType<'a, 'b> {
-  fn from(t2: &'b Type2<'a>) -> Self {
-    CDDLType::Type2(t2)
-  }
-}
-
-impl<'a, 'b: 'a> From<Value<'a>> for CDDLType<'a, 'b> {
-  fn from(value: Value<'a>) -> Self {
-    CDDLType::Value(value)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b Cow<'a, str>> for CDDLType<'a, 'b> {
-  fn from(text_value: &'b Cow<'a, str>) -> Self {
-    CDDLType::Value(Value::TEXT(Cow::Borrowed(text_value)))
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b GroupEntry<'a>> for CDDLType<'a, 'b> {
-  fn from(ge: &'b GroupEntry<'a>) -> Self {
-    CDDLType::GroupEntry(ge)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b GenericParams<'a>> for CDDLType<'a, 'b> {
-  fn from(params: &'b GenericParams<'a>) -> Self {
-    CDDLType::GenericParams(params)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b GenericParam<'a>> for CDDLType<'a, 'b> {
-  fn from(param: &'b GenericParam<'a>) -> Self {
-    CDDLType::GenericParam(param)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b GenericArgs<'a>> for CDDLType<'a, 'b> {
-  fn from(args: &'b GenericArgs<'a>) -> Self {
-    CDDLType::GenericArgs(args)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b GenericArg<'a>> for CDDLType<'a, 'b> {
-  fn from(arg: &'b GenericArg<'a>) -> Self {
-    CDDLType::GenericArg(arg)
-  }
-}
-
-impl<'a, 'b: 'a> From<&'b Operator<'a>> for CDDLType<'a, 'b> {
-  fn from(operator: &'b Operator<'a>) -> Self {
-    CDDLType::Operator(operator)
-  }
+cddl_types_from_ast! {
+  &'b CDDL<'a> => CDDLType::CDDL,
+  &'b Rule<'a> => CDDLType::Rule,
+  &'b TypeRule<'a> => CDDLType::TypeRule,
+  &'b GroupRule<'a> => CDDLType::GroupRule,
+  &'b Group<'a> => CDDLType::Group,
+  &'b GroupChoice<'a> => CDDLType::GroupChoice,
+  &'b GenericParams<'a> => CDDLType::GenericParams,
+  &'b GenericParam<'a> => CDDLType::GenericParam,
+  &'b GenericArgs<'a> => CDDLType::GenericArgs,
+  &'b GenericArg<'a> => CDDLType::GenericArg,
+  &'b GroupEntry<'a> => CDDLType::GroupEntry,
+  &'b Identifier<'a> => CDDLType::Identifier,
+  &'b Type<'a> => CDDLType::Type,
+  &'b TypeChoice<'a> => CDDLType::TypeChoice,
+  &'b Type1<'a> => CDDLType::Type1,
+  &'b Type2<'a> => CDDLType::Type2,
+  &'b Operator<'a> => CDDLType::Operator,
+  &'b Occurrence<'a> => CDDLType::Occurrence,
+  &'b ValueMemberKeyEntry<'a> => CDDLType::ValueMemberKeyEntry,
+  &'b TypeGroupnameEntry<'a> => CDDLType::TypeGroupnameEntry,
+  &'b MemberKey<'a> => CDDLType::MemberKey,
+  &'b NonMemberKey<'a> => CDDLType::NonMemberKey,
+  Occur => CDDLType::Occur,
+  Value<'a> => CDDLType::Value,
 }
 
 #[cfg(feature = "ast-comments")]
