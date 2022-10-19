@@ -490,10 +490,21 @@ impl<'a> Lexer<'a> {
 
                 self.position.range = (token_offset, self.position.index + 1);
 
-                Ok((
-                  self.position,
-                  Token::TAG(Some(t as u8), Some(self.read_number(idx)?.1)),
-                ))
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                  Ok((
+                    self.position,
+                    Token::TAG(Some(t as u8), Some(self.read_number(idx)?.1)),
+                  ))
+                }
+
+                #[cfg(target_arch = "wasm32")]
+                {
+                  Ok((
+                    self.position,
+                    Token::TAG(Some(t as u8), Some(self.read_number(idx)?.1 as usize)),
+                  ))
+                }
               }
               _ => {
                 self.position.range = (token_offset, self.position.index + 1);
@@ -943,10 +954,41 @@ impl<'a> Lexer<'a> {
       )));
     }
 
-    Ok(Token::VALUE(Value::UINT(i)))
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+      Ok(Token::VALUE(Value::UINT(i)))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+      Ok(Token::VALUE(Value::UINT(i as usize)))
+    }
   }
 
+  #[cfg(not(target_arch = "wasm32"))]
   fn read_number(&mut self, idx: usize) -> Result<(usize, usize)> {
+    let mut end_index = idx;
+
+    while let Some(&c) = self.peek_char() {
+      if is_digit(c.1) {
+        let (ei, _) = self.read_char()?;
+
+        end_index = ei;
+      } else {
+        break;
+      }
+    }
+
+    Ok((
+      end_index,
+      self.str_input[idx..=end_index]
+        .parse()
+        .map_err(|e| Error::from((self.str_input, self.position, e)))?,
+    ))
+  }
+
+  #[cfg(target_arch = "wasm32")]
+  fn read_number(&mut self, idx: usize) -> Result<(usize, u64)> {
     let mut end_index = idx;
 
     while let Some(&c) = self.peek_char() {
