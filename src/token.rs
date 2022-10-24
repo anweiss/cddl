@@ -512,7 +512,7 @@ impl<'a> fmt::Display for Token<'a> {
       Token::ARROWMAP => write!(f, "=>"),
       Token::SIZE => write!(f, ".size"),
       Token::BITS => write!(f, ".bits"),
-      Token::REGEXP => write!(f, ".regexp"),
+      Token::CREGEXP => write!(f, ".regexp"),
       Token::PCRE => write!(f, ".pcre"),
       Token::CBOR => write!(f, ".cbor"),
       Token::CBORSEQ => write!(f, ".cborseq"),
@@ -544,6 +544,7 @@ impl<'a> fmt::Display for Token<'a> {
       Token::TRUE => write!(f, "true"),
       Token::GTOCHOICE => write!(f, "&"),
       Token::VALUE(value) => write!(f, "{}", value),
+      Token::REGEXP => write!(f, "regexp"),
       Token::RANGEOP(i) => {
         if *i {
           write!(f, "..")
@@ -594,7 +595,7 @@ pub fn lookup_control_from_str<'a>(ident: &str) -> Option<Token<'a>> {
   match ident {
     ".size" => Some(Token::SIZE),
     ".bits" => Some(Token::BITS),
-    ".regexp" => Some(Token::REGEXP),
+    ".regexp" => Some(Token::CREGEXP),
     ".cbor" => Some(Token::CBOR),
     ".cborseq" => Some(Token::CBORSEQ),
     ".within" => Some(Token::WITHIN),
@@ -641,7 +642,7 @@ pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
   match t {
     Token::SIZE => Some(".size"),
     Token::BITS => Some(".bits"),
-    Token::REGEXP => Some(".regexp"),
+    Token::CREGEXP => Some(".regexp"),
     Token::CBOR => Some(".cbor"),
     Token::CBORSEQ => Some(".cborseq"),
     Token::WITHIN => Some(".within"),
