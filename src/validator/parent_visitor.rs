@@ -187,7 +187,7 @@ impl<'a, 'b: 'a> ParentVisitor<'a, 'b> {
 }
 
 impl<'a, 'b: 'a> CDDLType<'a, 'b> {
-  fn parent(&self, visitor: &'b ParentVisitor<'a, 'b>) -> Option<&'b CDDLType<'a, 'b>> {
+  pub fn parent(&self, visitor: &'b ParentVisitor<'a, 'b>) -> Option<&'b CDDLType<'a, 'b>> {
     for node in visitor.arena_tree.arena.iter() {
       if self == &node.val {
         if let Some(parent_idx) = node.parent {
