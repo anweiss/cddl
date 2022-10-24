@@ -169,11 +169,11 @@ impl From<MsgType> for ErrorMsg {
         extended: None,
       },
       MsgType::TypeSocketNamesMustBeTypeAugmentations => ErrorMsg {
-        short: "all plugs for type socket names must be augmentations using '/='".into(),
+        short: "all plugs for type socket names must be augmentations using '/=' (alternatively change the definition to be a group socket)".into(),
         extended: None,
       },
       MsgType::GroupSocketNamesMustBeGroupAugmentations => ErrorMsg {
-        short: "all plugs for group socket names must be augmentations using '//='".into(),
+        short: "all plugs for group socket names must be augmentations using '//=' (alternatively change the definition to be a type socket)".into(),
         extended: None,
       },
       MsgType::InvalidHexFloat => ErrorMsg {
