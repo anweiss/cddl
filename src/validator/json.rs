@@ -1475,8 +1475,8 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
       }
       #[cfg(feature = "additional-controls")]
       #[cfg(target_arch = "wasm32")]
-      t @ Some(Token::FEATURE) => {
-        self.ctrl = t;
+      ControlOperator::FEATURE => {
+        self.ctrl = Some(ctrl);
 
         if let Some(ef) = &self.enabled_features {
           let tv = text_value_from_type2(self.cddl, controller);

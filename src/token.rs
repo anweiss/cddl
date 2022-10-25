@@ -191,6 +191,7 @@ pub enum Token<'a> {
 }
 
 /// Control operator tokens
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum ControlOperator {
   // Control operators
