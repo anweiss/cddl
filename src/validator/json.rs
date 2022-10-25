@@ -113,7 +113,7 @@ impl fmt::Display for ValidationError {
       error_str.push_str(" type choice in group to choice enumeration");
     }
     if let Some(entry) = &self.type_group_name_entry {
-      let _ = write!(error_str, " group entry associated with rule \"{}\"", entry);
+      let _ = write!(error_str, " group entry associated with rule '{}'", entry);
     }
 
     if self.json_location.is_empty() {
@@ -510,7 +510,7 @@ impl<'a> JSONValidator<'a> {
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
           return Ok(());
         } else {
-          self.add_error(format!("object missing key: \"{}\"", t))
+          self.add_error(format!("object missing key: '{}'", t))
         }
 
         // Retrieve the value from key unless optional/zero or more, in which
@@ -531,7 +531,7 @@ impl<'a> JSONValidator<'a> {
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
           return Ok(());
         } else {
-          self.add_error(format!("object missing key: \"{}\"", t))
+          self.add_error(format!("object missing key: '{}'", t))
         }
       } else {
         self.add_error(format!(
@@ -987,7 +987,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                 if is_inclusive {
                   if s.len() < *l || s.len() > *u {
                     self.add_error(format!(
-                      "expected \"{}\" string length to be in the range {} <= value <= {}, got {}",
+                      "expected '{}' string length to be in the range {} <= value <= {}, got {}",
                       s, l, u, len
                     ));
                   }
@@ -995,7 +995,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
                   return Ok(());
                 } else if s.len() <= *l || s.len() >= *u {
                   self.add_error(format!(
-                    "expected \"{}\" string length to be in the range {} < value < {}, got {}",
+                    "expected '{}' string length to be in the range {} < value < {}, got {}",
                     s, l, u, len
                   ));
                   return Ok(());
@@ -2363,7 +2363,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             if s.len() == *v {
               None
             } else {
-              Some(format!("expected \"{}\" .size {}, got {}", s, v, s.len()))
+              Some(format!("expected '{}' .size {}, got {}", s, v, s.len()))
             }
           }
           _ => Some(format!("expected {}, got {}", v, s)),
@@ -2419,7 +2419,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             if s != t {
               None
             } else {
-              Some(format!("expected {} .ne to \"{}\"", value, s))
+              Some(format!("expected {} .ne to '{}'", value, s))
             }
           }
           Some(Token::REGEXP) | Some(Token::PCRE) => {
@@ -2439,13 +2439,13 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             if re.is_match(s) {
               None
             } else {
-              Some(format!("expected \"{}\" to match regex \"{}\"", s, t))
+              Some(format!("expected '{}' to match regex '{}'", s, t))
             }
           }
           #[cfg(feature = "additional-controls")]
           Some(Token::ABNF) => validate_abnf(t, s)
             .err()
-            .map(|e| format!("\"{}\" is not valid against abnf: {}", s, e)),
+            .map(|e| format!("'{}' is not valid against abnf: {}", s, e)),
 
           _ => {
             #[cfg(feature = "additional-controls")]
@@ -2453,22 +2453,22 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               None
             } else if let Some(Token::CAT) | Some(Token::DET) = &self.ctrl {
               Some(format!(
-                "expected value to match concatenated string {}, got \"{}\"",
+                "expected value to match concatenated string {}, got '{}'",
                 value, s
               ))
             } else if let Some(ctrl) = &self.ctrl {
-              Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
+              Some(format!("expected value {} {}, got '{}'", ctrl, value, s))
             } else {
-              Some(format!("expected value {} got \"{}\"", value, s))
+              Some(format!("expected value {} got '{}'", value, s))
             }
 
             #[cfg(not(feature = "additional-controls"))]
             if s == t {
               None
             } else if let Some(ctrl) = &self.ctrl {
-              Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
+              Some(format!("expected value {} {}, got '{}'", ctrl, value, s))
             } else {
-              Some(format!("expected value {} got \"{}\"", value, s))
+              Some(format!("expected value {} got '{}'", value, s))
             }
           }
         },

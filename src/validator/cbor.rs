@@ -102,7 +102,7 @@ impl fmt::Display for ValidationError {
       error_str.push_str(" type choice in group to choice enumeration");
     }
     if let Some(entry) = &self.type_group_name_entry {
-      let _ = write!(error_str, " group entry associated with rule \"{}\"", entry);
+      let _ = write!(error_str, " group entry associated with rule '{}'", entry);
     }
 
     write!(
@@ -890,7 +890,7 @@ where
                 if is_inclusive {
                   if s.len() < *l || s.len() > *u {
                     self.add_error(format!(
-                      "expected \"{}\" string length to be in the range {} <= value <= {}, got {}",
+                      "expected '{}' string length to be in the range {} <= value <= {}, got {}",
                       s, l, u, len
                     ));
                   }
@@ -898,7 +898,7 @@ where
                   return Ok(());
                 } else if s.len() <= *l || s.len() >= *u {
                   self.add_error(format!(
-                    "expected \"{}\" string length to be in the range {} < value < {}, got {}",
+                    "expected '{}' string length to be in the range {} < value < {}, got {}",
                     s, l, u, len
                   ));
                   return Ok(());
@@ -3242,7 +3242,7 @@ where
             if s != t {
               None
             } else {
-              Some(format!("expected {} .ne to \"{}\"", value, s))
+              Some(format!("expected {} .ne to '{}'", value, s))
             }
           }
           Some(Token::REGEXP) | Some(Token::PCRE) => {
@@ -3262,13 +3262,13 @@ where
             if re.is_match(s) {
               None
             } else {
-              Some(format!("expected \"{}\" to match regex \"{}\"", s, t))
+              Some(format!("expected '{}' to match regex '{}'", s, t))
             }
           }
           #[cfg(feature = "additional-controls")]
           Some(Token::ABNF) => validate_abnf(t, s)
             .err()
-            .map(|e| format!("\"{}\" is not valid against abnf: {}", s, e)),
+            .map(|e| format!("'{}' is not valid against abnf: {}", s, e)),
           _ => {
             #[cfg(feature = "additional-controls")]
             if s == t {
@@ -3279,18 +3279,18 @@ where
                 value, s
               ))
             } else if let Some(ctrl) = &self.ctrl {
-              Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
+              Some(format!("expected value {} {}, got '{}'", ctrl, value, s))
             } else {
-              Some(format!("expected value {} got \"{}\"", value, s))
+              Some(format!("expected value {} got '{}'", value, s))
             }
 
             #[cfg(not(feature = "additional-controls"))]
             if s == t {
               None
             } else if let Some(ctrl) = &self.ctrl {
-              Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
+              Some(format!("expected value {} {}, got '{}'", ctrl, value, s))
             } else {
-              Some(format!("expected value {} got \"{}\"", value, s))
+              Some(format!("expected value {} got '{}'", value, s))
             }
           }
         },
@@ -3299,7 +3299,7 @@ where
             if s.len() == *u {
               None
             } else {
-              Some(format!("expected \"{}\" .size {}, got {}", s, u, s.len()))
+              Some(format!("expected '{}' .size {}, got {}", s, u, s.len()))
             }
           }
           _ => Some(format!("expected {}, got {}", u, s)),
@@ -3307,7 +3307,7 @@ where
         token::Value::BYTE(token::ByteValue::UTF8(b)) if s.as_bytes() == b.as_ref() => None,
         token::Value::BYTE(token::ByteValue::B16(b)) if s.as_bytes() == b.as_ref() => None,
         token::Value::BYTE(token::ByteValue::B64(b)) if s.as_bytes() == b.as_ref() => None,
-        _ => Some(format!("expected {}, got \"{}\"", value, s)),
+        _ => Some(format!("expected {}, got '{}'", value, s)),
       },
       Value::Bytes(b) => match value {
         token::Value::UINT(v) => match &self.ctrl {
@@ -3421,7 +3421,7 @@ where
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
           None
         } else {
-          Some(format!("object missing key: \"{}\"", value))
+          Some(format!("object missing key: '{}'", value))
         }
 
         #[cfg(not(feature = "ast-span"))]
@@ -3440,7 +3440,7 @@ where
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
           None
         } else {
-          Some(format!("object missing key: \"{}\"", value))
+          Some(format!("object missing key: '{}'", value))
         }
       }
       _ => Some(format!("expected {}, got {:?}", value, self.cbor)),
