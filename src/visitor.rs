@@ -62,6 +62,16 @@ pub trait Visitor<'a, 'b, E: Error> {
     walk_operator(self, target, o)
   }
 
+  /// Visit rangectlop
+  fn visit_rangectlop(
+    &mut self,
+    op: &'b RangeCtlOp,
+    target: &'b Type1<'a>,
+    controller: &'b Type2<'a>,
+  ) -> Result<E> {
+    walk_rangectlop(self, op, target, controller)
+  }
+
   /// Visit range
   fn visit_range(
     &mut self,
@@ -244,12 +254,26 @@ where
   E: Error,
   V: Visitor<'a, 'b, E> + ?Sized,
 {
-  match &o.operator {
+  visitor.visit_rangectlop(&o.operator, target, &o.type2)
+}
+
+/// Walk rangectlop
+pub fn walk_rangectlop<'a, 'b, E, V>(
+  visitor: &mut V,
+  op: &'b RangeCtlOp,
+  target: &'b Type1<'a>,
+  controller: &'b Type2<'a>,
+) -> Result<E>
+where
+  E: Error,
+  V: Visitor<'a, 'b, E> + ?Sized,
+{
+  match op {
     RangeCtlOp::RangeOp { is_inclusive, .. } => {
-      visitor.visit_range(&target.type2, &o.type2, *is_inclusive)
+      visitor.visit_range(&target.type2, controller, *is_inclusive)
     }
     RangeCtlOp::CtlOp { ctrl, .. } => {
-      visitor.visit_control_operator(&target.type2, *ctrl, &o.type2)
+      visitor.visit_control_operator(&target.type2, *ctrl, controller)
     }
   }
 }

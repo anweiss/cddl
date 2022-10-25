@@ -1198,7 +1198,7 @@ where
         self.ctrl = None;
         Ok(())
       }
-      ControlOperator::CREGEXP | ControlOperator::PCRE => {
+      ControlOperator::REGEXP | ControlOperator::PCRE => {
         self.ctrl = Some(ctrl);
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
@@ -3255,7 +3255,7 @@ where
               Some(format!("expected {} .ne to \"{}\"", value, s))
             }
           }
-          Some(ControlOperator::CREGEXP) | Some(ControlOperator::PCRE) => {
+          Some(ControlOperator::REGEXP) | Some(ControlOperator::PCRE) => {
             let re = regex::Regex::new(
               &format_regex(
                 // Text strings must be JSON escaped per

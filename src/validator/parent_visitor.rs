@@ -2,7 +2,7 @@
 
 use crate::{
   ast::*,
-  token::{ByteValue, Value},
+  token::{ByteValue, ControlOperator, Value},
   visitor::{self, *},
 };
 
@@ -64,6 +64,7 @@ impl_parent! {
   TypeChoice<'a> => ([Type1<'a>], CDDLType::TypeChoice),
   Type1<'a> => ([Operator<'a>, Type2<'a>], CDDLType::Type1),
   Operator<'a> => ([Type2<'a>], CDDLType::Operator),
+  RangeCtlOp => ([ControlOperator], CDDLType::RangeCtlOp),
   Type2<'a> => ([Identifier<'a>, GenericArgs<'a>, Type<'a>, Group<'a>], CDDLType::Type2),
   Group<'a> => ([GroupChoice<'a>, Occurrence<'a>], CDDLType::Group),
   GroupChoice<'a> => ([GroupEntry<'a>], CDDLType::GroupChoice),
@@ -325,7 +326,30 @@ impl<'a, 'b: 'a> Visitor<'a, 'b, Error> for ParentVisitor<'a, 'b> {
     let child = self.arena_tree.node(CDDLType::Type2(&o.type2));
     self.insert(parent, child)?;
 
-    walk_operator(self, target, o)
+    let child = self.arena_tree.node(CDDLType::RangeCtlOp(&o.operator));
+    self.insert(parent, child)?;
+
+    self.visit_rangectlop(&o.operator, target, &o.type2)
+  }
+
+  fn visit_rangectlop(
+    &mut self,
+    op: &'b RangeCtlOp,
+    target: &'b Type1<'a>,
+    controller: &'b Type2<'a>,
+  ) -> visitor::Result<Error> {
+    match op {
+      RangeCtlOp::RangeOp { is_inclusive, .. } => {
+        self.visit_range(&target.type2, controller, *is_inclusive)
+      }
+      RangeCtlOp::CtlOp { ctrl, .. } => {
+        let parent = self.arena_tree.node(CDDLType::RangeCtlOp(op));
+        let child = self.arena_tree.node(CDDLType::ControlOperator(ctrl));
+        self.insert(parent, child)?;
+
+        self.visit_control_operator(&target.type2, *ctrl, controller)
+      }
+    }
   }
 
   fn visit_type2(&mut self, t2: &'b Type2<'a>) -> visitor::Result<Error> {
@@ -976,6 +1000,30 @@ mod tests {
       {
         let parent: &Type2 = ident.parent(&pv).unwrap();
         assert_eq!(parent, t2);
+      }
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn ctrl_parent_is_rangectlop() -> Result<()> {
+    let cddl = cddl_from_str(r#"ip4 = bstr .size 4"#, true).unwrap();
+    let pv = ParentVisitor::new(&cddl).unwrap();
+
+    if let Rule::Type { rule, .. } = cddl.rules.first().unwrap() {
+      if let op @ RangeCtlOp::CtlOp { ctrl, .. } = &rule
+        .value
+        .type_choices
+        .first()
+        .unwrap()
+        .type1
+        .operator
+        .as_ref()
+        .unwrap()
+        .operator
+      {
+        assert_eq!(ctrl.parent(&pv).unwrap(), op)
       }
     }
 

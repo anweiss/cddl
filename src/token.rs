@@ -200,7 +200,7 @@ pub enum ControlOperator {
   /// .bits control operator
   BITS,
   /// .regexp control operator
-  CREGEXP,
+  REGEXP,
   /// .cbor control operator
   CBOR,
   /// .cborseq control operator
@@ -488,7 +488,7 @@ impl fmt::Display for ControlOperator {
     match self {
       ControlOperator::SIZE => write!(f, ".size"),
       ControlOperator::BITS => write!(f, ".bits"),
-      ControlOperator::CREGEXP => write!(f, ".regexp"),
+      ControlOperator::REGEXP => write!(f, ".regexp"),
       ControlOperator::PCRE => write!(f, ".pcre"),
       ControlOperator::CBOR => write!(f, ".cbor"),
       ControlOperator::CBORSEQ => write!(f, ".cborseq"),
@@ -611,7 +611,7 @@ pub fn lookup_control_from_str(ident: &str) -> Option<ControlOperator> {
   match ident {
     ".size" => Some(ControlOperator::SIZE),
     ".bits" => Some(ControlOperator::BITS),
-    ".regexp" => Some(ControlOperator::CREGEXP),
+    ".regexp" => Some(ControlOperator::REGEXP),
     ".cbor" => Some(ControlOperator::CBOR),
     ".cborseq" => Some(ControlOperator::CBORSEQ),
     ".within" => Some(ControlOperator::WITHIN),

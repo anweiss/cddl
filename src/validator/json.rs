@@ -1287,7 +1287,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
         }
         self.ctrl = None;
       }
-      ControlOperator::CREGEXP | ControlOperator::PCRE => {
+      ControlOperator::REGEXP | ControlOperator::PCRE => {
         self.ctrl = Some(ctrl);
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
@@ -2431,7 +2431,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
               Some(format!("expected {} .ne to \"{}\"", value, s))
             }
           }
-          Some(ControlOperator::CREGEXP) | Some(ControlOperator::PCRE) => {
+          Some(ControlOperator::REGEXP) | Some(ControlOperator::PCRE) => {
             let re = regex::Regex::new(
               &format_regex(
                 // Text strings must be JSON escaped per
