@@ -2604,6 +2604,11 @@ impl<'a> Parser<'a> {
 
       self.next_token()?;
 
+      #[cfg(feature = "ast-comments")]
+      let _ = self.collect_comments()?;
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
+
       Some(t1)
     } else {
       if let Token::COLON = &self.cur_token {
