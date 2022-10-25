@@ -1,9 +1,10 @@
+/// Parent visitor implementation
+pub mod parent;
+
 #[cfg(target_arch = "wasm32")]
 extern crate console_error_panic_hook;
 
-use crate::token::ControlOperator;
-
-use super::token::{ByteValue, RangeValue, SocketPlug, Token, Value};
+use crate::token::{ByteValue, ControlOperator, RangeValue, SocketPlug, Token, Value};
 
 use std::{
   fmt::{self, Write},

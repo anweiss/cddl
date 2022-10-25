@@ -8,10 +8,10 @@ use crate::{
 
 use std::{borrow::Cow, fmt};
 
-/// validation Result
+/// Parent visitor result
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// validation error
+/// Parent visitor error
 #[derive(Debug)]
 pub enum Error {
   /// Tree overwrite error
@@ -154,7 +154,7 @@ impl<'a, 'b: 'a> Node<'a, 'b> {
   }
 }
 
-/// validator type
+/// Parent visitor type
 // #[derive(Clone)]
 pub struct ParentVisitor<'a, 'b: 'a> {
   arena_tree: ArenaTree<'a, 'b>,

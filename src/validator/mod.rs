@@ -5,9 +5,6 @@ pub mod cbor;
 /// JSON validation implementation
 pub mod json;
 
-/// parent visitor implementation
-pub mod parent_visitor;
-
 mod control;
 
 use crate::{
