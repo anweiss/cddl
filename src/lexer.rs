@@ -558,7 +558,7 @@ impl<'a> Lexer<'a> {
                 })?;
 
               self.position.range = (token_offset, self.position.index + 1);
-              return Ok((self.position, ctrlop));
+              return Ok((self.position, Token::ControlOperator(ctrlop)));
             }
           }
 
@@ -1067,7 +1067,7 @@ fn is_hexdigit(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
   use super::{
-    super::token::{SocketPlug, Token::*},
+    super::token::{ControlOperator, SocketPlug, Token::*},
     *,
   };
   use pretty_assertions::assert_eq;
@@ -1204,7 +1204,7 @@ mod tests {
       (IDENT("mycontrol", None), "mycontrol"),
       (ASSIGN, "="),
       (IDENT("mynumber", None), "mynumber"),
-      (GT, ".gt"),
+      (ControlOperator(ControlOperator::GT), ".gt"),
       (VALUE(Value::UINT(0)), "0"),
       (NEWLINE, ""),
       (NEWLINE, ""),
@@ -1298,7 +1298,7 @@ mod tests {
   #[test]
   fn verify_controlop() -> Result<()> {
     let input = r#".size"#;
-    let expected_tok = Token::SIZE;
+    let expected_tok = Token::ControlOperator(ControlOperator::SIZE);
 
     let mut l = Lexer::new(input);
 

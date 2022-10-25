@@ -1,6 +1,8 @@
 #[cfg(target_arch = "wasm32")]
 extern crate console_error_panic_hook;
 
+use crate::token::ControlOperator;
+
 use super::token::{ByteValue, RangeValue, SocketPlug, Token, Value};
 
 use std::{
@@ -940,7 +942,7 @@ impl<'a> From<Value<'a>> for Type1<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Operator<'a> {
   /// Operator
-  pub operator: RangeCtlOp<'a>,
+  pub operator: RangeCtlOp,
   /// Type bound by range or control operator
   pub type2: Type2<'a>,
 
@@ -1012,7 +1014,7 @@ impl<'a> fmt::Display for Type1<'a> {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum RangeCtlOp<'a> {
+pub enum RangeCtlOp {
   /// Range operator
   RangeOp {
     /// Is inclusive
@@ -1024,14 +1026,14 @@ pub enum RangeCtlOp<'a> {
   /// Control operator
   CtlOp {
     /// Control identifier
-    ctrl: &'a str,
+    ctrl: ControlOperator,
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
   },
 }
 
-impl<'a> fmt::Display for RangeCtlOp<'a> {
+impl fmt::Display for RangeCtlOp {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       RangeCtlOp::RangeOp {

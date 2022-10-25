@@ -176,7 +176,7 @@ impl<'a, 'b: 'a> ParentVisitor<'a, 'b> {
 
 impl<'a, 'b: 'a> ParentVisitor<'a, 'b> {
   fn insert(&mut self, parent: usize, child: usize) -> Result<()> {
-    if let None = self.arena_tree.arena[child].parent {
+    if self.arena_tree.arena[child].parent.is_none() {
       self.arena_tree.arena[child].parent = Some(parent);
     }
 

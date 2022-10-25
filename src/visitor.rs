@@ -1,6 +1,10 @@
 #![cfg(feature = "std")]
 
-use crate::{ast::*, token::ByteValue, token::Value};
+use crate::{
+  ast::*,
+  token::Value,
+  token::{ByteValue, ControlOperator},
+};
 use std::error::Error;
 
 /// Visitor result
@@ -72,7 +76,7 @@ pub trait Visitor<'a, 'b, E: Error> {
   fn visit_control_operator(
     &mut self,
     target: &'b Type2<'a>,
-    _ctrl: &str,
+    _ctrl: ControlOperator,
     controller: &'b Type2<'a>,
   ) -> Result<E> {
     walk_control_operator(self, target, controller)
@@ -244,7 +248,9 @@ where
     RangeCtlOp::RangeOp { is_inclusive, .. } => {
       visitor.visit_range(&target.type2, &o.type2, *is_inclusive)
     }
-    RangeCtlOp::CtlOp { ctrl, .. } => visitor.visit_control_operator(&target.type2, ctrl, &o.type2),
+    RangeCtlOp::CtlOp { ctrl, .. } => {
+      visitor.visit_control_operator(&target.type2, *ctrl, &o.type2)
+    }
   }
 }
 

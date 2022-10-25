@@ -1164,18 +1164,19 @@ impl<'a> Parser<'a> {
           span,
         })
       }
-      _ => token::control_str_from_token(&self.cur_token).map(|ctrl| {
+      Token::ControlOperator(ctrl) => {
         #[cfg(feature = "ast-span")]
         {
           span.0 = self.lexer_position.range.0;
         }
 
-        RangeCtlOp::CtlOp {
-          ctrl,
+        Some(RangeCtlOp::CtlOp {
+          ctrl: *ctrl,
           #[cfg(feature = "ast-span")]
           span,
-        }
-      }),
+        })
+      }
+      _ => None,
     };
 
     #[cfg(feature = "ast-span")]

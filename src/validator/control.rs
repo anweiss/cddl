@@ -1,10 +1,13 @@
 #![cfg(any(feature = "json", feature = "cbor"))]
 #![cfg(not(feature = "lsp"))]
 
-use crate::ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL};
+use crate::{
+  ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL},
+  token::ControlOperator,
+};
 
 #[cfg(feature = "additional-controls")]
-use crate::{ast::Type, token::lookup_control_from_str, validator::ByteValue, Token};
+use crate::{ast::Type, validator::ByteValue};
 #[cfg(feature = "additional-controls")]
 use itertools::Itertools;
 #[cfg(feature = "additional-controls")]
@@ -74,7 +77,11 @@ pub fn cat_operation<'a>(
   is_dedent: bool,
 ) -> Result<Vec<Type2<'a>>, String> {
   let mut literals = Vec::new();
-  let ctrl = if is_dedent { Token::DET } else { Token::CAT };
+  let ctrl = if is_dedent {
+    ControlOperator::DET
+  } else {
+    ControlOperator::CAT
+  };
 
   match target {
     Type2::TextValue { value, .. } => match controller {
@@ -637,7 +644,11 @@ pub fn plus_operation<'a>(
         for controller in controller.type_choices.iter() {
           match &controller.type1.operator {
             Some(Operator {
-              operator: RangeCtlOp::CtlOp { ctrl: ".plus", .. },
+              operator:
+                RangeCtlOp::CtlOp {
+                  ctrl: ControlOperator::PLUS,
+                  ..
+                },
               type2: nested_controller,
               ..
             }) => {
@@ -679,7 +690,11 @@ pub fn plus_operation<'a>(
         for controller in controller.type_choices.iter() {
           match &controller.type1.operator {
             Some(Operator {
-              operator: RangeCtlOp::CtlOp { ctrl: ".plus", .. },
+              operator:
+                RangeCtlOp::CtlOp {
+                  ctrl: ControlOperator::PLUS,
+                  ..
+                },
               type2: nested_controller,
               ..
             }) => {
@@ -718,7 +733,11 @@ pub fn plus_operation<'a>(
         for controller in controller.type_choices.iter() {
           match &controller.type1.operator {
             Some(Operator {
-              operator: RangeCtlOp::CtlOp { ctrl: ".plus", .. },
+              operator:
+                RangeCtlOp::CtlOp {
+                  ctrl: ControlOperator::PLUS,
+                  ..
+                },
               type2: nested_controller,
               ..
             }) => {
@@ -748,7 +767,11 @@ pub fn plus_operation<'a>(
       if let Some(tc) = target.type_choices.first() {
         match &tc.type1.operator {
           Some(Operator {
-            operator: RangeCtlOp::CtlOp { ctrl: ".plus", .. },
+            operator:
+              RangeCtlOp::CtlOp {
+                ctrl: ControlOperator::PLUS,
+                ..
+              },
             type2: nested_controller,
             ..
           }) => {
@@ -811,9 +834,13 @@ pub fn abnf_from_complex_controller<'a>(
   if let Some(tc) = controller.type_choices.first() {
     if let Some(operator) = &tc.type1.operator {
       if let RangeCtlOp::CtlOp { ctrl, .. } = operator.operator {
-        match lookup_control_from_str(ctrl) {
-          Some(Token::CAT) => return cat_operation(cddl, &tc.type1.type2, &operator.type2, false),
-          Some(Token::DET) => return cat_operation(cddl, &tc.type1.type2, &operator.type2, true),
+        match ctrl {
+          ControlOperator::CAT => {
+            return cat_operation(cddl, &tc.type1.type2, &operator.type2, false)
+          }
+          ControlOperator::DET => {
+            return cat_operation(cddl, &tc.type1.type2, &operator.type2, true)
+          }
           _ => return Err("invalid_controller".to_string()),
         }
       }
