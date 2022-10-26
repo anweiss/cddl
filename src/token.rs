@@ -3,7 +3,7 @@ use std::{convert::TryFrom, fmt};
 #[cfg(feature = "std")]
 use std::borrow::Cow;
 
-#[cfg(feature = "web")]
+#[cfg(target_arch = "wasm32")]
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(feature = "std"))]
