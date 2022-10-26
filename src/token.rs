@@ -3,7 +3,7 @@ use std::{convert::TryFrom, fmt};
 #[cfg(feature = "std")]
 use std::borrow::Cow;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(feature = "std"))]
@@ -98,57 +98,8 @@ pub enum Token<'a> {
   /// Right closing angle bracket
   RANGLEBRACKET,
 
-  // Control operators
-  /// .size control operator
-  SIZE,
-  /// .bits control operator
-  BITS,
-  /// .regexp control operator
-  CREGEXP,
-  /// .cbor control operator
-  CBOR,
-  /// .cborseq control operator
-  CBORSEQ,
-  /// .within control operator
-  WITHIN,
-  /// .and control operator
-  AND,
-  /// .lt control operator
-  LT,
-  /// .le control operator
-  LE,
-  /// .gt control operator
-  GT,
-  /// .ge control operator
-  GE,
-  /// .eq control operator
-  EQ,
-  /// .ne control operator
-  NE,
-  /// .default control operator
-  DEFAULT,
-  /// .pcre control operator
-  /// Proposed control extension to support Perl-Compatible Regular Expressions
-  /// (PCREs). See <https://tools.ietf.org/html/rfc8610#section-3.8.3.2s>
-  PCRE,
-  #[cfg(feature = "additional-controls")]
-  /// .cat control operator (rfc 9165)
-  CAT,
-  #[cfg(feature = "additional-controls")]
-  /// .det control operator (rfc 9165)
-  DET,
-  #[cfg(feature = "additional-controls")]
-  /// .plus control operator (rfc 9165)
-  PLUS,
-  #[cfg(feature = "additional-controls")]
-  /// .abnf control operator (rfc 9165)
-  ABNF,
-  #[cfg(feature = "additional-controls")]
-  /// .abnfb control operator (rfc 9165)
-  ABNFB,
-  #[cfg(feature = "additional-controls")]
-  /// .feature control operator (rfc 9165)
-  FEATURE,
+  /// Control operator token
+  ControlOperator(ControlOperator),
 
   /// group to choice enumeration '&'
   GTOCHOICE,
@@ -237,6 +188,63 @@ pub enum Token<'a> {
   /// newline (used only for comment formatting when compiled with the "lsp"
   /// feature)
   NEWLINE,
+}
+
+/// Control operator tokens
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+pub enum ControlOperator {
+  // Control operators
+  /// .size control operator
+  SIZE,
+  /// .bits control operator
+  BITS,
+  /// .regexp control operator
+  REGEXP,
+  /// .cbor control operator
+  CBOR,
+  /// .cborseq control operator
+  CBORSEQ,
+  /// .within control operator
+  WITHIN,
+  /// .and control operator
+  AND,
+  /// .lt control operator
+  LT,
+  /// .le control operator
+  LE,
+  /// .gt control operator
+  GT,
+  /// .ge control operator
+  GE,
+  /// .eq control operator
+  EQ,
+  /// .ne control operator
+  NE,
+  /// .default control operator
+  DEFAULT,
+  /// .pcre control operator
+  /// Proposed control extension to support Perl-Compatible Regular Expressions
+  /// (PCREs). See <https://tools.ietf.org/html/rfc8610#section-3.8.3.2s>
+  PCRE,
+  #[cfg(feature = "additional-controls")]
+  /// .cat control operator (rfc 9165)
+  CAT,
+  #[cfg(feature = "additional-controls")]
+  /// .det control operator (rfc 9165)
+  DET,
+  #[cfg(feature = "additional-controls")]
+  /// .plus control operator (rfc 9165)
+  PLUS,
+  #[cfg(feature = "additional-controls")]
+  /// .abnf control operator (rfc 9165)
+  ABNF,
+  #[cfg(feature = "additional-controls")]
+  /// .abnfb control operator (rfc 9165)
+  ABNFB,
+  #[cfg(feature = "additional-controls")]
+  /// .feature control operator (rfc 9165)
+  FEATURE,
 }
 
 impl<'a> Token<'a> {
@@ -356,7 +364,7 @@ impl<'a> fmt::Display for RangeValue<'a> {
 
 /// Literal value
 // TODO: support hexfloat and exponent
-#[cfg_attr(target_arch = "wasm32", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value<'a> {
   /// Integer value
@@ -403,7 +411,7 @@ impl<'a> From<&'a str> for Value<'a> {
 }
 
 /// Byte string values
-#[cfg_attr(target_arch = "wasm32", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ByteValue<'a> {
   /// Unprefixed byte string value
@@ -437,7 +445,7 @@ impl<'a> fmt::Display for ByteValue<'a> {
 }
 
 /// Socket/plug prefix
-#[cfg_attr(target_arch = "wasm32", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SocketPlug {
   /// Type socket `$`
@@ -471,6 +479,40 @@ impl fmt::Display for SocketPlug {
     match self {
       SocketPlug::TYPE => write!(f, "$"),
       SocketPlug::GROUP => write!(f, "$$"),
+    }
+  }
+}
+
+impl fmt::Display for ControlOperator {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      ControlOperator::SIZE => write!(f, ".size"),
+      ControlOperator::BITS => write!(f, ".bits"),
+      ControlOperator::REGEXP => write!(f, ".regexp"),
+      ControlOperator::PCRE => write!(f, ".pcre"),
+      ControlOperator::CBOR => write!(f, ".cbor"),
+      ControlOperator::CBORSEQ => write!(f, ".cborseq"),
+      ControlOperator::WITHIN => write!(f, ".within"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::CAT => write!(f, ".cat"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::DET => write!(f, ".det"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::PLUS => write!(f, ".plus"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::ABNF => write!(f, ".abnf"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::ABNFB => write!(f, ".abnfb"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::FEATURE => write!(f, ".feature"),
+      ControlOperator::AND => write!(f, ".and"),
+      ControlOperator::LT => write!(f, ".lt"),
+      ControlOperator::LE => write!(f, ".le"),
+      ControlOperator::GT => write!(f, ".gt"),
+      ControlOperator::GE => write!(f, ".ge"),
+      ControlOperator::EQ => write!(f, ".eq"),
+      ControlOperator::NE => write!(f, ".ne"),
+      ControlOperator::DEFAULT => write!(f, ".default"),
     }
   }
 }
@@ -510,33 +552,7 @@ impl<'a> fmt::Display for Token<'a> {
       Token::INT => write!(f, "int"),
       Token::UINT => write!(f, "uint"),
       Token::ARROWMAP => write!(f, "=>"),
-      Token::SIZE => write!(f, ".size"),
-      Token::BITS => write!(f, ".bits"),
-      Token::REGEXP => write!(f, ".regexp"),
-      Token::PCRE => write!(f, ".pcre"),
-      Token::CBOR => write!(f, ".cbor"),
-      Token::CBORSEQ => write!(f, ".cborseq"),
-      Token::WITHIN => write!(f, ".within"),
-      #[cfg(feature = "additional-controls")]
-      Token::CAT => write!(f, ".cat"),
-      #[cfg(feature = "additional-controls")]
-      Token::DET => write!(f, ".det"),
-      #[cfg(feature = "additional-controls")]
-      Token::PLUS => write!(f, ".plus"),
-      #[cfg(feature = "additional-controls")]
-      Token::ABNF => write!(f, ".abnf"),
-      #[cfg(feature = "additional-controls")]
-      Token::ABNFB => write!(f, ".abnfb"),
-      #[cfg(feature = "additional-controls")]
-      Token::FEATURE => write!(f, ".feature"),
-      Token::AND => write!(f, ".and"),
-      Token::LT => write!(f, ".lt"),
-      Token::LE => write!(f, ".le"),
-      Token::GT => write!(f, ".gt"),
-      Token::GE => write!(f, ".ge"),
-      Token::EQ => write!(f, ".eq"),
-      Token::NE => write!(f, ".ne"),
-      Token::DEFAULT => write!(f, ".default"),
+      Token::ControlOperator(co) => write!(f, "{}", co),
       Token::NUMBER => write!(f, "number"),
       Token::BSTR => write!(f, "bstr"),
       Token::BYTES => write!(f, "bytes"),
@@ -544,6 +560,7 @@ impl<'a> fmt::Display for Token<'a> {
       Token::TRUE => write!(f, "true"),
       Token::GTOCHOICE => write!(f, "&"),
       Token::VALUE(value) => write!(f, "{}", value),
+      Token::REGEXP => write!(f, "regexp"),
       Token::RANGEOP(i) => {
         if *i {
           write!(f, "..")
@@ -586,86 +603,39 @@ impl<'a> fmt::Display for Token<'a> {
 /// # Example
 ///
 /// ```
-/// use cddl::token::{lookup_control_from_str, Token};
+/// use cddl::token::{lookup_control_from_str, ControlOperator};
 ///
-/// assert_eq!(lookup_control_from_str(".size"), Some(Token::SIZE));
+/// assert_eq!(lookup_control_from_str(".size"), Some(ControlOperator::SIZE));
 /// ```
-pub fn lookup_control_from_str<'a>(ident: &str) -> Option<Token<'a>> {
+pub fn lookup_control_from_str(ident: &str) -> Option<ControlOperator> {
   match ident {
-    ".size" => Some(Token::SIZE),
-    ".bits" => Some(Token::BITS),
-    ".regexp" => Some(Token::REGEXP),
-    ".cbor" => Some(Token::CBOR),
-    ".cborseq" => Some(Token::CBORSEQ),
-    ".within" => Some(Token::WITHIN),
-    ".and" => Some(Token::AND),
-    ".lt" => Some(Token::LT),
-    ".le" => Some(Token::LE),
-    ".gt" => Some(Token::GT),
-    ".ge" => Some(Token::GE),
-    ".eq" => Some(Token::EQ),
-    ".ne" => Some(Token::NE),
-    ".default" => Some(Token::DEFAULT),
-    ".pcre" => Some(Token::PCRE),
+    ".size" => Some(ControlOperator::SIZE),
+    ".bits" => Some(ControlOperator::BITS),
+    ".regexp" => Some(ControlOperator::REGEXP),
+    ".cbor" => Some(ControlOperator::CBOR),
+    ".cborseq" => Some(ControlOperator::CBORSEQ),
+    ".within" => Some(ControlOperator::WITHIN),
+    ".and" => Some(ControlOperator::AND),
+    ".lt" => Some(ControlOperator::LT),
+    ".le" => Some(ControlOperator::LE),
+    ".gt" => Some(ControlOperator::GT),
+    ".ge" => Some(ControlOperator::GE),
+    ".eq" => Some(ControlOperator::EQ),
+    ".ne" => Some(ControlOperator::NE),
+    ".default" => Some(ControlOperator::DEFAULT),
+    ".pcre" => Some(ControlOperator::PCRE),
     #[cfg(feature = "additional-controls")]
-    ".cat" => Some(Token::CAT),
+    ".cat" => Some(ControlOperator::CAT),
     #[cfg(feature = "additional-controls")]
-    ".det" => Some(Token::DET),
+    ".det" => Some(ControlOperator::DET),
     #[cfg(feature = "additional-controls")]
-    ".plus" => Some(Token::PLUS),
+    ".plus" => Some(ControlOperator::PLUS),
     #[cfg(feature = "additional-controls")]
-    ".abnf" => Some(Token::ABNF),
+    ".abnf" => Some(ControlOperator::ABNF),
     #[cfg(feature = "additional-controls")]
-    ".abnfb" => Some(Token::ABNFB),
+    ".abnfb" => Some(ControlOperator::ABNFB),
     #[cfg(feature = "additional-controls")]
-    ".feature" => Some(Token::FEATURE),
-    _ => None,
-  }
-}
-
-/// Return an optional string from a given token if it is a control operator.
-/// Inverse of `lookup_control_from_str`
-///
-/// # Arguments
-///
-/// `t` - Reference to a `Token`
-///
-/// # Example
-///
-/// ```
-/// use cddl::token::{control_str_from_token, Token};
-///
-/// assert_eq!(control_str_from_token(&Token::SIZE), Some(".size"));
-/// ```
-pub fn control_str_from_token(t: &Token) -> Option<&'static str> {
-  match t {
-    Token::SIZE => Some(".size"),
-    Token::BITS => Some(".bits"),
-    Token::REGEXP => Some(".regexp"),
-    Token::CBOR => Some(".cbor"),
-    Token::CBORSEQ => Some(".cborseq"),
-    Token::WITHIN => Some(".within"),
-    Token::AND => Some(".and"),
-    Token::LT => Some(".lt"),
-    Token::LE => Some(".le"),
-    Token::GT => Some(".gt"),
-    Token::GE => Some(".ge"),
-    Token::EQ => Some(".eq"),
-    Token::NE => Some(".ne"),
-    Token::DEFAULT => Some(".default"),
-    Token::PCRE => Some(".pcre"),
-    #[cfg(feature = "additional-controls")]
-    Token::CAT => Some(".cat"),
-    #[cfg(feature = "additional-controls")]
-    Token::DET => Some(".det"),
-    #[cfg(feature = "additional-controls")]
-    Token::PLUS => Some(".plus"),
-    #[cfg(feature = "additional-controls")]
-    Token::ABNF => Some(".abnf"),
-    #[cfg(feature = "additional-controls")]
-    Token::ABNFB => Some(".abnfb"),
-    #[cfg(feature = "additional-controls")]
-    Token::FEATURE => Some(".feature"),
+    ".feature" => Some(ControlOperator::FEATURE),
     _ => None,
   }
 }

@@ -2,6 +2,7 @@
 #[allow(unused_imports)]
 #[cfg(feature = "ast-span")]
 #[cfg(feature = "ast-comments")]
+#[cfg(not(feature = "ast-parent"))]
 mod tests {
   use crate::{
     ast::*,
@@ -671,7 +672,7 @@ mod tests {
         value: 9.9,
         span: (0, 3, 1),
       },
-      Type2::Any((0, 1, 1)),
+      Type2::Any { span: (0, 1, 1) },
       Type2::Array {
         group: Group {
           group_choices: vec![GroupChoice {
@@ -720,7 +721,7 @@ mod tests {
               GroupEntry::TypeGroupname {
                 ge: TypeGroupnameEntry {
                   occur: Some(Occurrence {
-                    occur: Occur::OneOrMore((1, 2, 1)),
+                    occur: Occur::OneOrMore { span: (1, 2, 1) },
                     comments: None,
                     _a: PhantomData::default(),
                   }),
@@ -801,7 +802,7 @@ mod tests {
               GroupEntry::ValueMemberKey {
                 ge: Box::from(ValueMemberKeyEntry {
                   occur: Some(Occurrence {
-                    occur: Occur::Optional((2, 3, 1)),
+                    occur: Occur::Optional { span: (2, 3, 1) },
                     comments: None,
                     _a: PhantomData::default(),
                   }),
@@ -1029,7 +1030,7 @@ mod tests {
                                   GroupEntry::TypeGroupname {
                                     ge: TypeGroupnameEntry {
                                       occur: Some(Occurrence {
-                                        occur: Occur::ZeroOrMore((3, 4, 1)),
+                                        occur: Occur::ZeroOrMore { span: (3, 4, 1) },
                                         comments: None,
                                         _a: PhantomData::default(),
                                       }),
@@ -1094,7 +1095,7 @@ mod tests {
                                   GroupEntry::TypeGroupname {
                                     ge: TypeGroupnameEntry {
                                       occur: Some(Occurrence {
-                                        occur: Occur::ZeroOrMore((19, 20, 1)),
+                                        occur: Occur::ZeroOrMore { span: (19, 20, 1) },
                                         comments: None,
                                         _a: PhantomData::default(),
                                       }),
@@ -1386,7 +1387,7 @@ mod tests {
       GroupEntry::ValueMemberKey {
         ge: Box::from(ValueMemberKeyEntry {
           occur: Some(Occurrence {
-            occur: Occur::ZeroOrMore((0, 1, 1)),
+            occur: Occur::ZeroOrMore { span: (0, 1, 1) },
             comments: None,
             _a: PhantomData::default(),
           }),
@@ -1488,7 +1489,7 @@ mod tests {
       GroupEntry::ValueMemberKey {
         ge: Box::from(ValueMemberKeyEntry {
           occur: Some(Occurrence {
-            occur: Occur::Optional((0, 1, 1)),
+            occur: Occur::Optional { span: (0, 1, 1) },
             comments: None,
             _a: PhantomData::default(),
           }),
@@ -1583,7 +1584,7 @@ mod tests {
       GroupEntry::ValueMemberKey {
         ge: Box::from(ValueMemberKeyEntry {
           occur: Some(Occurrence {
-            occur: Occur::ZeroOrMore((0, 1, 1)),
+            occur: Occur::ZeroOrMore { span: (0, 1, 1) },
             comments: None,
             _a: PhantomData::default(),
           }),
@@ -1819,12 +1820,12 @@ mod tests {
         _a: PhantomData::default(),
       },
       Occurrence {
-        occur: Occur::ZeroOrMore((0, 1, 1)),
+        occur: Occur::ZeroOrMore { span: (0, 1, 1) },
         comments: None,
         _a: PhantomData::default(),
       },
       Occurrence {
-        occur: Occur::OneOrMore((0, 1, 1)),
+        occur: Occur::OneOrMore { span: (0, 1, 1) },
         comments: None,
         _a: PhantomData::default(),
       },
@@ -1847,7 +1848,7 @@ mod tests {
         _a: PhantomData::default(),
       },
       Occurrence {
-        occur: Occur::Optional((0, 1, 1)),
+        occur: Occur::Optional { span: (0, 1, 1) },
         comments: None,
         _a: PhantomData::default(),
       },

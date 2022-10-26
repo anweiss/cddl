@@ -47,8 +47,11 @@ struct ParserError {
   msg: ErrorMsg,
 }
 
-trait Validator<'a, E: Error>: Visitor<'a, E> {
+/// Validator trait. Implemented for JSON documents and CBOR binaries
+pub trait Validator<'a, 'b, E: Error>: Visitor<'a, 'b, E> {
+  /// Validate the target
   fn validate(&mut self) -> std::result::Result<(), E>;
+  /// Collect validation errors
   fn add_error(&mut self, reason: String);
 }
 
@@ -831,19 +834,19 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 ) -> std::result::Result<(bool, bool), Vec<String>> {
   let mut iter_items = false;
   #[cfg(feature = "ast-span")]
-  let allow_empty_array = matches!(occurrence, Some(Occur::Optional(_)));
+  let allow_empty_array = matches!(occurrence, Some(Occur::Optional { .. }));
   #[cfg(not(feature = "ast-span"))]
-  let allow_empty_array = matches!(occurrence, Some(Occur::Optional));
+  let allow_empty_array = matches!(occurrence, Some(Occur::Optional {}));
 
   let mut errors = Vec::new();
 
   match occurrence {
     #[cfg(feature = "ast-span")]
-    Some(Occur::ZeroOrMore(_)) => iter_items = true,
+    Some(Occur::ZeroOrMore { .. }) => iter_items = true,
     #[cfg(not(feature = "ast-span"))]
-    Some(Occur::ZeroOrMore) => iter_items = true,
+    Some(Occur::ZeroOrMore {}) => iter_items = true,
     #[cfg(feature = "ast-span")]
-    Some(Occur::OneOrMore(_)) => {
+    Some(Occur::OneOrMore { .. }) => {
       if values.is_empty() {
         errors.push("array must have at least one item".to_string());
       } else {
@@ -851,7 +854,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
       }
     }
     #[cfg(not(feature = "ast-span"))]
-    Some(Occur::OneOrMore) => {
+    Some(Occur::OneOrMore {}) => {
       if values.is_empty() {
         errors.push("array must have at least one item".to_string());
       } else {
@@ -882,7 +885,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
       iter_items = true;
     }
     #[cfg(feature = "ast-span")]
-    Some(Occur::Optional(_)) => {
+    Some(Occur::Optional { .. }) => {
       if values.len() > 1 {
         errors.push("array must have 0 or 1 items".to_string());
       }
@@ -890,7 +893,7 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
       iter_items = false;
     }
     #[cfg(not(feature = "ast-span"))]
-    Some(Occur::Optional) => {
+    Some(Occur::Optional {}) => {
       if values.len() > 1 {
         errors.push("array must have 0 or 1 items".to_string());
       }
@@ -939,7 +942,10 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
 /// entries in arrays, but may be useful in other contexts. The occurrence is
 /// only captured for the second element of the CDDL array to avoid ambiguity in
 /// non-homogenous array definitions
-pub fn entry_counts_from_group(cddl: &CDDL, group: &Group) -> Vec<EntryCount> {
+pub fn entry_counts_from_group<'a, 'b: 'a>(
+  cddl: &'a CDDL,
+  group: &'b Group<'a>,
+) -> Vec<EntryCount> {
   // Each EntryCount is associated with a group choice in the given group
   let mut entry_counts = Vec::new();
 
@@ -952,7 +958,7 @@ pub fn entry_counts_from_group(cddl: &CDDL, group: &Group) -> Vec<EntryCount> {
         GroupEntry::ValueMemberKey { ge, .. } => {
           if idx == 1 {
             if let Some(occur) = &ge.occur {
-              entry_occurrence = Some(occur.occur.clone())
+              entry_occurrence = Some(occur.occur)
             }
           }
 
@@ -961,7 +967,7 @@ pub fn entry_counts_from_group(cddl: &CDDL, group: &Group) -> Vec<EntryCount> {
         GroupEntry::InlineGroup { group, occur, .. } => {
           if idx == 1 {
             if let Some(occur) = occur {
-              entry_occurrence = Some(occur.occur.clone())
+              entry_occurrence = Some(occur.occur)
             }
           }
 
@@ -970,7 +976,7 @@ pub fn entry_counts_from_group(cddl: &CDDL, group: &Group) -> Vec<EntryCount> {
         GroupEntry::TypeGroupname { ge, .. } => {
           if idx == 1 {
             if let Some(occur) = &ge.occur {
-              entry_occurrence = Some(occur.occur.clone())
+              entry_occurrence = Some(occur.occur)
             }
           }
 
@@ -1014,13 +1020,13 @@ pub fn validate_entry_count(valid_entry_counts: &[EntryCount], num_entries: usiz
     num_entries == ec.count as usize
       || match ec.entry_occurrence {
         #[cfg(feature = "ast-span")]
-        Some(Occur::ZeroOrMore(_)) | Some(Occur::Optional(_)) => true,
+        Some(Occur::ZeroOrMore { .. }) | Some(Occur::Optional { .. }) => true,
         #[cfg(not(feature = "ast-span"))]
-        Some(Occur::ZeroOrMore) | Some(Occur::Optional) => true,
+        Some(Occur::ZeroOrMore {}) | Some(Occur::Optional {}) => true,
         #[cfg(feature = "ast-span")]
-        Some(Occur::OneOrMore(_)) if num_entries > 0 => true,
+        Some(Occur::OneOrMore { .. }) if num_entries > 0 => true,
         #[cfg(not(feature = "ast-span"))]
-        Some(Occur::OneOrMore) if num_entries > 0 => true,
+        Some(Occur::OneOrMore {}) if num_entries > 0 => true,
         Some(Occur::Exact { lower, upper, .. }) => {
           if let Some(lower) = lower {
             if let Some(upper) = upper {

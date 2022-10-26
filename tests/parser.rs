@@ -1,5 +1,6 @@
 #![cfg(feature = "ast-span")]
 #![cfg(feature = "ast-comments")]
+#![cfg(not(feature = "ast-parent"))]
 
 use std::marker::PhantomData;
 

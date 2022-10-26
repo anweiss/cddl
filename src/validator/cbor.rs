@@ -5,7 +5,7 @@
 use super::*;
 use crate::{
   ast::*,
-  token::{self, Token},
+  token,
   visitor::{self, *},
 };
 
@@ -56,7 +56,7 @@ impl<T: std::fmt::Debug> fmt::Display for Error<T> {
       Error::CBORParsing(error) => write!(f, "error parsing cbor: {}", error),
       Error::JSONParsing(error) => write!(f, "error parsing json string: {}", error),
       Error::CDDLParsing(error) => write!(f, "error parsing CDDL: {}", error),
-      Error::UTF8Parsing(error) => write!(f, "error pasing utf8: {}", error),
+      Error::UTF8Parsing(error) => write!(f, "error parsing utf8: {}", error),
     }
   }
 }
@@ -159,7 +159,7 @@ pub struct CBORValidator<'a> {
   // Aggregation of generic rules
   generic_rules: Vec<GenericRule<'a>>,
   // Control operator token detected in current state of AST evaluation
-  ctrl: Option<token::Token<'a>>,
+  ctrl: Option<token::ControlOperator>,
   // Is a group to choice enumeration detected in current state of AST
   // evaluation
   is_group_to_choice_enum: bool,
@@ -395,7 +395,7 @@ impl<'a> CBORValidator<'a> {
 
               cv.generic_rules = self.generic_rules.clone();
               cv.eval_generic_rule = self.eval_generic_rule;
-              cv.ctrl = self.ctrl.clone();
+              cv.ctrl = self.ctrl;
               cv.is_multi_type_choice = self.is_multi_type_choice;
               let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
 
@@ -449,7 +449,7 @@ impl<'a> CBORValidator<'a> {
                 cv.generic_rules = self.generic_rules.clone();
                 cv.eval_generic_rule = self.eval_generic_rule;
                 cv.is_multi_type_choice = self.is_multi_type_choice;
-                cv.ctrl = self.ctrl.clone();
+                cv.ctrl = self.ctrl;
                 let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
 
                 match token {
@@ -482,7 +482,7 @@ impl<'a> CBORValidator<'a> {
   }
 }
 
-impl<'a, T: std::fmt::Debug + 'static> Validator<'a, cbor::Error<T>> for CBORValidator<'a>
+impl<'a, 'b, T: std::fmt::Debug + 'static> Validator<'a, 'b, cbor::Error<T>> for CBORValidator<'a>
 where
   cbor::Error<T>: From<cbor::Error<std::io::Error>>,
 {
@@ -519,7 +519,7 @@ where
   }
 }
 
-impl<'a, T: std::fmt::Debug + 'static> Visitor<'a, Error<T>> for CBORValidator<'a>
+impl<'a, 'b, T: std::fmt::Debug + 'static> Visitor<'a, 'b, Error<T>> for CBORValidator<'a>
 where
   cbor::Error<T>: From<cbor::Error<std::io::Error>>,
 {
@@ -692,7 +692,7 @@ where
         if let Value::Map(m) = &self.cbor {
           let entry_counts = entry_counts_from_group(self.cddl, g);
           let len = m.len();
-          if let Token::EQ | Token::NE = t {
+          if let ControlOperator::EQ | ControlOperator::NE = t {
             if !validate_entry_count(&entry_counts, len) {
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
@@ -884,7 +884,7 @@ where
               }
             }
             Value::Text(s) => match self.ctrl {
-              Some(Token::SIZE) => {
+              Some(ControlOperator::SIZE) => {
                 let len = s.len();
                 let s = s.clone();
                 if is_inclusive {
@@ -982,7 +982,7 @@ where
   fn visit_control_operator(
     &mut self,
     target: &Type2<'a>,
-    ctrl: &str,
+    ctrl: ControlOperator,
     controller: &Type2<'a>,
   ) -> visitor::Result<Error<T>> {
     if let Type2::Typename {
@@ -1038,8 +1038,8 @@ where
       }
     }
 
-    match lookup_control_from_str(ctrl) {
-      t @ Some(Token::EQ) => {
+    match ctrl {
+      ControlOperator::EQ => {
         match target {
           Type2::Typename { ident, .. } => {
             if is_ident_string_data_type(self.cddl, ident)
@@ -1059,7 +1059,7 @@ where
           }
           Type2::Map { .. } => {
             if let Value::Map(_) = &self.cbor {
-              self.ctrl = t;
+              self.ctrl = Some(ctrl);
               self.is_ctrl_map_equality = true;
               self.visit_type2(controller)?;
               self.ctrl = None;
@@ -1074,13 +1074,13 @@ where
         }
         Ok(())
       }
-      t @ Some(Token::NE) => {
+      ControlOperator::NE => {
         match target {
           Type2::Typename { ident, .. } => {
             if is_ident_string_data_type(self.cddl, ident)
               || is_ident_numeric_data_type(self.cddl, ident)
             {
-              self.ctrl = t;
+              self.ctrl = Some(ctrl);
               self.visit_type2(controller)?;
               self.ctrl = None;
               return Ok(());
@@ -1088,7 +1088,7 @@ where
           }
           Type2::Array { .. } => {
             if let Value::Array(_) = &self.cbor {
-              self.ctrl = t;
+              self.ctrl = Some(ctrl);
               self.visit_type2(controller)?;
               self.ctrl = None;
               return Ok(());
@@ -1096,7 +1096,7 @@ where
           }
           Type2::Map { .. } => {
             if let Value::Map(_) = &self.cbor {
-              self.ctrl = t;
+              self.ctrl = Some(ctrl);
               self.is_ctrl_map_equality = true;
               self.visit_type2(controller)?;
               self.ctrl = None;
@@ -1111,10 +1111,10 @@ where
         }
         Ok(())
       }
-      t @ Some(Token::LT) | t @ Some(Token::GT) | t @ Some(Token::GE) | t @ Some(Token::LE) => {
+      ControlOperator::LT | ControlOperator::GT | ControlOperator::GE | ControlOperator::LE => {
         match target {
           Type2::Typename { ident, .. } if is_ident_numeric_data_type(self.cddl, ident) => {
-            self.ctrl = t;
+            self.ctrl = Some(ctrl);
             self.visit_type2(controller)?;
             self.ctrl = None;
             Ok(())
@@ -1128,13 +1128,13 @@ where
           }
         }
       }
-      t @ Some(Token::SIZE) => match target {
+      ControlOperator::SIZE => match target {
         Type2::Typename { ident, .. }
           if is_ident_string_data_type(self.cddl, ident)
             || is_ident_uint_data_type(self.cddl, ident)
             || is_ident_byte_string_data_type(self.cddl, ident) =>
         {
-          self.ctrl = t;
+          self.ctrl = Some(ctrl);
           self.visit_type2(controller)?;
           self.ctrl = None;
           Ok(())
@@ -1147,15 +1147,15 @@ where
           Ok(())
         }
       },
-      t @ Some(Token::AND) => {
-        self.ctrl = t;
+      ControlOperator::AND => {
+        self.ctrl = Some(ctrl);
         self.visit_type2(target)?;
         self.visit_type2(controller)?;
         self.ctrl = None;
         Ok(())
       }
-      t @ Some(Token::WITHIN) => {
-        self.ctrl = t;
+      ControlOperator::WITHIN => {
+        self.ctrl = Some(ctrl);
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         let no_errors = self.errors.len() == error_count;
@@ -1175,20 +1175,20 @@ where
 
         Ok(())
       }
-      t @ Some(Token::DEFAULT) => {
-        self.ctrl = t;
+      ControlOperator::DEFAULT => {
+        self.ctrl = Some(ctrl);
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
           #[cfg(feature = "ast-span")]
-          if let Some(Occur::Optional(_)) = self.occurrence.take() {
+          if let Some(Occur::Optional { .. }) = self.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {:?}",
               controller, self.cbor
             ));
           }
           #[cfg(not(feature = "ast-span"))]
-          if let Some(Occur::Optional) = self.occurrence.take() {
+          if let Some(Occur::Optional {}) = self.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {:?}",
               controller, self.cbor
@@ -1198,8 +1198,8 @@ where
         self.ctrl = None;
         Ok(())
       }
-      t @ Some(Token::REGEXP) | t @ Some(Token::PCRE) => {
-        self.ctrl = t;
+      ControlOperator::REGEXP | ControlOperator::PCRE => {
+        self.ctrl = Some(ctrl);
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
             match self.cbor {
@@ -1219,8 +1219,8 @@ where
 
         Ok(())
       }
-      t @ Some(Token::CBOR) | t @ Some(Token::CBORSEQ) => {
-        self.ctrl = t;
+      ControlOperator::CBOR | ControlOperator::CBORSEQ => {
+        self.ctrl = Some(ctrl);
         match target {
           Type2::Typename { ident, .. } if is_ident_byte_string_data_type(self.cddl, ident) => {
             match &self.cbor {
@@ -1240,8 +1240,8 @@ where
 
         Ok(())
       }
-      t @ Some(Token::BITS) => {
-        self.ctrl = t;
+      ControlOperator::BITS => {
+        self.ctrl = Some(ctrl);
         match target {
           Type2::Typename { ident, .. }
             if is_ident_byte_string_data_type(self.cddl, ident)
@@ -1266,8 +1266,8 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::CAT) => {
-        self.ctrl = t;
+      ControlOperator::CAT => {
+        self.ctrl = Some(ctrl);
 
         match cat_operation(self.cddl, target, controller, false) {
           Ok(values) => {
@@ -1294,8 +1294,8 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::DET) => {
-        self.ctrl = t;
+      ControlOperator::DET => {
+        self.ctrl = Some(ctrl);
 
         match cat_operation(self.cddl, target, controller, true) {
           Ok(values) => {
@@ -1322,8 +1322,8 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::PLUS) => {
-        self.ctrl = t;
+      ControlOperator::PLUS => {
+        self.ctrl = Some(ctrl);
 
         match plus_operation(self.cddl, target, controller) {
           Ok(values) => {
@@ -1352,8 +1352,8 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::ABNF) => {
-        self.ctrl = t;
+      ControlOperator::ABNF => {
+        self.ctrl = Some(ctrl);
 
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
@@ -1400,8 +1400,8 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::ABNFB) => {
-        self.ctrl = t;
+      ControlOperator::ABNFB => {
+        self.ctrl = Some(ctrl);
 
         match target {
           Type2::Typename { ident, .. } if is_ident_byte_string_data_type(self.cddl, ident) => {
@@ -1449,8 +1449,8 @@ where
       }
       #[cfg(feature = "additional-controls")]
       #[cfg(not(target_arch = "wasm32"))]
-      t @ Some(Token::FEATURE) => {
-        self.ctrl = t;
+      ControlOperator::FEATURE => {
+        self.ctrl = Some(ctrl);
 
         if let Some(ef) = self.enabled_features {
           let tv = text_value_from_type2(self.cddl, controller);
@@ -1492,8 +1492,8 @@ where
       }
       #[cfg(feature = "additional-controls")]
       #[cfg(target_arch = "wasm32")]
-      t @ Some(Token::FEATURE) => {
-        self.ctrl = t;
+      ControlOperator::FEATURE => {
+        self.ctrl = Some(ctrl);
 
         if let Some(ef) = &self.enabled_features {
           let tv = text_value_from_type2(self.cddl, controller);
@@ -1533,15 +1533,11 @@ where
 
         Ok(())
       }
-      _ => {
-        self.add_error(format!("unsupported control operator {}", ctrl));
-        Ok(())
-      }
     }
   }
 
   fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error<T>> {
-    if matches!(self.ctrl, Some(Token::CBOR)) {
+    if matches!(self.ctrl, Some(ControlOperator::CBOR)) {
       if let Value::Bytes(b) = &self.cbor {
         let value = ciborium::de::from_reader(&b[..]);
         match value {
@@ -1578,7 +1574,7 @@ where
       }
 
       return Ok(());
-    } else if matches!(self.ctrl, Some(Token::CBORSEQ)) {
+    } else if matches!(self.ctrl, Some(ControlOperator::CBORSEQ)) {
       if let Value::Bytes(b) = &self.cbor {
         let value = ciborium::de::from_reader(&b[..]);
         match value {
@@ -1700,7 +1696,10 @@ where
           if group.group_choices.len() == 1
             && group.group_choices[0].group_entries.is_empty()
             && !a.is_empty()
-            && !matches!(self.ctrl, Some(Token::NE) | Some(Token::DEFAULT))
+            && !matches!(
+              self.ctrl,
+              Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
+            )
           {
             self.add_error(format!("expected empty array, got {:?}", self.cbor));
             return Ok(());
@@ -2167,9 +2166,9 @@ where
         }
       },
       #[cfg(feature = "ast-span")]
-      Type2::Any(_) => Ok(()),
+      Type2::Any { .. } => Ok(()),
       #[cfg(not(feature = "ast-span"))]
-      Type2::Any => Ok(()),
+      Type2::Any {} => Ok(()),
       _ => {
         self.add_error(format!(
           "unsupported data type for validating cbor, got {}",
@@ -2297,7 +2296,7 @@ where
       Value::Map(m) => {
         match &self.occurrence {
           #[cfg(feature = "ast-span")]
-          Some(Occur::Optional(_)) | None => {
+          Some(Occur::Optional { .. }) | None => {
             if is_ident_string_data_type(self.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Text(_))) {
                 self
@@ -2309,7 +2308,6 @@ where
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
-
               return Ok(());
             }
 
@@ -2397,7 +2395,7 @@ where
             self.visit_value(&token::Value::TEXT(ident.ident.into()))
           }
           #[cfg(not(feature = "ast-span"))]
-          Some(Occur::Optiona) | None => {
+          Some(Occur::Optional {}) | None => {
             if is_ident_string_data_type(self.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Text(_))) {
                 self
@@ -2676,8 +2674,8 @@ where
             }
 
             #[cfg(feature = "ast-span")]
-            if let Occur::ZeroOrMore(_) | Occur::OneOrMore(_) = occur {
-              if let Occur::OneOrMore(_) = occur {
+            if let Occur::ZeroOrMore { .. } | Occur::OneOrMore { .. } = occur {
+              if let Occur::OneOrMore { .. } = occur {
                 if m.is_empty() {
                   self.add_error(format!(
                     "map cannot be empty, one or more entries with key type {} required",
@@ -2733,9 +2731,9 @@ where
             }
 
             #[cfg(not(feature = "ast-span"))]
-            if let Occur::ZeroOrMore | Occur::OneOrMore = occur {
-              if let Occur::OneOrMore = occur {
-                if o.is_empty() {
+            if let Occur::ZeroOrMore {} | Occur::OneOrMore {} = occur {
+              if let Occur::OneOrMore {} = occur {
+                if m.is_empty() {
                   self.add_error(format!(
                     "object cannot be empty, one or more entries with key type {} required",
                     ident
@@ -2797,8 +2795,8 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.cbor_location, "/{:?}", v);
-              } else if (!matches!(occur, Occur::ZeroOrMore(_)) && m.is_empty())
-                || (matches!(occur, Occur::ZeroOrMore(_)) && !m.is_empty())
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2814,8 +2812,8 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.cbor_location, "/{:?}", v);
-              } else if (!matches!(occur, Occur::ZeroOrMore(_)) && m.is_empty())
-                || (matches!(occur, Occur::ZeroOrMore(_)) && !m.is_empty())
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2830,8 +2828,8 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.cbor_location, "/{:?}", v);
-              } else if (!matches!(occur, Occur::ZeroOrMore(_)) && m.is_empty())
-                || (matches!(occur, Occur::ZeroOrMore(_)) && !m.is_empty())
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2846,8 +2844,8 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.cbor_location, "/{:?}", v);
-              } else if (!matches!(occur, Occur::ZeroOrMore(_)) && m.is_empty())
-                || (matches!(occur, Occur::ZeroOrMore(_)) && !m.is_empty())
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2862,8 +2860,8 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.cbor_location, "/{:?}", v);
-              } else if (!matches!(occur, Occur::ZeroOrMore(_)) && m.is_empty())
-                || (matches!(occur, Occur::ZeroOrMore(_)) && !m.is_empty())
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2878,8 +2876,8 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.cbor_location, "/{:?}", v);
-              } else if (!matches!(occur, Occur::ZeroOrMore(_)) && m.is_empty())
-                || (matches!(occur, Occur::ZeroOrMore(_)) && !m.is_empty())
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -3105,13 +3103,17 @@ where
     let error: Option<String> = match &self.cbor {
       Value::Integer(i) => match value {
         token::Value::INT(v) => match &self.ctrl {
-          Some(Token::NE) | Some(Token::DEFAULT) if i128::from(*i) != *v as i128 => None,
-          Some(Token::LT) if i128::from(*i) < *v as i128 => None,
-          Some(Token::LE) if i128::from(*i) <= *v as i128 => None,
-          Some(Token::GT) if i128::from(*i) > *v as i128 => None,
-          Some(Token::GE) if i128::from(*i) >= *v as i128 => None,
+          Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
+            if i128::from(*i) != *v as i128 =>
+          {
+            None
+          }
+          Some(ControlOperator::LT) if i128::from(*i) < *v as i128 => None,
+          Some(ControlOperator::LE) if i128::from(*i) <= *v as i128 => None,
+          Some(ControlOperator::GT) if i128::from(*i) > *v as i128 => None,
+          Some(ControlOperator::GE) if i128::from(*i) >= *v as i128 => None,
           #[cfg(feature = "additional-controls")]
-          Some(Token::PLUS) => {
+          Some(ControlOperator::PLUS) => {
             if i128::from(*i) == *v as i128 {
               None
             } else {
@@ -3119,7 +3121,7 @@ where
             }
           }
           #[cfg(feature = "additional-controls")]
-          None | Some(Token::FEATURE) => {
+          None | Some(ControlOperator::FEATURE) => {
             if i128::from(*i) == *v as i128 {
               None
             } else {
@@ -3136,22 +3138,26 @@ where
           }
           _ => Some(format!(
             "expected value {} {}, got {:?}",
-            self.ctrl.clone().unwrap(),
+            self.ctrl.unwrap(),
             v,
             i
           )),
         },
         token::Value::UINT(v) => match &self.ctrl {
-          Some(Token::NE) | Some(Token::DEFAULT) if i128::from(*i) != *v as i128 => None,
-          Some(Token::LT) if i128::from(*i) < *v as i128 => None,
-          Some(Token::LE) if i128::from(*i) <= *v as i128 => None,
-          Some(Token::GT) if i128::from(*i) > *v as i128 => None,
-          Some(Token::GE) if i128::from(*i) >= *v as i128 => None,
-          Some(Token::SIZE) => match 256i128.checked_pow(*v as u32) {
+          Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
+            if i128::from(*i) != *v as i128 =>
+          {
+            None
+          }
+          Some(ControlOperator::LT) if i128::from(*i) < *v as i128 => None,
+          Some(ControlOperator::LE) if i128::from(*i) <= *v as i128 => None,
+          Some(ControlOperator::GT) if i128::from(*i) > *v as i128 => None,
+          Some(ControlOperator::GE) if i128::from(*i) >= *v as i128 => None,
+          Some(ControlOperator::SIZE) => match 256i128.checked_pow(*v as u32) {
             Some(n) if i128::from(*i) < n => None,
             _ => Some(format!("expected value .size {}, got {:?}", v, i)),
           },
-          Some(Token::BITS) => {
+          Some(ControlOperator::BITS) => {
             if let Some(sv) = 1u32.checked_shl(*v as u32) {
               if (i128::from(*i) & sv as i128) != 0 {
                 None
@@ -3163,7 +3169,7 @@ where
             }
           }
           #[cfg(feature = "additional-controls")]
-          Some(Token::PLUS) => {
+          Some(ControlOperator::PLUS) => {
             if i128::from(*i) == *v as i128 {
               None
             } else {
@@ -3171,7 +3177,7 @@ where
             }
           }
           #[cfg(feature = "additional-controls")]
-          None | Some(Token::FEATURE) => {
+          None | Some(ControlOperator::FEATURE) => {
             if i128::from(*i) == *v as i128 {
               None
             } else {
@@ -3188,7 +3194,7 @@ where
           }
           _ => Some(format!(
             "expected value {} {}, got {:?}",
-            self.ctrl.clone().unwrap(),
+            self.ctrl.unwrap(),
             v,
             i
           )),
@@ -3198,13 +3204,17 @@ where
       },
       Value::Float(f) => match value {
         token::Value::FLOAT(v) => match &self.ctrl {
-          Some(Token::NE) | Some(Token::DEFAULT) if (*f - *v).abs() > std::f64::EPSILON => None,
-          Some(Token::LT) if *f < *v as f64 => None,
-          Some(Token::LE) if *f <= *v as f64 => None,
-          Some(Token::GT) if *f > *v as f64 => None,
-          Some(Token::GE) if *f >= *v as f64 => None,
+          Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
+            if (*f - *v).abs() > std::f64::EPSILON =>
+          {
+            None
+          }
+          Some(ControlOperator::LT) if *f < *v as f64 => None,
+          Some(ControlOperator::LE) if *f <= *v as f64 => None,
+          Some(ControlOperator::GT) if *f > *v as f64 => None,
+          Some(ControlOperator::GE) if *f >= *v as f64 => None,
           #[cfg(feature = "additional-controls")]
-          Some(Token::PLUS) => {
+          Some(ControlOperator::PLUS) => {
             if (*f - *v).abs() < std::f64::EPSILON {
               None
             } else {
@@ -3212,7 +3222,7 @@ where
             }
           }
           #[cfg(feature = "additional-controls")]
-          None | Some(Token::FEATURE) => {
+          None | Some(ControlOperator::FEATURE) => {
             if (*f - *v).abs() < std::f64::EPSILON {
               None
             } else {
@@ -3229,7 +3239,7 @@ where
           }
           _ => Some(format!(
             "expected value {} {}, got {:?}",
-            self.ctrl.clone().unwrap(),
+            self.ctrl.unwrap(),
             v,
             f
           )),
@@ -3238,14 +3248,14 @@ where
       },
       Value::Text(s) => match value {
         token::Value::TEXT(t) => match &self.ctrl {
-          Some(Token::NE) | Some(Token::DEFAULT) => {
+          Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) => {
             if s != t {
               None
             } else {
               Some(format!("expected {} .ne to \"{}\"", value, s))
             }
           }
-          Some(Token::REGEXP) | Some(Token::PCRE) => {
+          Some(ControlOperator::REGEXP) | Some(ControlOperator::PCRE) => {
             let re = regex::Regex::new(
               &format_regex(
                 // Text strings must be JSON escaped per
@@ -3266,14 +3276,14 @@ where
             }
           }
           #[cfg(feature = "additional-controls")]
-          Some(Token::ABNF) => validate_abnf(t, s)
+          Some(ControlOperator::ABNF) => validate_abnf(t, s)
             .err()
             .map(|e| format!("\"{}\" is not valid against abnf: {}", s, e)),
           _ => {
             #[cfg(feature = "additional-controls")]
             if s == t {
               None
-            } else if let Some(Token::CAT) | Some(Token::DET) = &self.ctrl {
+            } else if let Some(ControlOperator::CAT) | Some(ControlOperator::DET) = &self.ctrl {
               Some(format!(
                 "expected value to match concatenated string {}, got \"{}\"",
                 value, s
@@ -3295,7 +3305,7 @@ where
           }
         },
         token::Value::UINT(u) => match &self.ctrl {
-          Some(Token::SIZE) => {
+          Some(ControlOperator::SIZE) => {
             if s.len() == *u {
               None
             } else {
@@ -3311,14 +3321,14 @@ where
       },
       Value::Bytes(b) => match value {
         token::Value::UINT(v) => match &self.ctrl {
-          Some(Token::SIZE) => {
+          Some(ControlOperator::SIZE) => {
             if b.len() == *v {
               None
             } else {
               Some(format!("expected \"{:?}\" .size {}, got {}", b, v, b.len()))
             }
           }
-          Some(Token::BITS) => {
+          Some(ControlOperator::BITS) => {
             if let Some(rsv) = v.checked_shr(3) {
               if let Some(s) = b.get(rsv) {
                 if let Some(lsv) = 1u32.checked_shl(*v as u32 & 7) {
@@ -3327,7 +3337,7 @@ where
                   } else {
                     Some(format!(
                       "expected value {} {}, got {:?}",
-                      self.ctrl.clone().unwrap(),
+                      self.ctrl.unwrap(),
                       v,
                       b
                     ))
@@ -3335,7 +3345,7 @@ where
                 } else {
                   Some(format!(
                     "expected value {} {}, got {:?}",
-                    self.ctrl.clone().unwrap(),
+                    self.ctrl.unwrap(),
                     v,
                     b
                   ))
@@ -3343,7 +3353,7 @@ where
               } else {
                 Some(format!(
                   "expected value {} {}, got {:?}",
-                  self.ctrl.clone().unwrap(),
+                  self.ctrl.unwrap(),
                   v,
                   b
                 ))
@@ -3351,7 +3361,7 @@ where
             } else {
               Some(format!(
                 "expected value {} {}, got {:?}",
-                self.ctrl.clone().unwrap(),
+                self.ctrl.unwrap(),
                 v,
                 b
               ))
@@ -3359,14 +3369,14 @@ where
           }
           _ => Some(format!(
             "expected value {} {}, got {:?}",
-            self.ctrl.clone().unwrap(),
+            self.ctrl.unwrap(),
             v,
             b
           )),
         },
         #[cfg(feature = "additional-controls")]
         token::Value::TEXT(t) => match &self.ctrl {
-          Some(Token::ABNFB) => {
+          Some(ControlOperator::ABNFB) => {
             validate_abnf(t, std::str::from_utf8(b).map_err(Error::UTF8Parsing)?)
               .err()
               .map(|e| {
@@ -3378,7 +3388,7 @@ where
           }
           _ => Some(format!(
             "expected value {} {}, got {:?}",
-            self.ctrl.clone().unwrap(),
+            self.ctrl.unwrap(),
             t,
             b
           )),
@@ -3413,12 +3423,12 @@ where
           let _ = write!(self.cbor_location, "/{}", value);
 
           None
-        } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
+        } else if let Some(Occur::Optional { .. }) | Some(Occur::ZeroOrMore { .. }) =
           &self.occurrence.take()
         {
           self.advance_to_next_entry = true;
           None
-        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
+        } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.ctrl {
           None
         } else {
           Some(format!("object missing key: \"{}\"", value))
@@ -3434,7 +3444,9 @@ where
           self.cbor_location.push_str(&format!("/{}", value));
 
           None
-        } else if let Some(Occur::Optional) | Some(Occur::ZeroOrMore) = &self.occurrence.take() {
+        } else if let Some(Occur::Optional {}) | Some(Occur::ZeroOrMore {}) =
+          &self.occurrence.take()
+        {
           self.advance_to_next_entry = true;
           None
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
@@ -3453,8 +3465,8 @@ where
     Ok(())
   }
 
-  fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<Error<T>> {
-    self.occurrence = Some(o.occur.clone());
+  fn visit_occurrence(&mut self, o: &Occurrence<'a>) -> visitor::Result<Error<T>> {
+    self.occurrence = Some(o.occur);
 
     Ok(())
   }

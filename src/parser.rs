@@ -1164,18 +1164,19 @@ impl<'a> Parser<'a> {
           span,
         })
       }
-      _ => token::control_str_from_token(&self.cur_token).map(|ctrl| {
+      Token::ControlOperator(ctrl) => {
         #[cfg(feature = "ast-span")]
         {
           span.0 = self.lexer_position.range.0;
         }
 
-        RangeCtlOp::CtlOp {
-          ctrl,
+        Some(RangeCtlOp::CtlOp {
+          ctrl: *ctrl,
           #[cfg(feature = "ast-span")]
           span,
-        }
-      }),
+        })
+      }
+      _ => None,
     };
 
     #[cfg(feature = "ast-span")]
@@ -1734,13 +1735,15 @@ impl<'a> Parser<'a> {
             ),
           }),
           #[cfg(feature = "ast-span")]
-          _ => Ok(Type2::Any((
-            begin_type2_range,
-            self.lexer_position.range.1,
-            begin_type2_line,
-          ))),
+          _ => Ok(Type2::Any {
+            span: (
+              begin_type2_range,
+              self.lexer_position.range.1,
+              begin_type2_line,
+            ),
+          }),
           #[cfg(not(feature = "ast-span"))]
-          _ => Ok(Type2::Any),
+          _ => Ok(Type2::Any {}),
         }
       }
       _ => {
@@ -3183,13 +3186,15 @@ impl<'a> Parser<'a> {
 
         Ok(Some(Occurrence {
           #[cfg(feature = "ast-span")]
-          occur: Occur::Optional((
-            self.parser_position.range.0,
-            self.parser_position.range.1,
-            self.parser_position.line,
-          )),
+          occur: Occur::Optional {
+            span: (
+              self.parser_position.range.0,
+              self.parser_position.range.1,
+              self.parser_position.line,
+            ),
+          },
           #[cfg(not(feature = "ast-span"))]
-          occur: Occur::Optional,
+          occur: Occur::Optional {},
           #[cfg(feature = "ast-comments")]
           comments,
           _a: PhantomData::default(),
@@ -3210,13 +3215,15 @@ impl<'a> Parser<'a> {
 
         Ok(Some(Occurrence {
           #[cfg(feature = "ast-span")]
-          occur: Occur::OneOrMore((
-            self.parser_position.range.0,
-            self.parser_position.range.1,
-            self.parser_position.line,
-          )),
+          occur: Occur::OneOrMore {
+            span: (
+              self.parser_position.range.0,
+              self.parser_position.range.1,
+              self.parser_position.line,
+            ),
+          },
           #[cfg(not(feature = "ast-span"))]
-          occur: Occur::OneOrMore,
+          occur: Occur::OneOrMore {},
           #[cfg(feature = "ast-comments")]
           comments,
           _a: PhantomData::default(),
@@ -3244,15 +3251,17 @@ impl<'a> Parser<'a> {
           #[cfg(feature = "ast-span")]
           {
             self.parser_position.range = self.lexer_position.range;
-            Occur::ZeroOrMore((
-              self.parser_position.range.0,
-              self.parser_position.range.1,
-              self.parser_position.line,
-            ))
+            Occur::ZeroOrMore {
+              span: (
+                self.parser_position.range.0,
+                self.parser_position.range.1,
+                self.parser_position.line,
+              ),
+            }
           }
 
           #[cfg(not(feature = "ast-span"))]
-          Occur::ZeroOrMore
+          Occur::ZeroOrMore {}
         };
 
         self.next_token()?;

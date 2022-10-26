@@ -5,7 +5,7 @@
 use super::*;
 use crate::{
   ast::*,
-  token::{self, Token},
+  token,
   visitor::{self, *},
 };
 
@@ -178,7 +178,7 @@ pub struct JSONValidator<'a> {
   // Aggregation of generic rules
   generic_rules: Vec<GenericRule<'a>>,
   // Control operator token detected in current state of AST evaluation
-  ctrl: Option<token::Token<'a>>,
+  ctrl: Option<token::ControlOperator>,
   // Is a group to choice enumeration detected in current state of AST
   // evaluation
   is_group_to_choice_enum: bool,
@@ -402,7 +402,7 @@ impl<'a> JSONValidator<'a> {
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.is_multi_type_choice = self.is_multi_type_choice;
-              jv.ctrl = self.ctrl.clone();
+              jv.ctrl = self.ctrl;
               let _ = write!(jv.json_location, "{}/{}", self.json_location, idx);
 
               match token {
@@ -447,7 +447,7 @@ impl<'a> JSONValidator<'a> {
               jv.generic_rules = self.generic_rules.clone();
               jv.eval_generic_rule = self.eval_generic_rule;
               jv.is_multi_type_choice = self.is_multi_type_choice;
-              jv.ctrl = self.ctrl.clone();
+              jv.ctrl = self.ctrl;
               let _ = write!(jv.json_location, "{}/{}", self.json_location, idx);
 
               match token {
@@ -502,12 +502,12 @@ impl<'a> JSONValidator<'a> {
           let _ = write!(self.json_location, "/{}", t);
 
           return Ok(());
-        } else if let Some(Occur::Optional(_)) | Some(Occur::ZeroOrMore(_)) =
+        } else if let Some(Occur::Optional { .. }) | Some(Occur::ZeroOrMore { .. }) =
           &self.occurrence.take()
         {
           self.advance_to_next_entry = true;
           return Ok(());
-        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
+        } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.ctrl {
           return Ok(());
         } else {
           self.add_error(format!("object missing key: \"{}\"", t))
@@ -525,7 +525,9 @@ impl<'a> JSONValidator<'a> {
           self.json_location.push_str(&format!("/{}", t));
 
           return Ok(());
-        } else if let Some(Occur::Optional) | Some(Occur::ZeroOrMore) = &self.occurrence.take() {
+        } else if let Some(Occur::Optional {}) | Some(Occur::ZeroOrMore {}) =
+          &self.occurrence.take()
+        {
           self.advance_to_next_entry = true;
           return Ok(());
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
@@ -545,7 +547,7 @@ impl<'a> JSONValidator<'a> {
   }
 }
 
-impl<'a> Validator<'a, Error> for JSONValidator<'a> {
+impl<'a, 'b> Validator<'a, 'b, Error> for JSONValidator<'a> {
   /// Validate
   fn validate(&mut self) -> std::result::Result<(), Error> {
     for r in self.cddl.rules.iter() {
@@ -580,7 +582,7 @@ impl<'a> Validator<'a, Error> for JSONValidator<'a> {
   }
 }
 
-impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
+impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
   fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<Error> {
     if let Some(gp) = &tr.generic_params {
       if let Some(gr) = self
@@ -751,7 +753,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           let entry_counts = entry_counts_from_group(self.cddl, g);
 
           let len = o.len();
-          if let Token::EQ = t {
+          if let ControlOperator::EQ = t {
             if !validate_entry_count(&entry_counts, len) {
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
@@ -768,7 +770,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               }
               return Ok(());
             }
-          } else if let Token::NE | Token::DEFAULT = t {
+          } else if let ControlOperator::NE | ControlOperator::DEFAULT = t {
             if !validate_entry_count(&entry_counts, len) {
               for ec in entry_counts.iter() {
                 if let Some(occur) = &ec.entry_occurrence {
@@ -981,7 +983,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               }
             }
             Value::String(s) => match self.ctrl {
-              Some(Token::SIZE) => {
+              Some(ControlOperator::SIZE) => {
                 let len = s.len();
                 let s = s.clone();
                 if is_inclusive {
@@ -1084,7 +1086,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
   fn visit_control_operator(
     &mut self,
     target: &Type2<'a>,
-    ctrl: &str,
+    ctrl: ControlOperator,
     controller: &Type2<'a>,
   ) -> visitor::Result<Error> {
     if let Type2::Typename {
@@ -1140,8 +1142,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       }
     }
 
-    match lookup_control_from_str(ctrl) {
-      t @ Some(Token::EQ) => match target {
+    match ctrl {
+      ControlOperator::EQ => match target {
         Type2::Typename { ident, .. } => {
           if is_ident_string_data_type(self.cddl, ident)
             || is_ident_numeric_data_type(self.cddl, ident)
@@ -1160,7 +1162,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
         Type2::Map { .. } => {
           if let Value::Object(_) = &self.json {
-            self.ctrl = t;
+            self.ctrl = Some(ctrl);
             self.is_ctrl_map_equality = true;
             self.visit_type2(controller)?;
             self.ctrl = None;
@@ -1173,12 +1175,12 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           target
         )),
       },
-      t @ Some(Token::NE) => match target {
+      ControlOperator::NE => match target {
         Type2::Typename { ident, .. } => {
           if is_ident_string_data_type(self.cddl, ident)
             || is_ident_numeric_data_type(self.cddl, ident)
           {
-            self.ctrl = t;
+            self.ctrl = Some(ctrl);
             self.visit_type2(controller)?;
             self.ctrl = None;
             return Ok(());
@@ -1186,7 +1188,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
         Type2::Array { .. } => {
           if let Value::Array(_) = &self.json {
-            self.ctrl = t;
+            self.ctrl = Some(ctrl);
             self.visit_type2(controller)?;
             self.ctrl = None;
             return Ok(());
@@ -1194,7 +1196,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
         Type2::Map { .. } => {
           if let Value::Object(_) = &self.json {
-            self.ctrl = t;
+            self.ctrl = Some(ctrl);
             self.is_ctrl_map_equality = true;
             self.visit_type2(controller)?;
             self.ctrl = None;
@@ -1207,10 +1209,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           target
         )),
       },
-      t @ Some(Token::LT) | t @ Some(Token::GT) | t @ Some(Token::GE) | t @ Some(Token::LE) => {
+      ControlOperator::LT | ControlOperator::GT | ControlOperator::GE | ControlOperator::LE => {
         match target {
           Type2::Typename { ident, .. } if is_ident_numeric_data_type(self.cddl, ident) => {
-            self.ctrl = t;
+            self.ctrl = Some(ctrl);
             self.visit_type2(controller)?;
             self.ctrl = None;
           }
@@ -1222,12 +1224,12 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           }
         }
       }
-      t @ Some(Token::SIZE) => match target {
+      ControlOperator::SIZE => match target {
         Type2::Typename { ident, .. }
           if is_ident_string_data_type(self.cddl, ident)
             || is_ident_uint_data_type(self.cddl, ident) =>
         {
-          self.ctrl = t;
+          self.ctrl = Some(ctrl);
           self.visit_type2(controller)?;
           self.ctrl = None;
         }
@@ -1238,14 +1240,14 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           ));
         }
       },
-      t @ Some(Token::AND) => {
-        self.ctrl = t;
+      ControlOperator::AND => {
+        self.ctrl = Some(ctrl);
         self.visit_type2(target)?;
         self.visit_type2(controller)?;
         self.ctrl = None;
       }
-      t @ Some(Token::WITHIN) => {
-        self.ctrl = t;
+      ControlOperator::WITHIN => {
+        self.ctrl = Some(ctrl);
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         let no_errors = self.errors.len() == error_count;
@@ -1263,20 +1265,20 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
 
         self.ctrl = None;
       }
-      t @ Some(Token::DEFAULT) => {
-        self.ctrl = t;
+      ControlOperator::DEFAULT => {
+        self.ctrl = Some(ctrl);
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
           #[cfg(feature = "ast-span")]
-          if let Some(Occur::Optional(_)) = self.occurrence.take() {
+          if let Some(Occur::Optional { .. }) = self.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {}",
               controller, self.json
             ));
           }
           #[cfg(not(feature = "ast-span"))]
-          if let Some(Occur::Optional) = self.occurrence.take() {
+          if let Some(Occur::Optional {}) = self.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {}",
               controller, self.json
@@ -1285,8 +1287,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         }
         self.ctrl = None;
       }
-      t @ Some(Token::REGEXP) | t @ Some(Token::PCRE) => {
-        self.ctrl = t;
+      ControlOperator::REGEXP | ControlOperator::PCRE => {
+        self.ctrl = Some(ctrl);
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
             match self.json {
@@ -1305,8 +1307,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         self.ctrl = None;
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::CAT) => {
-        self.ctrl = t;
+      ControlOperator::CAT => {
+        self.ctrl = Some(ctrl);
 
         match cat_operation(self.cddl, target, controller, false) {
           Ok(values) => {
@@ -1332,8 +1334,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         self.ctrl = None;
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::DET) => {
-        self.ctrl = t;
+      ControlOperator::DET => {
+        self.ctrl = Some(ctrl);
 
         match cat_operation(self.cddl, target, controller, true) {
           Ok(values) => {
@@ -1359,8 +1361,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         self.ctrl = None;
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::PLUS) => {
-        self.ctrl = t;
+      ControlOperator::PLUS => {
+        self.ctrl = Some(ctrl);
 
         match plus_operation(self.cddl, target, controller) {
           Ok(values) => {
@@ -1385,8 +1387,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         self.ctrl = None;
       }
       #[cfg(feature = "additional-controls")]
-      t @ Some(Token::ABNF) => {
-        self.ctrl = t;
+      ControlOperator::ABNF => {
+        self.ctrl = Some(ctrl);
 
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
@@ -1432,8 +1434,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       }
       #[cfg(feature = "additional-controls")]
       #[cfg(not(target_arch = "wasm32"))]
-      t @ Some(Token::FEATURE) => {
-        self.ctrl = t;
+      ControlOperator::FEATURE => {
+        self.ctrl = Some(ctrl);
 
         if let Some(ef) = self.enabled_features {
           let tv = text_value_from_type2(self.cddl, controller);
@@ -1473,8 +1475,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       }
       #[cfg(feature = "additional-controls")]
       #[cfg(target_arch = "wasm32")]
-      t @ Some(Token::FEATURE) => {
-        self.ctrl = t;
+      ControlOperator::FEATURE => {
+        self.ctrl = Some(ctrl);
 
         if let Some(ef) = &self.enabled_features {
           let tv = text_value_from_type2(self.cddl, controller);
@@ -1555,7 +1557,10 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           if group.group_choices.len() == 1
             && group.group_choices[0].group_entries.is_empty()
             && !a.is_empty()
-            && !matches!(self.ctrl, Some(Token::NE) | Some(Token::DEFAULT))
+            && !matches!(
+              self.ctrl,
+              Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
+            )
           {
             self.add_error(format!("expected empty array, got {}", self.json));
             return Ok(());
@@ -1778,9 +1783,9 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
         Ok(())
       }
       #[cfg(feature = "ast-span")]
-      Type2::Any(_) => Ok(()),
+      Type2::Any { .. } => Ok(()),
       #[cfg(not(feature = "ast-span"))]
-      Type2::Any => Ok(()),
+      Type2::Any {} => Ok(()),
       _ => {
         self.add_error(format!(
           "unsupported data type for validating JSON, got {}",
@@ -1899,7 +1904,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       Value::Array(_) => self.validate_array_items(&ArrayItemToken::Identifier(ident)),
       Value::Object(o) => match &self.occurrence {
         #[cfg(feature = "ast-span")]
-        Some(Occur::Optional(_)) | None => {
+        Some(Occur::Optional { .. }) | None => {
           if token::lookup_ident(ident.ident)
             .in_standard_prelude()
             .is_some()
@@ -1914,7 +1919,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           self.visit_value(&token::Value::TEXT(ident.ident.into()))
         }
         #[cfg(not(feature = "ast-span"))]
-        Some(Occur::Optional) | None => {
+        Some(Occur::Optional {}) | None => {
           if token::lookup_ident(ident.ident)
             .in_standard_prelude()
             .is_some()
@@ -1943,8 +1948,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           }
 
           #[cfg(feature = "ast-span")]
-          if let Occur::ZeroOrMore(_) | Occur::OneOrMore(_) = occur {
-            if let Occur::OneOrMore(_) = occur {
+          if let Occur::ZeroOrMore { .. } | Occur::OneOrMore { .. } = occur {
+            if let Occur::OneOrMore { .. } = occur {
               if o.is_empty() {
                 self.add_error(format!(
                   "object cannot be empty, one or more entries with key type {} required",
@@ -2000,8 +2005,8 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           }
 
           #[cfg(not(feature = "ast-span"))]
-          if let Occur::ZeroOrMore | Occur::OneOrMore = occur {
-            if let Occur::OneOrMore = occur {
+          if let Occur::ZeroOrMore {} | Occur::OneOrMore {} = occur {
+            if let Occur::OneOrMore {} = occur {
               if o.is_empty() {
                 self.add_error(format!(
                   "object cannot be empty, one or more entries with key type {} required",
@@ -2273,13 +2278,13 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       token::Value::INT(v) => match &self.json {
         Value::Number(n) => match n.as_i64() {
           Some(i) => match &self.ctrl {
-            Some(Token::NE) | Some(Token::DEFAULT) if i != *v as i64 => None,
-            Some(Token::LT) if i < *v as i64 => None,
-            Some(Token::LE) if i <= *v as i64 => None,
-            Some(Token::GT) if i > *v as i64 => None,
-            Some(Token::GE) if i >= *v as i64 => None,
+            Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) if i != *v as i64 => None,
+            Some(ControlOperator::LT) if i < *v as i64 => None,
+            Some(ControlOperator::LE) if i <= *v as i64 => None,
+            Some(ControlOperator::GT) if i > *v as i64 => None,
+            Some(ControlOperator::GE) if i >= *v as i64 => None,
             #[cfg(feature = "additional-controls")]
-            Some(Token::PLUS) => {
+            Some(ControlOperator::PLUS) => {
               if i == *v as i64 {
                 None
               } else {
@@ -2287,7 +2292,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               }
             }
             #[cfg(feature = "additional-controls")]
-            None | Some(Token::FEATURE) => {
+            None | Some(ControlOperator::FEATURE) => {
               if i == *v as i64 {
                 None
               } else {
@@ -2304,7 +2309,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             }
             _ => Some(format!(
               "expected value {} {}, got {}",
-              self.ctrl.clone().unwrap(),
+              self.ctrl.unwrap(),
               v,
               n
             )),
@@ -2316,17 +2321,17 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       token::Value::UINT(v) => match &self.json {
         Value::Number(n) => match n.as_u64() {
           Some(i) => match &self.ctrl {
-            Some(Token::NE) | Some(Token::DEFAULT) if i != *v as u64 => None,
-            Some(Token::LT) if i < *v as u64 => None,
-            Some(Token::LE) if i <= *v as u64 => None,
-            Some(Token::GT) if i > *v as u64 => None,
-            Some(Token::GE) if i >= *v as u64 => None,
-            Some(Token::SIZE) => match 256u128.checked_pow(*v as u32) {
+            Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) if i != *v as u64 => None,
+            Some(ControlOperator::LT) if i < *v as u64 => None,
+            Some(ControlOperator::LE) if i <= *v as u64 => None,
+            Some(ControlOperator::GT) if i > *v as u64 => None,
+            Some(ControlOperator::GE) if i >= *v as u64 => None,
+            Some(ControlOperator::SIZE) => match 256u128.checked_pow(*v as u32) {
               Some(n) if (i as u128) < n => None,
               _ => Some(format!("expected value .size {}, got {}", v, n)),
             },
             #[cfg(feature = "additional-controls")]
-            Some(Token::PLUS) => {
+            Some(ControlOperator::PLUS) => {
               if i == *v as u64 {
                 None
               } else {
@@ -2334,7 +2339,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               }
             }
             #[cfg(feature = "additional-controls")]
-            None | Some(Token::FEATURE) => {
+            None | Some(ControlOperator::FEATURE) => {
               if i == *v as u64 {
                 None
               } else {
@@ -2351,7 +2356,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             }
             _ => Some(format!(
               "expected value {} {}, got {}",
-              self.ctrl.clone().unwrap(),
+              self.ctrl.unwrap(),
               v,
               n
             )),
@@ -2359,7 +2364,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
           None => Some(format!("{} cannot be represented as a u64", n)),
         },
         Value::String(s) => match &self.ctrl {
-          Some(Token::SIZE) => {
+          Some(ControlOperator::SIZE) => {
             if s.len() == *v {
               None
             } else {
@@ -2373,13 +2378,17 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       token::Value::FLOAT(v) => match &self.json {
         Value::Number(n) => match n.as_f64() {
           Some(f) => match &self.ctrl {
-            Some(Token::NE) | Some(Token::DEFAULT) if (f - *v).abs() > std::f64::EPSILON => None,
-            Some(Token::LT) if f < *v as f64 => None,
-            Some(Token::LE) if f <= *v as f64 => None,
-            Some(Token::GT) if f > *v as f64 => None,
-            Some(Token::GE) if f >= *v as f64 => None,
+            Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
+              if (f - *v).abs() > std::f64::EPSILON =>
+            {
+              None
+            }
+            Some(ControlOperator::LT) if f < *v as f64 => None,
+            Some(ControlOperator::LE) if f <= *v as f64 => None,
+            Some(ControlOperator::GT) if f > *v as f64 => None,
+            Some(ControlOperator::GE) if f >= *v as f64 => None,
             #[cfg(feature = "additional-controls")]
-            Some(Token::PLUS) => {
+            Some(ControlOperator::PLUS) => {
               if (f - *v).abs() < std::f64::EPSILON {
                 None
               } else {
@@ -2387,7 +2396,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
               }
             }
             #[cfg(feature = "additional-controls")]
-            None | Some(Token::FEATURE) => {
+            None | Some(ControlOperator::FEATURE) => {
               if (f - *v).abs() < std::f64::EPSILON {
                 None
               } else {
@@ -2404,7 +2413,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             }
             _ => Some(format!(
               "expected value {} {}, got {}",
-              self.ctrl.clone().unwrap(),
+              self.ctrl.unwrap(),
               v,
               n
             )),
@@ -2415,14 +2424,14 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
       },
       token::Value::TEXT(t) => match &self.json {
         Value::String(s) => match &self.ctrl {
-          Some(Token::NE) | Some(Token::DEFAULT) => {
+          Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) => {
             if s != t {
               None
             } else {
               Some(format!("expected {} .ne to \"{}\"", value, s))
             }
           }
-          Some(Token::REGEXP) | Some(Token::PCRE) => {
+          Some(ControlOperator::REGEXP) | Some(ControlOperator::PCRE) => {
             let re = regex::Regex::new(
               &format_regex(
                 // Text strings must be JSON escaped per
@@ -2443,7 +2452,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             }
           }
           #[cfg(feature = "additional-controls")]
-          Some(Token::ABNF) => validate_abnf(t, s)
+          Some(ControlOperator::ABNF) => validate_abnf(t, s)
             .err()
             .map(|e| format!("\"{}\" is not valid against abnf: {}", s, e)),
 
@@ -2451,7 +2460,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
             #[cfg(feature = "additional-controls")]
             if s == t {
               None
-            } else if let Some(Token::CAT) | Some(Token::DET) = &self.ctrl {
+            } else if let Some(ControlOperator::CAT) | Some(ControlOperator::DET) = &self.ctrl {
               Some(format!(
                 "expected value to match concatenated string {}, got \"{}\"",
                 value, s
@@ -2496,7 +2505,7 @@ impl<'a> Visitor<'a, Error> for JSONValidator<'a> {
   }
 
   fn visit_occurrence(&mut self, o: &Occurrence) -> visitor::Result<Error> {
-    self.occurrence = Some(o.occur.clone());
+    self.occurrence = Some(o.occur);
 
     Ok(())
   }

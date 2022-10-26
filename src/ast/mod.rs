@@ -1,7 +1,11 @@
+/// Parent visitor implementation
+pub mod parent;
+
 #[cfg(target_arch = "wasm32")]
 extern crate console_error_panic_hook;
 
-use super::token::{ByteValue, RangeValue, SocketPlug, Token, Value};
+use crate::token::{ByteValue, ControlOperator, RangeValue, SocketPlug, Token, Value};
+
 use std::{
   fmt::{self, Write},
   marker::PhantomData,
@@ -24,6 +28,78 @@ use alloc::{
 /// Starting index, ending index and line number
 #[cfg(feature = "ast-span")]
 pub type Span = (usize, usize, usize);
+
+#[derive(Clone, Debug, PartialEq)]
+#[doc(hidden)]
+pub enum CDDLType<'a, 'b: 'a> {
+  CDDL(&'b CDDL<'a>),
+  Rule(&'b Rule<'a>),
+  TypeRule(&'b TypeRule<'a>),
+  GroupRule(&'b GroupRule<'a>),
+  Group(&'b Group<'a>),
+  GroupChoice(&'b GroupChoice<'a>),
+  GenericParams(&'b GenericParams<'a>),
+  GenericParam(&'b GenericParam<'a>),
+  GenericArgs(&'b GenericArgs<'a>),
+  GenericArg(&'b GenericArg<'a>),
+  GroupEntry(&'b GroupEntry<'a>),
+  Identifier(&'b Identifier<'a>),
+  Type(&'b Type<'a>),
+  TypeChoice(&'b TypeChoice<'a>),
+  Type1(&'b Type1<'a>),
+  Type2(&'b Type2<'a>),
+  Operator(&'b Operator<'a>),
+  RangeCtlOp(&'b RangeCtlOp),
+  ControlOperator(&'b ControlOperator),
+  Occurrence(&'b Occurrence<'a>),
+  Occur(Occur),
+  Value(Value<'a>),
+  ValueMemberKeyEntry(&'b ValueMemberKeyEntry<'a>),
+  TypeGroupnameEntry(&'b TypeGroupnameEntry<'a>),
+  MemberKey(&'b MemberKey<'a>),
+  NonMemberKey(&'b NonMemberKey<'a>),
+}
+
+macro_rules! cddl_types_from_ast {
+  ($($t:ty => $p:path),* $(,)?) => {
+    $(
+      impl<'a, 'b: 'a> From<$t> for CDDLType<'a, 'b> {
+        fn from(value: $t) -> Self {
+          $p(value)
+        }
+      }
+    )*
+  };
+}
+
+cddl_types_from_ast! {
+  &'b CDDL<'a> => CDDLType::CDDL,
+  &'b Rule<'a> => CDDLType::Rule,
+  &'b TypeRule<'a> => CDDLType::TypeRule,
+  &'b GroupRule<'a> => CDDLType::GroupRule,
+  &'b Group<'a> => CDDLType::Group,
+  &'b GroupChoice<'a> => CDDLType::GroupChoice,
+  &'b GenericParams<'a> => CDDLType::GenericParams,
+  &'b GenericParam<'a> => CDDLType::GenericParam,
+  &'b GenericArgs<'a> => CDDLType::GenericArgs,
+  &'b GenericArg<'a> => CDDLType::GenericArg,
+  &'b GroupEntry<'a> => CDDLType::GroupEntry,
+  &'b Identifier<'a> => CDDLType::Identifier,
+  &'b Type<'a> => CDDLType::Type,
+  &'b TypeChoice<'a> => CDDLType::TypeChoice,
+  &'b Type1<'a> => CDDLType::Type1,
+  &'b Type2<'a> => CDDLType::Type2,
+  &'b Operator<'a> => CDDLType::Operator,
+  &'b RangeCtlOp => CDDLType::RangeCtlOp,
+  &'b ControlOperator => CDDLType::ControlOperator,
+  &'b Occurrence<'a> => CDDLType::Occurrence,
+  &'b ValueMemberKeyEntry<'a> => CDDLType::ValueMemberKeyEntry,
+  &'b TypeGroupnameEntry<'a> => CDDLType::TypeGroupnameEntry,
+  &'b MemberKey<'a> => CDDLType::MemberKey,
+  &'b NonMemberKey<'a> => CDDLType::NonMemberKey,
+  Occur => CDDLType::Occur,
+  Value<'a> => CDDLType::Value,
+}
 
 #[cfg(feature = "ast-comments")]
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
@@ -502,7 +578,7 @@ impl<'a> fmt::Display for GroupRule<'a> {
 /// genericparm =  "<" S id S *("," S id S ) ">"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct GenericParams<'a> {
   /// List of generic parameters
   pub params: Vec<GenericParam<'a>>,
@@ -694,7 +770,6 @@ impl<'a> Type<'a> {
 /// Type choice
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-
 pub struct TypeChoice<'a> {
   /// Type choice
   pub type1: Type1<'a>,
@@ -867,12 +942,12 @@ impl<'a> From<Value<'a>> for Type1<'a> {
   }
 }
 
+/// Range or control operator
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
-/// Range or control operator
 pub struct Operator<'a> {
   /// Operator
-  pub operator: RangeCtlOp<'a>,
+  pub operator: RangeCtlOp,
   /// Type bound by range or control operator
   pub type2: Type2<'a>,
 
@@ -944,7 +1019,7 @@ impl<'a> fmt::Display for Type1<'a> {
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum RangeCtlOp<'a> {
+pub enum RangeCtlOp {
   /// Range operator
   RangeOp {
     /// Is inclusive
@@ -956,14 +1031,14 @@ pub enum RangeCtlOp<'a> {
   /// Control operator
   CtlOp {
     /// Control identifier
-    ctrl: &'a str,
+    ctrl: ControlOperator,
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
   },
 }
 
-impl<'a> fmt::Display for RangeCtlOp<'a> {
+impl fmt::Display for RangeCtlOp {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       RangeCtlOp::RangeOp {
@@ -1211,12 +1286,11 @@ pub enum Type2<'a> {
   },
 
   /// Any data item
-  #[cfg(feature = "ast-span")]
-  Any(Span),
-
-  /// Any data item
-  #[cfg(not(feature = "ast-span"))]
-  Any,
+  Any {
+    /// Span
+    #[cfg(feature = "ast-span")]
+    span: Span,
+  },
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -1531,10 +1605,7 @@ impl<'a> fmt::Display for Type2<'a> {
 
         write!(f, "{}", mt)
       }
-      #[cfg(feature = "ast-span")]
-      Type2::Any(_) => write!(f, "#"),
-      #[cfg(not(feature = "ast-span"))]
-      Type2::Any => write!(f, "#"),
+      Type2::Any { .. } => write!(f, "#"),
     }
   }
 }
@@ -2819,7 +2890,7 @@ impl<'a> fmt::Display for MemberKey<'a> {
 ///       / "?"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum Occur {
   /// Occurrence indicator in the form n*m, where n is an optional lower limit
   /// and m is an optional upper limit
@@ -2834,37 +2905,31 @@ pub enum Occur {
   },
 
   /// Occurrence indicator in the form *, allowing zero or more occurrences
-  #[cfg(feature = "ast-span")]
-  ZeroOrMore(Span),
-
-  /// Occurrence indicator in the form *, allowing zero or more occurrences
-  #[cfg(not(feature = "ast-span"))]
-  ZeroOrMore,
+  ZeroOrMore {
+    /// Span
+    #[cfg(feature = "ast-span")]
+    span: Span,
+  },
 
   /// Occurrence indicator in the form +, allowing one or more occurrences
-  #[cfg(feature = "ast-span")]
-  OneOrMore(Span),
-
-  #[cfg(not(feature = "ast-span"))]
-  /// Occurrence indicator in the form +, allowing one or more occurrences
-  OneOrMore,
-
-  /// Occurrence indicator in the form ?, allowing an optional occurrence
-  #[cfg(feature = "ast-span")]
-  Optional(Span),
+  OneOrMore {
+    /// Span
+    #[cfg(feature = "ast-span")]
+    span: Span,
+  },
 
   /// Occurrence indicator in the form ?, allowing an optional occurrence
-  #[cfg(not(feature = "ast-span"))]
-  Optional,
+  Optional {
+    /// Span
+    #[cfg(feature = "ast-span")]
+    span: Span,
+  },
 }
 
 impl fmt::Display for Occur {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      #[cfg(feature = "ast-span")]
-      Occur::ZeroOrMore(_) => write!(f, "*"),
-      #[cfg(not(feature = "ast-span"))]
-      Occur::ZeroOrMore => write!(f, "*"),
+      Occur::ZeroOrMore { .. } => write!(f, "*"),
       Occur::Exact { lower, upper, .. } => {
         if let Some(li) = lower {
           if let Some(ui) = upper {
@@ -2880,14 +2945,8 @@ impl fmt::Display for Occur {
 
         write!(f, "*")
       }
-      #[cfg(feature = "ast-span")]
-      Occur::OneOrMore(_) => write!(f, "+"),
-      #[cfg(not(feature = "ast-span"))]
-      Occur::OneOrMore => write!(f, "+"),
-      #[cfg(feature = "ast-span")]
-      Occur::Optional(_) => write!(f, "?"),
-      #[cfg(not(feature = "ast-span"))]
-      Occur::Optional => write!(f, "?"),
+      Occur::OneOrMore { .. } => write!(f, "+"),
+      Occur::Optional { .. } => write!(f, "?"),
     }
   }
 }

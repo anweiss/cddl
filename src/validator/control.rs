@@ -1,10 +1,13 @@
 #![cfg(any(feature = "json", feature = "cbor"))]
 #![cfg(not(feature = "lsp"))]
 
-use crate::ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL};
+use crate::{
+  ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL},
+  token::ControlOperator,
+};
 
 #[cfg(feature = "additional-controls")]
-use crate::{ast::Type, token::lookup_control_from_str, validator::ByteValue, Token};
+use crate::{ast::Type, validator::ByteValue};
 #[cfg(feature = "additional-controls")]
 use itertools::Itertools;
 #[cfg(feature = "additional-controls")]
@@ -12,7 +15,10 @@ use pest_meta;
 
 /// Retrieve all text strings and byte string literals from a given rule
 /// identifier. Used for proposed .cat control operator.
-pub fn string_literals_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec<&'a Type2<'a>> {
+pub fn string_literals_from_ident<'a>(
+  cddl: &'a CDDL<'a>,
+  ident: &Identifier,
+) -> Vec<&'a Type2<'a>> {
   let mut literals = Vec::new();
   for r in cddl.rules.iter() {
     if let Rule::Type { rule, .. } = r {
@@ -38,7 +44,7 @@ pub fn string_literals_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec
 
 /// Retrieve all numeric values from a given rule identifier. Used for
 /// proposed .cat control operator.
-pub fn numeric_values_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec<&'a Type2<'a>> {
+pub fn numeric_values_from_ident<'a>(cddl: &'a CDDL<'a>, ident: &Identifier) -> Vec<&'a Type2<'a>> {
   let mut literals = Vec::new();
   for r in cddl.rules.iter() {
     if let Rule::Type { rule, .. } = r {
@@ -65,13 +71,17 @@ pub fn numeric_values_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec<
 /// Concatenate target and controller. The Vec return type is to accomodate more
 /// than one type choice in the controller.
 pub fn cat_operation<'a>(
-  cddl: &CDDL,
+  cddl: &'a CDDL<'a>,
   target: &Type2,
   controller: &Type2,
   is_dedent: bool,
 ) -> Result<Vec<Type2<'a>>, String> {
   let mut literals = Vec::new();
-  let ctrl = if is_dedent { Token::DET } else { Token::CAT };
+  let ctrl = if is_dedent {
+    ControlOperator::DET
+  } else {
+    ControlOperator::CAT
+  };
 
   match target {
     Type2::TextValue { value, .. } => match controller {
@@ -599,9 +609,9 @@ fn dedent_bytes(source: &[u8], is_utf8_byte_string: bool) -> Result<Vec<u8>, Str
 }
 
 /// Numeric addition of target and controller. The Vec return type is to
-/// accomodate more than one type choice in the controller
+/// accommodate more than one type choice in the controller
 pub fn plus_operation<'a>(
-  cddl: &CDDL,
+  cddl: &'a CDDL<'a>,
   target: &Type2,
   controller: &Type2,
 ) -> Result<Vec<Type2<'a>>, String> {
@@ -634,7 +644,11 @@ pub fn plus_operation<'a>(
         for controller in controller.type_choices.iter() {
           match &controller.type1.operator {
             Some(Operator {
-              operator: RangeCtlOp::CtlOp { ctrl: ".plus", .. },
+              operator:
+                RangeCtlOp::CtlOp {
+                  ctrl: ControlOperator::PLUS,
+                  ..
+                },
               type2: nested_controller,
               ..
             }) => {
@@ -676,7 +690,11 @@ pub fn plus_operation<'a>(
         for controller in controller.type_choices.iter() {
           match &controller.type1.operator {
             Some(Operator {
-              operator: RangeCtlOp::CtlOp { ctrl: ".plus", .. },
+              operator:
+                RangeCtlOp::CtlOp {
+                  ctrl: ControlOperator::PLUS,
+                  ..
+                },
               type2: nested_controller,
               ..
             }) => {
@@ -715,7 +733,11 @@ pub fn plus_operation<'a>(
         for controller in controller.type_choices.iter() {
           match &controller.type1.operator {
             Some(Operator {
-              operator: RangeCtlOp::CtlOp { ctrl: ".plus", .. },
+              operator:
+                RangeCtlOp::CtlOp {
+                  ctrl: ControlOperator::PLUS,
+                  ..
+                },
               type2: nested_controller,
               ..
             }) => {
@@ -745,7 +767,11 @@ pub fn plus_operation<'a>(
       if let Some(tc) = target.type_choices.first() {
         match &tc.type1.operator {
           Some(Operator {
-            operator: RangeCtlOp::CtlOp { ctrl: ".plus", .. },
+            operator:
+              RangeCtlOp::CtlOp {
+                ctrl: ControlOperator::PLUS,
+                ..
+              },
             type2: nested_controller,
             ..
           }) => {
@@ -802,15 +828,19 @@ pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
 /// return type is to accomodate more than one type choice in the controller.
 #[cfg(feature = "additional-controls")]
 pub fn abnf_from_complex_controller<'a>(
-  cddl: &'a CDDL,
+  cddl: &'a CDDL<'a>,
   controller: &Type,
 ) -> Result<Vec<Type2<'a>>, String> {
   if let Some(tc) = controller.type_choices.first() {
     if let Some(operator) = &tc.type1.operator {
       if let RangeCtlOp::CtlOp { ctrl, .. } = operator.operator {
-        match lookup_control_from_str(ctrl) {
-          Some(Token::CAT) => return cat_operation(cddl, &tc.type1.type2, &operator.type2, false),
-          Some(Token::DET) => return cat_operation(cddl, &tc.type1.type2, &operator.type2, true),
+        match ctrl {
+          ControlOperator::CAT => {
+            return cat_operation(cddl, &tc.type1.type2, &operator.type2, false)
+          }
+          ControlOperator::DET => {
+            return cat_operation(cddl, &tc.type1.type2, &operator.type2, true)
+          }
           _ => return Err("invalid_controller".to_string()),
         }
       }
