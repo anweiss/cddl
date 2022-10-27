@@ -713,6 +713,79 @@ impl<'a> Parser<'a> {
                 if let Some(group_entry) = gc.group_entries.get(0) {
                   // Check that there is no trailing comma
                   if !group_entry.1.optional_comma {
+                    // EXAMPLE: non-empty<M> = (M) .and ({ + any => any })
+                    if let GroupEntry::TypeGroupname {
+                      ge,
+                      #[cfg(feature = "ast-comments")]
+                      leading_comments,
+                      #[cfg(feature = "ast-comments")]
+                      trailing_comments,
+                      ..
+                    } = &group_entry.0
+                    {
+                      if ge.occur.is_none() && matches!(self.cur_token, Token::ControlOperator(_)) {
+                        let value = self.parse_type(Some(Type2::ParenthesizedType {
+                          #[cfg(feature = "ast-comments")]
+                          comments_before_type: comments_before_group.clone(),
+                          pt: Type {
+                            type_choices: vec![TypeChoice {
+                              #[cfg(feature = "ast-comments")]
+                              comments_before_type: leading_comments.clone(),
+                              #[cfg(feature = "ast-comments")]
+                              comments_after_type: trailing_comments.clone(),
+                              type1: Type1 {
+                                type2: Type2::Typename {
+                                  ident: ge.name.clone(),
+                                  generic_args: ge.generic_args.clone(),
+                                  #[cfg(feature = "ast-span")]
+                                  span: ge.name.span,
+                                },
+                                operator: None,
+                                #[cfg(feature = "ast-span")]
+                                span: ge.name.span,
+                                #[cfg(feature = "ast-comments")]
+                                comments_after_type: None,
+                              },
+                            }],
+                            #[cfg(feature = "ast-span")]
+                            span: ge.name.span,
+                          },
+                          #[cfg(feature = "ast-comments")]
+                          comments_after_type: comments_after_group.clone(),
+                          #[cfg(feature = "ast-span")]
+                          span: (
+                            begin_pt_range,
+                            self.parser_position.range.1,
+                            begin_rule_line,
+                          ),
+                        }))?;
+
+                        #[cfg(feature = "ast-span")]
+                        {
+                          end_rule_range = self.parser_position.range.1;
+                        }
+
+                        self.current_rule_generic_param_idents = None;
+
+                        return Ok(Rule::Type {
+                          rule: TypeRule {
+                            name: ident,
+                            generic_params: gp,
+                            is_type_choice_alternate,
+                            value,
+                            #[cfg(feature = "ast-comments")]
+                            comments_before_assignt: comments_before_assign,
+                            #[cfg(feature = "ast-comments")]
+                            comments_after_assignt: comments_after_assign,
+                          },
+                          #[cfg(feature = "ast-comments")]
+                          comments_after_rule,
+                          #[cfg(feature = "ast-span")]
+                          span: (begin_rule_range, end_rule_range, begin_rule_line),
+                        });
+                      }
+                    }
+
                     // TODO: Replace with box pattern destructuring once supported in stable
                     if let GroupEntry::ValueMemberKey { ge, .. } = &group_entry.0 {
                       if ge.occur.is_none() && ge.member_key.is_none() {
@@ -1021,6 +1094,8 @@ impl<'a> Parser<'a> {
     Ok(generic_args)
   }
 
+  // parenthesized_type can be provided as an argument to retrieve its span and
+  // comments if it has been previously parsed
   #[allow(missing_docs)]
   pub fn parse_type(&mut self, parenthesized_type: Option<Type2<'a>>) -> Result<Type<'a>> {
     #[cfg(feature = "ast-span")]
@@ -1103,6 +1178,8 @@ impl<'a> Parser<'a> {
     Ok(t)
   }
 
+  // parenthesized_type can be provided as an argument to retrieve its span and
+  // comments if it has been previously parsed
   #[allow(missing_docs)]
   pub fn parse_type1(&mut self, parenthesized_type: Option<Type2<'a>>) -> Result<Type1<'a>> {
     #[cfg(feature = "ast-span")]
