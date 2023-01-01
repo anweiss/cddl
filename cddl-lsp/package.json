@@ -99,7 +99,7 @@
     "merge-options": "^2.0.0",
     "mocha": "^9.2.2",
     "rimraf": "^3.0.2",
-    "ts-loader": "^7.0.5",
+    "ts-loader": "^9.4.2",
     "typescript": "^3.9.7",
     "vsce": "^2.7.0",
     "webpack": "^5.50.0",
