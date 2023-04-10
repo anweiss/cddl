@@ -57,7 +57,7 @@ pub trait Validator<'a, 'b, E: Error>: Visitor<'a, 'b, E> {
 
 impl CDDL<'_> {
   /// Validate the given document against the CDDL definition
-  pub fn validate(
+  fn validate_json(
     &self,
     document: &[u8],
     #[cfg(feature = "additional-controls")]
@@ -67,18 +67,27 @@ impl CDDL<'_> {
     #[cfg(target_arch = "wasm32")]
     enabled_features: Option<Box<[JsValue]>>,
   ) -> Result<(), Box<dyn Error>> {
-    if std::str::from_utf8(document).is_ok() {
-      let json =
-        serde_json::from_slice::<serde_json::Value>(document).map_err(json::Error::JSONParsing)?;
+    let json =
+      serde_json::from_slice::<serde_json::Value>(document).map_err(json::Error::JSONParsing)?;
 
-      #[cfg(feature = "additional-controls")]
-      let mut jv = JSONValidator::new(self, json, enabled_features);
-      #[cfg(not(feature = "additional-controls"))]
-      let mut jv = JSONValidator::new(&cddl, json);
+    #[cfg(feature = "additional-controls")]
+    let mut jv = JSONValidator::new(self, json, enabled_features);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut jv = JSONValidator::new(&cddl, json);
 
-      return jv.validate().map_err(|e| e.into());
-    }
+    jv.validate().map_err(|e| e.into())
+  }
 
+  fn validate_cbor(
+    &self,
+    document: &[u8],
+    #[cfg(feature = "additional-controls")]
+    #[cfg(not(target_arch = "wasm32"))]
+    enabled_features: Option<&[&str]>,
+    #[cfg(feature = "additional-controls")]
+    #[cfg(target_arch = "wasm32")]
+    enabled_features: Option<Box<[JsValue]>>,
+  ) -> Result<(), Box<dyn Error>> {
     let cbor: ciborium::value::Value = ciborium::de::from_reader(document)?;
 
     let mut cv = CBORValidator::new(self, cbor, enabled_features);
@@ -1143,7 +1152,7 @@ mod tests {
   use super::*;
 
   #[test]
-  fn validate() {
+  fn validate_json() {
     let cddl_schema = cddl_from_str(
       r#"
   foo = {
@@ -1158,6 +1167,6 @@ mod tests {
 
     documents
       .iter()
-      .all(|doc| cddl_schema.validate(doc.as_bytes(), None).is_ok());
+      .all(|doc| cddl_schema.validate_json(doc.as_bytes(), None).is_ok());
   }
 }
