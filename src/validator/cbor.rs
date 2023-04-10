@@ -9,6 +9,7 @@ use crate::{
   visitor::{self, *},
 };
 
+use core::convert::TryInto;
 use std::{
   borrow::Cow,
   collections::HashMap,
@@ -2292,6 +2293,53 @@ where
 
         Ok(())
       }
+      Value::Tag(tag, value) => {
+        match *tag {
+          0 => {
+            if is_ident_tdate_data_type(self.cddl, ident) {
+              if let Value::Text(value) = value.as_ref() {
+                if let Err(e) = chrono::DateTime::parse_from_rfc3339(value) {
+                  self.add_error(format!("expected tdate data type, decoding error: {}", e));
+                }
+              } else {
+                self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
+              }
+            } else {
+              self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
+            }
+          }
+          1 => {
+            if is_ident_time_data_type(self.cddl, ident) {
+              if let Value::Integer(value) = *value.as_ref() {
+                let dt = Utc.timestamp_opt(value.try_into().unwrap(), 0);
+                if let chrono::LocalResult::None = dt {
+                  self.add_error(format!(
+                    "expected time data type, invalid UNIX timestamp {:?}",
+                    self.cbor
+                  ));
+                }
+              } else if let Value::Float(value) = value.as_ref() {
+                let seconds = value.trunc() as i64;
+                let nanoseconds = (value.fract() * 1e9) as u32;
+                let dt = Utc.timestamp_opt(seconds, nanoseconds);
+                if let chrono::LocalResult::None = dt {
+                  self.add_error(format!(
+                    "expected time data type, invalid UNIX timestamp {:?}",
+                    self.cbor
+                  ));
+                }
+              } else {
+                self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
+              }
+            } else {
+              self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
+            }
+          }
+          _ => (),
+        }
+
+        Ok(())
+      }
       Value::Array(_) => self.validate_array_items(&ArrayItemToken::Identifier(ident)),
       Value::Map(m) => {
         match &self.occurrence {
@@ -3209,10 +3257,10 @@ where
           {
             None
           }
-          Some(ControlOperator::LT) if *f < *v as f64 => None,
-          Some(ControlOperator::LE) if *f <= *v as f64 => None,
-          Some(ControlOperator::GT) if *f > *v as f64 => None,
-          Some(ControlOperator::GE) if *f >= *v as f64 => None,
+          Some(ControlOperator::LT) if *f < *v => None,
+          Some(ControlOperator::LE) if *f <= *v => None,
+          Some(ControlOperator::GT) if *f > *v => None,
+          Some(ControlOperator::GE) if *f >= *v => None,
           #[cfg(feature = "additional-controls")]
           Some(ControlOperator::PLUS) => {
             if (*f - *v).abs() < std::f64::EPSILON {
@@ -3627,6 +3675,32 @@ mod tests {
     }
 
     let cbor = ciborium::cbor!([11, "test"]).unwrap();
+
+    let cddl = cddl.unwrap();
+
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    cv.validate()?;
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_tdate_tag() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        root = time
+      "#
+    );
+
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let cbor = ciborium::value::Value::Tag(
+      1,
+      Box::from(ciborium::value::Value::Float(1680965875.01_f64)),
+    );
 
     let cddl = cddl.unwrap();
 

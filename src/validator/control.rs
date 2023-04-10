@@ -435,7 +435,7 @@ pub fn cat_operation<'a>(
 
           literals.push(
             ByteValue::B64(
-              base64::encode_config(&concat, base64::URL_SAFE)
+              base64::encode_config(concat, base64::URL_SAFE)
                 .into_bytes()
                 .into(),
             )
@@ -474,7 +474,7 @@ pub fn cat_operation<'a>(
 
           literals.push(
             ByteValue::B64(
-              base64::encode_config(&concat, base64::URL_SAFE)
+              base64::encode_config(concat, base64::URL_SAFE)
                 .into_bytes()
                 .into(),
             )
@@ -500,7 +500,7 @@ pub fn cat_operation<'a>(
             };
             literals.push(
               ByteValue::B64(
-                base64::encode_config(&concat, base64::URL_SAFE)
+                base64::encode_config(concat, base64::URL_SAFE)
                   .into_bytes()
                   .into(),
               )
@@ -528,7 +528,7 @@ pub fn cat_operation<'a>(
             };
             literals.push(
               ByteValue::B64(
-                base64::encode_config(&concat, base64::URL_SAFE)
+                base64::encode_config(concat, base64::URL_SAFE)
                   .into_bytes()
                   .into(),
               )

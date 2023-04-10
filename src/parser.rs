@@ -448,7 +448,7 @@ impl<'a> Parser<'a> {
     let begin_rule_col = self.lexer_position.column;
 
     let ident = match &self.cur_token {
-      Token::IDENT(i, s) => self.identifier_from_ident_token(*i, *s),
+      Token::IDENT(i, s) => self.identifier_from_ident_token(i, *s),
       _ => {
         #[cfg(feature = "ast-span")]
         {
@@ -940,7 +940,7 @@ impl<'a> Parser<'a> {
 
       match &self.cur_token {
         Token::IDENT(ident, socket) => {
-          let param = self.identifier_from_ident_token(*ident, *socket);
+          let param = self.identifier_from_ident_token(ident, *socket);
 
           self.next_token()?;
 
@@ -1397,7 +1397,7 @@ impl<'a> Parser<'a> {
 
         // optional genericarg detected
         if self.peek_token_is(&Token::LANGLEBRACKET) {
-          let ident = self.identifier_from_ident_token(*ident, *socket);
+          let ident = self.identifier_from_ident_token(ident, *socket);
           let ga = self.parse_genericargs()?;
 
           #[cfg(feature = "ast-span")]
@@ -1418,7 +1418,7 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Type2::Typename {
-          ident: self.identifier_from_ident_token(*ident, *socket),
+          ident: self.identifier_from_ident_token(ident, *socket),
           generic_args: None,
           #[cfg(feature = "ast-span")]
           span: (
@@ -1598,7 +1598,7 @@ impl<'a> Parser<'a> {
         let ident = if let Some(ident) = self.cur_token.in_standard_prelude() {
           Some(self.identifier_from_ident_token(ident, None))
         } else if let Token::IDENT(ident, socket) = &self.cur_token {
-          Some(self.identifier_from_ident_token(*ident, *socket))
+          Some(self.identifier_from_ident_token(ident, *socket))
         } else {
           None
         };
@@ -1684,7 +1684,7 @@ impl<'a> Parser<'a> {
             })
           }
           Token::IDENT(ident, socket) => {
-            let ident = self.identifier_from_ident_token(*ident, *socket);
+            let ident = self.identifier_from_ident_token(ident, *socket);
             if self.peek_token_is(&Token::LANGLEBRACKET) {
               self.next_token()?;
 
