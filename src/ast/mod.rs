@@ -637,24 +637,13 @@ impl<'a> fmt::Display for GenericParams<'a> {
 /// genericarg = "<" S type1 S *("," S type1 S )  ">"
 /// ```
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct GenericArgs<'a> {
   /// Generic arguments
   pub args: Vec<GenericArg<'a>>,
   /// Span
   #[cfg(feature = "ast-span")]
   pub span: Span,
-}
-
-impl<'a> GenericArgs<'a> {
-  /// Default `GenericArg`
-  pub fn default() -> Self {
-    GenericArgs {
-      args: Vec::new(),
-      #[cfg(feature = "ast-span")]
-      span: (0, 0, 0),
-    }
-  }
 }
 
 /// Generic argument

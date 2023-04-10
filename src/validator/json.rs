@@ -1040,12 +1040,12 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
             Value::Number(n) => {
               if let Some(f) = n.as_f64() {
                 if is_inclusive {
-                  if f < *l as f64 || f > *u as f64 {
+                  if f < *l || f > *u {
                     self.add_error(error_str);
                   } else {
                     return Ok(());
                   }
-                } else if f <= *l as f64 || f >= *u as f64 {
+                } else if f <= *l || f >= *u {
                   self.add_error(error_str);
                   return Ok(());
                 } else {
@@ -2383,10 +2383,10 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
             {
               None
             }
-            Some(ControlOperator::LT) if f < *v as f64 => None,
-            Some(ControlOperator::LE) if f <= *v as f64 => None,
-            Some(ControlOperator::GT) if f > *v as f64 => None,
-            Some(ControlOperator::GE) if f >= *v as f64 => None,
+            Some(ControlOperator::LT) if f < *v => None,
+            Some(ControlOperator::LE) if f <= *v => None,
+            Some(ControlOperator::GT) if f > *v => None,
+            Some(ControlOperator::GE) if f >= *v => None,
             #[cfg(feature = "additional-controls")]
             Some(ControlOperator::PLUS) => {
               if (f - *v).abs() < std::f64::EPSILON {
