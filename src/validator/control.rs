@@ -142,7 +142,7 @@ pub fn cat_operation<'a>(
       // "testing" .cat b64'MTIz'
       Type2::B64ByteString {
         value: controller, ..
-      } => match base64::decode_config(controller, base64::URL_SAFE) {
+      } => match data_encoding::BASE64URL.decode(controller) {
         Ok(controller) => match String::from_utf8(controller) {
           Ok(controller) => {
             if is_dedent {
@@ -266,7 +266,7 @@ pub fn cat_operation<'a>(
         // 'testing' .cat b64'MTIz'
         Type2::B64ByteString {
           value: controller, ..
-        } => match base64::decode_config(controller, base64::URL_SAFE) {
+        } => match data_encoding::BASE64URL.decode(controller) {
           Ok(controller) => match String::from_utf8(controller) {
             Ok(controller) => {
               let value = value.trim_start_matches('\'').trim_end_matches('\'');
@@ -382,7 +382,7 @@ pub fn cat_operation<'a>(
       // h'74657374696E67' .cat b64'MTIz'
       Type2::B64ByteString {
         value: controller, ..
-      } => match base64::decode_config(controller, base64::URL_SAFE) {
+      } => match data_encoding::BASE64URL.decode(controller) {
         Ok(controller) => {
           let controller = base16::encode_lower(&controller);
           let concat = if is_dedent {
@@ -421,7 +421,7 @@ pub fn cat_operation<'a>(
       // b64'dGVzdGluZw==' .cat "123"
       Type2::TextValue {
         value: controller, ..
-      } => match base64::decode_config(value, base64::URL_SAFE) {
+      } => match data_encoding::BASE64URL.decode(value) {
         Ok(value) => {
           let concat = if is_dedent {
             [
@@ -434,12 +434,7 @@ pub fn cat_operation<'a>(
           };
 
           literals.push(
-            ByteValue::B64(
-              base64::encode_config(concat, base64::URL_SAFE)
-                .into_bytes()
-                .into(),
-            )
-            .into(),
+            ByteValue::B64(data_encoding::BASE64URL.encode(&concat).into_bytes().into()).into(),
           )
         }
         Err(e) => return Err(format!("target is invalid base64: {}", e)),
@@ -460,7 +455,7 @@ pub fn cat_operation<'a>(
       // b64'dGVzdGluZw==' .cat '123'
       Type2::UTF8ByteString {
         value: controller, ..
-      } => match base64::decode_config(value, base64::URL_SAFE) {
+      } => match data_encoding::BASE64URL.decode(value) {
         Ok(value) => {
           let concat = if is_dedent {
             [
@@ -473,12 +468,7 @@ pub fn cat_operation<'a>(
           };
 
           literals.push(
-            ByteValue::B64(
-              base64::encode_config(concat, base64::URL_SAFE)
-                .into_bytes()
-                .into(),
-            )
-            .into(),
+            ByteValue::B64(data_encoding::BASE64URL.encode(&concat).into_bytes().into()).into(),
           )
         }
         Err(e) => return Err(format!("target is invalid base64: {}", e)),
@@ -486,7 +476,7 @@ pub fn cat_operation<'a>(
       // b64'dGVzdGluZw==' .cat h'313233'
       Type2::B16ByteString {
         value: controller, ..
-      } => match base64::decode_config(value, base64::URL_SAFE) {
+      } => match data_encoding::BASE64URL.decode(value) {
         Ok(value) => match base16::decode(controller) {
           Ok(controller) => {
             let concat = if is_dedent {
@@ -499,12 +489,7 @@ pub fn cat_operation<'a>(
               [&value[..], &controller[..]].concat()
             };
             literals.push(
-              ByteValue::B64(
-                base64::encode_config(concat, base64::URL_SAFE)
-                  .into_bytes()
-                  .into(),
-              )
-              .into(),
+              ByteValue::B64(data_encoding::BASE64URL.encode(&concat).into_bytes().into()).into(),
             )
           }
           Err(e) => return Err(format!("controller is invalid base16: {}", e)),
@@ -514,8 +499,8 @@ pub fn cat_operation<'a>(
       // b64'dGVzdGluZw==' .cat b64'MTIz'
       Type2::B64ByteString {
         value: controller, ..
-      } => match base64::decode_config(value, base64::URL_SAFE) {
-        Ok(value) => match base64::decode_config(controller, base64::URL_SAFE) {
+      } => match data_encoding::BASE64URL.decode(value) {
+        Ok(value) => match data_encoding::BASE64URL.decode(controller) {
           Ok(controller) => {
             let concat = if is_dedent {
               [
@@ -527,12 +512,7 @@ pub fn cat_operation<'a>(
               [&value[..], &controller[..]].concat()
             };
             literals.push(
-              ByteValue::B64(
-                base64::encode_config(concat, base64::URL_SAFE)
-                  .into_bytes()
-                  .into(),
-              )
-              .into(),
+              ByteValue::B64(data_encoding::BASE64URL.encode(&concat).into_bytes().into()).into(),
             )
           }
           Err(e) => return Err(format!("controller is invalid base64: {}", e)),
