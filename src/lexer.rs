@@ -224,8 +224,8 @@ impl From<(&str, Position, base16::DecodeError)> for Error {
   }
 }
 
-impl From<(&str, Position, base64::DecodeError)> for Error {
-  fn from(e: (&str, Position, base64::DecodeError)) -> Self {
+impl From<(&str, Position, data_encoding::DecodeError)> for Error {
+  fn from(e: (&str, Position, data_encoding::DecodeError)) -> Self {
     Error {
       error_type: LexerErrorType::BASE64(e.2.to_string()),
       input: e.0.to_string(),
@@ -604,9 +604,11 @@ impl<'a> Lexer<'a> {
                           // Ensure that the byte string has been properly
                           // encoded
                           let bs = self.read_prefixed_byte_string(idx)?;
-                          let mut buf = [0u8; 1024];
-                          return base64::decode_config_slice(&bs, base64::URL_SAFE, &mut buf)
-                            .map_err(|e| (self.str_input, self.position, e).into())
+                          let mut buf =
+                            vec![0; data_encoding::BASE64.decode_len(bs.len()).unwrap()];
+                          return data_encoding::BASE64URL
+                            .decode_mut(&bs, &mut buf)
+                            .map_err(|e| (self.str_input, self.position, e.error).into())
                             .map(|_| {
                               self.position.range = (token_offset, self.position.index + 1);
 
