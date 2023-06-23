@@ -779,10 +779,16 @@ pub fn plus_operation<'a>(
 
 #[cfg(feature = "additional-controls")]
 pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
+  let abnf = abnf.trim();
   if let Some(idx) = abnf.find('\n') {
     let (rule, abnf) = abnf.split_at(idx);
+    let rule = rule.trim();
+    let mut abnf = abnf.trim().to_string();
+    // Refer to https://docs.rs/abnf/0.13.0/abnf/fn.rulelist.html as to why it
+    // needs to end with a newline
+    abnf.push('\n');
 
-    let rules = abnf_to_pest::parse_abnf(abnf).map_err(|e| e.to_string())?;
+    let rules = abnf_to_pest::parse_abnf(&abnf).map_err(|e| e.to_string())?;
     let mut w = Vec::new();
     abnf_to_pest::render_rules_to_pest(rules)
       .render(0, &mut w)
