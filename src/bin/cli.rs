@@ -63,15 +63,13 @@ struct Validate {
     short = 'j',
     long = "json",
     help = "JSON document(s) to validate",
-    use_value_delimiter = true,
-    multiple_values = true
+    use_value_delimiter = true
   )]
   json: Option<Vec<String>>,
   #[clap(
     short = 'c',
     long = "cbor",
     help = "CBOR binary file(s) to validate",
-    multiple_values = true,
     use_value_delimiter = true
   )]
   cbor: Option<Vec<String>>,

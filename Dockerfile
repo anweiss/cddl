@@ -1,7 +1,10 @@
-FROM ekidd/rust-musl-builder:1.57.0 AS builder
+FROM rust:1.64.0-alpine AS builder
+RUN apk update
+RUN apk add --no-cache openssl-dev musl-dev
+WORKDIR /usr/src/cddl
 COPY . ./
 RUN cargo b --release --bin cddl
 
-FROM scratch
-COPY --from=builder /home/rust/src/target/x86_64-unknown-linux-musl/release/cddl /cddl
-ENTRYPOINT [ "/cddl" ]
+FROM alpine:latest
+COPY --from=builder /usr/src/cddl/target/release/cddl /usr/local/bin/cddl
+ENTRYPOINT [ "/usr/local/bin/cddl" ]
