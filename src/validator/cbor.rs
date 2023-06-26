@@ -42,6 +42,10 @@ pub enum Error<T: std::fmt::Debug> {
   CDDLParsing(String),
   /// UTF8 parsing error,
   UTF8Parsing(std::str::Utf8Error),
+  /// Base16 decoding error
+  Base16Decoding(base16::DecodeError),
+  /// Base64 decoding error
+  Base64Decoding(data_encoding::DecodeError),
 }
 
 impl<T: std::fmt::Debug> fmt::Display for Error<T> {
@@ -58,6 +62,8 @@ impl<T: std::fmt::Debug> fmt::Display for Error<T> {
       Error::JSONParsing(error) => write!(f, "error parsing json string: {}", error),
       Error::CDDLParsing(error) => write!(f, "error parsing CDDL: {}", error),
       Error::UTF8Parsing(error) => write!(f, "error parsing utf8: {}", error),
+      Error::Base16Decoding(error) => write!(f, "error decoding base16: {}", error),
+      Error::Base64Decoding(error) => write!(f, "error decoding base64: {}", error),
     }
   }
 }
@@ -1901,6 +1907,12 @@ where
       Type2::IntValue { value, .. } => self.visit_value(&token::Value::INT(*value)),
       Type2::UintValue { value, .. } => self.visit_value(&token::Value::UINT(*value)),
       Type2::FloatValue { value, .. } => self.visit_value(&token::Value::FLOAT(*value)),
+      Type2::UTF8ByteString { value, .. } => {
+        self.visit_value(&token::Value::BYTE(ByteValue::UTF8(value.clone())))
+      }
+      Type2::B16ByteString { value, .. } => {
+        self.visit_value(&token::Value::BYTE(ByteValue::B16(value.clone())))
+      }
       Type2::ParenthesizedType { pt, .. } => self.visit_type(pt),
       Type2::Unwrap {
         ident,
@@ -3441,6 +3453,56 @@ where
             b
           )),
         },
+        #[cfg(feature = "additional-controls")]
+        token::Value::BYTE(bv) => match &self.ctrl {
+          Some(ControlOperator::ABNFB) => match bv {
+            ByteValue::UTF8(utf8bv) => validate_abnf(
+              std::str::from_utf8(utf8bv).map_err(Error::UTF8Parsing)?,
+              std::str::from_utf8(b).map_err(Error::UTF8Parsing)?,
+            )
+            .err()
+            .map(|e| {
+              format!(
+                "cbor bytes \"{:?}\" are not valid against abnf {}: {}",
+                b, bv, e
+              )
+            }),
+            ByteValue::B16(b16bv) => validate_abnf(
+              std::str::from_utf8(&base16::decode(b16bv).map_err(Error::Base16Decoding)?)
+                .map_err(Error::UTF8Parsing)?,
+              std::str::from_utf8(b).map_err(Error::UTF8Parsing)?,
+            )
+            .err()
+            .map(|e| {
+              format!(
+                "cbor bytes \"{:?}\" are not valid against abnf {}: {}",
+                b, bv, e
+              )
+            }),
+            ByteValue::B64(b64bv) => validate_abnf(
+              std::str::from_utf8(
+                &data_encoding::BASE64URL
+                  .decode(b64bv)
+                  .map_err(Error::Base64Decoding)?,
+              )
+              .map_err(Error::UTF8Parsing)?,
+              std::str::from_utf8(b).map_err(Error::UTF8Parsing)?,
+            )
+            .err()
+            .map(|e| {
+              format!(
+                "cbor bytes \"{:?}\" are not valid against abnf {}: {}",
+                b, bv, e
+              )
+            }),
+          },
+          _ => Some(format!(
+            "expected value {} {}, got {:?}",
+            self.ctrl.unwrap(),
+            bv,
+            b
+          )),
+        },
         _ => Some(format!("expected {}, got {:?}", value, b)),
       },
       Value::Array(_) => {
@@ -3575,7 +3637,7 @@ mod tests {
 
   #[cfg(feature = "additional-controls")]
   #[test]
-  fn validate_abnfb() -> std::result::Result<(), Box<dyn std::error::Error>> {
+  fn validate_abnfb_1() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cddl = indoc!(
       r#"
         oid = bytes .abnfb ("oid" .det cbor-tags-oid)
@@ -3701,6 +3763,51 @@ mod tests {
       1,
       Box::from(ciborium::value::Value::Float(1680965875.01_f64)),
     );
+
+    let cddl = cddl.unwrap();
+
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    cv.validate()?;
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_abnfb_2() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        ; Binary ABNF Test Schema
+        test_cbor = {
+          61285: sub_map
+        }
+        
+        sub_map = {
+          1: signature_abnf
+        }
+        
+        signature = bytes .size 64
+        
+        signature_abnf = signature .abnfb '     
+        ANYDATA
+        ANYDATA = *OCTET
+
+        OCTET =  %x00-FF
+        '
+      "#
+    );
+
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let cbor = ciborium::value::Value::Map(vec![(
+      ciborium::value::Value::Integer(61285.into()),
+      ciborium::value::Value::Map(vec![(
+        ciborium::value::Value::Integer(1.into()),
+        ciborium::value::Value::Bytes(b"test".to_vec()),
+      )]),
+    )]);
 
     let cddl = cddl.unwrap();
 

@@ -30,7 +30,7 @@
 //!
 //! This crate supports validation of both CBOR and JSON data structures. An
 //! extremely basic REPL is included as well. This crate's minimum supported
-//! Rust version (MSRV) is 1.57.0.
+//! Rust version (MSRV) is 1.65.0.
 //!
 //! Also bundled into this repository is a basic language server implementation
 //! and extension for Visual Studio Code for editing CDDL. The implementation is
