@@ -1,24 +1,24 @@
 on:
   push:
     tags-ignore:
-      - '*'
+      - "*"
     paths:
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/anchore-analysis.yml'
-      - 'Dockerfile'
-      - '.dockerignore'
-      - 'Cargo.toml'
-      - 'src/**'
-      - 'tests/**'
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/anchore-analysis.yml"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "Cargo.toml"
+      - "src/**"
+      - "tests/**"
   pull_request:
     paths:
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/anchore-analysis.yml'
-      - 'Dockerfile'
-      - '.dockerignore'
-      - 'Cargo.toml'
-      - 'src/**'
-      - 'tests/**'
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/anchore-analysis.yml"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "Cargo.toml"
+      - "src/**"
+      - "tests/**"
 
 name: Build and Test
 
@@ -26,7 +26,7 @@ jobs:
   minimum-version-check:
     strategy:
       matrix:
-        rust_toolchain: [1.65.0]
+        rust_toolchain: [1.67.0]
         os: [ubuntu-latest, macOS-latest, windows-latest]
     name: minimum version check using Rust ${{ matrix.rust_toolchain }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
