@@ -181,7 +181,7 @@ fn verify_cddl() -> Result<()> {
                       span: (63, 65, 4),
                     },
                     comments: None,
-                    _a: PhantomData::default(),
+                    _a: PhantomData,
                   }),
                   group: Group {
                     group_choices: vec![GroupChoice {
@@ -203,7 +203,7 @@ fn verify_cddl() -> Result<()> {
                         OptionalComma {
                           optional_comma: false,
                           trailing_comments: None,
-                          _a: PhantomData::default(),
+                          _a: PhantomData,
                         },
                       )],
                       comments_before_grpchoice: None,
@@ -364,7 +364,7 @@ fn verify_cddl() -> Result<()> {
                                 OptionalComma {
                                   optional_comma: true,
                                   trailing_comments: None,
-                                  _a: PhantomData::default(),
+                                  _a: PhantomData,
                                 },
                               ),
                               (
@@ -410,7 +410,7 @@ fn verify_cddl() -> Result<()> {
                                 OptionalComma {
                                   optional_comma: false,
                                   trailing_comments: None,
-                                  _a: PhantomData::default(),
+                                  _a: PhantomData,
                                 },
                               ),
                             ],
@@ -526,7 +526,7 @@ fn verify_cddl() -> Result<()> {
                         OptionalComma {
                           optional_comma: false,
                           trailing_comments: None,
-                          _a: PhantomData::default(),
+                          _a: PhantomData,
                         },
                       )],
                       comments_before_grpchoice: None,

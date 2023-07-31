@@ -3011,7 +3011,7 @@ mod tests {
               OptionalComma {
                 optional_comma: true,
                 trailing_comments: None,
-                _a: PhantomData::default(),
+                _a: PhantomData,
               }
             ),
             (
@@ -3053,7 +3053,7 @@ mod tests {
               OptionalComma {
                 optional_comma: true,
                 trailing_comments: None,
-                _a: PhantomData::default(),
+                _a: PhantomData,
               }
             ),
           ],

@@ -686,7 +686,7 @@ mod tests {
                       span: (1, 3, 1),
                     },
                     comments: None,
-                    _a: PhantomData::default(),
+                    _a: PhantomData,
                   }),
                   name: Identifier {
                     ident: "reputon",
@@ -702,7 +702,7 @@ mod tests {
               OptionalComma {
                 optional_comma: false,
                 trailing_comments: None,
-                _a: PhantomData::default(),
+                _a: PhantomData,
               },
             )],
             comments_before_grpchoice: None,
@@ -723,7 +723,7 @@ mod tests {
                   occur: Some(Occurrence {
                     occur: Occur::OneOrMore { span: (1, 2, 1) },
                     comments: None,
-                    _a: PhantomData::default(),
+                    _a: PhantomData,
                   }),
                   name: Identifier {
                     ident: "reputon",
@@ -739,7 +739,7 @@ mod tests {
               OptionalComma {
                 optional_comma: false,
                 trailing_comments: None,
-                _a: PhantomData::default(),
+                _a: PhantomData,
               },
             )],
             comments_before_grpchoice: None,
@@ -782,7 +782,7 @@ mod tests {
               OptionalComma {
                 optional_comma: false,
                 trailing_comments: None,
-                _a: PhantomData::default(),
+                _a: PhantomData,
               },
             )],
             comments_before_grpchoice: None,
@@ -804,7 +804,7 @@ mod tests {
                   occur: Some(Occurrence {
                     occur: Occur::Optional { span: (2, 3, 1) },
                     comments: None,
-                    _a: PhantomData::default(),
+                    _a: PhantomData,
                   }),
                   member_key: Some(MemberKey::Type1 {
                     t1: Box::from(Type1 {
@@ -851,7 +851,7 @@ mod tests {
               OptionalComma {
                 optional_comma: true,
                 trailing_comments: None,
-                _a: PhantomData::default(),
+                _a: PhantomData,
               },
             )],
             comments_before_grpchoice: None,
@@ -914,7 +914,7 @@ mod tests {
                         OptionalComma {
                           optional_comma: true,
                           trailing_comments: None,
-                          _a: PhantomData::default(),
+                          _a: PhantomData,
                         },
                       ),
                       (
@@ -960,7 +960,7 @@ mod tests {
                         OptionalComma {
                           optional_comma: false,
                           trailing_comments: None,
-                          _a: PhantomData::default(),
+                          _a: PhantomData,
                         },
                       ),
                     ],
@@ -977,7 +977,7 @@ mod tests {
               OptionalComma {
                 optional_comma: false,
                 trailing_comments: None,
-                _a: PhantomData::default(),
+                _a: PhantomData,
               },
             )],
             comments_before_grpchoice: None,
@@ -1032,7 +1032,7 @@ mod tests {
                                       occur: Some(Occurrence {
                                         occur: Occur::ZeroOrMore { span: (3, 4, 1) },
                                         comments: None,
-                                        _a: PhantomData::default(),
+                                        _a: PhantomData,
                                       }),
                                       name: Identifier {
                                         ident: "file-entry",
@@ -1048,7 +1048,7 @@ mod tests {
                                   OptionalComma {
                                     optional_comma: false,
                                     trailing_comments: None,
-                                    _a: PhantomData::default(),
+                                    _a: PhantomData,
                                   },
                                 )],
                                 comments_before_grpchoice: None,
@@ -1077,7 +1077,7 @@ mod tests {
                 OptionalComma {
                   optional_comma: true,
                   trailing_comments: None,
-                  _a: PhantomData::default(),
+                  _a: PhantomData,
                 },
               ),
               (
@@ -1097,7 +1097,7 @@ mod tests {
                                       occur: Some(Occurrence {
                                         occur: Occur::ZeroOrMore { span: (19, 20, 1) },
                                         comments: None,
-                                        _a: PhantomData::default(),
+                                        _a: PhantomData,
                                       }),
                                       name: Identifier {
                                         ident: "directory-entry",
@@ -1113,7 +1113,7 @@ mod tests {
                                   OptionalComma {
                                     optional_comma: false,
                                     trailing_comments: None,
-                                    _a: PhantomData::default(),
+                                    _a: PhantomData,
                                   },
                                 )],
                                 comments_before_grpchoice: None,
@@ -1142,7 +1142,7 @@ mod tests {
                 OptionalComma {
                   optional_comma: false,
                   trailing_comments: None,
-                  _a: PhantomData::default(),
+                  _a: PhantomData,
                 },
               ),
             ],
@@ -1178,7 +1178,7 @@ mod tests {
                   OptionalComma {
                     optional_comma: true,
                     trailing_comments: None,
-                    _a: PhantomData::default(),
+                    _a: PhantomData,
                   },
                 ),
                 (
@@ -1199,7 +1199,7 @@ mod tests {
                   OptionalComma {
                     optional_comma: false,
                     trailing_comments: None,
-                    _a: PhantomData::default(),
+                    _a: PhantomData,
                   },
                 ),
               ],
@@ -1226,7 +1226,7 @@ mod tests {
                   OptionalComma {
                     optional_comma: true,
                     trailing_comments: None,
-                    _a: PhantomData::default(),
+                    _a: PhantomData,
                   },
                 ),
                 (
@@ -1247,7 +1247,7 @@ mod tests {
                   OptionalComma {
                     optional_comma: false,
                     trailing_comments: None,
-                    _a: PhantomData::default(),
+                    _a: PhantomData,
                   },
                 ),
               ],
@@ -1283,7 +1283,7 @@ mod tests {
                 OptionalComma {
                   optional_comma: true,
                   trailing_comments: None,
-                  _a: PhantomData::default(),
+                  _a: PhantomData,
                 },
               ),
               (
@@ -1304,7 +1304,7 @@ mod tests {
                 OptionalComma {
                   optional_comma: true,
                   trailing_comments: None,
-                  _a: PhantomData::default(),
+                  _a: PhantomData,
                 },
               ),
               (
@@ -1325,7 +1325,7 @@ mod tests {
                 OptionalComma {
                   optional_comma: true,
                   trailing_comments: None,
-                  _a: PhantomData::default(),
+                  _a: PhantomData,
                 },
               ),
               (
@@ -1346,7 +1346,7 @@ mod tests {
                 OptionalComma {
                   optional_comma: false,
                   trailing_comments: None,
-                  _a: PhantomData::default(),
+                  _a: PhantomData,
                 },
               ),
             ],
@@ -1389,7 +1389,7 @@ mod tests {
           occur: Some(Occurrence {
             occur: Occur::ZeroOrMore { span: (0, 1, 1) },
             comments: None,
-            _a: PhantomData::default(),
+            _a: PhantomData,
           }),
           member_key: Some(MemberKey::Type1 {
             t1: Box::from(Type1 {
@@ -1491,7 +1491,7 @@ mod tests {
           occur: Some(Occurrence {
             occur: Occur::Optional { span: (0, 1, 1) },
             comments: None,
-            _a: PhantomData::default(),
+            _a: PhantomData,
           }),
           member_key: Some(MemberKey::Value {
             value: token::Value::UINT(0),
@@ -1586,7 +1586,7 @@ mod tests {
           occur: Some(Occurrence {
             occur: Occur::ZeroOrMore { span: (0, 1, 1) },
             comments: None,
-            _a: PhantomData::default(),
+            _a: PhantomData,
           }),
           member_key: Some(MemberKey::Type1 {
             t1: Box::from(Type1 {
@@ -1611,7 +1611,7 @@ mod tests {
                       OptionalComma {
                         optional_comma: false,
                         trailing_comments: None,
-                        _a: PhantomData::default(),
+                        _a: PhantomData,
                       },
                     )],
                     comments_before_grpchoice: None,
@@ -1817,17 +1817,17 @@ mod tests {
           span: (0, 3, 1),
         },
         comments: None,
-        _a: PhantomData::default(),
+        _a: PhantomData,
       },
       Occurrence {
         occur: Occur::ZeroOrMore { span: (0, 1, 1) },
         comments: None,
-        _a: PhantomData::default(),
+        _a: PhantomData,
       },
       Occurrence {
         occur: Occur::OneOrMore { span: (0, 1, 1) },
         comments: None,
-        _a: PhantomData::default(),
+        _a: PhantomData,
       },
       Occurrence {
         occur: Occur::Exact {
@@ -1836,7 +1836,7 @@ mod tests {
           span: (0, 2, 1),
         },
         comments: None,
-        _a: PhantomData::default(),
+        _a: PhantomData,
       },
       Occurrence {
         occur: Occur::Exact {
@@ -1845,12 +1845,12 @@ mod tests {
           span: (0, 2, 1),
         },
         comments: None,
-        _a: PhantomData::default(),
+        _a: PhantomData,
       },
       Occurrence {
         occur: Occur::Optional { span: (0, 1, 1) },
         comments: None,
-        _a: PhantomData::default(),
+        _a: PhantomData,
       },
     ];
 

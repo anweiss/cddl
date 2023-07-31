@@ -1999,7 +1999,7 @@ impl<'a> Parser<'a> {
             optional_comma: false,
             #[cfg(feature = "ast-comments")]
             trailing_comments: None,
-            _a: PhantomData::default(),
+            _a: PhantomData,
           },
         ));
 
@@ -2058,7 +2058,7 @@ impl<'a> Parser<'a> {
           optional_comma,
           #[cfg(feature = "ast-comments")]
           trailing_comments,
-          _a: PhantomData::default(),
+          _a: PhantomData,
         },
       ));
     }
@@ -3274,7 +3274,7 @@ impl<'a> Parser<'a> {
           occur: Occur::Optional {},
           #[cfg(feature = "ast-comments")]
           comments,
-          _a: PhantomData::default(),
+          _a: PhantomData,
         }))
       }
       Token::ONEORMORE => {
@@ -3303,7 +3303,7 @@ impl<'a> Parser<'a> {
           occur: Occur::OneOrMore {},
           #[cfg(feature = "ast-comments")]
           comments,
-          _a: PhantomData::default(),
+          _a: PhantomData,
         }))
       }
       Token::ASTERISK => {
@@ -3356,7 +3356,7 @@ impl<'a> Parser<'a> {
           occur,
           #[cfg(feature = "ast-comments")]
           comments,
-          _a: PhantomData::default(),
+          _a: PhantomData,
         }))
       }
       Token::VALUE(_) => {
@@ -3422,7 +3422,7 @@ impl<'a> Parser<'a> {
           },
           #[cfg(feature = "ast-comments")]
           comments,
-          _a: PhantomData::default(),
+          _a: PhantomData,
         }))
       }
       _ => Ok(None),
