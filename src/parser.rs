@@ -8,7 +8,7 @@ use super::{
   token::{self, SocketPlug, Token},
 };
 
-use std::{cmp::Ordering, marker::PhantomData, mem, result};
+use std::{cmp::Ordering, collections::HashSet, marker::PhantomData, mem, result};
 
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
@@ -26,6 +26,7 @@ use std::borrow::Cow;
 use alloc::{
   borrow::{Cow, ToOwned},
   boxed::Box,
+  collections::HashSet,
   string::{String, ToString},
   vec::Vec,
 };
@@ -56,6 +57,7 @@ pub struct Parser<'a> {
   #[cfg(not(feature = "ast-span"))]
   visited_rule_idents: Vec<&'a str>,
   current_rule_generic_param_idents: Option<Vec<&'a str>>,
+  typenames: HashSet<&'a str>,
 }
 
 /// Parsing error types
@@ -120,6 +122,48 @@ impl<'a> Parser<'a> {
       parser_position: Position::default(),
       visited_rule_idents: Vec::default(),
       current_rule_generic_param_idents: None,
+      typenames: HashSet::from([
+        "any",
+        "uint",
+        "nint",
+        "int",
+        "bstr",
+        "bytes",
+        "tstr",
+        "text",
+        "tdate",
+        "time",
+        "number",
+        "biguint",
+        "bignint",
+        "bigint",
+        "integer",
+        "unsigned",
+        "decfrac",
+        "bigfloat",
+        "eb64url",
+        "eb64legacy",
+        "eb16",
+        "encoded-cbor",
+        "uri",
+        "b64url",
+        "b64legacy",
+        "regexp",
+        "mime-message",
+        "cbor-any",
+        "float16",
+        "float32",
+        "float64",
+        "float16-32",
+        "float32-64",
+        "float",
+        "false",
+        "true",
+        "bool",
+        "nil",
+        "null",
+        "undefined",
+      ]),
     };
 
     p.next_token()?;
@@ -658,6 +702,7 @@ impl<'a> Parser<'a> {
           self.advance_newline()?;
 
           self.current_rule_generic_param_idents = None;
+          self.typenames.insert(ident.ident);
 
           Ok(Rule::Type {
             rule: TypeRule {
@@ -766,6 +811,7 @@ impl<'a> Parser<'a> {
                         }
 
                         self.current_rule_generic_param_idents = None;
+                        self.typenames.insert(ident.ident);
 
                         return Ok(Rule::Type {
                           rule: TypeRule {
@@ -809,6 +855,7 @@ impl<'a> Parser<'a> {
                         }
 
                         self.current_rule_generic_param_idents = None;
+                        self.typenames.insert(ident.ident);
 
                         return Ok(Rule::Type {
                           rule: TypeRule {
@@ -900,6 +947,7 @@ impl<'a> Parser<'a> {
         );
 
         self.current_rule_generic_param_idents = None;
+        self.typenames.insert(ident.ident);
 
         Ok(Rule::Type {
           rule: TypeRule {
@@ -2170,61 +2218,65 @@ impl<'a> Parser<'a> {
 
         #[cfg(feature = "ast-span")]
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
-          if name.socket.is_none()
-            && token::lookup_ident(name.ident)
-              .in_standard_prelude()
-              .is_none()
-          {
-            if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == name.ident) {
+          if !self.typenames.contains(name.ident) {
+            if name.socket.is_none()
+              && token::lookup_ident(name.ident)
+                .in_standard_prelude()
+                .is_none()
+            {
+              if let Some(params) = &self.current_rule_generic_param_idents {
+                if !params.iter().any(|&p| p == name.ident) {
+                  self.visited_rule_idents.push((name.ident, name.span));
+                }
+              } else {
                 self.visited_rule_idents.push((name.ident, name.span));
               }
-            } else {
-              self.visited_rule_idents.push((name.ident, name.span));
             }
-          }
 
-          return Ok(GroupEntry::TypeGroupname {
-            ge: TypeGroupnameEntry {
-              occur,
-              name,
-              generic_args,
-            },
-            #[cfg(feature = "ast-comments")]
-            leading_comments: comments_before_type_or_group,
-            #[cfg(feature = "ast-comments")]
-            trailing_comments,
-            span,
-          });
+            return Ok(GroupEntry::TypeGroupname {
+              ge: TypeGroupnameEntry {
+                occur,
+                name,
+                generic_args,
+              },
+              #[cfg(feature = "ast-comments")]
+              leading_comments: comments_before_type_or_group,
+              #[cfg(feature = "ast-comments")]
+              trailing_comments,
+              span,
+            });
+          }
         }
 
         #[cfg(not(feature = "ast-span"))]
         if let Some((name, generic_args)) = entry_type.groupname_entry() {
-          if name.socket.is_none()
-            && token::lookup_ident(name.ident)
-              .in_standard_prelude()
-              .is_none()
-          {
-            if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == name.ident) {
+          if !self.typenames.contains(name.ident) {
+            if name.socket.is_none()
+              && token::lookup_ident(name.ident)
+                .in_standard_prelude()
+                .is_none()
+            {
+              if let Some(params) = &self.current_rule_generic_param_idents {
+                if !params.iter().any(|&p| p == name.ident) {
+                  self.visited_rule_idents.push(name.ident);
+                }
+              } else {
                 self.visited_rule_idents.push(name.ident);
               }
-            } else {
-              self.visited_rule_idents.push(name.ident);
             }
-          }
 
-          return Ok(GroupEntry::TypeGroupname {
-            ge: TypeGroupnameEntry {
-              occur,
-              name,
-              generic_args,
-            },
-            #[cfg(feature = "ast-comments")]
-            leading_comments: comments_before_type_or_group,
-            #[cfg(feature = "ast-comments")]
-            trailing_comments,
-          });
+            return Ok(GroupEntry::TypeGroupname {
+              ge: TypeGroupnameEntry {
+                occur,
+                name,
+                generic_args,
+              },
+              #[cfg(feature = "ast-comments")]
+              leading_comments: comments_before_type_or_group,
+              #[cfg(feature = "ast-comments")]
+              trailing_comments,
+            });
+          }
         }
 
         // A parse tree that returns a type instead of a member key needs to
@@ -2406,77 +2458,81 @@ impl<'a> Parser<'a> {
 
         #[cfg(feature = "ast-span")]
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
-          if generic_args.is_some() && self.peek_token_is(&Token::LANGLEBRACKET) {
-            while !self.peek_token_is(&Token::RANGLEBRACKET) {
+          if !self.typenames.contains(name.ident) {
+            if generic_args.is_some() && self.peek_token_is(&Token::LANGLEBRACKET) {
+              while !self.peek_token_is(&Token::RANGLEBRACKET) {
+                self.next_token()?;
+              }
+
               self.next_token()?;
             }
 
-            self.next_token()?;
-          }
-
-          if name.socket.is_none()
-            && token::lookup_ident(name.ident)
-              .in_standard_prelude()
-              .is_none()
-          {
-            if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == name.ident) {
+            if name.socket.is_none()
+              && token::lookup_ident(name.ident)
+                .in_standard_prelude()
+                .is_none()
+            {
+              if let Some(params) = &self.current_rule_generic_param_idents {
+                if !params.iter().any(|&p| p == name.ident) {
+                  self.visited_rule_idents.push((name.ident, name.span));
+                }
+              } else {
                 self.visited_rule_idents.push((name.ident, name.span));
               }
-            } else {
-              self.visited_rule_idents.push((name.ident, name.span));
             }
-          }
 
-          return Ok(GroupEntry::TypeGroupname {
-            ge: TypeGroupnameEntry {
-              occur,
-              name,
-              generic_args,
-            },
-            #[cfg(feature = "ast-comments")]
-            leading_comments: None,
-            #[cfg(feature = "ast-comments")]
-            trailing_comments,
-            span,
-          });
+            return Ok(GroupEntry::TypeGroupname {
+              ge: TypeGroupnameEntry {
+                occur,
+                name,
+                generic_args,
+              },
+              #[cfg(feature = "ast-comments")]
+              leading_comments: None,
+              #[cfg(feature = "ast-comments")]
+              trailing_comments,
+              span,
+            });
+          }
         }
 
         #[cfg(not(feature = "ast-span"))]
         if let Some((name, generic_args)) = entry_type.groupname_entry() {
-          if generic_args.is_some() && self.peek_token_is(&Token::LANGLEBRACKET) {
-            while !self.peek_token_is(&Token::RANGLEBRACKET) {
+          if !self.typenames.contains(name.ident) {
+            if generic_args.is_some() && self.peek_token_is(&Token::LANGLEBRACKET) {
+              while !self.peek_token_is(&Token::RANGLEBRACKET) {
+                self.next_token()?;
+              }
+
               self.next_token()?;
             }
 
-            self.next_token()?;
-          }
-
-          if name.socket.is_none()
-            && token::lookup_ident(name.ident)
-              .in_standard_prelude()
-              .is_none()
-          {
-            if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == name.ident) {
+            if name.socket.is_none()
+              && token::lookup_ident(name.ident)
+                .in_standard_prelude()
+                .is_none()
+            {
+              if let Some(params) = &self.current_rule_generic_param_idents {
+                if !params.iter().any(|&p| p == name.ident) {
+                  self.visited_rule_idents.push(name.ident);
+                }
+              } else {
                 self.visited_rule_idents.push(name.ident);
               }
-            } else {
-              self.visited_rule_idents.push(name.ident);
             }
-          }
 
-          return Ok(GroupEntry::TypeGroupname {
-            ge: TypeGroupnameEntry {
-              occur,
-              name,
-              generic_args,
-            },
-            #[cfg(feature = "ast-comments")]
-            leading_comments: None,
-            #[cfg(feature = "ast-comments")]
-            trailing_comments,
-          });
+            return Ok(GroupEntry::TypeGroupname {
+              ge: TypeGroupnameEntry {
+                occur,
+                name,
+                generic_args,
+              },
+              #[cfg(feature = "ast-comments")]
+              leading_comments: None,
+              #[cfg(feature = "ast-comments")]
+              trailing_comments,
+            });
+          }
         }
 
         #[cfg(feature = "ast-span")]
