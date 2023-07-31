@@ -8,7 +8,7 @@ use super::{
   token::{self, SocketPlug, Token},
 };
 
-use std::{cmp::Ordering, collections::HashSet, marker::PhantomData, mem, result};
+use std::{cmp::Ordering, marker::PhantomData, mem, result};
 
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
@@ -20,13 +20,13 @@ use displaydoc::Display;
 #[cfg(feature = "std")]
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 #[cfg(feature = "std")]
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::BTreeSet};
 
 #[cfg(not(feature = "std"))]
 use alloc::{
   borrow::{Cow, ToOwned},
   boxed::Box,
-  collections::HashSet,
+  collections::BTreeSet,
   string::{String, ToString},
   vec::Vec,
 };
@@ -57,7 +57,7 @@ pub struct Parser<'a> {
   #[cfg(not(feature = "ast-span"))]
   visited_rule_idents: Vec<&'a str>,
   current_rule_generic_param_idents: Option<Vec<&'a str>>,
-  typenames: HashSet<&'a str>,
+  typenames: BTreeSet<&'a str>,
 }
 
 /// Parsing error types
@@ -122,7 +122,7 @@ impl<'a> Parser<'a> {
       parser_position: Position::default(),
       visited_rule_idents: Vec::default(),
       current_rule_generic_param_idents: None,
-      typenames: HashSet::from([
+      typenames: BTreeSet::from([
         "any",
         "uint",
         "nint",
