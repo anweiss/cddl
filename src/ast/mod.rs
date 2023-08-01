@@ -329,13 +329,6 @@ pub enum Rule<'a> {
     #[doc(hidden)]
     comments_after_rule: Option<Comments<'a>>,
   },
-  /// Unknown expression
-  Unknown {
-    #[doc(hidden)]
-    rule: Box<Rule<'a>>,
-    #[doc(hidden)]
-    range: (usize, usize),
-  },
 }
 
 impl<'a> Rule<'a> {
@@ -345,7 +338,6 @@ impl<'a> Rule<'a> {
     match self {
       Rule::Type { span, .. } => *span,
       Rule::Group { span, .. } => *span,
-      Rule::Unknown { rule, .. } => rule.span(),
     }
   }
 
@@ -441,7 +433,6 @@ impl<'a> fmt::Display for Rule<'a> {
 
         write!(f, "{}", rule_str)
       }
-      Rule::Unknown { rule, .. } => rule.fmt(f),
     }
   }
 }
@@ -452,7 +443,6 @@ impl<'a> Rule<'a> {
     match self {
       Rule::Type { rule, .. } => rule.name.to_string(),
       Rule::Group { rule, .. } => rule.name.to_string(),
-      Rule::Unknown { rule, .. } => rule.name(),
     }
   }
 
@@ -462,7 +452,6 @@ impl<'a> Rule<'a> {
     match self {
       Rule::Type { rule, .. } => rule.is_type_choice_alternate,
       Rule::Group { rule, .. } => rule.is_group_choice_alternate,
-      Rule::Unknown { rule, .. } => rule.is_choice_alternate(),
     }
   }
 }

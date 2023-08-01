@@ -57,9 +57,9 @@ pub struct Parser<'a> {
   typenames: Rc<BTreeSet<&'a str>>,
   groupnames: Rc<BTreeSet<&'a str>>,
   #[cfg(feature = "ast-span")]
-  unknown_rules: Vec<(&'a str, Span)>,
+  unknown_rule_idents: Vec<(&'a str, Span)>,
   #[cfg(not(feature = "ast-span"))]
-  unknown_rules: Vec<&'a str>,
+  unknown_rule_idents: Vec<&'a str>,
   is_guaranteed: bool,
 }
 
@@ -170,7 +170,7 @@ impl<'a> Parser<'a> {
         "undefined",
       ])),
       groupnames: Rc::new(BTreeSet::default()),
-      unknown_rules: Vec::default(),
+      unknown_rule_idents: Vec::default(),
       is_guaranteed: false,
     };
 
@@ -389,7 +389,6 @@ impl<'a> Parser<'a> {
     match &rule {
       Rule::Type { rule, .. } => Rc::make_mut(&mut self.typenames).insert(rule.name.ident),
       Rule::Group { rule, .. } => Rc::make_mut(&mut self.groupnames).insert(rule.name.ident),
-      _ => unreachable!(),
     };
   }
 
@@ -403,6 +402,14 @@ impl<'a> Parser<'a> {
       comments: self.collect_comments()?,
       ..Default::default()
     };
+
+    struct UnknownRule<'a> {
+      rule: Rule<'a>,
+      index: usize,
+      range: (usize, usize),
+    }
+
+    let mut unknown_rules = Vec::default();
 
     while self.cur_token != Token::EOF {
       let begin_rule_range = self.lexer_position.range.0;
@@ -427,15 +434,16 @@ impl<'a> Parser<'a> {
             continue;
           }
 
-          if !self.unknown_rules.is_empty() {
+          if !self.unknown_rule_idents.is_empty() {
             if self.is_guaranteed {
               self.register_rule(&r);
             }
-            c.rules.push(Rule::Unknown {
-              rule: Box::new(r),
+            unknown_rules.push(UnknownRule {
+              rule: r,
+              index: c.rules.len(),
               range: (begin_rule_range, self.lexer_position.range.1),
             });
-            self.unknown_rules = Vec::default();
+            self.unknown_rule_idents = Vec::default();
           } else {
             self.register_rule(&r);
             c.rules.push(r);
@@ -451,32 +459,45 @@ impl<'a> Parser<'a> {
       }
     }
 
+    // In practice unknown rules usually are declared backwards, so we reverse
+    // it here.
+    unknown_rules.reverse();
+
     // Try to specialize unknown rules until the set of them stabilizes.
     {
       let mut errors;
-      let mut rules;
+      let mut known_rules = Vec::default();
       loop {
+        let mut resolved_rules = Vec::default();
+        let mut unresolved_rules = Vec::default();
+
         errors = Vec::default();
-        rules = Vec::default();
-        for (index, rule) in c.rules.iter().enumerate() {
-          if let Rule::Unknown { range, .. } = rule {
-            match self.resolve_rule(*range, false) {
-              Ok(rule) => rules.push((index, rule)),
-              Err(_) => match self.resolve_rule(*range, true) {
-                Ok(rule) => rules.push((index, rule)),
-                Err(mut error) => errors.append(&mut error),
-              },
-            }
+        for unknown_rule in unknown_rules {
+          match self.resolve_rule(unknown_rule.range, false) {
+            Ok(rule) => resolved_rules.push((unknown_rule.index, rule)),
+            Err(_) => match self.resolve_rule(unknown_rule.range, true) {
+              Ok(rule) => resolved_rules.push((unknown_rule.index, rule)),
+              Err(mut error) => {
+                errors.append(&mut error);
+                unresolved_rules.push(unknown_rule);
+              }
+            },
           }
         }
-        if rules.is_empty() {
+        if resolved_rules.is_empty() {
           break;
         }
-        for (index, rule) in rules {
-          c.rules[index] = rule;
+        for (_, rule) in &resolved_rules {
+          self.register_rule(&rule);
         }
+        known_rules.append(&mut resolved_rules);
+        unknown_rules = unresolved_rules;
       }
       self.errors.append(&mut errors);
+      known_rules.sort_by(|(a, _), (b, _)| b.partial_cmp(a).unwrap());
+      for (index, rule) in known_rules {
+        c.rules.insert(index, rule);
+      }
     }
 
     if !self.errors.is_empty() {
@@ -508,11 +529,11 @@ impl<'a> Parser<'a> {
     let rule = parser
       .parse_rule(parse_group_rule)
       .map_err(|err| vec![err])?;
-    if !parser.unknown_rules.is_empty() {
+    if !parser.unknown_rule_idents.is_empty() {
       Err(
         #[cfg(feature = "ast-span")]
         parser
-          .unknown_rules
+          .unknown_rule_idents
           .into_iter()
           .map(|(ident, span)| Error::PARSER {
             position: Position {
@@ -529,7 +550,7 @@ impl<'a> Parser<'a> {
           .collect(),
         #[cfg(not(feature = "ast-span"))]
         parser
-          .unknown_rules
+          .unknown_rule_idents
           .into_iter()
           .map(|ident| Error::PARSER {
             msg: ErrorMsg {
@@ -540,7 +561,6 @@ impl<'a> Parser<'a> {
           .collect(),
       )
     } else {
-      self.register_rule(&rule);
       Ok(rule)
     }
   }
@@ -1455,12 +1475,12 @@ impl<'a> Parser<'a> {
 
             #[cfg(feature = "ast-span")]
             if !is_generic_param && !self.typenames.contains(ident.ident) {
-              self.unknown_rules.push((ident.ident, ident.span));
+              self.unknown_rule_idents.push((ident.ident, ident.span));
             }
 
             #[cfg(not(feature = "ast-span"))]
             if !is_generic_param && !self.typenames.contains(ident.ident) {
-              self.unknown_rules.push(ident.ident);
+              self.unknown_rule_idents.push(ident.ident);
             }
           }
 
@@ -1488,12 +1508,12 @@ impl<'a> Parser<'a> {
 
           #[cfg(feature = "ast-span")]
           if !is_generic_param && !self.typenames.contains(ident.ident) {
-            self.unknown_rules.push((ident.ident, ident.span));
+            self.unknown_rule_idents.push((ident.ident, ident.span));
           }
 
           #[cfg(not(feature = "ast-span"))]
           if !is_generic_param && !self.typenames.contains(ident.ident) {
-            self.unknown_rules.push(ident.ident);
+            self.unknown_rule_idents.push(ident.ident);
           }
         }
 
@@ -2253,7 +2273,7 @@ impl<'a> Parser<'a> {
           if self.groupnames.contains(name.ident) || matches!(name.socket, Some(SocketPlug::GROUP))
           {
             if name.socket == None {
-              self.unknown_rules.pop();
+              self.unknown_rule_idents.pop();
             }
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
@@ -2275,7 +2295,7 @@ impl<'a> Parser<'a> {
           if self.groupnames.contains(name.ident) || matches!(name.socket, Some(SocketPlug::GROUP))
           {
             if name.socket == None {
-              self.unknown_rules.pop();
+              self.unknown_rule_idents.pop();
             }
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
@@ -2413,7 +2433,7 @@ impl<'a> Parser<'a> {
             }
 
             if name.socket == None {
-              self.unknown_rules.pop();
+              self.unknown_rule_idents.pop();
             }
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
@@ -2443,7 +2463,7 @@ impl<'a> Parser<'a> {
             }
 
             if name.socket == None {
-              self.unknown_rules.pop();
+              self.unknown_rule_idents.pop();
             }
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
