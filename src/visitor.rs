@@ -188,6 +188,7 @@ where
   match rule {
     Rule::Type { rule, .. } => visitor.visit_type_rule(rule),
     Rule::Group { rule, .. } => visitor.visit_group_rule(rule),
+    Rule::Unknown { rule, .. } => walk_rule(visitor, rule),
   }
 }
 
