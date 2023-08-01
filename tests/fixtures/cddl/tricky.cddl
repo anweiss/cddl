@@ -1,0 +1,11 @@
+; These all become type rules.
+a = ( b )
+b = ( c )
+c = d
+d = tstr
+
+; These all become group rules.
+e = ( f )
+f = ( g )
+g = h
+h = ()

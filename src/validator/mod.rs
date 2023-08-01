@@ -462,6 +462,7 @@ pub fn generic_params_from_rule<'a>(rule: &Rule<'a>) -> Option<Vec<&'a str>> {
       .generic_params
       .as_ref()
       .map(|gp| gp.params.iter().map(|gp| gp.param.ident).collect()),
+    Rule::Unknown { rule, .. } => generic_params_from_rule(rule),
   }
 }
 
@@ -519,6 +520,7 @@ pub fn type_choices_from_group_choice<'a>(
               cddl,
               &GroupChoice::new(vec![rule.entry.clone()]),
             )),
+            _ => {}
           }
         }
       }

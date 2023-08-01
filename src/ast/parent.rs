@@ -235,6 +235,9 @@ impl<'a, 'b: 'a> Visitor<'a, 'b, Error> for ParentVisitor<'a, 'b> {
 
         self.visit_type_rule(rule)?;
       }
+      Rule::Unknown { rule, .. } => {
+        self.visit_rule(rule)?;
+      }
     }
 
     Ok(())
@@ -910,6 +913,7 @@ mod tests {
   fn generic_args_parent_is_type2() -> Result<()> {
     let cddl = cddl_from_str(
       r#"
+        message<name, value> = {}
         messages = message<"reboot", "now"> / message<"sleep", 1..100>
       "#,
       true,
@@ -936,6 +940,7 @@ mod tests {
   fn generic_arg_parent_is_generic_args() -> Result<()> {
     let cddl = cddl_from_str(
       r#"
+        message<name, value> = {}
         messages = message<"reboot", "now"> / message<"sleep", 1..100>
       "#,
       true,

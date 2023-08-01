@@ -20,13 +20,14 @@ use displaydoc::Display;
 #[cfg(feature = "std")]
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 #[cfg(feature = "std")]
-use std::{borrow::Cow, collections::BTreeSet};
+use std::{borrow::Cow, collections::BTreeSet, rc::Rc};
 
 #[cfg(not(feature = "std"))]
 use alloc::{
   borrow::{Cow, ToOwned},
   boxed::Box,
   collections::BTreeSet,
+  rc::Rc,
   string::{String, ToString},
   vec::Vec,
 };
@@ -52,12 +53,14 @@ pub struct Parser<'a> {
   parser_position: Position,
   /// Vec of collected parsing errors
   pub errors: Vec<Error>,
-  #[cfg(feature = "ast-span")]
-  visited_rule_idents: Vec<(&'a str, Span)>,
-  #[cfg(not(feature = "ast-span"))]
-  visited_rule_idents: Vec<&'a str>,
   current_rule_generic_param_idents: Option<Vec<&'a str>>,
-  typenames: BTreeSet<&'a str>,
+  typenames: Rc<BTreeSet<&'a str>>,
+  groupnames: Rc<BTreeSet<&'a str>>,
+  #[cfg(feature = "ast-span")]
+  unknown_rules: Vec<(&'a str, Span)>,
+  #[cfg(not(feature = "ast-span"))]
+  unknown_rules: Vec<&'a str>,
+  is_guaranteed: bool,
 }
 
 /// Parsing error types
@@ -88,6 +91,9 @@ pub enum Error {
   #[displaydoc("incremental parsing error")]
   /// Incremental parsing error
   INCREMENTAL,
+  #[displaydoc("defer parsing error")]
+  /// Incremental parsing error
+  GROUP,
 }
 
 #[cfg(feature = "std")]
@@ -120,9 +126,8 @@ impl<'a> Parser<'a> {
       peek_lexer_position: Position::default(),
       #[cfg(feature = "ast-span")]
       parser_position: Position::default(),
-      visited_rule_idents: Vec::default(),
       current_rule_generic_param_idents: None,
-      typenames: BTreeSet::from([
+      typenames: Rc::new(BTreeSet::from([
         "any",
         "uint",
         "nint",
@@ -163,7 +168,10 @@ impl<'a> Parser<'a> {
         "nil",
         "null",
         "undefined",
-      ]),
+      ])),
+      groupnames: Rc::new(BTreeSet::default()),
+      unknown_rules: Vec::default(),
+      is_guaranteed: false,
     };
 
     p.next_token()?;
@@ -377,6 +385,14 @@ impl<'a> Parser<'a> {
     Ok(())
   }
 
+  fn register_rule(&mut self, rule: &Rule<'a>) {
+    match &rule {
+      Rule::Type { rule, .. } => Rc::make_mut(&mut self.typenames).insert(rule.name.ident),
+      Rule::Group { rule, .. } => Rc::make_mut(&mut self.groupnames).insert(rule.name.ident),
+      _ => unreachable!(),
+    };
+  }
+
   /// Parses into a `CDDL` AST
   pub fn parse_cddl(&mut self) -> Result<CDDL<'a>> {
     #[cfg(not(feature = "ast-comments"))]
@@ -389,7 +405,8 @@ impl<'a> Parser<'a> {
     };
 
     while self.cur_token != Token::EOF {
-      match self.parse_rule() {
+      let begin_rule_range = self.lexer_position.range.0;
+      match self.parse_rule(false) {
         Ok(r) => {
           let rule_exists =
             |existing_rule: &Rule| r.name() == existing_rule.name() && !r.is_choice_alternate();
@@ -410,7 +427,20 @@ impl<'a> Parser<'a> {
             continue;
           }
 
-          c.rules.push(r);
+          if !self.unknown_rules.is_empty() {
+            if self.is_guaranteed {
+              self.register_rule(&r);
+            }
+            c.rules.push(Rule::Unknown {
+              rule: Box::new(r),
+              range: (begin_rule_range, self.lexer_position.range.1),
+            });
+            self.unknown_rules = Vec::default();
+          } else {
+            self.register_rule(&r);
+            c.rules.push(r);
+          }
+          self.is_guaranteed = false;
         }
         Err(Error::INCREMENTAL) => {
           if !self.cur_token_is(Token::EOF) {
@@ -421,50 +451,34 @@ impl<'a> Parser<'a> {
       }
     }
 
-    #[cfg(feature = "ast-span")]
-    for (rule, span) in self.visited_rule_idents.iter() {
-      if !c.rules.iter().any(|r| r.name() == *rule) {
-        self.errors.push(Error::PARSER {
-          position: Position {
-            column: 0,
-            index: span.0,
-            line: span.2,
-            range: (span.0, span.1),
-          },
-          msg: ErrorMsg {
-            short: format!("missing definition for rule {}", rule),
-            extended: None,
-          },
-        })
+    // Try to specialize unknown rules until the set of them stabilizes.
+    {
+      let mut errors;
+      let mut rules;
+      loop {
+        errors = Vec::default();
+        rules = Vec::default();
+        for (index, rule) in c.rules.iter().enumerate() {
+          if let Rule::Unknown { range, .. } = rule {
+            match self.resolve_rule(*range, false) {
+              Ok(rule) => rules.push((index, rule)),
+              Err(_) => match self.resolve_rule(*range, true) {
+                Ok(rule) => rules.push((index, rule)),
+                Err(mut error) => errors.append(&mut error),
+              },
+            }
+          }
+        }
+        if rules.is_empty() {
+          break;
+        }
+        for (index, rule) in rules {
+          c.rules[index] = rule;
+        }
       }
+      self.errors.append(&mut errors);
     }
 
-    #[cfg(not(feature = "ast-span"))]
-    for rule in self.visited_rule_idents.iter() {
-      if !c.rules.iter().any(|r| r.name() == *rule) {
-        self.errors.push(Error::PARSER {
-          msg: ErrorMsg {
-            short: format!("missing definition for rule {}", rule),
-            extended: None,
-          },
-        })
-      }
-    }
-
-    // TODO: implement second pass over parenthesized type rules whose contents
-    // are Type2::Typename, and if the identifier refers to another group rule
-    // per the match rules in Appendix C, refactor rule into a group rule:
-    //
-    // "A rule defines a name for a type expression (production "type") or for a
-    // group expression (production "grpent"), with the intention that the
-    // semantics does not change when the name is replaced by its (parenthesized
-    // if needed) definition.  Note that whether the name defined by a rule
-    // stands for a type or a group isn't always determined by syntax alone:
-    // e.g., "a = b" can make "a" a type if "b" is a type, or a group if "b" is
-    // a group.  More subtly, in "a = (b)", "a" may be used as a type if "b" is
-    // a type, or as a group both when "b" is a group and when "b" is a type (a
-    // good convention to make the latter case stand out to the human reader is
-    // to write "a = (b,)")."
     if !self.errors.is_empty() {
       return Err(Error::INCREMENTAL);
     }
@@ -482,8 +496,57 @@ impl<'a> Parser<'a> {
     Ok(c)
   }
 
+  fn resolve_rule(
+    &mut self,
+    range: (usize, usize),
+    parse_group_rule: bool,
+  ) -> result::Result<Rule<'a>, Vec<Error>> {
+    let tokens = Box::new(lexer::Lexer::new(&self.str_input[range.0..range.1]).iter());
+    let mut parser = Parser::new(self.str_input, tokens).map_err(|err| vec![err])?;
+    parser.groupnames = self.groupnames.clone();
+    parser.typenames = self.typenames.clone();
+    let rule = parser
+      .parse_rule(parse_group_rule)
+      .map_err(|err| vec![err])?;
+    if !parser.unknown_rules.is_empty() {
+      Err(
+        #[cfg(feature = "ast-span")]
+        parser
+          .unknown_rules
+          .into_iter()
+          .map(|(ident, span)| Error::PARSER {
+            position: Position {
+              column: 0,
+              index: span.0,
+              line: span.2,
+              range: (span.0 + range.0, span.1 + range.0),
+            },
+            msg: ErrorMsg {
+              short: format!("missing definition for rule {}", ident),
+              extended: None,
+            },
+          })
+          .collect(),
+        #[cfg(not(feature = "ast-span"))]
+        parser
+          .unknown_rules
+          .into_iter()
+          .map(|ident| Error::PARSER {
+            msg: ErrorMsg {
+              short: format!("missing definition for rule {}", ident),
+              extended: None,
+            },
+          })
+          .collect(),
+      )
+    } else {
+      self.register_rule(&rule);
+      Ok(rule)
+    }
+  }
+
   #[allow(missing_docs)]
-  pub fn parse_rule(&mut self) -> Result<Rule<'a>> {
+  pub fn parse_rule(&mut self, parse_group_rule: bool) -> Result<Rule<'a>> {
     #[cfg(feature = "ast-span")]
     let begin_rule_range = self.lexer_position.range.0;
     #[cfg(feature = "ast-span")]
@@ -607,6 +670,7 @@ impl<'a> Parser<'a> {
     // as group rule
     if matches!(self.cur_token, Token::IDENT(_, Some(SocketPlug::GROUP)))
       || is_group_choice_alternate
+      || parse_group_rule
     {
       let ge = self.parse_grpent(true)?;
 
@@ -623,6 +687,7 @@ impl<'a> Parser<'a> {
       );
 
       self.current_rule_generic_param_idents = None;
+      self.is_guaranteed = true;
 
       return Ok(Rule::Group {
         rule: Box::from(GroupRule {
@@ -643,85 +708,6 @@ impl<'a> Parser<'a> {
     }
 
     match self.cur_token {
-      // Check for an occurrence indicator of uint followed by an asterisk '*'
-      Token::VALUE(token::Value::UINT(_)) => {
-        if self.peek_token_is(&Token::ASTERISK) {
-          let ge = self.parse_grpent(true)?;
-
-          #[cfg(feature = "ast-comments")]
-          let comments_after_rule = self.collect_comments()?;
-          #[cfg(not(feature = "ast-comments"))]
-          self.advance_newline()?;
-
-          #[cfg(feature = "ast-span")]
-          let span = (
-            begin_rule_range,
-            self.parser_position.range.1,
-            begin_rule_line,
-          );
-
-          self.current_rule_generic_param_idents = None;
-
-          Ok(Rule::Group {
-            rule: Box::from(GroupRule {
-              name: ident,
-              generic_params: gp,
-              is_group_choice_alternate,
-              entry: ge,
-              #[cfg(feature = "ast-comments")]
-              comments_before_assigng: comments_before_assign,
-              #[cfg(feature = "ast-comments")]
-              comments_after_assigng: comments_after_assign,
-            }),
-            #[cfg(feature = "ast-comments")]
-            comments_after_rule,
-            #[cfg(feature = "ast-span")]
-            span,
-          })
-        } else {
-          #[cfg(feature = "ast-comments")]
-          let mut t = self.parse_type(None)?;
-          #[cfg(not(feature = "ast-comments"))]
-          let t = self.parse_type(None)?;
-
-          #[cfg(feature = "ast-span")]
-          let span = (
-            begin_rule_range,
-            self.parser_position.range.1,
-            begin_rule_line,
-          );
-
-          #[cfg(feature = "ast-comments")]
-          let comments_after_rule = if let Some(comments) = t.split_comments_after_type() {
-            Some(comments)
-          } else {
-            self.collect_comments()?
-          };
-
-          #[cfg(not(feature = "ast-comments"))]
-          self.advance_newline()?;
-
-          self.current_rule_generic_param_idents = None;
-          self.typenames.insert(ident.ident);
-
-          Ok(Rule::Type {
-            rule: TypeRule {
-              name: ident,
-              generic_params: gp,
-              is_type_choice_alternate,
-              value: t,
-              #[cfg(feature = "ast-comments")]
-              comments_before_assignt: comments_before_assign,
-              #[cfg(feature = "ast-comments")]
-              comments_after_assignt: comments_after_assign,
-            },
-            #[cfg(feature = "ast-comments")]
-            comments_after_rule,
-            #[cfg(feature = "ast-span")]
-            span,
-          })
-        }
-      }
       Token::LPAREN | Token::ASTERISK | Token::ONEORMORE | Token::OPTIONAL => {
         #[cfg(feature = "ast-span")]
         let begin_pt_range = self.lexer_position.range.0;
@@ -738,10 +724,14 @@ impl<'a> Parser<'a> {
 
         // If a group entry is an inline group with no leading occurrence
         // indicator, and its group has only a single element that is not
-        // preceded by an occurrence indicator nor member key, treat it as a
-        // parenthesized type, subsequently parsing the remaining type and
-        // returning the type rule. This is one of the few situations where
-        // `clone` is required
+        // preceded by an occurrence indicator nor member key, then there are
+        // two valid interpretations: either it's a parenthesized inline group
+        // with a type or a parenthesized type. Both cases are interpreted in
+        // the same way, but according to the BNF, the parenthesized type takes
+        // priority.
+        //
+        // A priori, we coerce this group into a parenthesized type. This is one
+        // of the few situations where `clone` is required
         if let GroupEntry::InlineGroup {
           occur: None,
           group,
@@ -811,7 +801,6 @@ impl<'a> Parser<'a> {
                         }
 
                         self.current_rule_generic_param_idents = None;
-                        self.typenames.insert(ident.ident);
 
                         return Ok(Rule::Type {
                           rule: TypeRule {
@@ -855,7 +844,6 @@ impl<'a> Parser<'a> {
                         }
 
                         self.current_rule_generic_param_idents = None;
-                        self.typenames.insert(ident.ident);
 
                         return Ok(Rule::Type {
                           rule: TypeRule {
@@ -947,7 +935,15 @@ impl<'a> Parser<'a> {
         );
 
         self.current_rule_generic_param_idents = None;
-        self.typenames.insert(ident.ident);
+
+        if t.type_choices.len() > 1
+          || !matches!(
+            t.type_choices[0].type1.type2,
+            Type2::ParenthesizedType { .. } | Type2::Typename { .. }
+          )
+        {
+          self.is_guaranteed = true;
+        }
 
         Ok(Rule::Type {
           rule: TypeRule {
@@ -1451,6 +1447,23 @@ impl<'a> Parser<'a> {
           #[cfg(feature = "ast-span")]
           let end_type2_range = self.parser_position.range.1;
 
+          if ident.socket == None {
+            let mut is_generic_param = false;
+            if let Some(idents) = &self.current_rule_generic_param_idents {
+              is_generic_param = idents.iter().any(|&id| id == ident.ident);
+            }
+
+            #[cfg(feature = "ast-span")]
+            if !is_generic_param && !self.typenames.contains(ident.ident) {
+              self.unknown_rules.push((ident.ident, ident.span));
+            }
+
+            #[cfg(not(feature = "ast-span"))]
+            if !is_generic_param && !self.typenames.contains(ident.ident) {
+              self.unknown_rules.push(ident.ident);
+            }
+          }
+
           return Ok(Type2::Typename {
             ident,
             generic_args: Some(ga),
@@ -1465,8 +1478,27 @@ impl<'a> Parser<'a> {
           self.parser_position.line = self.lexer_position.line;
         }
 
+        let ident = self.identifier_from_ident_token(ident, *socket);
+
+        if ident.socket == None {
+          let mut is_generic_param = false;
+          if let Some(idents) = &self.current_rule_generic_param_idents {
+            is_generic_param = idents.iter().any(|&id| id == ident.ident);
+          }
+
+          #[cfg(feature = "ast-span")]
+          if !is_generic_param && !self.typenames.contains(ident.ident) {
+            self.unknown_rules.push((ident.ident, ident.span));
+          }
+
+          #[cfg(not(feature = "ast-span"))]
+          if !is_generic_param && !self.typenames.contains(ident.ident) {
+            self.unknown_rules.push(ident.ident);
+          }
+        }
+
         Ok(Type2::Typename {
-          ident: self.identifier_from_ident_token(ident, *socket),
+          ident,
           generic_args: None,
           #[cfg(feature = "ast-span")]
           span: (
@@ -2218,21 +2250,11 @@ impl<'a> Parser<'a> {
 
         #[cfg(feature = "ast-span")]
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
-          if !self.typenames.contains(name.ident) {
-            if name.socket.is_none()
-              && token::lookup_ident(name.ident)
-                .in_standard_prelude()
-                .is_none()
-            {
-              if let Some(params) = &self.current_rule_generic_param_idents {
-                if !params.iter().any(|&p| p == name.ident) {
-                  self.visited_rule_idents.push((name.ident, name.span));
-                }
-              } else {
-                self.visited_rule_idents.push((name.ident, name.span));
-              }
+          if self.groupnames.contains(name.ident) || matches!(name.socket, Some(SocketPlug::GROUP))
+          {
+            if name.socket == None {
+              self.unknown_rules.pop();
             }
-
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
                 occur,
@@ -2250,21 +2272,11 @@ impl<'a> Parser<'a> {
 
         #[cfg(not(feature = "ast-span"))]
         if let Some((name, generic_args)) = entry_type.groupname_entry() {
-          if !self.typenames.contains(name.ident) {
-            if name.socket.is_none()
-              && token::lookup_ident(name.ident)
-                .in_standard_prelude()
-                .is_none()
-            {
-              if let Some(params) = &self.current_rule_generic_param_idents {
-                if !params.iter().any(|&p| p == name.ident) {
-                  self.visited_rule_idents.push(name.ident);
-                }
-              } else {
-                self.visited_rule_idents.push(name.ident);
-              }
+          if self.groupnames.contains(name.ident) || matches!(name.socket, Some(SocketPlug::GROUP))
+          {
+            if name.socket == None {
+              self.unknown_rules.pop();
             }
-
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
                 occur,
@@ -2292,40 +2304,6 @@ impl<'a> Parser<'a> {
         } else {
           comments_after_type_or_group
         };
-
-        #[cfg(feature = "ast-span")]
-        if let Some((ident, _, _)) = entry_type.groupname_entry() {
-          if ident.socket.is_none()
-            && token::lookup_ident(ident.ident)
-              .in_standard_prelude()
-              .is_none()
-          {
-            if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == ident.ident) {
-                self.visited_rule_idents.push((ident.ident, ident.span));
-              }
-            } else {
-              self.visited_rule_idents.push((ident.ident, ident.span));
-            }
-          }
-        }
-
-        #[cfg(not(feature = "ast-span"))]
-        if let Some((ident, _)) = entry_type.groupname_entry() {
-          if ident.socket.is_none()
-            && token::lookup_ident(ident.ident)
-              .in_standard_prelude()
-              .is_none()
-          {
-            if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == ident.ident) {
-                self.visited_rule_idents.push(ident.ident);
-              }
-            } else {
-              self.visited_rule_idents.push(ident.ident);
-            }
-          }
-        }
 
         Ok(GroupEntry::ValueMemberKey {
           ge: Box::from(ValueMemberKeyEntry {
@@ -2383,40 +2361,6 @@ impl<'a> Parser<'a> {
           span.1 = self.lexer_position.range.1;
         }
 
-        #[cfg(feature = "ast-span")]
-        if let Some((ident, _, _)) = entry_type.groupname_entry() {
-          if ident.socket.is_none()
-            && token::lookup_ident(ident.ident)
-              .in_standard_prelude()
-              .is_none()
-          {
-            if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == ident.ident) {
-                self.visited_rule_idents.push((ident.ident, ident.span));
-              }
-            } else {
-              self.visited_rule_idents.push((ident.ident, ident.span));
-            }
-          }
-        }
-
-        #[cfg(not(feature = "ast-span"))]
-        if let Some((ident, _)) = entry_type.groupname_entry() {
-          if ident.socket.is_none()
-            && token::lookup_ident(ident.ident)
-              .in_standard_prelude()
-              .is_none()
-          {
-            if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == ident.ident) {
-                self.visited_rule_idents.push(ident.ident);
-              }
-            } else {
-              self.visited_rule_idents.push(ident.ident);
-            }
-          }
-        }
-
         Ok(GroupEntry::ValueMemberKey {
           ge: Box::from(ValueMemberKeyEntry {
             occur,
@@ -2458,7 +2402,8 @@ impl<'a> Parser<'a> {
 
         #[cfg(feature = "ast-span")]
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
-          if !self.typenames.contains(name.ident) {
+          if self.groupnames.contains(name.ident) || matches!(name.socket, Some(SocketPlug::GROUP))
+          {
             if generic_args.is_some() && self.peek_token_is(&Token::LANGLEBRACKET) {
               while !self.peek_token_is(&Token::RANGLEBRACKET) {
                 self.next_token()?;
@@ -2467,20 +2412,9 @@ impl<'a> Parser<'a> {
               self.next_token()?;
             }
 
-            if name.socket.is_none()
-              && token::lookup_ident(name.ident)
-                .in_standard_prelude()
-                .is_none()
-            {
-              if let Some(params) = &self.current_rule_generic_param_idents {
-                if !params.iter().any(|&p| p == name.ident) {
-                  self.visited_rule_idents.push((name.ident, name.span));
-                }
-              } else {
-                self.visited_rule_idents.push((name.ident, name.span));
-              }
+            if name.socket == None {
+              self.unknown_rules.pop();
             }
-
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
                 occur,
@@ -2498,7 +2432,8 @@ impl<'a> Parser<'a> {
 
         #[cfg(not(feature = "ast-span"))]
         if let Some((name, generic_args)) = entry_type.groupname_entry() {
-          if !self.typenames.contains(name.ident) {
+          if self.groupnames.contains(name.ident) || matches!(name.socket, Some(SocketPlug::GROUP))
+          {
             if generic_args.is_some() && self.peek_token_is(&Token::LANGLEBRACKET) {
               while !self.peek_token_is(&Token::RANGLEBRACKET) {
                 self.next_token()?;
@@ -2507,20 +2442,9 @@ impl<'a> Parser<'a> {
               self.next_token()?;
             }
 
-            if name.socket.is_none()
-              && token::lookup_ident(name.ident)
-                .in_standard_prelude()
-                .is_none()
-            {
-              if let Some(params) = &self.current_rule_generic_param_idents {
-                if !params.iter().any(|&p| p == name.ident) {
-                  self.visited_rule_idents.push(name.ident);
-                }
-              } else {
-                self.visited_rule_idents.push(name.ident);
-              }
+            if name.socket == None {
+              self.unknown_rules.pop();
             }
-
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
                 occur,
@@ -2532,40 +2456,6 @@ impl<'a> Parser<'a> {
               #[cfg(feature = "ast-comments")]
               trailing_comments,
             });
-          }
-        }
-
-        #[cfg(feature = "ast-span")]
-        if let Some((ident, _, _)) = entry_type.groupname_entry() {
-          if ident.socket.is_none()
-            && token::lookup_ident(ident.ident)
-              .in_standard_prelude()
-              .is_none()
-          {
-            if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == ident.ident) {
-                self.visited_rule_idents.push((ident.ident, ident.span));
-              }
-            } else {
-              self.visited_rule_idents.push((ident.ident, ident.span));
-            }
-          }
-        }
-
-        #[cfg(not(feature = "ast-span"))]
-        if let Some((ident, _)) = entry_type.groupname_entry() {
-          if ident.socket.is_none()
-            && token::lookup_ident(ident.ident)
-              .in_standard_prelude()
-              .is_none()
-          {
-            if let Some(params) = &self.current_rule_generic_param_idents {
-              if !params.iter().any(|&p| p == ident.ident) {
-                self.visited_rule_idents.push(ident.ident);
-              }
-            } else {
-              self.visited_rule_idents.push(ident.ident);
-            }
           }
         }
 
