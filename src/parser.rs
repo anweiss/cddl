@@ -488,7 +488,7 @@ impl<'a> Parser<'a> {
           break;
         }
         for (_, rule) in &resolved_rules {
-          self.register_rule(&rule);
+          self.register_rule(rule);
         }
         known_rules.append(&mut resolved_rules);
         unknown_rules = unresolved_rules;
@@ -2272,7 +2272,7 @@ impl<'a> Parser<'a> {
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
           if self.groupnames.contains(name.ident) || matches!(name.socket, Some(SocketPlug::GROUP))
           {
-            if name.socket == None {
+            if name.socket.is_none() {
               self.unknown_rule_idents.pop();
             }
             return Ok(GroupEntry::TypeGroupname {
@@ -2432,7 +2432,7 @@ impl<'a> Parser<'a> {
               self.next_token()?;
             }
 
-            if name.socket == None {
+            if name.socket.is_none() {
               self.unknown_rule_idents.pop();
             }
             return Ok(GroupEntry::TypeGroupname {
