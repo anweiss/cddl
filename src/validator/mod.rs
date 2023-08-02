@@ -1101,6 +1101,7 @@ pub enum ArrayItemToken<'a> {
   Range(&'a Type2<'a>, &'a Type2<'a>, bool),
   Group(&'a Group<'a>),
   Identifier(&'a Identifier<'a>),
+  TaggedData(&'a Type2<'a>),
 }
 
 #[allow(missing_docs)]
@@ -1139,6 +1140,16 @@ impl ArrayItemToken<'_> {
           format!("expected type {} at index {}", ident, idx)
         } else {
           format!("expected type {}", ident)
+        }
+      }
+      ArrayItemToken::TaggedData(tagged_data) => {
+        if let Some(idx) = idx {
+          format!(
+            "expected tagged data tag {:?} at index {}",
+            tagged_data, idx
+          )
+        } else {
+          format!("expected tagged data {:?}", tagged_data)
         }
       }
     }

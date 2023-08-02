@@ -417,6 +417,7 @@ impl<'a> JSONValidator<'a> {
                 }
                 ArrayItemToken::Group(group) => jv.visit_group(group)?,
                 ArrayItemToken::Identifier(ident) => jv.visit_identifier(ident)?,
+                _ => (),
               }
 
               if self.is_multi_type_choice && jv.errors.is_empty() {
@@ -462,6 +463,7 @@ impl<'a> JSONValidator<'a> {
                 }
                 ArrayItemToken::Group(group) => jv.visit_group(group)?,
                 ArrayItemToken::Identifier(ident) => jv.visit_identifier(ident)?,
+                _ => (),
               }
 
               self.errors.append(&mut jv.errors);
@@ -1169,8 +1171,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
         }
         Type2::Array { group, .. } => {
           if let Value::Array(_) = &self.json {
-            let entry_counts = entry_counts_from_group(self.cddl, group);
-            self.entry_counts = Some(entry_counts);
+            self.entry_counts = Some(entry_counts_from_group(self.cddl, group));
             self.visit_type2(controller)?;
             self.entry_counts = None;
             return Ok(());
@@ -1582,8 +1583,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
             return Ok(());
           }
 
-          let entry_counts = entry_counts_from_group(self.cddl, group);
-          self.entry_counts = Some(entry_counts);
+          self.entry_counts = Some(entry_counts_from_group(self.cddl, group));
           self.visit_group(group)?;
           self.entry_counts = None;
 

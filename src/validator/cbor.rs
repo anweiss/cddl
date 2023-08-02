@@ -418,6 +418,7 @@ impl<'a> CBORValidator<'a> {
                 }
                 ArrayItemToken::Group(group) => cv.visit_group(group)?,
                 ArrayItemToken::Identifier(ident) => cv.visit_identifier(ident)?,
+                ArrayItemToken::TaggedData(tagged_data) => cv.visit_type2(tagged_data)?,
               }
 
               if self.is_multi_type_choice && cv.errors.is_empty() {
@@ -471,6 +472,7 @@ impl<'a> CBORValidator<'a> {
                   }
                   ArrayItemToken::Group(group) => cv.visit_group(group)?,
                   ArrayItemToken::Identifier(ident) => cv.visit_identifier(ident)?,
+                  ArrayItemToken::TaggedData(tagged_data) => cv.visit_type2(tagged_data)?,
                 }
 
                 self.errors.append(&mut cv.errors);
@@ -1073,8 +1075,7 @@ where
           }
           Type2::Array { group, .. } => {
             if let Value::Array(_) = &self.cbor {
-              let entry_counts = entry_counts_from_group(self.cddl, group);
-              self.entry_counts = Some(entry_counts);
+              self.entry_counts = Some(entry_counts_from_group(self.cddl, group));
               self.visit_type2(controller)?;
               self.entry_counts = None;
               return Ok(());
@@ -1728,8 +1729,7 @@ where
             return Ok(());
           }
 
-          let entry_counts = entry_counts_from_group(self.cddl, group);
-          self.entry_counts = Some(entry_counts);
+          self.entry_counts = Some(entry_counts_from_group(self.cddl, group));
           self.visit_group(group)?;
           self.entry_counts = None;
 
@@ -1753,8 +1753,7 @@ where
         Value::Map(m) if self.is_member_key => {
           let current_location = self.cbor_location.clone();
 
-          let entry_counts = entry_counts_from_group(self.cddl, group);
-          self.entry_counts = Some(entry_counts);
+          self.entry_counts = Some(entry_counts_from_group(self.cddl, group));
 
           for (k, v) in m.iter() {
             #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
@@ -2030,6 +2029,7 @@ where
           self.errors.append(&mut cv.errors);
           Ok(())
         }
+        Value::Array(_) => self.validate_array_items(&ArrayItemToken::TaggedData(t2)),
         _ => {
           if let Some(tag) = tag {
             self.add_error(format!(
@@ -3865,6 +3865,36 @@ mod tests {
         base16::decode("BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD").unwrap(),
       ),
     ]);
+
+    let cddl = cddl.unwrap();
+
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    cv.validate()?;
+
+    Ok(())
+  }
+
+  #[test]
+  fn tagged_data_in_array_validation() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    use ciborium::value::Value;
+
+    let cddl = indoc!(
+      r#"
+        start = [ * help ]
+
+        help = #6.123(bstr)
+      "#
+    );
+
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let cbor = Value::Array(vec![Value::Tag(
+      123,
+      Box::from(Value::Bytes(base16::decode("00").unwrap())),
+    )]);
 
     let cddl = cddl.unwrap();
 
