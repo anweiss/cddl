@@ -205,6 +205,7 @@ pub struct JSONValidator<'a> {
   array_errors: Option<HashMap<usize, Vec<ValidationError>>>,
   is_colon_shortcut_present: bool,
   is_root: bool,
+  is_multi_type_choice_type_rule_validating_array: bool,
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   enabled_features: Option<&'a [&'a str]>,
@@ -257,6 +258,7 @@ impl<'a> JSONValidator<'a> {
       array_errors: None,
       is_colon_shortcut_present: false,
       is_root: false,
+      is_multi_type_choice_type_rule_validating_array: false,
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
@@ -295,6 +297,7 @@ impl<'a> JSONValidator<'a> {
       array_errors: None,
       is_colon_shortcut_present: false,
       is_root: false,
+      is_multi_type_choice_type_rule_validating_array: false,
     }
   }
 
@@ -330,6 +333,7 @@ impl<'a> JSONValidator<'a> {
       array_errors: None,
       is_colon_shortcut_present: false,
       is_root: false,
+      is_multi_type_choice_type_rule_validating_array: false,
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
@@ -368,6 +372,7 @@ impl<'a> JSONValidator<'a> {
       array_errors: None,
       is_colon_shortcut_present: false,
       is_root: false,
+      is_multi_type_choice_type_rule_validating_array: false,
     }
   }
 
@@ -603,6 +608,10 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
     let type_choice_alternates = type_choice_alternates_from_ident(self.cddl, &tr.name);
     if !type_choice_alternates.is_empty() {
       self.is_multi_type_choice = true;
+
+      if self.json.is_array() {
+        self.is_multi_type_choice_type_rule_validating_array = true;
+      }
     }
 
     let error_count = self.errors.len();
@@ -616,6 +625,10 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
 
         return Ok(());
       }
+    }
+
+    if tr.value.type_choices.len() > 1 && self.json.is_array() {
+      self.is_multi_type_choice_type_rule_validating_array = true;
     }
 
     self.visit_type(&tr.value)
@@ -665,10 +678,13 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
     }
 
     let initial_error_count = self.errors.len();
+
     for type_choice in t.type_choices.iter() {
       // If validating an array whose elements are type choices (i.e. [ 1* tstr
       // / integer ]), collect all errors and filter after the fact
-      if matches!(self.json, Value::Array(_)) {
+      if matches!(self.json, Value::Array(_))
+        && !self.is_multi_type_choice_type_rule_validating_array
+      {
         let error_count = self.errors.len();
 
         self.visit_type_choice(type_choice)?;

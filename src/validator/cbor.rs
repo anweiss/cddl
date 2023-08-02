@@ -196,6 +196,7 @@ pub struct CBORValidator<'a> {
   array_errors: Option<HashMap<usize, Vec<ValidationError>>>,
   is_colon_shortcut_present: bool,
   is_root: bool,
+  is_multi_type_choice_type_rule_validating_array: bool,
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   enabled_features: Option<&'a [&'a str]>,
@@ -249,6 +250,7 @@ impl<'a> CBORValidator<'a> {
       array_errors: None,
       is_colon_shortcut_present: false,
       is_root: false,
+      is_multi_type_choice_type_rule_validating_array: false,
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
@@ -288,6 +290,7 @@ impl<'a> CBORValidator<'a> {
       array_errors: None,
       is_colon_shortcut_present: false,
       is_root: false,
+      is_multi_type_choice_type_rule_validating_array: false,
     }
   }
 
@@ -324,6 +327,7 @@ impl<'a> CBORValidator<'a> {
       array_errors: None,
       is_colon_shortcut_present: false,
       is_root: false,
+      is_multi_type_choice_type_rule_validating_array: false,
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
@@ -363,6 +367,7 @@ impl<'a> CBORValidator<'a> {
       array_errors: None,
       is_colon_shortcut_present: false,
       is_root: false,
+      is_multi_type_choice_type_rule_validating_array: false,
     }
   }
 
@@ -550,9 +555,14 @@ where
     let type_choice_alternates = type_choice_alternates_from_ident(self.cddl, &tr.name);
     if !type_choice_alternates.is_empty() {
       self.is_multi_type_choice = true;
+
+      if self.cbor.is_array() {
+        self.is_multi_type_choice_type_rule_validating_array = true;
+      }
     }
 
     let error_count = self.errors.len();
+
     for t in type_choice_alternates {
       let cur_errors = self.errors.len();
       self.visit_type(t)?;
@@ -563,6 +573,10 @@ where
 
         return Ok(());
       }
+    }
+
+    if tr.value.type_choices.len() > 1 && self.cbor.is_array() {
+      self.is_multi_type_choice_type_rule_validating_array = true;
     }
 
     self.visit_type(&tr.value)
@@ -615,7 +629,9 @@ where
     for type_choice in t.type_choices.iter() {
       // If validating an array whose elements are type choices (i.e. [ 1* tstr
       // / integer ]), collect all errors and filter after the fact
-      if matches!(self.cbor, Value::Array(_)) {
+      if matches!(self.cbor, Value::Array(_))
+        && !self.is_multi_type_choice_type_rule_validating_array
+      {
         let error_count = self.errors.len();
 
         self.visit_type_choice(type_choice)?;
@@ -3427,12 +3443,13 @@ where
               ))
             }
           }
-          _ => Some(format!(
-            "expected value {} {}, got {:?}",
-            self.ctrl.unwrap(),
-            v,
-            b
-          )),
+          _ => {
+            if let Some(ctrl) = self.ctrl {
+              Some(format!("expected value {} {}, got {:?}", ctrl, v, b))
+            } else {
+              Some(format!("expected value {}, got {:?}", v, b))
+            }
+          }
         },
         #[cfg(feature = "additional-controls")]
         token::Value::TEXT(t) => match &self.ctrl {
@@ -3808,6 +3825,46 @@ mod tests {
         ciborium::value::Value::Bytes(b"test".to_vec()),
       )]),
     )]);
+
+    let cddl = cddl.unwrap();
+
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    cv.validate()?;
+
+    Ok(())
+  }
+
+  #[test]
+  fn multi_type_choice_type_rule_array_validation(
+  ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    use ciborium::value::Value;
+
+    let cddl = indoc!(
+      r#"
+        Ref = nil / refShort / refFull
+
+        blobSize = uint
+        hashID = uint .lt 23
+        hashName = text
+        hashDigest = bytes
+        
+        refShort = [ blobSize, hashID, hashDigest ]
+        refFull = { 1: blobSize, 2: hashName, 3: hashDigest }
+      "#
+    );
+
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    if let Err(e) = &cddl {
+      println!("{}", e);
+    }
+
+    let cbor = Value::Array(vec![
+      Value::Integer(3.into()),
+      Value::Integer(2.into()),
+      Value::Bytes(
+        base16::decode("BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD").unwrap(),
+      ),
+    ]);
 
     let cddl = cddl.unwrap();
 
