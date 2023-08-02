@@ -235,9 +235,6 @@ impl<'a, 'b: 'a> Visitor<'a, 'b, Error> for ParentVisitor<'a, 'b> {
 
         self.visit_type_rule(rule)?;
       }
-      Rule::Unknown { rule, .. } => {
-        self.visit_rule(rule)?;
-      }
     }
 
     Ok(())
