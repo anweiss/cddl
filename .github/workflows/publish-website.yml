@@ -28,11 +28,11 @@ jobs:
       - name: Install node
         uses: actions/setup-node@v1
         with:
-          node-version: '16'
+          node-version: "16"
 
       - name: Build wasm
         run: |
-          wasm-pack build --release --no-default-features --features web
+          wasm-pack build --release
 
       - name: Build web
         run: |
@@ -41,7 +41,7 @@ jobs:
           npm run build
 
       - name: Deploy web
-        uses: JamesIves/github-pages-deploy-action@v4.2.5
+        uses: JamesIves/github-pages-deploy-action@v4.4.3
         with:
           branch: gh-pages
           folder: www/dist

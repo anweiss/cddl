@@ -104,6 +104,37 @@ jobs:
           command: test
           args: --all -- --nocapture
 
+  wasm-test-suite:
+    name: wasm test suite
+    runs-on: ubuntu-latest
+    if: contains(github.ref, 'vscode-extension') != true
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          target: wasm32-unknown-unknown
+
+      - name: Install wasmpack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install node
+        uses: actions/setup-node@v1
+        with:
+          node-version: "16"
+
+      - name: Build wasm
+        run: |
+          wasm-pack test --node -- --test wasm
+
   style-linting:
     strategy:
       matrix:
