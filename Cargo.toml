@@ -9,7 +9,16 @@ version = "0.9.1"
 authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
 readme = "README.md"
 edition = "2018"
-exclude = ["cddl-lsp/**/*", "www/**/*", ".github/**/*", ".devcontainer/**/*", "pkg/**/*", ".dockerignore", "Dockerfile", "tests/**/*"]
+exclude = [
+    "cddl-lsp/**/*",
+    "www/**/*",
+    ".github/**/*",
+    ".devcontainer/**/*",
+    "pkg/**/*",
+    ".dockerignore",
+    "Dockerfile",
+    "tests/**/*",
+]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -24,11 +33,16 @@ codespan-reporting = "0.11.1"
 hexf-parse = "0.2.1"
 itertools = "0.11.0"
 lexical-core = "0.8.3"
-regex = { version = "1.5.4", default-features = false, features = ["std", "unicode-perl"] }
+regex = { version = "1.5.4", default-features = false, features = [
+    "std",
+    "unicode-perl",
+] }
 regex-syntax = { version = "0.7.1", optional = true }
 serde = { version = "1.0.127", optional = true, features = ["derive"] }
 ciborium = { version = "0.2.0", optional = true }
-serde_json = { version = "1.0.66", optional = true, default-features = false, features = ["std"] }
+serde_json = { version = "1.0.66", optional = true, default-features = false, features = [
+    "std",
+] }
 uriparse = { version = "0.6.3", optional = true }
 base64-url = { version = "2.0.0", optional = true }
 abnf_to_pest = "0.5.1"
@@ -54,8 +68,30 @@ wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-test = "0.3.25"
 
 [features]
-default = ["std", "ast-span", "ast-comments", "json", "cbor", "additional-controls", "ast-parent"]
-std = ["base16/alloc", "data-encoding/alloc", "serde_json", "ciborium", "serde", "chrono", "wasm-bindgen", "serde-wasm-bindgen", "clap", "crossterm", "uriparse", "base64-url", "regex-syntax"]
+default = [
+    "std",
+    "ast-span",
+    "ast-comments",
+    "json",
+    "cbor",
+    "additional-controls",
+    "ast-parent",
+]
+std = [
+    "base16/alloc",
+    "data-encoding/alloc",
+    "serde_json",
+    "ciborium",
+    "serde",
+    "chrono",
+    "wasm-bindgen",
+    "serde-wasm-bindgen",
+    "clap",
+    "crossterm",
+    "uriparse",
+    "base64-url",
+    "regex-syntax",
+]
 lsp = ["std"]
 additional-controls = []
 ast-span = []
@@ -63,7 +99,6 @@ ast-comments = []
 ast-parent = []
 json = ["std"]
 cbor = ["std"]
-web = ["ast-span", "wasm-bindgen", "serde-wasm-bindgen", "serde", "ast-comments"]
 
 [[bin]]
 name = "cddl"
