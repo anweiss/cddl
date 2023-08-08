@@ -4,8 +4,8 @@ on:
     branches:
       - main
     paths-ignore:
-      - '.github/workflows/release-vscode-extension.yml'
-      - 'cddl-lsp/**'
+      - ".github/workflows/release-vscode-extension.yml"
+      - "cddl-lsp/**"
 
 jobs:
   compilation-check:
@@ -49,7 +49,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v1
         with:
-          node-version: '16'
+          node-version: "16"
 
       - name: Install wasmpack
         run: |
@@ -95,11 +95,11 @@ jobs:
       - name: Install node
         uses: actions/setup-node@v1
         with:
-          node-version: '16'
+          node-version: "16"
 
       - name: Build wasm
         run: |
-          wasm-pack build --release --no-default-features --features web
+          wasm-pack build --release
 
       - name: Build web
         run: |
