@@ -1,0 +1,12 @@
+foo = {
+    p1: "foo",
+    (bar // baz)
+}
+
+bar = (
+    p2: "bar"
+)
+
+baz = (
+    p3: "baz"
+)

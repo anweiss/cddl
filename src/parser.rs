@@ -2273,7 +2273,12 @@ impl<'a> Parser<'a> {
           if self.groupnames.contains(name.ident) || matches!(name.socket, Some(SocketPlug::GROUP))
           {
             if name.socket.is_none() {
-              self.unknown_rule_idents.pop();
+              self.unknown_rule_idents = self
+                .unknown_rule_idents
+                .clone()
+                .into_iter()
+                .filter(|(ident, _)| ident != &name.ident)
+                .collect();
             }
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
@@ -2294,8 +2299,13 @@ impl<'a> Parser<'a> {
         if let Some((name, generic_args)) = entry_type.groupname_entry() {
           if self.groupnames.contains(name.ident) || matches!(name.socket, Some(SocketPlug::GROUP))
           {
-            if name.socket == None {
-              self.unknown_rule_idents.pop();
+            if name.socket.is_none() {
+              self.unknown_rule_idents = self
+                .unknown_rule_idents
+                .clone()
+                .into_iter()
+                .filter(|ident| ident != &name.ident)
+                .collect();
             }
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
@@ -2433,7 +2443,12 @@ impl<'a> Parser<'a> {
             }
 
             if name.socket.is_none() {
-              self.unknown_rule_idents.pop();
+              self.unknown_rule_idents = self
+                .unknown_rule_idents
+                .clone()
+                .into_iter()
+                .filter(|(ident, _)| ident != &name.ident)
+                .collect();
             }
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
@@ -2462,8 +2477,13 @@ impl<'a> Parser<'a> {
               self.next_token()?;
             }
 
-            if name.socket == None {
-              self.unknown_rule_idents.pop();
+            if name.socket.is_none() {
+              self.unknown_rule_idents = self
+                .unknown_rule_idents
+                .clone()
+                .into_iter()
+                .filter(|ident| ident != &name.ident)
+                .collect();
             }
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
@@ -2913,13 +2933,17 @@ impl<'a> Parser<'a> {
           }
         }
 
+        // Create a new parser for the previously-lexed tokens.
+        let mut parser = Parser::new(self.str_input, Box::new(tokens.into_iter()))?;
+        parser.groupnames = self.groupnames.clone();
+        parser.typenames = self.typenames.clone();
+
         // Parse tokens vec as group
         if has_group_entries {
-          let mut p = Parser::new(self.str_input, Box::new(tokens.into_iter()))?;
-          let group = match p.parse_group() {
+          let group = match parser.parse_group() {
             Ok(g) => g,
             Err(Error::INCREMENTAL) => {
-              for e in p.errors.into_iter() {
+              for e in parser.errors.into_iter() {
                 self.errors.push(e);
               }
 
@@ -2927,6 +2951,9 @@ impl<'a> Parser<'a> {
             }
             Err(e) => return Err(e),
           };
+          self
+            .unknown_rule_idents
+            .append(&mut parser.unknown_rule_idents);
 
           return Ok(Some(MemberKey::NonMemberKey {
             non_member_key: NonMemberKey::Group(group),
@@ -2938,11 +2965,10 @@ impl<'a> Parser<'a> {
         }
 
         // Parse tokens vec as type
-        let mut p = Parser::new(self.str_input, Box::new(tokens.into_iter()))?;
-        let t = match p.parse_type(None) {
+        let t = match parser.parse_type(None) {
           Ok(t) => t,
           Err(Error::INCREMENTAL) => {
-            for e in p.errors.into_iter() {
+            for e in parser.errors.into_iter() {
               self.errors.push(e);
             }
 
@@ -2950,6 +2976,9 @@ impl<'a> Parser<'a> {
           }
           Err(e) => return Err(e),
         };
+        self
+          .unknown_rule_idents
+          .append(&mut parser.unknown_rule_idents);
 
         #[cfg(feature = "ast-comments")]
         let comments_before_cut = self.collect_comments()?;
