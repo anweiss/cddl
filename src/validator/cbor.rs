@@ -373,7 +373,7 @@ impl<'a> CBORValidator<'a> {
 
   /// Extract the underlying CBOR Value.
   pub fn extract_cbor(self) -> Value {
-      self.cbor
+    self.cbor
   }
 
   fn validate_array_items<T: std::fmt::Debug + 'static>(
@@ -3911,11 +3911,11 @@ mod tests {
 
   #[test]
   fn extract_cbor() {
-      use ciborium::value::Value;
+    use ciborium::value::Value;
 
-      let cbor = Value::Float(1.23);
-      let cddl = cddl_from_str("start = any", true).unwrap();
-      let cv = CBORValidator::new(&cddl, cbor, None);
-      assert_eq!(cv.extract_cbor(), Value::Float(1.23));
+    let cbor = Value::Float(1.23);
+    let cddl = cddl_from_str("start = any", true).unwrap();
+    let cv = CBORValidator::new(&cddl, cbor, None);
+    assert_eq!(cv.extract_cbor(), Value::Float(1.23));
   }
 }
