@@ -102,6 +102,7 @@ cddl_types_from_ast! {
 }
 
 #[cfg(feature = "ast-comments")]
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 #[doc(hidden)]
 pub struct Comments<'a>(pub Vec<&'a str>);
@@ -151,7 +152,6 @@ pub struct CDDL<'a> {
   pub rules: Vec<Rule<'a>>,
 
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments: Option<Comments<'a>>,
 }
@@ -308,7 +308,6 @@ pub enum Rule<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_rule: Option<Comments<'a>>,
   },
@@ -321,7 +320,6 @@ pub enum Rule<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_rule: Option<Comments<'a>>,
   },
@@ -471,11 +469,9 @@ pub struct TypeRule<'a> {
   pub value: Type<'a>,
 
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_assignt: Option<Comments<'a>>,
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_assignt: Option<Comments<'a>>,
 }
@@ -529,11 +525,9 @@ pub struct GroupRule<'a> {
   pub entry: GroupEntry<'a>,
 
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_assigng: Option<Comments<'a>>,
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_assigng: Option<Comments<'a>>,
 }
@@ -591,11 +585,9 @@ pub struct GenericParam<'a> {
   pub param: Identifier<'a>,
 
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_ident: Option<Comments<'a>>,
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_ident: Option<Comments<'a>>,
 }
@@ -650,11 +642,9 @@ pub struct GenericArg<'a> {
   pub arg: Box<Type1<'a>>,
 
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_type: Option<Comments<'a>>,
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_type: Option<Comments<'a>>,
 }
@@ -759,11 +749,9 @@ pub struct TypeChoice<'a> {
   /// Type choice
   pub type1: Type1<'a>,
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_type: Option<Comments<'a>>,
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_type: Option<Comments<'a>>,
 }
@@ -869,7 +857,6 @@ pub struct Type1<'a> {
   pub span: Span,
 
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_type: Option<Comments<'a>>,
 }
@@ -937,11 +924,9 @@ pub struct Operator<'a> {
   pub type2: Type2<'a>,
 
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_operator: Option<Comments<'a>>,
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_after_operator: Option<Comments<'a>>,
 }
@@ -1139,11 +1124,9 @@ pub enum Type2<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_type: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_type: Option<Comments<'a>>,
   },
@@ -1157,11 +1140,9 @@ pub enum Type2<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_group: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_group: Option<Comments<'a>>,
   },
@@ -1175,11 +1156,9 @@ pub enum Type2<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_group: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_group: Option<Comments<'a>>,
   },
@@ -1195,7 +1174,6 @@ pub enum Type2<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments: Option<Comments<'a>>,
   },
@@ -1209,15 +1187,12 @@ pub enum Type2<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_group: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_group: Option<Comments<'a>>,
   },
@@ -1233,7 +1208,6 @@ pub enum Type2<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments: Option<Comments<'a>>,
   },
@@ -1250,11 +1224,9 @@ pub enum Type2<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_type: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_type: Option<Comments<'a>>,
   },
@@ -2027,7 +1999,6 @@ pub struct GroupChoice<'a> {
   // No trailing comments since these will be captured by the S ["," S] matching
   // rule
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments_before_grpchoice: Option<Comments<'a>>,
 }
@@ -2269,11 +2240,9 @@ pub enum GroupEntry<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     leading_comments: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     trailing_comments: Option<Comments<'a>>,
   },
@@ -2288,11 +2257,9 @@ pub enum GroupEntry<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     leading_comments: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     trailing_comments: Option<Comments<'a>>,
   },
@@ -2308,11 +2275,9 @@ pub enum GroupEntry<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_group: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_group: Option<Comments<'a>>,
   },
@@ -2342,7 +2307,6 @@ pub struct OptionalComma<'a> {
   pub optional_comma: bool,
 
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub trailing_comments: Option<Comments<'a>>,
 
@@ -2536,7 +2500,6 @@ pub struct Occurrence<'a> {
   pub occur: Occur,
 
   #[cfg(feature = "ast-comments")]
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   pub comments: Option<Comments<'a>>,
 
@@ -2648,15 +2611,12 @@ pub enum MemberKey<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_before_cut: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_cut: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_arrowmap: Option<Comments<'a>>,
   },
@@ -2671,11 +2631,9 @@ pub enum MemberKey<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_colon: Option<Comments<'a>>,
   },
@@ -2690,16 +2648,13 @@ pub enum MemberKey<'a> {
     span: Span,
 
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
-    #[cfg_attr(target_arch = "wasm32", serde(skip))]
     #[doc(hidden)]
     comments_after_colon: Option<Comments<'a>>,
   },
 
-  #[cfg_attr(target_arch = "wasm32", serde(skip))]
   #[doc(hidden)]
   NonMemberKey {
     non_member_key: NonMemberKey<'a>,
@@ -2710,6 +2665,7 @@ pub enum MemberKey<'a> {
   },
 }
 
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 #[doc(hidden)]
 pub enum NonMemberKey<'a> {
