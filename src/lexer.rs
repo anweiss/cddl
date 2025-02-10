@@ -500,7 +500,7 @@ impl<'a> Lexer<'a> {
                 {
                   Ok((
                     self.position,
-                    Token::TAG(Some(t as u8), Some(self.read_number(idx)?.1 as usize)),
+                    Token::TAG(Some(t as u8), Some(self.read_number(idx)?.1 as u64)),
                   ))
                 }
               }
