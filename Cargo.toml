@@ -32,7 +32,7 @@ clap = { version = "3.2.23", optional = true, features = ["derive"] }
 codespan-reporting = "0.11.1"
 hexf-parse = "0.2.1"
 itertools = "0.11.0"
-lexical-core = "0.8.3"
+lexical-core = "1.0.5"
 regex = { version = "1.5.4", default-features = false, features = [
     "std",
     "unicode-perl",
