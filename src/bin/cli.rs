@@ -1,13 +1,16 @@
-#![cfg(feature = "cbor")]
-#![cfg(feature = "json")]
+#![cfg(all(feature = "cbor", feature = "json"))]
 #![cfg(not(feature = "lsp"))]
+#![cfg(not(test))]
+#![allow(unused_imports)]
+#![allow(unused_macros)]
 
 #[macro_use]
 extern crate log;
 
+use cddl::cddl_from_str;
+#[cfg(not(target_arch = "wasm32"))]
 use cddl::{
-  cddl_from_str, parser::root_type_name_from_cddl_str, validate_cbor_from_slice,
-  validate_json_from_str,
+  parser::root_type_name_from_cddl_str, validate_cbor_from_slice, validate_json_from_str,
 };
 use clap::{ArgGroup, Args, Parser, Subcommand};
 
@@ -91,6 +94,7 @@ macro_rules! error {
     };
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), Box<dyn Error>> {
   TermLogger::init(
     LevelFilter::Info,
@@ -282,3 +286,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   Ok(())
 }
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}
