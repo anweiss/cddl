@@ -26,9 +26,9 @@ jobs:
   minimum-version-check:
     strategy:
       matrix:
-        rust_toolchain: [1.67.0]
+        rust_toolchain: [1.71.1]
         os: [ubuntu-latest, macOS-latest, windows-latest]
-    name: minimum version check using Rust ${{ matrix.rust_toolchain }} on ${{ matrix.os }}
+    name: msrv check
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
@@ -129,7 +129,7 @@ jobs:
       - name: Install node
         uses: actions/setup-node@v1
         with:
-          node-version: "16"
+          node-version: "20"
 
       - name: Build wasm
         run: |

@@ -55,17 +55,18 @@ simplelog = "0.12.1"
 [dev-dependencies]
 indoc = "2.0.1"
 pretty_assertions = "1.2.0"
+wasm-bindgen-test = "0.3.34"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-crossterm = { version = "0.27.0", optional = true }
+crossterm = { version = "0.28.1", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.6"
-serde-wasm-bindgen = { version = "0.5.0", optional = true }
+serde-wasm-bindgen = { version = "0.6.5", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
-
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen-test = "0.3.25"
+wasm-bindgen-test = "0.3.34"
+js-sys = "0.3.64"
+web-sys = { version = "0.3.64", features = ["console"] }
 
 [features]
 default = [
@@ -76,6 +77,7 @@ default = [
     "cbor",
     "additional-controls",
     "ast-parent",
+    "wasm-bindgen",
 ]
 std = [
     "base16/alloc",
@@ -104,7 +106,6 @@ cbor = ["std"]
 name = "cddl"
 required-features = ["std", "json", "cbor"]
 path = "src/bin/cli.rs"
-test = false
 
 [profile.release]
 opt-level = "s"

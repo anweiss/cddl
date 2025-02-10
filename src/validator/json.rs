@@ -554,7 +554,7 @@ impl<'a> JSONValidator<'a> {
   }
 }
 
-impl<'a, 'b> Validator<'a, 'b, Error> for JSONValidator<'a> {
+impl<'a> Validator<'a, '_, Error> for JSONValidator<'a> {
   /// Validate
   fn validate(&mut self) -> std::result::Result<(), Error> {
     for r in self.cddl.rules.iter() {
@@ -589,7 +589,7 @@ impl<'a, 'b> Validator<'a, 'b, Error> for JSONValidator<'a> {
   }
 }
 
-impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
+impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
   fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<Error> {
     if let Some(gp) = &tr.generic_params {
       if let Some(gr) = self
@@ -1121,8 +1121,8 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
           if let Some(gr) = self
             .generic_rules
             .iter()
+            .find(|&gr| gr.name == name)
             .cloned()
-            .find(|gr| gr.name == name)
           {
             for (idx, gp) in gr.params.iter().enumerate() {
               if let Some(arg) = gr.args.get(idx) {
@@ -1145,8 +1145,8 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
         if let Some(gr) = self
           .generic_rules
           .iter()
+          .find(|&gr| gr.name == name)
           .cloned()
-          .find(|gr| gr.name == name)
         {
           for (idx, gp) in gr.params.iter().enumerate() {
             if let Some(arg) = gr.args.get(idx) {
@@ -1817,8 +1817,8 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
       if let Some(gr) = self
         .generic_rules
         .iter()
+        .find(|&gr| gr.name == name)
         .cloned()
-        .find(|gr| gr.name == name)
       {
         for (idx, gp) in gr.params.iter().enumerate() {
           if *gp == ident.ident {
@@ -2395,7 +2395,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
         Value::Number(n) => match n.as_f64() {
           Some(f) => match &self.ctrl {
             Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
-              if (f - *v).abs() > std::f64::EPSILON =>
+              if (f - *v).abs() > f64::EPSILON =>
             {
               None
             }
@@ -2405,7 +2405,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
             Some(ControlOperator::GE) if f >= *v => None,
             #[cfg(feature = "additional-controls")]
             Some(ControlOperator::PLUS) => {
-              if (f - *v).abs() < std::f64::EPSILON {
+              if (f - *v).abs() < f64::EPSILON {
                 None
               } else {
                 Some(format!("expected computed .plus value {}, got {}", v, n))
@@ -2413,7 +2413,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
             }
             #[cfg(feature = "additional-controls")]
             None | Some(ControlOperator::FEATURE) => {
-              if (f - *v).abs() < std::f64::EPSILON {
+              if (f - *v).abs() < f64::EPSILON {
                 None
               } else {
                 Some(format!("expected value {}, got {}", v, n))
@@ -2421,7 +2421,7 @@ impl<'a, 'b> Visitor<'a, 'b, Error> for JSONValidator<'a> {
             }
             #[cfg(not(feature = "additional-controls"))]
             None => {
-              if (f - *v).abs() < std::f64::EPSILON {
+              if (f - *v).abs() < f64::EPSILON {
                 None
               } else {
                 Some(format!("expected value {}, got {}", v, n))

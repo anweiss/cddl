@@ -496,7 +496,7 @@ impl<'a> CBORValidator<'a> {
   }
 }
 
-impl<'a, 'b, T: std::fmt::Debug + 'static> Validator<'a, 'b, cbor::Error<T>> for CBORValidator<'a>
+impl<'a, T: std::fmt::Debug + 'static> Validator<'a, '_, cbor::Error<T>> for CBORValidator<'a>
 where
   cbor::Error<T>: From<cbor::Error<std::io::Error>>,
 {
@@ -533,7 +533,7 @@ where
   }
 }
 
-impl<'a, 'b, T: std::fmt::Debug + 'static> Visitor<'a, 'b, Error<T>> for CBORValidator<'a>
+impl<'a, T: std::fmt::Debug + 'static> Visitor<'a, '_, Error<T>> for CBORValidator<'a>
 where
   cbor::Error<T>: From<cbor::Error<std::io::Error>>,
 {
@@ -1024,8 +1024,8 @@ where
           if let Some(gr) = self
             .generic_rules
             .iter()
+            .find(|&gr| gr.name == name)
             .cloned()
-            .find(|gr| gr.name == name)
           {
             for (idx, gp) in gr.params.iter().enumerate() {
               if let Some(arg) = gr.args.get(idx) {
@@ -1048,8 +1048,8 @@ where
         if let Some(gr) = self
           .generic_rules
           .iter()
+          .find(|&gr| gr.name == name)
           .cloned()
-          .find(|gr| gr.name == name)
         {
           for (idx, gp) in gr.params.iter().enumerate() {
             if let Some(arg) = gr.args.get(idx) {
@@ -2213,8 +2213,8 @@ where
       if let Some(gr) = self
         .generic_rules
         .iter()
+        .find(|&gr| gr.name == name)
         .cloned()
-        .find(|gr| gr.name == name)
       {
         for (idx, gp) in gr.params.iter().enumerate() {
           if *gp == ident.ident {
@@ -3281,7 +3281,7 @@ where
       Value::Float(f) => match value {
         token::Value::FLOAT(v) => match &self.ctrl {
           Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
-            if (*f - *v).abs() > std::f64::EPSILON =>
+            if (*f - *v).abs() > f64::EPSILON =>
           {
             None
           }
@@ -3291,7 +3291,7 @@ where
           Some(ControlOperator::GE) if *f >= *v => None,
           #[cfg(feature = "additional-controls")]
           Some(ControlOperator::PLUS) => {
-            if (*f - *v).abs() < std::f64::EPSILON {
+            if (*f - *v).abs() < f64::EPSILON {
               None
             } else {
               Some(format!("expected computed .plus value {}, got {:?}", v, f))
@@ -3299,7 +3299,7 @@ where
           }
           #[cfg(feature = "additional-controls")]
           None | Some(ControlOperator::FEATURE) => {
-            if (*f - *v).abs() < std::f64::EPSILON {
+            if (*f - *v).abs() < f64::EPSILON {
               None
             } else {
               Some(format!("expected value {}, got {:?}", v, f))
@@ -3307,7 +3307,7 @@ where
           }
           #[cfg(not(feature = "additional-controls"))]
           None => {
-            if (*f - *v).abs() < std::f64::EPSILON {
+            if (*f - *v).abs() < f64::EPSILON {
               None
             } else {
               Some(format!("expected value {}, got {:?}", v, f))

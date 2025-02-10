@@ -160,7 +160,7 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
 	try {
 		cddl = wasm.cddl_from_str(text);
 	} catch (e) {
-		errors = e;
+		errors = Array.isArray(e) ? e : [e];
 	}
 
 	let diagnostics: Diagnostic[] = [];

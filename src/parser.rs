@@ -763,9 +763,9 @@ impl<'a> Parser<'a> {
         } = &ge
         {
           if group.group_choices.len() == 1 {
-            if let Some(gc) = group.group_choices.get(0) {
+            if let Some(gc) = group.group_choices.first() {
               if gc.group_entries.len() == 1 {
-                if let Some(group_entry) = gc.group_entries.get(0) {
+                if let Some(group_entry) = gc.group_entries.first() {
                   // Check that there is no trailing comma
                   if !group_entry.1.optional_comma {
                     // EXAMPLE: non-empty<M> = (M) .and ({ + any => any })
@@ -3517,7 +3517,7 @@ pub fn root_type_name_from_cddl_str(input: &str) -> std::result::Result<String, 
   Err("cddl spec contains no root type".to_string())
 }
 
-impl<'a> CDDL<'a> {
+impl CDDL<'_> {
   /// Parses CDDL from a byte slice
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "std")]
