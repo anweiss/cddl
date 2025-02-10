@@ -247,7 +247,7 @@ pub enum ControlOperator {
   FEATURE,
 }
 
-impl<'a> Token<'a> {
+impl Token<'_> {
   /// Returns optional string literal of token if it is in the standard prelude
   ///
   /// # Example
@@ -340,7 +340,7 @@ impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
   }
 }
 
-impl<'a> RangeValue<'a> {
+impl RangeValue<'_> {
   /// Returns `Value` from given `RangeValue`
   pub fn as_value(&self) -> Option<Value> {
     match &self {
@@ -351,7 +351,7 @@ impl<'a> RangeValue<'a> {
   }
 }
 
-impl<'a> fmt::Display for RangeValue<'a> {
+impl fmt::Display for RangeValue<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       RangeValue::IDENT(ident, _) => write!(f, "{}", ident),
@@ -392,7 +392,7 @@ pub enum Numeric {
   FLOAT(f64),
 }
 
-impl<'a> fmt::Display for Value<'a> {
+impl fmt::Display for Value<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Value::TEXT(text) => write!(f, "\"{}\"", text),
@@ -422,7 +422,7 @@ pub enum ByteValue<'a> {
   B64(Cow<'a, [u8]>),
 }
 
-impl<'a> fmt::Display for ByteValue<'a> {
+impl fmt::Display for ByteValue<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       ByteValue::UTF8(b) => write!(f, "'{}'", std::str::from_utf8(b).map_err(|_| fmt::Error)?),
@@ -517,7 +517,7 @@ impl fmt::Display for ControlOperator {
   }
 }
 
-impl<'a> fmt::Display for Token<'a> {
+impl fmt::Display for Token<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Token::IDENT(ident, socket_plug) => {

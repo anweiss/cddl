@@ -107,7 +107,7 @@ cddl_types_from_ast! {
 pub struct Comments<'a>(pub Vec<&'a str>);
 
 #[cfg(feature = "ast-comments")]
-impl<'a> Comments<'a> {
+impl Comments<'_> {
   fn any_non_newline(&self) -> bool {
     self.0.iter().any(|c| *c != "\n")
   }
@@ -118,7 +118,7 @@ impl<'a> Comments<'a> {
 }
 
 #[cfg(feature = "ast-comments")]
-impl<'a> fmt::Display for Comments<'a> {
+impl fmt::Display for Comments<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if self.all_newline() {
       return write!(f, "");
@@ -156,7 +156,7 @@ pub struct CDDL<'a> {
   pub comments: Option<Comments<'a>>,
 }
 
-impl<'a> fmt::Display for CDDL<'a> {
+impl fmt::Display for CDDL<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
@@ -228,15 +228,15 @@ pub struct Identifier<'a> {
   pub span: Span,
 }
 
-impl<'a> PartialEq for Identifier<'a> {
+impl PartialEq for Identifier<'_> {
   fn eq(&self, other: &Self) -> bool {
     self.to_string() == other.to_string()
   }
 }
 
-impl<'a> Eq for Identifier<'a> {}
+impl Eq for Identifier<'_> {}
 
-impl<'a> fmt::Display for Identifier<'a> {
+impl fmt::Display for Identifier<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if let Some(sp) = &self.socket {
       return write!(f, "{}{}", sp, self.ident);
@@ -246,7 +246,7 @@ impl<'a> fmt::Display for Identifier<'a> {
   }
 }
 
-impl<'a> From<&'static str> for Identifier<'a> {
+impl From<&'static str> for Identifier<'_> {
   fn from(ident: &'static str) -> Self {
     let mut socket = ident.chars().take(2);
 
@@ -283,11 +283,7 @@ impl<'a> From<&'static str> for Identifier<'a> {
 
 impl<'a> From<Token<'a>> for Identifier<'a> {
   fn from(token: Token) -> Self {
-    let token = if let Some(token) = token.in_standard_prelude() {
-      token
-    } else {
-      ""
-    };
+    let token = token.in_standard_prelude().unwrap_or_default();
 
     Identifier::from(token)
   }
@@ -331,7 +327,7 @@ pub enum Rule<'a> {
   },
 }
 
-impl<'a> Rule<'a> {
+impl Rule<'_> {
   /// Return `Span` for `Rule`
   #[cfg(feature = "ast-span")]
   pub fn span(&self) -> Span {
@@ -384,7 +380,7 @@ impl<'a> Rule<'a> {
   }
 }
 
-impl<'a> fmt::Display for Rule<'a> {
+impl fmt::Display for Rule<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Rule::Type {
@@ -437,7 +433,7 @@ impl<'a> fmt::Display for Rule<'a> {
   }
 }
 
-impl<'a> Rule<'a> {
+impl Rule<'_> {
   /// Returns the name id of a rule
   pub fn name(&self) -> String {
     match self {
@@ -484,7 +480,7 @@ pub struct TypeRule<'a> {
   pub comments_after_assignt: Option<Comments<'a>>,
 }
 
-impl<'a> fmt::Display for TypeRule<'a> {
+impl fmt::Display for TypeRule<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut tr_output = self.name.to_string();
 
@@ -542,7 +538,7 @@ pub struct GroupRule<'a> {
   pub comments_after_assigng: Option<Comments<'a>>,
 }
 
-impl<'a> fmt::Display for GroupRule<'a> {
+impl fmt::Display for GroupRule<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut gr_output = self.name.to_string();
 
@@ -604,7 +600,7 @@ pub struct GenericParam<'a> {
   pub comments_after_ident: Option<Comments<'a>>,
 }
 
-impl<'a> fmt::Display for GenericParams<'a> {
+impl fmt::Display for GenericParams<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut gp = String::from("<");
     for (idx, parm) in self.params.iter().enumerate() {
@@ -663,7 +659,7 @@ pub struct GenericArg<'a> {
   pub comments_after_type: Option<Comments<'a>>,
 }
 
-impl<'a> fmt::Display for GenericArgs<'a> {
+impl fmt::Display for GenericArgs<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut ga = String::from("<");
     for (idx, arg) in self.args.iter().enumerate() {
@@ -772,7 +768,7 @@ pub struct TypeChoice<'a> {
   pub comments_after_type: Option<Comments<'a>>,
 }
 
-impl<'a> fmt::Display for Type<'a> {
+impl fmt::Display for Type<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut type_str = String::new();
 
@@ -950,7 +946,7 @@ pub struct Operator<'a> {
   pub comments_after_operator: Option<Comments<'a>>,
 }
 
-impl<'a> fmt::Display for Type1<'a> {
+impl fmt::Display for Type1<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut t1_str = String::new();
 
@@ -1283,7 +1279,7 @@ pub enum Type2<'a> {
 }
 
 #[allow(clippy::cognitive_complexity)]
-impl<'a> fmt::Display for Type2<'a> {
+impl fmt::Display for Type2<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Type2::IntValue { value, .. } => write!(f, "{}", value),
@@ -1659,7 +1655,7 @@ impl<'a> From<Type1<'a>> for Type2<'a> {
   }
 }
 
-impl<'a> From<usize> for Type2<'a> {
+impl From<usize> for Type2<'_> {
   fn from(value: usize) -> Self {
     Type2::UintValue {
       value,
@@ -1669,7 +1665,7 @@ impl<'a> From<usize> for Type2<'a> {
   }
 }
 
-impl<'a> From<isize> for Type2<'a> {
+impl From<isize> for Type2<'_> {
   fn from(value: isize) -> Self {
     Type2::IntValue {
       value,
@@ -1679,7 +1675,7 @@ impl<'a> From<isize> for Type2<'a> {
   }
 }
 
-impl<'a> From<f64> for Type2<'a> {
+impl From<f64> for Type2<'_> {
   fn from(value: f64) -> Self {
     Type2::FloatValue {
       value,
@@ -1689,7 +1685,7 @@ impl<'a> From<f64> for Type2<'a> {
   }
 }
 
-impl<'a> From<String> for Type2<'a> {
+impl From<String> for Type2<'_> {
   fn from(value: String) -> Self {
     Type2::TextValue {
       value: value.into(),
@@ -1934,7 +1930,7 @@ impl<'a> From<GroupEntry<'a>> for Group<'a> {
   }
 }
 
-impl<'a> fmt::Display for Group<'a> {
+impl fmt::Display for Group<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut group_str = String::new();
 
@@ -2089,7 +2085,7 @@ impl<'a> GroupChoice<'a> {
   }
 }
 
-impl<'a> fmt::Display for GroupChoice<'a> {
+impl fmt::Display for GroupChoice<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut gc_str = String::new();
 
@@ -2322,7 +2318,7 @@ pub enum GroupEntry<'a> {
   },
 }
 
-impl<'a> GroupEntry<'a> {
+impl GroupEntry<'_> {
   #[cfg(feature = "ast-comments")]
   fn has_trailing_comments(&self) -> bool {
     matches!(self,
@@ -2354,7 +2350,7 @@ pub struct OptionalComma<'a> {
   pub _a: PhantomData<&'a ()>,
 }
 
-impl<'a> fmt::Display for OptionalComma<'a> {
+impl fmt::Display for OptionalComma<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut optcomma_str = String::new();
 
@@ -2389,7 +2385,7 @@ impl<'a> fmt::Display for OptionalComma<'a> {
   }
 }
 
-impl<'a> OptionalComma<'a> {
+impl OptionalComma<'_> {
   #[cfg(feature = "ast-comments")]
   fn has_trailing_comments(&self) -> bool {
     if let Some(comments) = &self.trailing_comments {
@@ -2400,7 +2396,7 @@ impl<'a> OptionalComma<'a> {
   }
 }
 
-impl<'a> fmt::Display for GroupEntry<'a> {
+impl fmt::Display for GroupEntry<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       GroupEntry::ValueMemberKey {
@@ -2548,7 +2544,7 @@ pub struct Occurrence<'a> {
   pub _a: PhantomData<&'a ()>,
 }
 
-impl<'a> fmt::Display for Occurrence<'a> {
+impl fmt::Display for Occurrence<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     #[cfg(feature = "ast-comments")]
     let mut occur_str = self.occur.to_string();
@@ -2582,7 +2578,7 @@ pub struct ValueMemberKeyEntry<'a> {
   pub entry_type: Type<'a>,
 }
 
-impl<'a> fmt::Display for ValueMemberKeyEntry<'a> {
+impl fmt::Display for ValueMemberKeyEntry<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut vmke_str = String::new();
 
@@ -2613,7 +2609,7 @@ pub struct TypeGroupnameEntry<'a> {
   pub generic_args: Option<GenericArgs<'a>>,
 }
 
-impl<'a> fmt::Display for TypeGroupnameEntry<'a> {
+impl fmt::Display for TypeGroupnameEntry<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut tge_str = String::new();
 
@@ -2721,7 +2717,7 @@ pub enum NonMemberKey<'a> {
   Type(Type<'a>),
 }
 
-impl<'a> fmt::Display for MemberKey<'a> {
+impl fmt::Display for MemberKey<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       MemberKey::Type1 {

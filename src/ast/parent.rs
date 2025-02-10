@@ -35,7 +35,7 @@ impl std::error::Error for Error {
 /// Parent trait retrieving the implemented type's parent
 pub trait Parent<'a, 'b: 'a, T> {
   /// Returns the parent for the AST type
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&T>;
+  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&'a T>;
 }
 
 macro_rules! impl_parent {
@@ -43,7 +43,7 @@ macro_rules! impl_parent {
     $(
       $(
         impl<'a, 'b: 'a> Parent<'a, 'b, $parent> for $child {
-          fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&$parent> {
+          fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&'a $parent> {
             if let Some($p(value)) = CDDLType::from(self).parent(parent_visitor) {
               return Some(value);
             }
@@ -80,13 +80,13 @@ impl_parent! {
 }
 
 impl<'a, 'b: 'a> Parent<'a, 'b, ()> for CDDL<'a> {
-  fn parent(&'a self, _parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&()> {
+  fn parent(&'a self, _parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&'a ()> {
     None
   }
 }
 
 impl<'a, 'b: 'a> Parent<'a, 'b, Type2<'a>> for Value<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&Type2<'a>> {
+  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&'a Type2<'a>> {
     if let Some(CDDLType::Type2(value)) = CDDLType::from(self.to_owned()).parent(parent_visitor) {
       return Some(value);
     }
@@ -96,7 +96,7 @@ impl<'a, 'b: 'a> Parent<'a, 'b, Type2<'a>> for Value<'a> {
 }
 
 impl<'a, 'b: 'a> Parent<'a, 'b, MemberKey<'a>> for Value<'a> {
-  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&MemberKey<'a>> {
+  fn parent(&'a self, parent_visitor: &'b ParentVisitor<'a, 'b>) -> Option<&'a MemberKey<'a>> {
     if let Some(CDDLType::MemberKey(value)) = CDDLType::from(self.to_owned()).parent(parent_visitor)
     {
       return Some(value);
