@@ -14,12 +14,9 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          target: wasm32-unknown-unknown
+        run: |
+          rustup update
+          rustup target add wasm32-unknown-unknown
 
       - name: Install wasmpack
         run: |
