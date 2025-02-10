@@ -337,7 +337,7 @@ impl<'a> Lexer<'a> {
     self
       .input
       .next()
-      .map(|c| {
+      .inspect(|c| {
         if c.1 == '\n' {
           self.position.line += 1;
           self.position.column = 1;
@@ -348,8 +348,6 @@ impl<'a> Lexer<'a> {
         if !c.1.is_ascii_whitespace() {
           self.position.index = c.0;
         }
-
-        c
       })
       .ok_or_else(|| (self.str_input, self.position, UnableToAdvanceToken).into())
   }

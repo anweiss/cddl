@@ -14,21 +14,18 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          target: wasm32-unknown-unknown
+        run: |
+          rustup update
+          rustup target add wasm32-unknown-unknown
 
       - name: Install wasmpack
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Install node
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a
         with:
-          node-version: "16"
+          node-version: "20"
 
       - name: Build wasm
         run: |
