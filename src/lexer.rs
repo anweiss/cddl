@@ -334,7 +334,6 @@ impl<'a> Lexer<'a> {
   fn read_char(&mut self) -> Result<(usize, char)> {
     self.multipeek.next();
 
-    #[allow(unstable_features)]
     self
       .input
       .next()
