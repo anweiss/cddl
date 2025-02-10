@@ -956,7 +956,7 @@ impl<'a> Lexer<'a> {
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-      Ok(Token::VALUE(Value::UINT(i)))
+      Ok(Token::VALUE(Value::UINT(i as usize)))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -966,7 +966,7 @@ impl<'a> Lexer<'a> {
   }
 
   #[cfg(not(target_arch = "wasm32"))]
-  fn read_number(&mut self, idx: usize) -> Result<(usize, usize)> {
+  fn read_number(&mut self, idx: usize) -> Result<(usize, u64)> {
     let mut end_index = idx;
 
     while let Some(&c) = self.peek_char() {

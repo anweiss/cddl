@@ -31,7 +31,7 @@ pub enum Token<'a> {
     /// Major type
     Option<u8>,
     /// Optional constraint
-    Option<usize>,
+    Option<u64>,
   ),
 
   // Operators

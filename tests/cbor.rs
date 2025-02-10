@@ -2,11 +2,12 @@
 #![cfg(feature = "cbor")]
 #![cfg(not(target_arch = "wasm32"))]
 
-use cddl::{self, validator::validate_cbor_from_slice};
-
+use cddl::validator::validate_cbor_from_slice;
+use ciborium::value::Value;
 use serde::{Deserialize, Serialize};
+use std::error::Error;
 
-#[rustfmt::skip] // allow arbitrary indents for readability
+#[rustfmt::skip] 
 pub mod cbor {
     // example values from rfc7049 appendix A
     pub const BOOL_FALSE:   &[u8] = b"\xF4";
@@ -37,6 +38,29 @@ pub mod cbor {
     pub const BYTES_1234:   &[u8] = b"\x44\x01\x02\x03\x04"; // hex 01020304
 
 }
+
+// These data structures exist so that we can serialize some more complex
+// beyond the RFC examples.
+#[derive(Debug, Serialize, Deserialize)]
+struct PersonStruct {
+  name: String,
+  age: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersonTuple(String, u32);
+
+#[derive(Debug, Serialize, Deserialize)]
+struct BackwardsTuple(u32, String);
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LongTuple(String, u32, u32);
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ShortTuple(String);
+
+#[derive(Debug, Serialize, Deserialize)]
+struct KitchenSink(String, u32, f64, bool);
 
 #[test]
 fn validate_cbor_bool() {
@@ -125,29 +149,6 @@ fn validate_cbor_array() {
   let cddl_input = r#"thing = [1, 2, 3]"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
 }
-
-// These data structures exist so that we can serialize some more complex
-// beyond the RFC examples.
-#[derive(Debug, Serialize, Deserialize)]
-struct PersonStruct {
-  name: String,
-  age: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct PersonTuple(String, u32);
-
-#[derive(Debug, Serialize, Deserialize)]
-struct BackwardsTuple(u32, String);
-
-#[derive(Debug, Serialize, Deserialize)]
-struct LongTuple(String, u32, u32);
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ShortTuple(String);
-
-#[derive(Debug, Serialize, Deserialize)]
-struct KitchenSink(String, u32, f64, bool);
 
 #[test]
 fn validate_cbor_group() {
@@ -289,4 +290,35 @@ fn validate_cbor_map() {
 
   let cddl_input = r#"thing = {x: int, y: int, z: int}"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap_err();
+}
+
+#[test]
+fn verify_large_tag_values() -> Result<(), Box<dyn Error>> {
+  let input = r#"
+        thing = #6.8386104246373017956(tstr) / #6.42(tstr)
+    "#;
+
+  // Test tag 42 (small tag value)
+  let test_str = "test";
+  let cbor = Value::Tag(42, Box::new(Value::Text(test_str.to_string())));
+  let mut bytes = Vec::new();
+  ciborium::ser::into_writer(&cbor, &mut bytes)?;
+  assert!(validate_cbor_from_slice(input, &bytes, None).is_ok());
+
+  // Test tag 8386104246373017956 (large tag value)
+  let cbor = Value::Tag(
+    8386104246373017956,
+    Box::new(Value::Text(test_str.to_string())),
+  );
+  let mut bytes = Vec::new();
+  ciborium::ser::into_writer(&cbor, &mut bytes)?;
+  assert!(validate_cbor_from_slice(input, &bytes, None).is_ok());
+
+  // Test wrong tag value - should fail
+  let cbor = Value::Tag(99, Box::new(Value::Text(test_str.to_string())));
+  let mut bytes = Vec::new();
+  ciborium::ser::into_writer(&cbor, &mut bytes)?;
+  assert!(validate_cbor_from_slice(input, &bytes, None).is_err());
+
+  Ok(())
 }
