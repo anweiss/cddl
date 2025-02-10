@@ -1216,7 +1216,7 @@ pub enum Type2<'a> {
   /// is the type of the tagged value
   TaggedData {
     /// Tag
-    tag: Option<usize>,
+    tag: Option<u64>,
     /// Type
     t: Type<'a>,
     /// Span
@@ -1235,8 +1235,8 @@ pub enum Type2<'a> {
   DataMajorType {
     /// Major type
     mt: u8,
-    /// Constraint
-    constraint: Option<usize>,
+    /// Constraint - Using u64 to support larger values in wasm32
+    constraint: Option<u64>,
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,

@@ -2103,7 +2103,7 @@ where
         Value::Bytes(b) => {
           match mt {
             2u8 => match constraint {
-              Some(c) if *c == b.len() => return Ok(()),
+              Some(c) if *c == b.len() as u64 => return Ok(()),
               Some(c) => self.add_error(format!(
                 "expected byte string type with constraint {} (#{}.{}), got {:?}",
                 c, mt, c, self.cbor
@@ -2121,7 +2121,7 @@ where
         Value::Text(t) => {
           match mt {
             3u8 => match constraint {
-              Some(c) if *c == t.len() => return Ok(()),
+              Some(c) if *c == t.len() as u64 => return Ok(()),
               Some(c) => self.add_error(format!(
                 "expected text string type with constraint {} (#{}.{}), got {:?}",
                 c, mt, c, self.cbor
@@ -2139,7 +2139,7 @@ where
         Value::Array(a) => {
           match mt {
             4u8 => match constraint {
-              Some(c) if *c == a.len() => return Ok(()),
+              Some(c) if *c == a.len() as u64 => return Ok(()),
               Some(c) => self.add_error(format!(
                 "expected array type with constraint {} (#{}.{}), got {:?}",
                 c, mt, c, self.cbor
@@ -2157,7 +2157,7 @@ where
         Value::Map(m) => {
           match mt {
             5u8 => match constraint {
-              Some(c) if *c == m.len() => return Ok(()),
+              Some(c) if *c == m.len() as u64 => return Ok(()),
               Some(c) => self.add_error(format!(
                 "expected map type with constraint {} (#{}.{}), got {:?}",
                 c, mt, c, self.cbor
