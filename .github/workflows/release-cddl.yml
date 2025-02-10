@@ -47,9 +47,9 @@ jobs:
           override: true
 
       - name: Install Node.js
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a
         with:
-          node-version: "16"
+          node-version: "20"
 
       - name: Install wasmpack
         run: |
@@ -93,9 +93,9 @@ jobs:
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Install node
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a
         with:
-          node-version: "16"
+          node-version: "20"
 
       - name: Build wasm
         run: |
