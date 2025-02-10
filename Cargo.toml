@@ -105,6 +105,7 @@ name = "cddl"
 required-features = ["std", "json", "cbor"]
 path = "src/bin/cli.rs"
 test = false
+target = "cfg(not(target_arch = \"wasm32\"))"
 
 [profile.release]
 opt-level = "s"
