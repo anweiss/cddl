@@ -28,7 +28,7 @@ jobs:
       matrix:
         rust_toolchain: [1.71.1]
         os: [ubuntu-latest, macOS-latest, windows-latest]
-    name: minimum version check using Rust ${{ matrix.rust_toolchain }} on ${{ matrix.os }}
+    name: msrv check
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
