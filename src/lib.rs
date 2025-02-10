@@ -524,7 +524,6 @@
 #![allow(dead_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
-#![allow(unstable_features)]
 
 #[macro_use]
 #[cfg(not(feature = "std"))]
