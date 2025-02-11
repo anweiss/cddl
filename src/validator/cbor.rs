@@ -207,6 +207,7 @@ pub struct CBORValidator<'a> {
   has_feature_errors: bool,
   #[cfg(feature = "additional-controls")]
   disabled_features: Option<Vec<String>>,
+  range_upper: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -254,6 +255,7 @@ impl<'a> CBORValidator<'a> {
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
+      range_upper: None,
     }
   }
 
@@ -291,6 +293,7 @@ impl<'a> CBORValidator<'a> {
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
+      range_upper: None,
     }
   }
 
@@ -331,6 +334,7 @@ impl<'a> CBORValidator<'a> {
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
+      range_upper: None,
     }
   }
 
@@ -368,6 +372,7 @@ impl<'a> CBORValidator<'a> {
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
+      range_upper: None,
     }
   }
 
@@ -554,7 +559,7 @@ where
         self.generic_rules.push(GenericRule {
           name: tr.name.ident,
           params: gp.params.iter().map(|p| p.param.ident).collect(),
-          args: vec![],
+          args: Vec::new(),
         });
       }
     }
@@ -601,7 +606,7 @@ where
         self.generic_rules.push(GenericRule {
           name: gr.name.ident,
           params: gp.params.iter().map(|p| p.param.ident).collect(),
-          args: vec![],
+          args: Vec::new(),
         });
       }
     }
@@ -634,8 +639,6 @@ where
 
     let initial_error_count = self.errors.len();
     for type_choice in t.type_choices.iter() {
-      // If validating an array whose elements are type choices (i.e. [ 1* tstr
-      // / integer ]), collect all errors and filter after the fact
       if matches!(self.cbor, Value::Array(_))
         && !self.is_multi_type_choice_type_rule_validating_array
       {
@@ -806,203 +809,87 @@ where
       return self.validate_array_items(&ArrayItemToken::Range(lower, upper, is_inclusive));
     }
 
-    match lower {
-      Type2::IntValue { value: l, .. } => match upper {
-        Type2::IntValue { value: u, .. } => {
-          let error_str = if is_inclusive {
-            format!(
-              "expected integer to be in range {} <= value <= {}, got {:?}",
-              l, u, self.cbor
-            )
-          } else {
-            format!(
-              "expected integer to be in range {} < value < {}, got {:?}",
-              l, u, self.cbor
-            )
-          };
-
-          match &self.cbor {
-            Value::Integer(i) => {
-              if is_inclusive {
-                if i128::from(*i) < *l as i128 || i128::from(*i) > *u as i128 {
-                  self.add_error(error_str);
-                } else {
-                  return Ok(());
-                }
-              } else if i128::from(*i) <= *l as i128 || i128::from(*i) >= *u as i128 {
-                self.add_error(error_str);
-                return Ok(());
-              } else {
-                return Ok(());
+    match (lower, upper) {
+      (Type2::UintValue { value: l, .. }, Type2::UintValue { value: u, .. }) => {
+        match &self.cbor {
+          Value::Bytes(b) => {
+            let len = b.len();
+            if is_inclusive {
+              if len < *l || len > *u {
+                self.add_error(format!(
+                  "expected uint to be in range {} <= value <= {}, got Bytes({:?})",
+                  l, u, b
+                ));
               }
-            }
-            _ => {
-              self.add_error(error_str);
-              return Ok(());
+            } else {
+              if len <= *l || len >= *u {
+                self.add_error(format!(
+                  "expected uint to be in range {} < value < {}, got Bytes({:?})",
+                  l, u, b
+                ));
+              }
             }
           }
-        }
-        Type2::UintValue { value: u, .. } => {
-          let error_str = if is_inclusive {
-            format!(
-              "expected integer to be in range {} <= value <= {}, got {:?}",
-              l, u, self.cbor
-            )
-          } else {
-            format!(
-              "expected integer to be in range {} < value < {}, got {:?}",
-              l, u, self.cbor
-            )
-          };
-
-          match &self.cbor {
-            Value::Integer(i) => {
+          Value::Text(s) => match self.ctrl {
+            Some(ControlOperator::SIZE) => {
+              let len = s.len();
+              let s = s.clone();
               if is_inclusive {
-                if i128::from(*i) < *l as i128 || i128::from(*i) > *u as i128 {
-                  self.add_error(error_str);
-                } else {
-                  return Ok(());
-                }
-              } else if i128::from(*i) <= *l as i128 || i128::from(*i) >= *u as i128 {
-                self.add_error(error_str);
-                return Ok(());
-              } else {
-                return Ok(());
-              }
-            }
-            _ => {
-              self.add_error(error_str);
-              return Ok(());
-            }
-          }
-        }
-        _ => {
-          self.add_error(format!(
-            "invalid cddl range. upper value must be an integer type. got {}",
-            upper
-          ));
-          return Ok(());
-        }
-      },
-      Type2::UintValue { value: l, .. } => match upper {
-        Type2::UintValue { value: u, .. } => {
-          let error_str = if is_inclusive {
-            format!(
-              "expected uint to be in range {} <= value <= {}, got {:?}",
-              l, u, self.cbor
-            )
-          } else {
-            format!(
-              "expected uint to be in range {} < value < {}, got {:?}",
-              l, u, self.cbor
-            )
-          };
-
-          match &self.cbor {
-            Value::Integer(i) => {
-              if is_inclusive {
-                if i128::from(*i) < *l as i128 || i128::from(*i) > *u as i128 {
-                  self.add_error(error_str);
-                } else {
-                  return Ok(());
-                }
-              } else if i128::from(*i) <= *l as i128 || i128::from(*i) >= *u as i128 {
-                self.add_error(error_str);
-                return Ok(());
-              } else {
-                return Ok(());
-              }
-            }
-            Value::Text(s) => match self.ctrl {
-              Some(ControlOperator::SIZE) => {
-                let len = s.len();
-                let s = s.clone();
-                if is_inclusive {
-                  if s.len() < *l || s.len() > *u {
-                    self.add_error(format!(
-                      "expected \"{}\" string length to be in the range {} <= value <= {}, got {}",
-                      s, l, u, len
-                    ));
-                  }
-
-                  return Ok(());
-                } else if s.len() <= *l || s.len() >= *u {
+                if s.len() < *l || s.len() > *u {
                   self.add_error(format!(
-                    "expected \"{}\" string length to be in the range {} < value < {}, got {}",
+                    "expected \"{}\" string length to be in the range {} <= value <= {}, got {}",
                     s, l, u, len
                   ));
-                  return Ok(());
                 }
-              }
-              _ => {
-                self.add_error("string value cannot be validated against a range without the .size control operator".to_string());
-                return Ok(());
-              }
-            },
-            _ => {
-              self.add_error(error_str);
-              return Ok(());
-            }
-          }
-        }
-        _ => {
-          self.add_error(format!(
-            "invalid cddl range. upper value must be a uint type. got {}",
-            upper
-          ));
-          return Ok(());
-        }
-      },
-      Type2::FloatValue { value: l, .. } => match upper {
-        Type2::FloatValue { value: u, .. } => {
-          let error_str = if is_inclusive {
-            format!(
-              "expected float to be in range {} <= value <= {}, got {:?}",
-              l, u, self.cbor
-            )
-          } else {
-            format!(
-              "expected float to be in range {} < value < {}, got {:?}",
-              l, u, self.cbor
-            )
-          };
 
-          match &self.cbor {
-            Value::Float(f) => {
-              if is_inclusive {
-                if *f < *l || *f > *u {
-                  self.add_error(error_str);
-                } else {
-                  return Ok(());
-                }
-              } else if *f <= *l || *f >= *u {
-                self.add_error(error_str);
                 return Ok(());
-              } else {
+              } else if s.len() <= *l || s.len() >= *u {
+                self.add_error(format!(
+                  "expected \"{}\" string length to be in the range {} < value < {}, got {}",
+                  s, l, u, len
+                ));
                 return Ok(());
               }
             }
             _ => {
-              self.add_error(error_str);
+              self.add_error("string value cannot be validated against a range without the .size control operator".to_string());
               return Ok(());
             }
+          },
+          Value::Integer(i) => {
+            if is_inclusive {
+              if i128::from(*i) < *l as i128 || i128::from(*i) > *u as i128 {
+                self.add_error(format!(
+                  "expected integer to be in range {} <= value <= {}, got {:?}",
+                  l, u, i
+                ));
+              }
+            } else {
+              if i128::from(*i) <= *l as i128 || i128::from(*i) >= *u as i128 {
+                self.add_error(format!(
+                  "expected integer to be in range {} < value < {}, got {:?}",
+                  l, u, i
+                ));
+              }
+            }
+          }
+          _ => {
+            self.add_error(format!(
+              "expected value to be in range {} {} value {} {}, got {:?}",
+              l,
+              if is_inclusive { "<=" } else { "<" },
+              if is_inclusive { "<=" } else { "<" },
+              u,
+              self.cbor
+            ));
           }
         }
-        _ => {
-          self.add_error(format!(
-            "invalid cddl range. upper value must be a float type. got {}",
-            upper
-          ));
-          return Ok(());
-        }
-      },
+      }
       _ => {
-        self.add_error(
-          "invalid cddl range. upper and lower values must be either integers or floats"
-            .to_string(),
-        );
-
-        return Ok(());
+        self.add_error(format!(
+          "invalid cddl range. upper and lower values must be uint types. got {} and {}",
+          lower, upper
+        ));
       }
     }
 
@@ -3403,10 +3290,22 @@ where
       Value::Bytes(b) => match value {
         token::Value::UINT(v) => match &self.ctrl {
           Some(ControlOperator::SIZE) => {
-            if b.len() == *v {
-              None
+            if let Some(range_upper) = self.range_upper.take() {
+              let len = b.len();
+              if len < *v || len > range_upper {
+                Some(format!(
+                  "expected bytes .size to be in range {} <= value <= {}, got {}",
+                  v, range_upper, len
+                ))
+              } else {
+                None
+              }
             } else {
-              Some(format!("expected \"{:?}\" .size {}, got {}", b, v, b.len()))
+              if b.len() == *v {
+                None
+              } else {
+                Some(format!("expected \"{:?}\" .size {}, got {}", b, v, b.len()))
+              }
             }
           }
           Some(ControlOperator::BITS) => {
@@ -3917,5 +3816,96 @@ mod tests {
     let cddl = cddl_from_str("start = any", true).unwrap();
     let cv = CBORValidator::new(&cddl, cbor, None);
     assert_eq!(cv.extract_cbor(), Value::Float(1.23));
+  }
+
+  #[test]
+  fn validate_bstr_size_range() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        m = { field: bstr .size (16..1000) }
+        "#
+    );
+
+    let cddl = cddl_from_str(cddl, true)?;
+
+    // Test valid byte string length
+    let valid_bytes = vec![0u8; 100];
+    let valid_cbor = ciborium::value::Value::Map(vec![(
+      ciborium::value::Value::Text("field".to_string()),
+      ciborium::value::Value::Bytes(valid_bytes),
+    )]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, valid_cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, valid_cbor);
+    assert!(cv.validate().is_ok());
+
+    // Test byte string that's too short
+    let short_bytes = vec![0u8; 10];
+    let short_cbor = ciborium::value::Value::Map(vec![(
+      ciborium::value::Value::Text("field".to_string()),
+      ciborium::value::Value::Bytes(short_bytes),
+    )]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, short_cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, short_cbor);
+    assert!(cv.validate().is_err());
+
+    // Test byte string that's too long
+    let long_bytes = vec![0u8; 1500];
+    let long_cbor = ciborium::value::Value::Map(vec![(
+      ciborium::value::Value::Text("field".to_string()),
+      ciborium::value::Value::Bytes(long_bytes),
+    )]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, long_cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, long_cbor);
+    assert!(cv.validate().is_err());
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_bstr_size_exclusive_range() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        m = { field: bstr .size (16...1000) }
+      "#
+    );
+
+    let cddl = cddl_from_str(cddl, true)?;
+
+    // Test valid byte string length (17 bytes - should pass)
+    let valid_bytes = vec![0u8; 17];
+    let valid_cbor = ciborium::value::Value::Map(vec![(
+      ciborium::value::Value::Text("field".to_string()),
+      ciborium::value::Value::Bytes(valid_bytes),
+    )]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, valid_cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, valid_cbor);
+    assert!(cv.validate().is_ok());
+
+    // Test boundary case (16 bytes - should fail)
+    let boundary_bytes = vec![0u8; 16];
+    let boundary_cbor = ciborium::value::Value::Map(vec![(
+      ciborium::value::Value::Text("field".to_string()),
+      ciborium::value::Value::Bytes(boundary_bytes),
+    )]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, boundary_cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, boundary_cbor);
+    assert!(cv.validate().is_err());
+
+    Ok(())
   }
 }
