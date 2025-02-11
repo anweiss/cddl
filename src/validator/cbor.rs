@@ -3292,7 +3292,7 @@ where
           Some(ControlOperator::SIZE) => {
             if let Some(range_upper) = self.range_upper.as_ref() {
               let len = b.len();
-              if len < *v || len > range_upper {
+              if len < *v || len > *range_upper {
                 Some(format!(
                   "expected bytes .size to be in range {} <= value <= {}, got {}",
                   v, range_upper, len
