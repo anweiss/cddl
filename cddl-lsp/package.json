@@ -97,7 +97,7 @@
     "@typescript-eslint/parser": "^5.16.0",
     "eslint": "^8.11.0",
     "merge-options": "^2.0.0",
-    "mocha": "^9.2.2",
+    "mocha": "^11.1.0",
     "rimraf": "^3.0.2",
     "ts-loader": "^7.0.5",
     "typescript": "^5.7.3",
