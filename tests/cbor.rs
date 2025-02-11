@@ -2,8 +2,12 @@
 #![cfg(feature = "cbor")]
 #![cfg(not(target_arch = "wasm32"))]
 
-use cddl::validator::validate_cbor_from_slice;
+use cddl::{
+  cddl_from_str,
+  validator::{cbor::CBORValidator, validate_cbor_from_slice, Validator},
+};
 use ciborium::value::Value;
+use indoc::indoc;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 
@@ -319,6 +323,82 @@ fn verify_large_tag_values() -> Result<(), Box<dyn Error>> {
   let mut bytes = Vec::new();
   ciborium::ser::into_writer(&cbor, &mut bytes)?;
   assert!(validate_cbor_from_slice(input, &bytes, None).is_err());
+
+  Ok(())
+}
+
+#[test]
+fn validate_range_operators() -> Result<(), Box<dyn Error>> {
+  let cddl = indoc!(
+    r#"
+        test = {
+            inclusive: 5..10,      ; inclusive-inclusive range 
+            exclusive: 5...10,     ; inclusive-exclusive range (per RFC 8610)
+        }
+        "#
+  );
+
+  let cddl = cddl_from_str(cddl, true)?;
+
+  // Test inclusive range (..) and inclusive-exclusive range (...)
+  let test = Value::Map(vec![
+    (
+      Value::Text("inclusive".to_string()),
+      Value::Integer(5.into()),
+    ),
+    (
+      Value::Text("exclusive".to_string()),
+      Value::Integer(5.into()),
+    ),
+  ]);
+  let mut cv = CBORValidator::new(&cddl, test, None);
+  cv.validate()?;
+
+  let test = Value::Map(vec![
+    (
+      Value::Text("inclusive".to_string()),
+      Value::Integer(10.into()),
+    ),
+    (
+      Value::Text("exclusive".to_string()),
+      Value::Integer(9.into()),
+    ),
+  ]);
+  let mut cv = CBORValidator::new(&cddl, test, None);
+  cv.validate()?;
+
+  // Test fail cases
+  let test = Value::Map(vec![
+    (
+      Value::Text("inclusive".to_string()),
+      Value::Integer(10.into()),
+    ),
+    (
+      Value::Text("exclusive".to_string()),
+      Value::Integer(10.into()),
+    ), // Should fail - 10 is exclusive
+  ]);
+  let mut cv = CBORValidator::new(&cddl, test, None);
+  assert!(
+    cv.validate().is_err(),
+    "10 should fail inclusive-exclusive range 5...10"
+  );
+
+  let test = Value::Map(vec![
+    (
+      Value::Text("inclusive".to_string()),
+      Value::Integer(4.into()),
+    ), // Should fail - 4 is out of range
+    (
+      Value::Text("exclusive".to_string()),
+      Value::Integer(5.into()),
+    ),
+  ]);
+  let mut cv = CBORValidator::new(&cddl, test, None);
+  assert!(
+    cv.validate().is_err(),
+    "4 should fail inclusive range 5..10"
+  );
 
   Ok(())
 }

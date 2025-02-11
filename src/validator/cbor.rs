@@ -822,9 +822,9 @@ where
                 ));
               }
             } else {
-              if len <= *l || len >= *u {
+              if len < *l || len >= *u {
                 self.add_error(format!(
-                  "expected uint to be in range {} < value < {}, got Bytes({:?})",
+                  "expected uint to be in range {} <= value < {}, got Bytes({:?})",
                   l, u, b
                 ));
               }
@@ -843,9 +843,9 @@ where
                 }
 
                 return Ok(());
-              } else if s.len() <= *l || s.len() >= *u {
+              } else if s.len() < *l || s.len() >= *u {
                 self.add_error(format!(
-                  "expected \"{}\" string length to be in the range {} < value < {}, got {}",
+                  "expected \"{}\" string length to be in the range {} <= value < {}, got {}",
                   s, l, u, len
                 ));
                 return Ok(());
@@ -865,9 +865,9 @@ where
                 ));
               }
             } else {
-              if i128::from(*i) <= *l as i128 || i128::from(*i) >= *u as i128 {
+              if i128::from(*i) < *l as i128 || i128::from(*i) >= *u as i128 {
                 self.add_error(format!(
-                  "expected integer to be in range {} < value < {}, got {:?}",
+                  "expected integer to be in range {} <= value < {}, got {:?}",
                   l, u, i
                 ));
               }
@@ -3893,7 +3893,7 @@ mod tests {
     let mut cv = CBORValidator::new(&cddl, valid_cbor);
     assert!(cv.validate().is_ok());
 
-    // Test boundary case (16 bytes - should fail)
+    // Test boundary case (16 bytes - should pass)
     let boundary_bytes = vec![0u8; 16];
     let boundary_cbor = ciborium::value::Value::Map(vec![(
       ciborium::value::Value::Text("field".to_string()),
@@ -3904,7 +3904,7 @@ mod tests {
     let mut cv = CBORValidator::new(&cddl, boundary_cbor, None);
     #[cfg(not(feature = "additional-controls"))]
     let mut cv = CBORValidator::new(&cddl, boundary_cbor);
-    assert!(cv.validate().is_err());
+    assert!(cv.validate().is_ok());
 
     Ok(())
   }
