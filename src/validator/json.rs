@@ -878,222 +878,158 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       return self.validate_array_items(&ArrayItemToken::Range(lower, upper, is_inclusive));
     }
 
-    match lower {
-      Type2::IntValue { value: l, .. } => match upper {
-        Type2::IntValue { value: u, .. } => {
-          let error_str = if is_inclusive {
-            format!(
-              "expected integer to be in range {} <= value <= {}, got {}",
-              l, u, self.json
-            )
-          } else {
-            format!(
-              "expected integer to be in range {} < value < {}, got {}",
-              l, u, self.json
-            )
-          };
+    match (lower, upper) {
+      (Type2::IntValue { value: l, .. }, Type2::IntValue { value: u, .. }) => {
+        let error_str = if is_inclusive {
+          format!(
+            "expected integer to be in range {} <= value <= {}, got {}",
+            l, u, self.json
+          )
+        } else {
+          // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
+          format!(
+            "expected integer to be in range {} <= value < {}, got {}",
+            l, u, self.json
+          )
+        };
 
-          match &self.json {
-            Value::Number(n) => {
-              if let Some(i) = n.as_i64() {
-                if is_inclusive {
-                  if i < *l as i64 || i > *u as i64 {
-                    self.add_error(error_str);
-                  } else {
-                    return Ok(());
-                  }
-                } else if i <= *l as i64 || i >= *u as i64 {
+        match &self.json {
+          Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+              if is_inclusive {
+                if i < *l as i64 || i > *u as i64 {
                   self.add_error(error_str);
-                  return Ok(());
-                } else {
-                  return Ok(());
                 }
               } else {
-                self.add_error(error_str);
-                return Ok(());
+                // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
+                if i < *l as i64 || i >= *u as i64 {
+                  self.add_error(error_str);
+                }
               }
-            }
-            _ => {
+            } else {
               self.add_error(error_str);
               return Ok(());
             }
           }
+          _ => {
+            self.add_error(format!(
+              "invalid cddl range. value must be an integer type. got {}",
+              self.json
+            ));
+            return Ok(());
+          }
         }
-        Type2::UintValue { value: u, .. } => {
-          let error_str = if is_inclusive {
-            format!(
-              "expected integer to be in range {} <= value <= {}, got {}",
-              l, u, self.json
-            )
-          } else {
-            format!(
-              "expected integer to be in range {} < value < {}, got {}",
-              l, u, self.json
-            )
-          };
+      }
+      (Type2::UintValue { value: l, .. }, Type2::UintValue { value: u, .. }) => {
+        let error_str = if is_inclusive {
+          format!(
+            "expected uint to be in range {} <= value <= {}, got {}",
+            l, u, self.json
+          )
+        } else {
+          // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
+          format!(
+            "expected uint to be in range {} <= value < {}, got {}",
+            l, u, self.json
+          )
+        };
 
-          match &self.json {
-            Value::Number(n) => {
-              if let Some(i) = n.as_i64() {
-                if is_inclusive {
-                  if i < *l as i64 || i > *u as i64 {
-                    self.add_error(error_str);
-                  } else {
-                    return Ok(());
-                  }
-                } else if i <= *l as i64 || i >= *u as i64 {
+        match &self.json {
+          Value::Number(n) => {
+            if let Some(i) = n.as_u64() {
+              // Fix: Cast all usize values to u64
+              let lower = *l as u64;
+              let upper = *u as u64;
+              if is_inclusive {
+                if i < lower || i > upper {
                   self.add_error(error_str);
-                  return Ok(());
-                } else {
-                  return Ok(());
                 }
               } else {
-                self.add_error(error_str);
-                return Ok(());
+                if i < lower || i >= upper {
+                  self.add_error(error_str);
+                }
               }
-            }
-            _ => {
+            } else {
               self.add_error(error_str);
               return Ok(());
             }
           }
-        }
-        _ => {
-          self.add_error(format!(
-            "invalid cddl range. upper value must be an integer type. got {}",
-            upper
-          ));
-          return Ok(());
-        }
-      },
-      Type2::UintValue { value: l, .. } => match upper {
-        Type2::UintValue { value: u, .. } => {
-          let error_str = if is_inclusive {
-            format!(
-              "expected uint to be in range {} <= value <= {}, got {}",
-              l, u, self.json
-            )
-          } else {
-            format!(
-              "expected uint to be in range {} < value < {}, got {}",
-              l, u, self.json
-            )
-          };
-
-          match &self.json {
-            Value::Number(n) => {
-              if let Some(i) = n.as_u64() {
-                if is_inclusive {
-                  if i < *l as u64 || i > *u as u64 {
-                    self.add_error(error_str);
-                  } else {
-                    return Ok(());
-                  }
-                } else if i <= *l as u64 || i >= *u as u64 {
+          Value::String(s) => match self.ctrl {
+            Some(ControlOperator::SIZE) => {
+              let len = s.len() as u64; // Fix: Convert len to u64
+                                        // Fix: Cast all usize values to u64
+              let lower = *l as u64;
+              let upper = *u as u64;
+              if is_inclusive {
+                if len < lower || len > upper {
                   self.add_error(error_str);
-                  return Ok(());
-                } else {
-                  return Ok(());
                 }
               } else {
-                self.add_error(error_str);
-                return Ok(());
-              }
-            }
-            Value::String(s) => match self.ctrl {
-              Some(ControlOperator::SIZE) => {
-                let len = s.len();
-                let s = s.clone();
-                if is_inclusive {
-                  if s.len() < *l || s.len() > *u {
-                    self.add_error(format!(
-                      "expected \"{}\" string length to be in the range {} <= value <= {}, got {}",
-                      s, l, u, len
-                    ));
-                  }
-
-                  return Ok(());
-                } else if s.len() <= *l || s.len() >= *u {
-                  self.add_error(format!(
-                    "expected \"{}\" string length to be in the range {} < value < {}, got {}",
-                    s, l, u, len
-                  ));
-                  return Ok(());
+                if len < lower || len >= upper {
+                  self.add_error(error_str);
                 }
               }
-              _ => {
-                self.add_error("string value cannot be validated against a range without the .size control operator".to_string());
-                return Ok(());
-              }
-            },
+            }
             _ => {
+              self.add_error("string value cannot be validated against a range without the .size control operator".to_string());
+              return Ok(());
+            }
+          },
+          _ => {
+            self.add_error(format!(
+              "invalid cddl range. value must be a uint type. got {}",
+              self.json
+            ));
+            return Ok(());
+          }
+        }
+      }
+      (Type2::FloatValue { value: l, .. }, Type2::FloatValue { value: u, .. }) => {
+        let error_str = if is_inclusive {
+          format!(
+            "expected float to be in range {} <= value <= {}, got {}",
+            l, u, self.json
+          )
+        } else {
+          // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
+          format!(
+            "expected float to be in range {} <= value < {}, got {}",
+            l, u, self.json
+          )
+        };
+
+        match &self.json {
+          Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+              if is_inclusive {
+                if f < *l || f > *u {
+                  self.add_error(error_str);
+                }
+              } else {
+                // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
+                if f < *l || f >= *u {
+                  self.add_error(error_str);
+                }
+              }
+            } else {
               self.add_error(error_str);
               return Ok(());
             }
           }
-        }
-        _ => {
-          self.add_error(format!(
-            "invalid cddl range. upper value must be a uint type. got {}",
-            upper
-          ));
-          return Ok(());
-        }
-      },
-      Type2::FloatValue { value: l, .. } => match upper {
-        Type2::FloatValue { value: u, .. } => {
-          let error_str = if is_inclusive {
-            format!(
-              "expected float to be in range {} <= value <= {}, got {}",
-              l, u, self.json
-            )
-          } else {
-            format!(
-              "expected float to be in range {} < value < {}, got {}",
-              l, u, self.json
-            )
-          };
-
-          match &self.json {
-            Value::Number(n) => {
-              if let Some(f) = n.as_f64() {
-                if is_inclusive {
-                  if f < *l || f > *u {
-                    self.add_error(error_str);
-                  } else {
-                    return Ok(());
-                  }
-                } else if f <= *l || f >= *u {
-                  self.add_error(error_str);
-                  return Ok(());
-                } else {
-                  return Ok(());
-                }
-              } else {
-                self.add_error(error_str);
-                return Ok(());
-              }
-            }
-            _ => {
-              self.add_error(error_str);
-              return Ok(());
-            }
+          _ => {
+            self.add_error(format!(
+              "invalid cddl range. value must be a float type. got {}",
+              self.json
+            ));
+            return Ok(());
           }
         }
-        _ => {
-          self.add_error(format!(
-            "invalid cddl range. upper value must be a float type. got {}",
-            upper
-          ));
-          return Ok(());
-        }
-      },
+      }
       _ => {
         self.add_error(
           "invalid cddl range. upper and lower values must be either integers or floats"
             .to_string(),
         );
-
         return Ok(());
       }
     }
@@ -1118,12 +1054,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       } = controller
       {
         if let Some(name) = self.eval_generic_rule {
-          if let Some(gr) = self
-            .generic_rules
-            .iter()
-            .find(|&gr| gr.name == name)
-            .cloned()
-          {
+          if let Some(gr) = self.generic_rules.iter().find(|r| r.name == name).cloned() {
             for (idx, gp) in gr.params.iter().enumerate() {
               if let Some(arg) = gr.args.get(idx) {
                 if *gp == target_ident.ident {
@@ -1142,12 +1073,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       }
 
       if let Some(name) = self.eval_generic_rule {
-        if let Some(gr) = self
-          .generic_rules
-          .iter()
-          .find(|&gr| gr.name == name)
-          .cloned()
-        {
+        if let Some(gr) = self.generic_rules.iter().find(|r| r.name == name).cloned() {
           for (idx, gp) in gr.params.iter().enumerate() {
             if let Some(arg) = gr.args.get(idx) {
               if *gp == target_ident.ident {
@@ -1287,15 +1213,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
-          #[cfg(feature = "ast-span")]
-          if let Some(Occur::Optional { .. }) = self.occurrence.take() {
-            self.add_error(format!(
-              "expected default value {}, got {}",
-              controller, self.json
-            ));
-          }
-          #[cfg(not(feature = "ast-span"))]
-          if let Some(Occur::Optional {}) = self.occurrence.take() {
+          if let Some(Occur::Optional { .. }) = self.occurrence.as_ref() {
             self.add_error(format!(
               "expected default value {}, got {}",
               controller, self.json
@@ -2798,6 +2716,107 @@ mod tests {
 
     let mut jv = JSONValidator::new(&cddl, json, None);
     jv.validate().unwrap();
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_range_operators() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Test inclusive range (..)
+    let cddl = indoc!(
+      r#"
+        thing = 5..10
+        "#
+    );
+
+    let json = serde_json::json!(5); // Should pass
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_ok());
+
+    let json = serde_json::json!(10); // Should pass
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_ok());
+
+    let json = serde_json::json!(4); // Should fail
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_err());
+
+    let json = serde_json::json!(11); // Should fail
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_err());
+
+    // Test inclusive-exclusive range (...)
+    let cddl = indoc!(
+      r#"
+        thing = 5...10
+        "#
+    );
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+
+    let json = serde_json::json!(5); // Should pass
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_ok());
+
+    let json = serde_json::json!(9); // Should pass
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_ok());
+
+    let json = serde_json::json!(10); // Should fail (exclusive upper bound)
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_err());
+
+    let json = serde_json::json!(4); // Should fail
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_err());
+
+    // Test inclusive-exclusive range with floats
+    let cddl = indoc!(
+      r#"
+        thing = 1.5...3.5
+        "#
+    );
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+
+    let json = serde_json::json!(1.5); // Should pass
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_ok());
+
+    let json = serde_json::json!(2.5); // Should pass
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_ok());
+
+    let json = serde_json::json!(3.5); // Should fail (exclusive upper bound)
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_err());
+
+    let json = serde_json::json!(1.0); // Should fail
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_err());
+
+    // Test range with string length using .size control
+    let cddl = indoc!(
+      r#"
+        thing = tstr .size (2...5)
+        "#
+    );
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+
+    let json = serde_json::json!("ab"); // Length 2 - should pass
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_ok());
+
+    let json = serde_json::json!("abcd"); // Length 4 - should pass
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_ok());
+
+    let json = serde_json::json!("abcde"); // Length 5 - should fail (exclusive)
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_err());
+
+    let json = serde_json::json!("a"); // Length 1 - should fail
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    assert!(jv.validate().is_err());
 
     Ok(())
   }
