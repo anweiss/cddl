@@ -821,13 +821,11 @@ where
                   l, u, b
                 ));
               }
-            } else {
-              if len < *l || len >= *u {
-                self.add_error(format!(
-                  "expected uint to be in range {} <= value < {}, got Bytes({:?})",
-                  l, u, b
-                ));
-              }
+            } else if len < *l || len >= *u {
+              self.add_error(format!(
+                "expected uint to be in range {} <= value < {}, got Bytes({:?})",
+                l, u, b
+              ));
             }
           }
           Value::Text(s) => match self.ctrl {
@@ -864,13 +862,11 @@ where
                   l, u, i
                 ));
               }
-            } else {
-              if i128::from(*i) < *l as i128 || i128::from(*i) >= *u as i128 {
-                self.add_error(format!(
-                  "expected integer to be in range {} <= value < {}, got {:?}",
-                  l, u, i
-                ));
-              }
+            } else if i128::from(*i) < *l as i128 || i128::from(*i) >= *u as i128 {
+              self.add_error(format!(
+                "expected integer to be in range {} <= value < {}, got {:?}",
+                l, u, i
+              ));
             }
           }
           _ => {
@@ -1140,11 +1136,98 @@ where
         match target {
           Type2::Typename { ident, .. } if is_ident_byte_string_data_type(self.cddl, ident) => {
             match &self.cbor {
-              Value::Bytes(_) | Value::Array(_) => self.visit_type2(controller)?,
-              _ => self.add_error(format!(
-                "{} control can only be matched against a CBOR byte string, got {:?}",
-                ctrl, self.cbor
-              )),
+              Value::Bytes(b) => {
+                // Handle direct byte string case
+                let inner_value = ciborium::de::from_reader(&b[..]);
+                match inner_value {
+                  Ok(value) => {
+                    #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                    let mut cv =
+                      CBORValidator::new(self.cddl, value, self.enabled_features.clone());
+                    #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                    let mut cv = CBORValidator::new(self.cddl, value, self.enabled_features);
+                    #[cfg(not(feature = "additional-controls"))]
+                    let mut cv = CBORValidator::new(self.cddl, value);
+
+                    cv.generic_rules = self.generic_rules.clone();
+                    cv.eval_generic_rule = self.eval_generic_rule;
+                    cv.cbor_location.push_str(&self.cbor_location);
+
+                    cv.visit_type2(controller)?;
+
+                    if !cv.errors.is_empty() {
+                      self.errors.append(&mut cv.errors);
+                    }
+                  }
+                  Err(e) => {
+                    self.add_error(format!("error decoding embedded CBOR: {}", e));
+                  }
+                }
+              }
+              Value::Array(arr) => {
+                // Handle array of byte strings case
+                for (idx, item) in arr.iter().enumerate() {
+                  if let Value::Bytes(b) = item {
+                    let inner_value = ciborium::de::from_reader(&b[..]);
+                    match inner_value {
+                      Ok(value) => {
+                        let current_location = self.cbor_location.clone();
+                        #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                        let mut cv =
+                          CBORValidator::new(self.cddl, value, self.enabled_features.clone());
+                        #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                        let mut cv = CBORValidator::new(self.cddl, value, self.enabled_features);
+                        #[cfg(not(feature = "additional-controls"))]
+                        let mut cv = CBORValidator::new(self.cddl, value);
+
+                        cv.generic_rules = self.generic_rules.clone();
+                        cv.eval_generic_rule = self.eval_generic_rule;
+                        let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
+
+                        cv.visit_type2(controller)?;
+
+                        if !cv.errors.is_empty() {
+                          self.errors.append(&mut cv.errors);
+                        }
+                        self.cbor_location = current_location;
+                      }
+                      Err(e) => {
+                        let error_msg =
+                          format!("error decoding embedded CBOR at index {}: {}", idx, e);
+                        self.errors.push(ValidationError {
+                          reason: error_msg,
+                          cddl_location: self.cddl_location.clone(),
+                          cbor_location: self.cbor_location.clone(),
+                          is_multi_type_choice: self.is_multi_type_choice,
+                          is_multi_group_choice: self.is_multi_group_choice,
+                          is_group_to_choice_enum: self.is_group_to_choice_enum,
+                          type_group_name_entry: self.type_group_name_entry.map(|e| e.to_string()),
+                        });
+                      }
+                    }
+                  } else {
+                    let error_msg = format!(
+                      "array item at index {} must be a byte string for .cbor control, got {:?}",
+                      idx, item
+                    );
+                    self.errors.push(ValidationError {
+                      reason: error_msg,
+                      cddl_location: self.cddl_location.clone(),
+                      cbor_location: self.cbor_location.clone(),
+                      is_multi_type_choice: self.is_multi_type_choice,
+                      is_multi_group_choice: self.is_multi_group_choice,
+                      is_group_to_choice_enum: self.is_group_to_choice_enum,
+                      type_group_name_entry: self.type_group_name_entry.map(|e| e.to_string()),
+                    });
+                  }
+                }
+              }
+              _ => {
+                self.add_error(format!(
+                  ".cbor control can only be matched against a CBOR byte string or array of byte strings, got {:?}",
+                  self.cbor
+                ));
+              }
             }
           }
           _ => self.add_error(format!(
@@ -1464,7 +1547,6 @@ where
             let mut cv = CBORValidator::new(self.cddl, value, self.enabled_features.clone());
             #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
             let mut cv = CBORValidator::new(self.cddl, value, self.enabled_features);
-
             #[cfg(not(feature = "additional-controls"))]
             let mut cv = CBORValidator::new(self.cddl, value);
 
@@ -1884,7 +1966,7 @@ where
       Type2::TaggedData { tag, t, .. } => match &self.cbor {
         Value::Tag(actual_tag, value) => {
           if let Some(tag) = tag {
-            if *tag as u64 != *actual_tag {
+            if { *tag } != *actual_tag {
               self.add_error(format!(
                 "expected tagged data #6.{}({}), got {:?}",
                 tag, t, self.cbor
@@ -3300,12 +3382,10 @@ where
               } else {
                 None
               }
+            } else if b.len() == *v {
+              None
             } else {
-              if b.len() == *v {
-                None
-              } else {
-                Some(format!("expected \"{:?}\" .size {}, got {}", b, v, b.len()))
-              }
+              Some(format!("expected \"{:?}\" .size {}, got {}", b, v, b.len()))
             }
           }
           Some(ControlOperator::BITS) => {
@@ -3905,6 +3985,133 @@ mod tests {
     #[cfg(not(feature = "additional-controls"))]
     let mut cv = CBORValidator::new(&cddl, boundary_cbor);
     assert!(cv.validate().is_ok());
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_nested_cbor() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        root = {
+            foo: bstr .cbor bar
+        }
+
+        bar = {
+            a: text,
+            b: int,
+            c: bstr
+        }
+        "#
+    );
+
+    let cddl = cddl_from_str(cddl, true)?;
+
+    // Create valid inner CBOR map
+    let inner_cbor = ciborium::cbor!({
+        "a" => "test",
+        "b" => -42,
+        "c" => Value::Bytes(b"bytes".to_vec())
+    })?;
+
+    // Serialize inner CBOR to bytes
+    let mut inner_bytes = Vec::new();
+    ciborium::ser::into_writer(&inner_cbor, &mut inner_bytes)?;
+
+    // Create outer CBOR map containing the bytes
+    let outer_cbor = Value::Map(vec![(
+      Value::Text("foo".to_string()),
+      Value::Bytes(inner_bytes),
+    )]);
+
+    // Test valid case
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, outer_cbor.clone(), None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, outer_cbor.clone());
+    assert!(cv.validate().is_ok());
+
+    // Test invalid inner CBOR (missing required field)
+    let invalid_inner = ciborium::cbor!({
+        "a" => "test",
+        "b" => -42
+        // missing "c" field
+    })?;
+
+    let mut invalid_bytes = Vec::new();
+    ciborium::ser::into_writer(&invalid_inner, &mut invalid_bytes)?;
+
+    let invalid_outer = Value::Map(vec![(
+      Value::Text("foo".to_string()),
+      Value::Bytes(invalid_bytes),
+    )]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, invalid_outer, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, invalid_outer);
+    assert!(cv.validate().is_err());
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_nested_cbor_in_array() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = indoc!(
+      r#"
+        root = [
+            foo: bstr .cbor bar
+        ]
+
+        bar = {
+            a: text,
+            b: int,
+            c: bstr
+        }
+        "#
+    );
+
+    let cddl = cddl_from_str(cddl, true)?;
+
+    // Create valid inner CBOR map
+    let inner_cbor = ciborium::cbor!({
+        "a" => "test",
+        "b" => -42,
+        "c" => Value::Bytes(b"bytes".to_vec())
+    })?;
+
+    // Serialize inner CBOR to bytes
+    let mut inner_bytes = Vec::new();
+    ciborium::ser::into_writer(&inner_cbor, &mut inner_bytes)?;
+
+    // Create outer CBOR array containing the bytes
+    let outer_cbor = Value::Array(vec![Value::Bytes(inner_bytes)]);
+
+    // Test valid case
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, outer_cbor.clone(), None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, outer_cbor.clone());
+    cv.validate()?;
+    assert!(cv.validate().is_ok());
+
+    // Test invalid inner CBOR (missing required field)
+    let invalid_inner = ciborium::cbor!({
+        "a" => "test",
+        "b" => -42
+        // missing "c" field
+    })?;
+
+    let mut invalid_bytes = Vec::new();
+    ciborium::ser::into_writer(&invalid_inner, &mut invalid_bytes)?;
+
+    let invalid_outer = Value::Array(vec![Value::Bytes(invalid_bytes)]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, invalid_outer, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, invalid_outer);
+    assert!(cv.validate().is_err());
 
     Ok(())
   }

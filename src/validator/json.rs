@@ -944,10 +944,8 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
                 if i < lower || i > upper {
                   self.add_error(error_str);
                 }
-              } else {
-                if i < lower || i >= upper {
-                  self.add_error(error_str);
-                }
+              } else if i < lower || i >= upper {
+                self.add_error(error_str);
               }
             } else {
               self.add_error(error_str);
@@ -964,10 +962,8 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
                 if len < lower || len > upper {
                   self.add_error(error_str);
                 }
-              } else {
-                if len < lower || len >= upper {
-                  self.add_error(error_str);
-                }
+              } else if len < lower || len >= upper {
+                self.add_error(error_str);
               }
             }
             _ => {
