@@ -417,7 +417,13 @@ impl<'a> JSONValidator<'a> {
                 }
                 ArrayItemToken::Group(group) => jv.visit_group(group)?,
                 ArrayItemToken::Identifier(ident) => jv.visit_identifier(ident)?,
-                _ => (),
+                ArrayItemToken::TaggedData(tag_data) => {
+                  // Handle tagged data
+                  jv.add_error(format!(
+                    "Tagged data not supported in arrays: {:?}",
+                    tag_data
+                  ))
+                }
               }
 
               if self.is_multi_type_choice && jv.errors.is_empty() {
@@ -461,9 +467,22 @@ impl<'a> JSONValidator<'a> {
                 ArrayItemToken::Range(lower, upper, is_inclusive) => {
                   jv.visit_range(lower, upper, *is_inclusive)?
                 }
-                ArrayItemToken::Group(group) => jv.visit_group(group)?,
+
                 ArrayItemToken::Identifier(ident) => jv.visit_identifier(ident)?,
-                _ => (),
+                ArrayItemToken::TaggedData(tag_data) => {
+                  // Handle tagged data
+                  jv.add_error(format!(
+                    "Tagged data not supported in arrays: {:?}",
+                    tag_data
+                  ))
+                }
+                // Special nested array handling - using Group variant instead
+                // as Array variant doesn't exist
+                ArrayItemToken::Group(group) if v.is_array() => {
+                  // Special handling for nested arrays
+                  jv.visit_group(group)?;
+                }
+                ArrayItemToken::Group(group) => jv.visit_group(group)?,
               }
 
               self.errors.append(&mut jv.errors);
@@ -675,6 +694,42 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
   }
 
   fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<Error> {
+    // Special case for nested array in literal position
+    if let Value::Array(outer_array) = &self.json {
+      if let Some(idx) = self.group_entry_idx {
+        // We're processing a specific array item
+        if let Some(item) = outer_array.get(idx) {
+          if item.is_array() {
+            // This is a nested array, check if we're supposed to validate against an array type
+            for tc in t.type_choices.iter() {
+              if let Type2::Array { .. } = &tc.type1.type2 {
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut jv =
+                  JSONValidator::new(self.cddl, item.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                let mut jv = JSONValidator::new(self.cddl, item.clone(), self.enabled_features);
+                #[cfg(not(feature = "additional-controls"))]
+                let mut jv = JSONValidator::new(self.cddl, item.clone());
+
+                jv.generic_rules = self.generic_rules.clone();
+                jv.eval_generic_rule = self.eval_generic_rule;
+                jv.is_multi_type_choice = self.is_multi_type_choice;
+
+                let _ = write!(jv.json_location, "{}/{}", self.json_location, idx);
+
+                // Visit the type choice with the inner array value
+                jv.visit_type_choice(tc)?;
+
+                self.errors.append(&mut jv.errors);
+                return Ok(());
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Regular type processing
     if t.type_choices.len() > 1 {
       self.is_multi_type_choice = true;
     }
@@ -1518,6 +1573,11 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
           Ok(())
         }
+        // Special case for nested array validation
+        _ if matches!(self.json, Value::Array(_)) => {
+          self.validate_array_items(&ArrayItemToken::Group(group))?;
+          Ok(())
+        }
         _ => {
           self.add_error(format!("expected array type, got {}", self.json));
           Ok(())
@@ -1533,7 +1593,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             if let Some(gr) = self
               .generic_rules
               .iter_mut()
-              .find(|gr| gr.name == ident.ident)
+              .find(|r| r.name == ident.ident)
             {
               for arg in ga.args.iter() {
                 gr.args.push((*arg.arg).clone());
@@ -1596,7 +1656,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             if let Some(gr) = self
               .generic_rules
               .iter_mut()
-              .find(|gr| gr.name == ident.ident)
+              .find(|r| r.name == ident.ident)
             {
               for arg in ga.args.iter() {
                 gr.args.push((*arg.arg).clone());
@@ -1756,6 +1816,20 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       return Ok(());
     }
 
+    // Special case for array values - check if we're in an array context and this
+    // is a reference to another array type
+    if let Value::Array(_) = &self.json {
+      if let Some(rule) = rule_from_ident(self.cddl, ident) {
+        if let Rule::Type { rule, .. } = rule {
+          for tc in rule.value.type_choices.iter() {
+            if let Type2::Array { .. } = &tc.type1.type2 {
+              return self.visit_type_choice(tc);
+            }
+          }
+        }
+      }
+    }
+
     match &self.json {
       Value::Null if is_ident_null_data_type(self.cddl, ident) => Ok(()),
       Value::Bool(b) => {
@@ -1831,7 +1905,17 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
         Ok(())
       }
-      Value::Array(_) => self.validate_array_items(&ArrayItemToken::Identifier(ident)),
+      Value::Array(_) => {
+        // For arrays, check if this identifier refers to an array type rule first
+        if let Some(r) = rule_from_ident(self.cddl, ident) {
+          if is_array_type_rule(self.cddl, ident) {
+            return self.visit_rule(r);
+          }
+        }
+
+        // Then fallback to normal array validation
+        self.validate_array_items(&ArrayItemToken::Identifier(ident))
+      }
       Value::Object(o) => match &self.occurrence {
         #[cfg(feature = "ast-span")]
         Some(Occur::Optional { .. }) | None => {
@@ -2441,6 +2525,23 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
   }
 }
 
+// Helper function to check if an identifier refers to an array type rule
+fn is_array_type_rule<'a>(cddl: &'a CDDL<'a>, ident: &Identifier<'a>) -> bool {
+  for r in cddl.rules.iter() {
+    if let Rule::Type { rule, .. } = r {
+      if rule.name.ident == ident.ident {
+        // Check if the type rule defines an array
+        for tc in rule.value.type_choices.iter() {
+          if let Type2::Array { .. } = &tc.type1.type2 {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  false
+}
+
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
@@ -2813,6 +2914,86 @@ mod tests {
     let json = serde_json::json!("a"); // Length 1 - should fail
     let mut jv = JSONValidator::new(&cddl, json, None);
     assert!(jv.validate().is_err());
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_nested_arrays() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Test with explicit array type
+    let cddl = indoc!(
+      r#"
+        array = [0, [* int]]
+      "#
+    );
+
+    let json = r#"[0, [1, 2]]"#;
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+    let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
+
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    jv.validate()?;
+
+    // Test with named arrays
+    let cddl = indoc!(
+      r#"
+        root = [0, inner]
+        inner = [* int]
+      "#
+    );
+
+    let json = r#"[0, [1, 2]]"#;
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+    let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
+
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    jv.validate()?;
+
+    // Test with explicit array literals
+    let cddl = indoc!(
+      r#"
+        direct = [1, [2, 3]]
+      "#
+    );
+
+    let json = r#"[1, [2, 3]]"#;
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+    let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
+
+    let mut jv = JSONValidator::new(&cddl, json, None);
+    jv.validate()?; // If this passes, our fix works
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_direct_nested_array() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Simplest possible case with explicit literal array
+    let cddl = indoc!(
+      r#"
+        direct = [1, [2, 3]]
+        "#
+    );
+
+    let json = r#"[1, [2, 3]]"#;
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+    let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
+
+    let mut jv = JSONValidator::new(&cddl, json, None);
+
+    // Print detailed information for debugging
+    match jv.validate() {
+      Ok(_) => println!("Validation successful!"),
+      Err(e) => {
+        eprintln!("Validation error: {}", e);
+        if let Error::Validation(errors) = &e {
+          for (i, err) in errors.iter().enumerate() {
+            eprintln!("Error {}: {} at {}", i, err.reason, err.json_location);
+          }
+        }
+        return Err(e.into());
+      }
+    }
 
     Ok(())
   }
