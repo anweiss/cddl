@@ -426,6 +426,11 @@ impl<'a> CBORValidator<'a> {
                 ArrayItemToken::Range(lower, upper, is_inclusive) => {
                   cv.visit_range(lower, upper, *is_inclusive)?
                 }
+                // Special handling for nested arrays when using the Group variant
+                ArrayItemToken::Group(group) if v.is_array() => {
+                  // Special handling for nested arrays
+                  cv.visit_group(group)?;
+                }
                 ArrayItemToken::Group(group) => cv.visit_group(group)?,
                 ArrayItemToken::Identifier(ident) => cv.visit_identifier(ident)?,
                 ArrayItemToken::TaggedData(tagged_data) => cv.visit_type2(tagged_data)?,
@@ -479,6 +484,11 @@ impl<'a> CBORValidator<'a> {
                   ArrayItemToken::Value(value) => cv.visit_value(value)?,
                   ArrayItemToken::Range(lower, upper, is_inclusive) => {
                     cv.visit_range(lower, upper, *is_inclusive)?
+                  }
+                  // Special nested array handling when using the Group variant
+                  ArrayItemToken::Group(group) if v.is_array() => {
+                    // Special handling for nested arrays
+                    cv.visit_group(group)?;
                   }
                   ArrayItemToken::Group(group) => cv.visit_group(group)?,
                   ArrayItemToken::Identifier(ident) => cv.visit_identifier(ident)?,
@@ -633,6 +643,42 @@ where
   }
 
   fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<Error<T>> {
+    // Special case for nested array in literal position
+    if let Value::Array(outer_array) = &self.cbor {
+      if let Some(idx) = self.group_entry_idx {
+        // We're processing a specific array item
+        if let Some(item) = outer_array.get(idx) {
+          if item.is_array() {
+            // This is a nested array, check if we're supposed to validate against an array type
+            for tc in t.type_choices.iter() {
+              if let Type2::Array { .. } = &tc.type1.type2 {
+                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                let mut cv =
+                  CBORValidator::new(self.cddl, item.clone(), self.enabled_features.clone());
+                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                let mut cv = CBORValidator::new(self.cddl, item.clone(), self.enabled_features);
+                #[cfg(not(feature = "additional-controls"))]
+                let mut cv = CBORValidator::new(self.cddl, item.clone());
+
+                cv.generic_rules = self.generic_rules.clone();
+                cv.eval_generic_rule = self.eval_generic_rule;
+                cv.is_multi_type_choice = self.is_multi_type_choice;
+
+                let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
+
+                // Visit the type choice with the inner array value
+                cv.visit_type_choice(tc)?;
+
+                self.errors.append(&mut cv.errors);
+                return Ok(());
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Regular type processing
     if t.type_choices.len() > 1 {
       self.is_multi_type_choice = true;
     }
@@ -2212,6 +2258,20 @@ where
       return Ok(());
     }
 
+    // Special case for array values - check if we're in an array context and this
+    // is a reference to another array type
+    if let Value::Array(_) = &self.cbor {
+      if let Some(rule) = rule_from_ident(self.cddl, ident) {
+        if let Rule::Type { rule, .. } = rule {
+          for tc in rule.value.type_choices.iter() {
+            if let Type2::Array { .. } = &tc.type1.type2 {
+              return self.visit_type_choice(tc);
+            }
+          }
+        }
+      }
+    }
+
     match &self.cbor {
       Value::Null if is_ident_null_data_type(self.cddl, ident) => Ok(()),
       Value::Bytes(_) if is_ident_byte_string_data_type(self.cddl, ident) => Ok(()),
@@ -2453,7 +2513,7 @@ where
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                self.cbor_location.push_str(&format!("/{}", value));
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2468,7 +2528,7 @@ where
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                self.cbor_location.push_str(&format!("/{}", value));
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2482,7 +2542,7 @@ where
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                self.cbor_location.push_str(&format!("/{}", value));
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2496,7 +2556,7 @@ where
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                self.cbor_location.push_str(&format!("/{}", value));
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2510,7 +2570,7 @@ where
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                self.cbor_location.push_str(&format!("/{}", value));
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -2524,7 +2584,7 @@ where
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                self.cbor_location.push_str(&format!("/{}", value));
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -4093,7 +4153,10 @@ mod tests {
     #[cfg(not(feature = "additional-controls"))]
     let mut cv = CBORValidator::new(&cddl, outer_cbor.clone());
     cv.validate()?;
-    assert!(cv.validate().is_ok());
+    assert!(
+      cv.validate().is_ok(),
+      // "Nested array with wildcard should validate successfully"
+    );
 
     // Test invalid inner CBOR (missing required field)
     let invalid_inner = ciborium::cbor!({
@@ -4112,6 +4175,82 @@ mod tests {
     #[cfg(not(feature = "additional-controls"))]
     let mut cv = CBORValidator::new(&cddl, invalid_outer);
     assert!(cv.validate().is_err());
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_nested_arrays() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Test with explicit array type
+    let cddl = indoc!(
+      r#"
+        array = [0, [* int]]
+      "#
+    );
+
+    let cbor = ciborium::cbor!([0, [1, 2]]).unwrap();
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    cv.validate()?;
+
+    // Test with named arrays
+    let cddl = indoc!(
+      r#"
+        root = [0, inner]
+        inner = [* int]
+      "#
+    );
+
+    let cbor = ciborium::cbor!([0, [1, 2]]).unwrap();
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    cv.validate()?;
+
+    // Test with explicit array literals
+    let cddl = indoc!(
+      r#"
+        direct = [1, [2, 3]]
+      "#
+    );
+
+    let cbor = ciborium::cbor!([1, [2, 3]]).unwrap();
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    cv.validate()?; // If this passes, our fix works
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_direct_nested_array() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Simplest possible case with explicit literal array
+    let cddl = indoc!(
+      r#"
+        direct = [1, [2, 3]]
+        "#
+    );
+
+    let cbor = ciborium::cbor!([1, [2, 3]]).unwrap();
+    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+
+    // Print detailed information for debugging
+    match cv.validate() {
+      Ok(_) => println!("Validation successful!"),
+      Err(e) => {
+        eprintln!("Validation error: {}", e);
+        if let Error::Validation(errors) = &e {
+          for (i, err) in errors.iter().enumerate() {
+            eprintln!("Error {}: {} at {}", i, err.reason, err.cbor_location);
+          }
+        }
+        return Err(e.into());
+      }
+    }
 
     Ok(())
   }
