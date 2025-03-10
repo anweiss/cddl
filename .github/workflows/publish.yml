@@ -12,7 +12,6 @@ jobs:
     name: Build and publish binaries
     strategy:
       matrix:
-        rust_toolchain: [stable]
         os: [ubuntu-latest, macOS-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     if: contains(github.ref, 'vscode-extension') != true
@@ -23,7 +22,6 @@ jobs:
       - name: Install Rust
         run: |
           rustup update
-          rustup install ${{ matrix.rust_toolchain }}
 
       - name: Build CLI
         if: matrix.os == 'ubuntu-latest'
@@ -106,7 +104,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GHCRPAT }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
         uses: docker/build-push-action@v2
@@ -150,10 +148,8 @@ jobs:
           sed -i -e 's/"name": "@anweiss\/cddl"/"name": "@anweiss\/cddl-languageserver"/g' cddl-languageserver/package.json
 
       - name: Publish to GPR
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "//npm.pkg.github.com/:_authToken=$GITHUB_TOKEN" > ~/.npmrc
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" > ~/.npmrc
           cp .npmrc pkg/
           cp .npmrc cddl-languageserver/
           cd pkg
@@ -219,8 +215,6 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v2
-        with:
-          persist-credentials: false
 
       - name: Install Rust
         run: |
