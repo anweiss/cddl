@@ -409,16 +409,20 @@ impl<'a> Parser<'a> {
       range: (usize, usize),
     }
 
-    let mut unknown_rules = Vec::default();
+    // First pass: Parse all rules and register their names without checking for unknown identifiers
+    let mut all_rules = Vec::default();
+    // let mut rule_ranges = Vec::default();
 
     while self.cur_token != Token::EOF {
       let begin_rule_range = self.lexer_position.range.0;
+
       match self.parse_rule(false) {
         Ok(r) => {
           let rule_exists =
             |existing_rule: &Rule| r.name() == existing_rule.name() && !r.is_choice_alternate();
 
-          if c.rules.iter().any(rule_exists) {
+          if c.rules.iter().any(rule_exists) || all_rules.iter().any(|(rule, _)| rule_exists(rule))
+          {
             #[cfg(feature = "ast-span")]
             {
               self.parser_position.range = (r.span().0, r.span().1);
@@ -434,20 +438,10 @@ impl<'a> Parser<'a> {
             continue;
           }
 
-          if !self.unknown_rule_idents.is_empty() {
-            if self.is_guaranteed {
-              self.register_rule(&r);
-            }
-            unknown_rules.push(UnknownRule {
-              rule: r,
-              index: c.rules.len(),
-              range: (begin_rule_range, self.lexer_position.range.1),
-            });
-            self.unknown_rule_idents = Vec::default();
-          } else {
-            self.register_rule(&r);
-            c.rules.push(r);
-          }
+          // Register the rule name immediately
+          self.register_rule(&r);
+
+          all_rules.push((r, begin_rule_range));
           self.is_guaranteed = false;
         }
         Err(Error::INCREMENTAL) => {
@@ -456,6 +450,23 @@ impl<'a> Parser<'a> {
           }
         }
         Err(e) => return Err(e),
+      }
+    }
+
+    // Second pass: Add all rules to the CDDL
+    let mut unknown_rules = Vec::default();
+
+    for (rule, begin_rule_range) in all_rules {
+      // Check if the rule still has unknown identifiers
+      if !self.unknown_rule_idents.is_empty() {
+        unknown_rules.push(UnknownRule {
+          rule,
+          index: c.rules.len(),
+          range: (begin_rule_range, self.lexer_position.range.1),
+        });
+        self.unknown_rule_idents = Vec::default();
+      } else {
+        c.rules.push(rule);
       }
     }
 
@@ -3705,5 +3716,33 @@ pub fn format_cddl_from_str(input: &str) -> result::Result<String, JsValue> {
       Err(e) => Err(JsValue::from(e.to_string())),
     },
     Err(e) => Err(JsValue::from(e.to_string())),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::lexer;
+
+  #[test]
+  fn test_multiple_rules_with_reference_to_parenthesized_type() {
+    let input = r#"basic = (d: #6.23(uint), e: bytes)
+        outer = [a: uint, b: basic, c: "some text"]"#;
+
+    // Use the parser directly for better error diagnostics
+    let mut parser = Parser::new(input, Box::new(lexer::lexer_from_str(input).iter())).unwrap();
+    let result = parser.parse_cddl();
+
+    // Ensure there are no errors
+    assert!(result.is_ok(), "Parser errors: {:?}", parser.errors);
+
+    // Check that the CDDL contains two rules
+    let cddl = result.unwrap();
+    assert_eq!(cddl.rules.len(), 2);
+
+    // Verify rule names
+    let rule_names: Vec<_> = cddl.rules.iter().map(|r| r.name()).collect();
+    assert!(rule_names.contains(&"basic".to_string()));
+    assert!(rule_names.contains(&"outer".to_string()));
   }
 }
