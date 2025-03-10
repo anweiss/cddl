@@ -86,14 +86,7 @@ jobs:
 
   publish-docker:
     name: Publish Docker
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            arch: amd64
-          - os: ubuntu-latest
-            arch: arm64
+    runs-on: ubuntu-latest
     if: contains(github.ref, 'vscode-extension') != true
     steps:
       - name: Checkout source
@@ -129,27 +122,11 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.docker_meta.outputs.tags }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache
-  
-  docker_manifest:
-    name: Docker manifest
-    needs: publish-docker
-    runs-on: ubuntu-latest
-    steps:
-      - name: Login to GHCR
-        uses: docker/login-action@v1
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create and push manifest
-        run: |
-            docker manifest create ${{ github.repository_owner }}/docker-uname ${{ github.repository_owner }}/docker-uname:amd64 ${{ github.repository_owner }}/docker-uname:arm64
-            docker manifest push ${{ github.repository_owner }}/docker-uname
 
   publish-npm:
     name: Publish npm
