@@ -105,6 +105,7 @@ jobs:
           images: ghcr.io/anweiss/cddl-cli
           tag-custom: ${{ steps.get_latest_tag.outputs.docker_tag }}
           tag-custom-only: true
+          tag-latest: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
