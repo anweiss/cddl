@@ -11,6 +11,9 @@ on:
       - 'cddl-lsp/**'
 
 name: Build and Test LSP Extension
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   build-and-test:
