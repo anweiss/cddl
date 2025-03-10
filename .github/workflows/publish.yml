@@ -50,36 +50,30 @@ jobs:
 
       - name: Upload binary asset
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: svenstaro/upload-release-action@v2
         with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./cddl-linux-amd64.tar.gz
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./cddl-linux-amd64.tar.gz
           asset_name: cddl-linux-amd64.tar.gz
-          asset_content_type: application/zip
+          tag: ${{ github.ref }}
 
       - name: Upload binary asset
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: svenstaro/upload-release-action@v2
         with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./cddl-windows-amd64.zip
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./cddl-windows-amd64.zip
           asset_name: cddl-windows-amd64.zip
-          asset_content_type: application/zip
+          tag: ${{ github.ref }}
 
       - name: Upload binary asset
         if: matrix.os == 'macOS-latest'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: svenstaro/upload-release-action@v2
         with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./cddl-darwin-amd64.zip
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./cddl-darwin-amd64.zip
           asset_name: cddl-darwin-amd64.zip
-          asset_content_type: application/zip
+          tag: ${{ github.ref }}
 
   publish-docker:
     name: Publish Docker
