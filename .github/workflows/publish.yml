@@ -54,9 +54,10 @@ jobs:
         id: get_latest_tag
         shell: bash
         run: |
-          LATEST_TAG=$(git describe --tags --abbrev=0)
+          # Try to get latest tag, use a default if none exists
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "latest")
           echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
-          echo "Found latest tag: $LATEST_TAG"
+          echo "Found tag to use: $LATEST_TAG"
 
       - name: Upload binary asset
         if: matrix.os == 'ubuntu-latest'
