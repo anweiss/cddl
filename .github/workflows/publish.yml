@@ -55,7 +55,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ./cddl-linux-amd64.tar.gz
           asset_name: cddl-linux-amd64.tar.gz
-          tag: ${{ github.ref }}
+          tag: "0.9.5"
 
       - name: Upload binary asset
         if: matrix.os == 'windows-latest'
@@ -64,7 +64,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ./cddl-windows-amd64.zip
           asset_name: cddl-windows-amd64.zip
-          tag: ${{ github.ref }}
+          tag: "0.9.5"
 
       - name: Upload binary asset
         if: matrix.os == 'macOS-latest'
@@ -73,7 +73,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ./cddl-darwin-amd64.zip
           asset_name: cddl-darwin-amd64.zip
-          tag: ${{ github.ref }}
+          tag: "0.9.5"
 
   publish-docker:
     name: Publish Docker
