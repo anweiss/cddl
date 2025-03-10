@@ -48,6 +48,14 @@ jobs:
           cp target\release\cddl.exe cddl-windows-amd64.exe
           Compress-Archive -Path .\cddl-windows-amd64.exe -DestinationPath cddl-windows-amd64.zip
 
+      - name: Get latest release tag
+        id: get_latest_tag
+        shell: bash
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0)
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "Found latest tag: $LATEST_TAG"
+
       - name: Upload binary asset
         if: matrix.os == 'ubuntu-latest'
         uses: svenstaro/upload-release-action@v2
@@ -56,7 +64,7 @@ jobs:
           file: ./cddl-linux-amd64.tar.gz
           asset_name: cddl-linux-amd64.tar.gz
           overwrite: true
-          tag: "0.9.5"
+          tag: ${{ steps.get_latest_tag.outputs.latest_tag }}
 
       - name: Upload binary asset
         if: matrix.os == 'windows-latest'
@@ -66,7 +74,7 @@ jobs:
           file: ./cddl-windows-amd64.zip
           asset_name: cddl-windows-amd64.zip
           overwrite: true
-          tag: "0.9.5"
+          tag: ${{ steps.get_latest_tag.outputs.latest_tag }}
 
       - name: Upload binary asset
         if: matrix.os == 'macOS-latest'
@@ -76,7 +84,7 @@ jobs:
           file: ./cddl-darwin-amd64.zip
           asset_name: cddl-darwin-amd64.zip
           overwrite: true
-          tag: "0.9.5"
+          tag: ${{ steps.get_latest_tag.outputs.latest_tag }}
 
   publish-docker:
     name: Publish Docker
