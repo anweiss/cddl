@@ -201,7 +201,15 @@ jobs:
 
       - name: Publish crate
         run: |
-          cargo publish
+          # Extract version from Cargo.toml
+          VERSION=$(grep -m 1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          
+          # Check if version already exists
+          if cargo search cddl --limit 1 | grep -q "cddl = \"$VERSION\""; then
+            echo "Version $VERSION already exists on crates.io, skipping publish"
+          else
+            cargo publish
+          fi
 
   publish-website:
     name: Publish website
