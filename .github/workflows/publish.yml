@@ -147,10 +147,34 @@ jobs:
           echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" > ~/.npmrc
           cp .npmrc pkg/
           cp .npmrc cddl-languageserver/
+          
+          # Publish the main package
           cd pkg
-          npm publish --access=public
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "Attempting to publish @anweiss/cddl@${PKG_VERSION}"
+          npm publish --access=public || {
+            STATUS=$?
+            if grep -q "409 Conflict" <<< "$(npm publish --access=public 2>&1)"; then
+              echo "Package @anweiss/cddl@${PKG_VERSION} already exists on GitHub Package Registry, skipping publish"
+              exit 0
+            else
+              exit $STATUS
+            fi
+          }
+          
+          # Publish the language server package
           cd ../cddl-languageserver
-          npm publish --access=public
+          LSP_VERSION=$(node -p "require('./package.json').version")
+          echo "Attempting to publish @anweiss/cddl-languageserver@${LSP_VERSION}"
+          npm publish --access=public || {
+            STATUS=$?
+            if grep -q "409 Conflict" <<< "$(npm publish --access=public 2>&1)"; then
+              echo "Package @anweiss/cddl-languageserver@${LSP_VERSION} already exists on GitHub Package Registry, skipping publish"
+              exit 0
+            else
+              exit $STATUS
+            fi
+          }
 
   publish-vscode-extension:
     name: Publish vscode extension
