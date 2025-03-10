@@ -36,7 +36,7 @@
         packages.default = pkgs.rustPlatform.buildRustPackage {
           inherit nativeBuildInputs buildInputs;
           pname = "cddl";
-          version = "0.9.4";
+          version = "0.9.5";
 
           src = ./.;
 
