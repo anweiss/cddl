@@ -55,6 +55,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ./cddl-linux-amd64.tar.gz
           asset_name: cddl-linux-amd64.tar.gz
+          overwrite: true
           tag: "0.9.5"
 
       - name: Upload binary asset
@@ -64,6 +65,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ./cddl-windows-amd64.zip
           asset_name: cddl-windows-amd64.zip
+          overwrite: true
           tag: "0.9.5"
 
       - name: Upload binary asset
@@ -73,6 +75,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ./cddl-darwin-amd64.zip
           asset_name: cddl-darwin-amd64.zip
+          overwrite: true
           tag: "0.9.5"
 
   publish-docker:
