@@ -1,0 +1,29 @@
+name: 'Get Latest Release Tag'
+description: 'Fetches the latest semantic versioning release tag'
+outputs:
+  latest_tag:
+    description: 'The latest version tag found'
+    value: ${{ steps.get_tag.outputs.latest_tag }}
+  docker_tag:
+    description: 'The latest version tag without v prefix for Docker'
+    value: ${{ steps.get_tag.outputs.docker_tag }}
+runs:
+  using: 'composite'
+  steps:
+    - id: get_tag
+      shell: bash
+      run: |
+        # Find tags that match semantic versioning pattern and get the latest one
+        LATEST_TAG=$(git tag -l '*.*.*' | sort -V | tail -n1)
+        
+        # If no semantic version tags found, try any tag or use "latest" as fallback
+        if [ -z "$LATEST_TAG" ]; then
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "latest")
+        fi
+        
+        # Strip the 'v' prefix if present for Docker tags
+        DOCKER_TAG=${LATEST_TAG#v}
+        
+        echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+        echo "docker_tag=$DOCKER_TAG" >> $GITHUB_OUTPUT
+        echo "Found tag to use: $LATEST_TAG (Docker tag: $DOCKER_TAG)"
