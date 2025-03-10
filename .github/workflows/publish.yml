@@ -107,7 +107,7 @@ jobs:
         id: docker_meta
         uses: crazy-max/ghaction-docker-meta@v1
         with:
-          images: ghcr.io/anweiss/cddl-cli
+          images: ghcr.io/anweiss/cddl
           tag-semver: |
             {{version}}
 
