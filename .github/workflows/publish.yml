@@ -102,14 +102,35 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Get latest release tag
+        id: get_latest_tag
+        shell: bash
+        run: |
+          # Find tags that match semantic versioning pattern and get the latest one
+          LATEST_TAG=$(git tag -l '*.*.*' | sort -V | tail -n1)
+          
+          # If no semantic version tags found, try any tag or use "latest" as fallback
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "latest")
+          fi
+          
+          # Strip the 'v' prefix if present for Docker tags
+          DOCKER_TAG=${LATEST_TAG#v}
+          
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "docker_tag=$DOCKER_TAG" >> $GITHUB_OUTPUT
+          echo "Found tag to use: $LATEST_TAG (Docker tag: $DOCKER_TAG)"
 
       - name: Docker meta
         id: docker_meta
         uses: crazy-max/ghaction-docker-meta@v1
         with:
           images: ghcr.io/anweiss/cddl-cli
-          tag-semver: |
-            {{version}}
+          tag-custom: ${{ steps.get_latest_tag.outputs.docker_tag }}
+          tag-custom-only: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
