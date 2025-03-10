@@ -54,8 +54,14 @@ jobs:
         id: get_latest_tag
         shell: bash
         run: |
-          # Try to get latest tag, use a default if none exists
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "latest")
+          # Find tags that match semantic versioning pattern and get the latest one
+          LATEST_TAG=$(git tag -l '*.*.*' | sort -V | tail -n1)
+          
+          # If no semantic version tags found, try any tag or use "latest" as fallback
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "latest")
+          fi
+          
           echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
           echo "Found tag to use: $LATEST_TAG"
 
