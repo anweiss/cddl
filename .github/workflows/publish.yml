@@ -103,7 +103,7 @@ jobs:
         uses: crazy-max/ghaction-docker-meta@v1
         with:
           images: ghcr.io/anweiss/cddl-cli
-          tag-custom: ${{ steps.get_latest_tag.outputs.docker_tag }}
+          tag-custom: ${{ steps.get_latest_tag.outputs.docker_tag }},latest
           tag-custom-only: true
           tag-latest: true
 
