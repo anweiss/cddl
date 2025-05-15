@@ -1043,6 +1043,40 @@ where
           }
         }
       }
+      
+      // Validate that the CBOR value matches the target type before applying control operators
+      if is_ident_string_data_type(self.cddl, target_ident) && !matches!(self.cbor, Value::Text(_)) {
+        self.add_error(format!("expected type tstr, got {:?}", self.cbor));
+        return Ok(());
+      } else if is_ident_byte_string_data_type(self.cddl, target_ident) && !matches!(self.cbor, Value::Bytes(_)) {
+        self.add_error(format!("expected type bstr, got {:?}", self.cbor));
+        return Ok(());
+      } else if is_ident_uint_data_type(self.cddl, target_ident) {
+        // For uint, we need to check that it's an integer and it's non-negative
+        if !matches!(self.cbor, Value::Integer(_)) {
+          self.add_error(format!("expected type uint, got {:?}", self.cbor));
+          return Ok(());
+        } else if let Value::Integer(i) = &self.cbor {
+          if i128::from(*i) < 0 {
+            self.add_error(format!("expected type uint, got {:?}", self.cbor));
+            return Ok(());
+          }
+        }
+        self.add_error(format!("expected type uint, got {:?}", self.cbor));
+        return Ok(());
+      } else if is_ident_integer_data_type(self.cddl, target_ident) && !matches!(self.cbor, Value::Integer(_)) {
+        self.add_error(format!("expected type int, got {:?}", self.cbor));
+        return Ok(());
+      } else if is_ident_float_data_type(self.cddl, target_ident) && !matches!(self.cbor, Value::Float(_)) {
+        self.add_error(format!("expected type float, got {:?}", self.cbor));
+        return Ok(());
+      } else if is_ident_bool_data_type(self.cddl, target_ident) && !matches!(self.cbor, Value::Bool(_)) {
+        self.add_error(format!("expected type bool, got {:?}", self.cbor));
+        return Ok(());
+      } else if is_ident_null_data_type(self.cddl, target_ident) && !matches!(self.cbor, Value::Null) {
+        self.add_error(format!("expected type null, got {:?}", self.cbor));
+        return Ok(());
+      }
     }
 
     match ctrl {
