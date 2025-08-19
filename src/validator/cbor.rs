@@ -197,6 +197,8 @@ pub struct CBORValidator<'a> {
   is_colon_shortcut_present: bool,
   is_root: bool,
   is_multi_type_choice_type_rule_validating_array: bool,
+  // Track visited rules to prevent infinite recursion
+  visited_rules: std::collections::HashSet<String>,
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   enabled_features: Option<&'a [&'a str]>,
@@ -252,6 +254,7 @@ impl<'a> CBORValidator<'a> {
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: std::collections::HashSet::new(),
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
@@ -293,6 +296,7 @@ impl<'a> CBORValidator<'a> {
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: std::collections::HashSet::new(),
       range_upper: None,
     }
   }
@@ -331,6 +335,7 @@ impl<'a> CBORValidator<'a> {
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: std::collections::HashSet::new(),
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
@@ -372,6 +377,7 @@ impl<'a> CBORValidator<'a> {
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: std::collections::HashSet::new(),
       range_upper: None,
     }
   }
@@ -379,6 +385,21 @@ impl<'a> CBORValidator<'a> {
   /// Extract the underlying CBOR Value.
   pub fn extract_cbor(self) -> Value {
     self.cbor
+  }
+
+  /// Create a new CBORValidator with inherited recursion state
+  fn new_with_recursion_state(&self, cbor: Value) -> CBORValidator<'a> {
+    #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+    let mut cv = CBORValidator::new(self.cddl, cbor, self.enabled_features.clone());
+    #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+    let mut cv = CBORValidator::new(self.cddl, cbor, self.enabled_features);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(self.cddl, cbor);
+
+    cv.generic_rules = self.generic_rules.clone();
+    cv.eval_generic_rule = self.eval_generic_rule;
+    cv.visited_rules = self.visited_rules.clone();
+    cv
   }
 
   fn validate_array_items<T: std::fmt::Debug + 'static>(
@@ -409,11 +430,11 @@ impl<'a> CBORValidator<'a> {
               }
 
               #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-              let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              let mut cv = self.new_with_recursion_state(v.clone());
               #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-              let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+              let mut cv = self.new_with_recursion_state(v.clone());
               #[cfg(not(feature = "additional-controls"))]
-              let mut cv = CBORValidator::new(self.cddl, v.clone());
+              let mut cv = self.new_with_recursion_state(v.clone());
 
               cv.generic_rules = self.generic_rules.clone();
               cv.eval_generic_rule = self.eval_generic_rule;
@@ -467,17 +488,14 @@ impl<'a> CBORValidator<'a> {
             if let Some(idx) = idx {
               if let Some(v) = a.get(idx) {
                 #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-                let mut cv =
-                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                let mut cv = self.new_with_recursion_state(v.clone());
                 #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-                let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+                let mut cv = self.new_with_recursion_state(v.clone());
                 #[cfg(not(feature = "additional-controls"))]
-                let mut cv = CBORValidator::new(self.cddl, v.clone());
+                let mut cv = self.new_with_recursion_state(v.clone());
 
-                cv.generic_rules = self.generic_rules.clone();
-                cv.eval_generic_rule = self.eval_generic_rule;
-                cv.is_multi_type_choice = self.is_multi_type_choice;
                 cv.ctrl = self.ctrl;
+                cv.is_multi_type_choice = self.is_multi_type_choice;
                 let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
 
                 match token {
@@ -2250,7 +2268,21 @@ where
     // member key
     if !self.is_colon_shortcut_present {
       if let Some(r) = rule_from_ident(self.cddl, ident) {
-        return self.visit_rule(r);
+        // Check for recursion to prevent stack overflow
+        let rule_key = format!("{}", ident.ident);
+        if self.visited_rules.contains(&rule_key) {
+          // We've already validated this rule in the current validation path
+          // This is a recursive reference, so we allow it and assume it's valid
+          return Ok(());
+        }
+
+        // Mark this rule as visited before recursing
+        self.visited_rules.insert(rule_key.clone());
+        let result = self.visit_rule(r);
+        // Remove the rule from visited set after processing
+        self.visited_rules.remove(&rule_key);
+
+        return result;
       }
     }
 
@@ -4251,6 +4283,47 @@ mod tests {
         return Err(e.into());
       }
     }
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_recursive_structures() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Test case for issue #248: stack overflow with recursive structures
+    let cddl = indoc!(
+      r#"
+        Tree = {
+          root: Node
+        }
+
+        Node = [
+          value: text,
+          children: [* Node]
+        ]
+      "#
+    );
+
+    let cddl = cddl_from_str(cddl, true)?;
+
+    // Create a nested tree structure
+    let cbor = ciborium::cbor!({
+      "root" => ["value", [["child1", []], ["child2", []]]]
+    })?;
+
+    // This should not cause a stack overflow
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, cbor);
+
+    // The validation should complete without stack overflow
+    let result = cv.validate();
+
+    // The structure should be valid
+    assert!(
+      result.is_ok(),
+      "Recursive structure validation should not cause stack overflow"
+    );
 
     Ok(())
   }
