@@ -702,6 +702,8 @@ where
     }
 
     let initial_error_count = self.errors.len();
+    let mut choice_validation_succeeded = false;
+
     for type_choice in t.type_choices.iter() {
       if matches!(self.cbor, Value::Array(_))
         && !self.is_multi_type_choice_type_rule_validating_array
@@ -723,6 +725,7 @@ where
               self.errors.pop();
             }
           }
+          choice_validation_succeeded = true;
         }
 
         #[cfg(not(feature = "additional-controls"))]
@@ -735,46 +738,54 @@ where
               self.errors.pop();
             }
           }
+          choice_validation_succeeded = true;
         }
 
         continue;
       }
 
-      let error_count = self.errors.len();
-      self.visit_type_choice(type_choice)?;
+      // Create a copy of the validator to test this choice in isolation
+      let mut choice_validator = self.clone();
+      choice_validator.errors.clear();
 
-      #[cfg(feature = "additional-controls")]
-      if self.errors.len() == error_count
-        && !self.has_feature_errors
-        && self.disabled_features.is_none()
-      {
-        // Disregard invalid type choice validation errors if one of the
-        // choices validates successfully
-        let type_choice_error_count = self.errors.len() - initial_error_count;
-        if type_choice_error_count > 0 {
-          for _ in 0..type_choice_error_count {
-            self.errors.pop();
+      choice_validator.visit_type_choice(type_choice)?;
+
+      // If this choice validates successfully (no errors), use it
+      if choice_validator.errors.is_empty() {
+        #[cfg(feature = "additional-controls")]
+        if !choice_validator.has_feature_errors || choice_validator.disabled_features.is_some() {
+          // Clear any accumulated errors and return success
+          let type_choice_error_count = self.errors.len() - initial_error_count;
+          if type_choice_error_count > 0 {
+            for _ in 0..type_choice_error_count {
+              self.errors.pop();
+            }
           }
+          return Ok(());
         }
 
-        return Ok(());
-      }
-
-      #[cfg(not(feature = "additional-controls"))]
-      if self.errors.len() == error_count {
-        // Disregard invalid type choice validation errors if one of the
-        // choices validates successfully
-        let type_choice_error_count = self.errors.len() - initial_error_count;
-        if type_choice_error_count > 0 {
-          for _ in 0..type_choice_error_count {
-            self.errors.pop();
+        #[cfg(not(feature = "additional-controls"))]
+        {
+          // Clear any accumulated errors and return success
+          let type_choice_error_count = self.errors.len() - initial_error_count;
+          if type_choice_error_count > 0 {
+            for _ in 0..type_choice_error_count {
+              self.errors.pop();
+            }
           }
+          return Ok(());
         }
-
-        return Ok(());
+      } else {
+        // This choice failed, accumulate its errors
+        self.errors.extend(choice_validator.errors);
       }
     }
 
+    // If we got here and choice_validation_succeeded is true (for array case),
+    // then validation succeeded
+    if choice_validation_succeeded {
+      return Ok(());
+    }
     Ok(())
   }
 

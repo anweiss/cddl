@@ -742,6 +742,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     }
 
     let initial_error_count = self.errors.len();
+    let mut choice_validation_succeeded = false;
 
     for type_choice in t.type_choices.iter() {
       // If validating an array whose elements are type choices (i.e. [ 1* tstr
@@ -766,6 +767,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
               self.errors.pop();
             }
           }
+          choice_validation_succeeded = true;
         }
 
         #[cfg(not(feature = "additional-controls"))]
@@ -778,44 +780,53 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
               self.errors.pop();
             }
           }
+          choice_validation_succeeded = true;
         }
 
         continue;
       }
 
-      let error_count = self.errors.len();
-      self.visit_type_choice(type_choice)?;
+      // Create a copy of the validator to test this choice in isolation
+      let mut choice_validator = self.clone();
+      choice_validator.errors.clear();
 
-      #[cfg(feature = "additional-controls")]
-      if self.errors.len() == error_count
-        && !self.has_feature_errors
-        && self.disabled_features.is_none()
-      {
-        // Disregard invalid type choice validation errors if one of the
-        // choices validates successfully
-        let type_choice_error_count = self.errors.len() - initial_error_count;
-        if type_choice_error_count > 0 {
-          for _ in 0..type_choice_error_count {
-            self.errors.pop();
+      choice_validator.visit_type_choice(type_choice)?;
+
+      // If this choice validates successfully (no errors), use it
+      if choice_validator.errors.is_empty() {
+        #[cfg(feature = "additional-controls")]
+        if !choice_validator.has_feature_errors || choice_validator.disabled_features.is_some() {
+          // Clear any accumulated errors and return success
+          let type_choice_error_count = self.errors.len() - initial_error_count;
+          if type_choice_error_count > 0 {
+            for _ in 0..type_choice_error_count {
+              self.errors.pop();
+            }
           }
+          return Ok(());
         }
 
-        return Ok(());
-      }
-
-      #[cfg(not(feature = "additional-controls"))]
-      if self.errors.len() == error_count {
-        // Disregard invalid type choice validation errors if one of the
-        // choices validates successfully
-        let type_choice_error_count = self.errors.len() - initial_error_count;
-        if type_choice_error_count > 0 {
-          for _ in 0..type_choice_error_count {
-            self.errors.pop();
+        #[cfg(not(feature = "additional-controls"))]
+        {
+          // Clear any accumulated errors and return success
+          let type_choice_error_count = self.errors.len() - initial_error_count;
+          if type_choice_error_count > 0 {
+            for _ in 0..type_choice_error_count {
+              self.errors.pop();
+            }
           }
+          return Ok(());
         }
-
-        return Ok(());
+      } else {
+        // This choice failed, accumulate its errors
+        self.errors.extend(choice_validator.errors);
       }
+    }
+
+    // If we got here and choice_validation_succeeded is true (for array case),
+    // then validation succeeded
+    if choice_validation_succeeded {
+      return Ok(());
     }
 
     Ok(())
@@ -3086,6 +3097,72 @@ mod tests {
       result.is_ok(),
       "Validation should pass for empty map with empty map schema"
     );
+  }
+
+  #[test]
+  fn test_issue_174_choice_validation() {
+    // Test for issue #174 - Choice validates in case where neither option validates
+    let cddl_str = indoc!(
+      r#"
+        Root = Choice1 / Choice2
+
+        Choice1 = {
+           id1: text,
+           ?id2: text,
+           Extensible
+        }
+
+        Choice2 = {
+           ?id1: text,
+           id2: text,
+           Extensible
+        }
+
+        Extensible = (*text => any)
+      "#
+    );
+
+    // This JSON should fail because id2 is not text in either choice
+    let json_str = r#"{"id1": "example", "id2": 2}"#;
+
+    #[cfg(feature = "additional-controls")]
+    let result = validate_json_from_str(cddl_str, json_str, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let result = validate_json_from_str(cddl_str, json_str);
+
+    // This should fail validation since id2 is a number, not text
+    match result {
+      Err(Error::Validation(errors)) => {
+        assert!(!errors.is_empty(), "Should have validation errors");
+        // We expect errors related to type mismatch
+      }
+      Ok(_) => {
+        panic!("Issue #174 bug detected: validation incorrectly passed when neither choice should validate")
+      }
+      Err(other) => panic!("Unexpected error type: {:?}", other),
+    }
+
+    // Test valid cases still work
+    let valid_cases = [
+      r#"{"id1": "example", "id2": "text"}"#, // Both fields as text
+      r#"{"id1": "example"}"#,                // Only id1 (matches Choice1)
+      r#"{"id2": "text"}"#,                   // Only id2 (matches Choice2)
+    ];
+
+    for valid_json in valid_cases.iter() {
+      #[cfg(feature = "additional-controls")]
+      let result = validate_json_from_str(cddl_str, valid_json, None);
+      #[cfg(not(feature = "additional-controls"))]
+      let result = validate_json_from_str(cddl_str, valid_json);
+
+      match result {
+        Ok(_) => {} // Expected
+        Err(e) => panic!(
+          "Valid JSON should pass validation: {}, error: {:?}",
+          valid_json, e
+        ),
+      }
+    }
   }
 
   #[test]
