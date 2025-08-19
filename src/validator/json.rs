@@ -22,6 +22,340 @@ use serde_json::Value;
 #[cfg(feature = "additional-controls")]
 use control::{abnf_from_complex_controller, cat_operation, plus_operation, validate_abnf};
 
+/// Format a JSON value in a concise way for error messages
+fn format_json_value_concise(value: &Value) -> String {
+  match value {
+    Value::Null => "null".to_string(),
+    Value::Bool(b) => b.to_string(),
+    Value::Number(n) => n.to_string(),
+    Value::String(s) => {
+      if s.len() <= 50 {
+        format!("\"{}\"", s)
+      } else {
+        format!("\"{}...\" ({} chars)", &s[..47], s.len())
+      }
+    }
+    Value::Array(arr) => {
+      if arr.is_empty() {
+        "[]".to_string()
+      } else if arr.len() <= 3 {
+        format!("[{}]", arr.iter().map(format_json_value_concise).collect::<Vec<_>>().join(", "))
+      } else {
+        format!("[{}, ... ({} items)]", 
+          arr.iter().take(2).map(format_json_value_concise).collect::<Vec<_>>().join(", "),
+          arr.len())
+      }
+    }
+    Value::Object(obj) => {
+      if obj.is_empty() {
+        "{}".to_string()
+      } else if obj.len() <= 2 {
+        let items: Vec<String> = obj.iter()
+          .map(|(k, v)| format!("\"{}\": {}", k, format_json_value_concise(v)))
+          .collect();
+        format!("{{{}}}", items.join(", "))
+      } else {
+        format!("{{...}} ({} properties)", obj.len())
+      }
+    }
+  }
+}
+
+/// Extract a formatted JSON snippet showing the failing value with context
+fn extract_json_snippet(failing_value: &Value, json_path: &str) -> String {
+  // Extract the field name from the JSON path for context
+  let path_parts: Vec<&str> = json_path.split('/').filter(|p| !p.is_empty()).collect();
+  
+  if path_parts.is_empty() {
+    // Root level failure
+    return format!("→ {}", format_json_value_concise(failing_value));
+  }
+  
+  let field_name = path_parts.last().unwrap();
+  
+  // Check if this is an array index
+  if field_name.parse::<usize>().is_ok() {
+    // Array element failure
+    return format!("[\n  ...\n→ {}  ← validation failed\n  ...\n]", 
+                  format_json_value_concise(failing_value));
+  }
+  
+  // Object field failure - create a context snippet
+  format!("{{\n  ...\n→ \"{}\": {}  ← validation failed\n  ...\n}}", 
+          field_name, format_json_value_concise(failing_value))
+}
+
+/// Format JSON value with pretty printing
+fn format_json_pretty(value: &Value, indent: usize) -> String {
+  let indent_str = "  ".repeat(indent);
+  match value {
+    Value::Object(obj) => {
+      if obj.is_empty() {
+        "{}".to_string()
+      } else {
+        let mut result = "{\n".to_string();
+        for (key, val) in obj {
+          result.push_str(&format!("{}  \"{}\": {},\n", indent_str, key, format_json_value_concise(val)));
+        }
+        result.pop(); // Remove last comma
+        result.pop(); // Remove last newline  
+        result.push('\n');
+        result.push_str(&format!("{}}}", indent_str));
+        result
+      }
+    }
+    Value::Array(arr) => {
+      if arr.is_empty() {
+        "[]".to_string()
+      } else {
+        let mut result = "[\n".to_string();
+        for val in arr {
+          result.push_str(&format!("{}  {},\n", indent_str, format_json_value_concise(val)));
+        }
+        result.pop(); // Remove last comma
+        result.pop(); // Remove last newline
+        result.push('\n');
+        result.push_str(&format!("{}]", indent_str));
+        result
+      }
+    }
+    _ => format_json_value_concise(value)
+  }
+}
+
+/// Generate a CDDL snippet based on the validation context
+fn generate_cddl_snippet(json_path: &str, expected_type: &str, type_group_name: Option<&String>) -> String {
+  // If we have a type/group name, use that as context
+  if let Some(rule_name) = type_group_name {
+    if json_path.is_empty() || json_path == "/" {
+      return format!("{} = {}", rule_name, expected_type);
+    }
+    
+    // Extract the field name from the path
+    let path_parts: Vec<&str> = json_path.split('/').filter(|p| !p.is_empty()).collect();
+    if let Some(field_name) = path_parts.last() {
+      if field_name.parse::<usize>().is_ok() {
+        // Array element
+        return format!("{} = [\n  ...\n→ {}  ← expected type\n  ...\n]", 
+                      rule_name, expected_type);
+      } else {
+        // Object field
+        return format!("{} = {{\n  ...\n→ {}: {}  ← expected type\n  ...\n}}", 
+                      rule_name, field_name, expected_type);
+      }
+    }
+  }
+  
+  // Generate a contextual CDDL snippet based on the JSON path
+  if json_path.is_empty() || json_path == "/" {
+    format!("→ {}", expected_type)
+  } else {
+    let path_parts: Vec<&str> = json_path.split('/').filter(|p| !p.is_empty()).collect();
+    
+    if let Some(field_name) = path_parts.last() {
+      if field_name.parse::<usize>().is_ok() {
+        // Array index
+        format!("[\n  ...\n→ {}  ← expected type\n  ...\n]", expected_type)
+      } else {
+        // Object field
+        format!("{{\n  ...\n→ {}: {}  ← expected type\n  ...\n}}", field_name, expected_type)
+      }
+    } else {
+      format!("→ {}", expected_type)
+    }
+  }
+}
+fn extract_expected_type_from_reason(reason: &str) -> Option<String> {
+  if let Some(start) = reason.find("expected type ") {
+    if let Some(end) = reason[start + 14..].find(',') {
+      return Some(reason[start + 14..start + 14 + end].to_string());
+    } else if let Some(end) = reason[start + 14..].find(' ') {
+      return Some(reason[start + 14..start + 14 + end].to_string());
+    } else {
+      // Take the rest of the string after "expected type "
+      return Some(reason[start + 14..].to_string());
+    }
+  }
+  
+  // Try to extract other patterns
+  if reason.contains("object missing key") {
+    return Some("object with required key".to_string());
+  }
+  
+  if reason.contains("unexpected key") {
+    return Some("object without this key".to_string());
+  }
+  
+  if reason.contains("array must have") {
+    return Some("array with specific length".to_string());
+  }
+  
+  None
+}
+fn get_json_type_name(value: &Value) -> String {
+  match value {
+    Value::Null => "null".to_string(),
+    Value::Bool(_) => "boolean".to_string(),
+    Value::Number(n) => {
+      if n.is_i64() || n.is_u64() {
+        "integer".to_string()
+      } else {
+        "number".to_string()
+      }
+    }
+    Value::String(_) => "string".to_string(),
+    Value::Array(_) => "array".to_string(),
+    Value::Object(_) => "object".to_string(),
+  }
+}
+
+/// Extract the value at a specific JSON path
+fn extract_value_at_path(json: &Value, path: &str) -> Value {
+  if path.is_empty() || path == "/" {
+    return json.clone();
+  }
+
+  let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+  let mut current = json;
+
+  for part in parts {
+    match current {
+      Value::Object(obj) => {
+        if let Some(value) = obj.get(part) {
+          current = value;
+        } else {
+          return Value::Null;
+        }
+      }
+      Value::Array(arr) => {
+        if let Ok(index) = part.parse::<usize>() {
+          if let Some(value) = arr.get(index) {
+            current = value;
+          } else {
+            return Value::Null;
+          }
+        } else {
+          return Value::Null;
+        }
+      }
+      _ => return Value::Null,
+    }
+  }
+
+  current.clone()
+}
+
+/// Generate suggestions based on the error reason and actual value
+fn generate_suggestions_from_reason(reason: &str, actual_value: &Value) -> Vec<String> {
+  let mut suggestions = Vec::new();
+
+  if reason.contains("expected type") {
+    // Parse "expected type uint, got "not_a_number""
+    if let Some(expected_start) = reason.find("expected type ") {
+      if let Some(expected_end) = reason[expected_start + 14..].find(',') {
+        let expected = &reason[expected_start + 14..expected_start + 14 + expected_end];
+        let actual_type = get_json_type_name(actual_value);
+        suggestions.extend(create_type_mismatch_suggestions(expected, &actual_type));
+      }
+    }
+  } else if reason.contains("missing key") || reason.contains("object missing key") {
+    if let Some(key_start) = reason.find("\"") {
+      if let Some(key_end) = reason[key_start + 1..].find("\"") {
+        let field_name = &reason[key_start + 1..key_start + 1 + key_end];
+        suggestions.extend(create_missing_field_suggestions(field_name));
+      }
+    }
+  } else if reason.contains("unexpected key") {
+    if let Some(key_start) = reason.find("\"") {
+      if let Some(key_end) = reason[key_start + 1..].find("\"") {
+        let field_name = &reason[key_start + 1..key_start + 1 + key_end];
+        suggestions.extend(create_unexpected_field_suggestions(field_name));
+      }
+    }
+  } else if reason.contains("array must have") {
+    // Parse array length errors
+    if reason.contains("exactly") {
+      if let Some(num_start) = reason.find("exactly ") {
+        if let Some(num_end) = reason[num_start + 8..].find(" items") {
+          if let Ok(expected) = reason[num_start + 8..num_start + 8 + num_end].parse::<usize>() {
+            let actual = if let Value::Array(arr) = actual_value { arr.len() } else { 0 };
+            suggestions.extend(create_array_length_suggestions(expected, actual));
+          }
+        }
+      }
+    }
+  } else if reason.contains("range") {
+    suggestions.push("Check that the value falls within the expected range".to_string());
+    suggestions.push("Verify the range constraints in your CDDL specification".to_string());
+  }
+
+  if suggestions.is_empty() {
+    suggestions.push("Check your data format against the CDDL specification".to_string());
+    suggestions.push("Verify that all required fields are present and correctly typed".to_string());
+  }
+
+  suggestions
+}
+
+fn create_type_mismatch_suggestions(expected: &str, actual: &str) -> Vec<String> {
+  let mut suggestions = Vec::new();
+  
+  match (expected, actual) {
+    ("uint", "string") | ("int", "string") | ("integer", "string") => {
+      suggestions.push("Convert the string to a number, e.g., \"123\" → 123".to_string());
+      suggestions.push("Remove quotes around numeric values".to_string());
+    }
+    ("tstr" | "text", "integer") | ("tstr" | "text", "number") => {
+      suggestions.push("Convert the number to a string, e.g., 123 → \"123\"".to_string());
+      suggestions.push("Add quotes around the value".to_string());
+    }
+    ("bool", _) => {
+      suggestions.push("Use true or false boolean values".to_string());
+    }
+    ("null", _) => {
+      suggestions.push("Use null value".to_string());
+    }
+    (_, _) => {
+      suggestions.push(format!("Change the value to match the expected type: {}", expected));
+    }
+  }
+  
+  suggestions.push("Check your CDDL specification to ensure the type requirement is correct".to_string());
+  suggestions
+}
+
+fn create_missing_field_suggestions(field_name: &str) -> Vec<String> {
+  vec![
+    format!("Add the required field \"{}\" to your JSON object", field_name),
+    "Check if the field name is spelled correctly".to_string(),
+    "Verify that the field is not accidentally nested in a sub-object".to_string(),
+    "Review your CDDL specification to confirm required fields".to_string(),
+  ]
+}
+
+fn create_unexpected_field_suggestions(field_name: &str) -> Vec<String> {
+  vec![
+    format!("Remove the unexpected field \"{}\" from your JSON object", field_name),
+    "Check if the field name is spelled correctly".to_string(),
+    "Verify that this field should be in a different part of the JSON structure".to_string(),
+    "Review your CDDL specification to see if this field is optional or forbidden".to_string(),
+  ]
+}
+
+fn create_array_length_suggestions(expected: usize, actual: usize) -> Vec<String> {
+  let mut suggestions = Vec::new();
+  
+  if actual < expected {
+    suggestions.push(format!("Add {} more items to the array", expected - actual));
+  } else if actual > expected {
+    suggestions.push(format!("Remove {} items from the array", actual - expected));
+  }
+  
+  suggestions.push("Check your CDDL specification for the correct array length requirements".to_string());
+  suggestions.push("Verify that you're not missing or including extra array elements".to_string());
+  suggestions
+}
+
 /// JSON validation Result
 pub type Result = std::result::Result<(), Error>;
 
@@ -30,6 +364,8 @@ pub type Result = std::result::Result<(), Error>;
 pub enum Error {
   /// Zero or more validation errors
   Validation(Vec<ValidationError>),
+  /// Enhanced validation errors with improved reporting
+  EnhancedValidation(Vec<crate::error::validation::ValidationError>),
   /// JSON parsing error
   JSONParsing(serde_json::Error),
   /// CDDL parsing error
@@ -50,6 +386,10 @@ impl fmt::Display for Error {
         }
         write!(f, "{}", error_str)
       }
+      Error::EnhancedValidation(errors) => {
+        let reporter = crate::error::validation::ValidationErrorReporter::new().with_colors(false);
+        write!(f, "{}", reporter.format_errors(errors))
+      }
       Error::JSONParsing(error) => write!(f, "error parsing JSON: {}", error),
       Error::CDDLParsing(error) => write!(f, "error parsing CDDL: {}", error),
       Error::UTF8Parsing(error) => write!(f, "error pasing utf8: {}", error),
@@ -69,6 +409,20 @@ impl std::error::Error for Error {
 
 impl Error {
   fn from_validator(jv: &JSONValidator, reason: String) -> Self {
+    // Extract the actual value at the error location
+    let actual_value = if !jv.json_location.is_empty() {
+      Some(extract_value_at_path(&jv.json, &jv.json_location))
+    } else {
+      Some(jv.json.clone())
+    };
+    
+    // Generate suggestions based on the error reason and actual value
+    let suggestions = if let Some(ref value) = actual_value {
+      generate_suggestions_from_reason(&reason, value)
+    } else {
+      Vec::new()
+    };
+    
     Error::Validation(vec![ValidationError {
       cddl_location: jv.cddl_location.clone(),
       json_location: jv.json_location.clone(),
@@ -77,6 +431,10 @@ impl Error {
       is_group_to_choice_enum: jv.is_group_to_choice_enum,
       type_group_name_entry: jv.type_group_name_entry.map(|e| e.to_string()),
       is_multi_group_choice: jv.is_multi_group_choice,
+      actual_value,
+      context: None,
+      suggestions,
+      cddl_fragment: None,
     }])
   }
 }
@@ -98,37 +456,31 @@ pub struct ValidationError {
   pub is_group_to_choice_enum: bool,
   /// Error is associated with a type/group name group entry
   pub type_group_name_entry: Option<String>,
+  /// The actual JSON value that failed validation (for rich error reporting)
+  pub actual_value: Option<Value>,
+  /// Additional context information about the error
+  pub context: Option<String>,
+  /// Suggested fixes for the validation error
+  pub suggestions: Vec<String>,
+  /// CDDL rule fragment that was being validated against
+  pub cddl_fragment: Option<String>,
 }
 
 impl fmt::Display for ValidationError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    let mut error_str = String::from("error validating");
-    if self.is_multi_group_choice {
-      error_str.push_str(" group choice");
-    }
-    if self.is_multi_type_choice {
-      error_str.push_str(" type choice");
-    }
-    if self.is_group_to_choice_enum {
-      error_str.push_str(" type choice in group to choice enumeration");
-    }
-    if let Some(entry) = &self.type_group_name_entry {
-      let _ = write!(error_str, " group entry associated with rule \"{}\"", entry);
-    }
-
-    if self.json_location.is_empty() {
-      return write!(
-        f,
-        "{} at the root of the JSON document: {}",
-        error_str, self.reason
-      );
-    }
-
-    write!(
-      f,
-      "{} at JSON location {}: {}",
-      error_str, self.json_location, self.reason
-    )
+    // Use AJV-inspired simple, clean error reporting
+    
+    // Convert JSON path to dot notation like AJV (data.age instead of /age)
+    let data_path = if self.json_location.is_empty() || self.json_location == "/" {
+      "data".to_string()
+    } else {
+      format!("data.{}", self.json_location.trim_start_matches('/').replace('/', "."))
+    };
+    
+    // Show the error in AJV style: data.path error_message
+    writeln!(f, "{} {}", data_path, &self.reason)?;
+    
+    Ok(())
   }
 }
 
@@ -140,6 +492,10 @@ impl std::error::Error for ValidationError {
 
 impl ValidationError {
   fn from_validator(jv: &JSONValidator, reason: String) -> Self {
+    // The jv.json already contains the value at the current location
+    let actual_value = jv.json.clone();
+    let suggestions = generate_suggestions_from_reason(&reason, &actual_value);
+    
     ValidationError {
       cddl_location: jv.cddl_location.clone(),
       json_location: jv.json_location.clone(),
@@ -148,6 +504,10 @@ impl ValidationError {
       is_group_to_choice_enum: jv.is_group_to_choice_enum,
       type_group_name_entry: jv.type_group_name_entry.map(|e| e.to_string()),
       is_multi_group_choice: jv.is_multi_group_choice,
+      actual_value: Some(actual_value),
+      context: Some(format!("JSON path: {}, CDDL location: {}", jv.json_location, jv.cddl_location)),
+      suggestions,
+      cddl_fragment: Some(jv.cddl_location.clone()), // Will be enhanced later with actual CDDL snippet
     }
   }
 }
@@ -229,6 +589,11 @@ struct GenericRule<'a> {
 }
 
 impl<'a> JSONValidator<'a> {
+  /// Get the JSON value being validated
+  pub fn json(&self) -> &Value {
+    &self.json
+  }
+
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   /// New JSONValidation from CDDL AST and JSON value
@@ -603,6 +968,10 @@ impl<'a> Validator<'a, '_, Error> for JSONValidator<'a> {
   }
 
   fn add_error(&mut self, reason: String) {
+    // The self.json already contains the value at the current location
+    let actual_value = self.json.clone();
+    let suggestions = generate_suggestions_from_reason(&reason, &actual_value);
+    
     self.errors.push(ValidationError {
       reason,
       cddl_location: self.cddl_location.clone(),
@@ -611,6 +980,10 @@ impl<'a> Validator<'a, '_, Error> for JSONValidator<'a> {
       is_multi_group_choice: self.is_multi_group_choice,
       is_group_to_choice_enum: self.is_group_to_choice_enum,
       type_group_name_entry: self.type_group_name_entry.map(|e| e.to_string()),
+      actual_value: Some(actual_value),
+      context: Some(format!("JSON path: {}, CDDL location: {}", self.json_location, self.cddl_location)),
+      suggestions,
+      cddl_fragment: Some(self.cddl_location.clone()), // Will be enhanced later with actual CDDL snippet
     });
   }
 }

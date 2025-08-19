@@ -179,26 +179,25 @@ fn main() -> Result<(), Box<dyn Error>> {
             continue;
           }
 
+          let file_content = fs::read_to_string(file)?;
+
+          // Use modernized validation with improved error reporting
           #[cfg(feature = "additional-controls")]
           let r = validate_json_from_str(
             &cddl_str,
-            &fs::read_to_string(file)?,
+            &file_content,
             enabled_features.as_deref(),
           );
           #[cfg(not(feature = "additional-controls"))]
-          let r = validate_json_from_str(&cddl_str, &fs::read_to_string(file)?);
+          let r = validate_json_from_str(&cddl_str, &file_content);
 
           match r {
             Ok(_) => {
-              info!("Validation of {:?} is successful", p);
+              println!("{:?} valid", p);
             }
             Err(e) => {
-              error!(
-                cli.ci,
-                "Validation of {:?} failed: {}",
-                p,
-                e.to_string().trim_end()
-              );
+              eprintln!("{:?} invalid", p);
+              eprintln!("{}", e.to_string().trim_end());
             }
           }
         }
@@ -216,6 +215,7 @@ fn main() -> Result<(), Box<dyn Error>> {
           let mut data = Vec::new();
           f.read_to_end(&mut data)?;
 
+          // Use modernized validation with improved error reporting
           #[cfg(feature = "additional-controls")]
           let c = validate_cbor_from_slice(&cddl_str, &data, None);
           #[cfg(not(feature = "additional-controls"))]
@@ -223,15 +223,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
           match c {
             Ok(_) => {
-              info!("Validation of {:?} is successful", p);
+              println!("{:?} valid", p);
             }
             Err(e) => {
-              error!(
-                cli.ci,
-                "Validation of {:?} failed: {}",
-                p,
-                e.to_string().trim_end()
-              );
+              eprintln!("{:?} invalid", p);
+              eprintln!("{}", e.to_string().trim_end());
             }
           }
         }
@@ -251,17 +247,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 
           match r {
             Ok(_) => {
-              info!("Validation from stdin is successful");
+              println!("stdin valid");
             }
             Err(e) => {
-              error!(
-                cli.ci,
-                "Validation from stdin failed: {}",
-                e.to_string().trim_end()
-              );
+              eprintln!("stdin invalid");
+              eprintln!("{}", e.to_string().trim_end());
             }
           }
         } else {
+          // Use modernized validation with improved error reporting
           #[cfg(feature = "additional-controls")]
           let c = validate_cbor_from_slice(&cddl_str, &data, enabled_features.as_deref());
           #[cfg(not(feature = "additional-controls"))]
@@ -269,14 +263,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
           match c {
             Ok(_) => {
-              info!("Validation from stdin is successful");
+              println!("stdin valid");
             }
             Err(e) => {
-              error!(
-                cli.ci,
-                "Validation from stdin failed: {}",
-                e.to_string().trim_end()
-              );
+              eprintln!("stdin invalid");
+              eprintln!("{}", e.to_string().trim_end());
             }
           }
         }

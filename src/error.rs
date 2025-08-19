@@ -6,6 +6,8 @@ use serde::Serialize;
 #[cfg(not(feature = "std"))]
 use alloc::string::String;
 
+pub mod validation;
+
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct ErrorMsg {

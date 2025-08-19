@@ -220,6 +220,11 @@ struct GenericRule<'a> {
 }
 
 impl<'a> CBORValidator<'a> {
+  /// Get the CBOR value being validated
+  pub fn cbor(&self) -> &Value {
+    &self.cbor
+  }
+
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   /// New cborValidation from CDDL AST and cbor value
