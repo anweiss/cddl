@@ -139,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "cddl"
-version = "0.9.5"
+version = "0.10.0"
 dependencies = [
  "abnf_to_pest",
  "base16",
