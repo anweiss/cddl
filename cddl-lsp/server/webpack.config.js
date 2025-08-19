@@ -19,7 +19,7 @@ module.exports = withDefaults({
   plugins: [
     new WasmPackPlugin({
       crateDirectory: path.resolve(__dirname, '../../../cddl'),
-      extraArgs: '--target nodejs -- --features lsp',
+      extraArgs: '--target nodejs -- --features lsp,ast-comments',
       forceMode: 'production',
       outDir: path.resolve(__dirname, 'pkg'),
       outName: 'cddl',

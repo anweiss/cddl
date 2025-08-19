@@ -348,7 +348,6 @@ impl<'a> Parser<'a> {
     let mut comments: Option<Comments> = None;
 
     while let Token::COMMENT(_comment) = self.cur_token {
-      #[cfg(not(feature = "lsp"))]
       comments.get_or_insert(Comments::default()).0.push(_comment);
 
       self.next_token()?;
@@ -376,9 +375,6 @@ impl<'a> Parser<'a> {
   #[cfg(not(feature = "ast-comments"))]
   fn advance_newline(&mut self) -> Result<()> {
     while let Token::NEWLINE = self.cur_token {
-      #[cfg(feature = "lsp")]
-      comments.get_or_insert(Comments::default()).0.push("\n");
-
       self.next_token()?;
     }
 

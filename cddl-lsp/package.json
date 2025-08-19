@@ -80,7 +80,7 @@
     "vscode:prepublish": "npm run webpack",
     "webpack": "npm run clean && webpack --mode production --config ./client/webpack.config.js && webpack --mode production --config ./server/webpack.config.js",
     "webpack-dev": "npm run clean && webpack --mode none --config ./client/webpack.config.js && webpack --mode none --config ./server/webpack.config.js",
-    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/pkg --release --target nodejs -- --features lsp",
+    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/pkg --release --target nodejs -- --features lsp,ast-comments",
     "compile": "npm run wasm && tsc -b",
     "compile:client": "tsc -b ./client/tsconfig.json",
     "compile:server": "npm run wasm && tsc -b ./server/tsconfig.json",

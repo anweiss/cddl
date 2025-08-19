@@ -127,11 +127,19 @@ impl fmt::Display for Comments<'_> {
 
     let mut comment_str = String::new();
 
-    for comment in &self.0 {
+    for (i, comment) in self.0.iter().enumerate() {
       if *comment == "\n" {
         comment_str.push('\n')
       } else {
-        let _ = writeln!(comment_str, ";{}", comment);
+        // Add the comment with semicolon prefix
+        let _ = write!(comment_str, ";{}", comment);
+        
+        // Only add newline if the next item is not already a newline,
+        // or if this is the last comment
+        let next_is_newline = self.0.get(i + 1).map(|next| *next == "\n").unwrap_or(false);
+        if !next_is_newline {
+          comment_str.push('\n');
+        }
       }
     }
 
