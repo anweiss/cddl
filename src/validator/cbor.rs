@@ -3992,6 +3992,52 @@ mod tests {
   }
 
   #[test]
+  fn test_conditional_array_validation() {
+    let cddl_str = r#"
+        NestedPart = [
+          disposition: 0,
+          language: tstr,
+          partIndex: uint,
+          ( NullPart // SinglePart )
+        ]
+
+        NullPart = ( cardinality: 0 )
+        SinglePart = (
+            cardinality: 1,
+            contentType: tstr,
+            content: bstr
+        )
+    "#;
+
+    let cddl = cddl_from_str(cddl_str, true).unwrap();
+
+    // Test data: A SinglePart with 6 elements (disposition, language, partIndex, cardinality, contentType, content)
+    let cbor_data = Value::Array(vec![
+      Value::Integer(0.into()),              // disposition
+      Value::Text("en".to_string()),         // language: tstr
+      Value::Integer(1.into()),              // partIndex: uint
+      Value::Integer(1.into()),              // cardinality: single (1)
+      Value::Text("text/plain".to_string()), // contentType: tstr
+      Value::Bytes(b"hello world".to_vec()), // content: bstr
+    ]);
+
+    #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
+    #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut validator = CBORValidator::new(&cddl, cbor_data);
+    let result = validator.validate();
+
+    // This should pass but currently fails
+    assert!(
+      result.is_ok(),
+      "Validation should succeed for SinglePart structure: {:?}",
+      result
+    );
+  }
+
+  #[test]
   fn extract_cbor() {
     use ciborium::value::Value;
 
