@@ -1481,7 +1481,7 @@ impl<'a> Parser<'a> {
           if ident.socket.is_none() {
             let mut is_generic_param = false;
             if let Some(idents) = &self.current_rule_generic_param_idents {
-              is_generic_param = idents.iter().any(|&id| id == ident.ident);
+              is_generic_param = idents.contains(&ident.ident);
             }
 
             #[cfg(feature = "ast-span")]
@@ -1514,7 +1514,7 @@ impl<'a> Parser<'a> {
         if ident.socket.is_none() {
           let mut is_generic_param = false;
           if let Some(idents) = &self.current_rule_generic_param_idents {
-            is_generic_param = idents.iter().any(|&id| id == ident.ident);
+            is_generic_param = idents.contains(&ident.ident);
           }
 
           #[cfg(feature = "ast-span")]

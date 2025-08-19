@@ -783,7 +783,7 @@ impl<'a> Lexer<'a> {
             );
           }
 
-          return Ok(self.str_input[idx..self.read_char()?.0].as_bytes().into());
+          return Ok((&self.str_input.as_bytes()[idx..self.read_char()?.0]).into());
         }
         // CRLF
         _ => {
@@ -909,13 +909,13 @@ impl<'a> Lexer<'a> {
 
             if is_signed {
               return Ok(Token::VALUE(Value::FLOAT(
-                lexical::parse::<f64>(self.str_input[signed_idx..=end_idx].as_bytes())
+                lexical::parse::<f64>(&self.str_input.as_bytes()[signed_idx..=end_idx])
                   .map_err(|e| Error::from((self.str_input, self.position, e)))?,
               )));
             }
 
             return Ok(Token::VALUE(Value::FLOAT(
-              lexical::parse::<f64>(self.str_input[idx..=end_idx].as_bytes())
+              lexical::parse::<f64>(&self.str_input.as_bytes()[idx..=end_idx])
                 .map_err(|e| Error::from((self.str_input, self.position, e)))?,
             )));
           }
@@ -935,7 +935,7 @@ impl<'a> Lexer<'a> {
     if is_signed {
       if is_exponent {
         return Ok(Token::VALUE(Value::INT(
-          lexical::parse::<f64>(self.str_input[signed_idx..=end_idx].as_bytes())
+          lexical::parse::<f64>(&self.str_input.as_bytes()[signed_idx..=end_idx])
             .map_err(|e| Error::from((self.str_input, self.position, e)))? as isize,
         )));
       } else {
@@ -949,7 +949,7 @@ impl<'a> Lexer<'a> {
 
     if is_exponent {
       return Ok(Token::VALUE(Value::UINT(
-        lexical::parse::<f64>(self.str_input[idx..=end_idx].as_bytes())
+        lexical::parse::<f64>(&self.str_input.as_bytes()[idx..=end_idx])
           .map_err(|e| Error::from((self.str_input, self.position, e)))? as usize,
       )));
     }

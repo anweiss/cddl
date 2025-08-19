@@ -1727,6 +1727,19 @@ where
             return Ok(());
           }
 
+          // Check if this is an empty map schema with non-empty CBOR map
+          if group.group_choices.len() == 1
+            && group.group_choices[0].group_entries.is_empty()
+            && !m.is_empty()
+            && !matches!(
+              self.ctrl,
+              Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
+            )
+          {
+            self.add_error(format!("expected empty map, got {:?}", self.cbor));
+            return Ok(());
+          }
+
           #[allow(clippy::needless_collect)]
           let m = m.iter().map(|entry| entry.0.clone()).collect::<Vec<_>>();
 
@@ -2269,7 +2282,7 @@ where
     if !self.is_colon_shortcut_present {
       if let Some(r) = rule_from_ident(self.cddl, ident) {
         // Check for recursion to prevent stack overflow
-        let rule_key = format!("{}", ident.ident);
+        let rule_key = ident.ident.to_string();
         if self.visited_rules.contains(&rule_key) {
           // We've already validated this rule in the current validation path
           // This is a recursive reference, so we allow it and assume it's valid
@@ -2293,12 +2306,10 @@ where
     // Special case for array values - check if we're in an array context and this
     // is a reference to another array type
     if let Value::Array(_) = &self.cbor {
-      if let Some(rule) = rule_from_ident(self.cddl, ident) {
-        if let Rule::Type { rule, .. } = rule {
-          for tc in rule.value.type_choices.iter() {
-            if let Type2::Array { .. } = &tc.type1.type2 {
-              return self.visit_type_choice(tc);
-            }
+      if let Some(Rule::Type { rule, .. }) = rule_from_ident(self.cddl, ident) {
+        for tc in rule.value.type_choices.iter() {
+          if let Type2::Array { .. } = &tc.type1.type2 {
+            return self.visit_type_choice(tc);
           }
         }
       }
@@ -4324,6 +4335,110 @@ mod tests {
       result.is_ok(),
       "Recursive structure validation should not cause stack overflow"
     );
+
+    Ok(())
+  }
+
+  #[test]
+  fn test_issue_221_empty_map_with_extra_keys_cbor() {
+    // This test reproduces issue #221 for CBOR
+    // CDDL schema defines an empty map: root = {}
+    // CBOR has extra keys
+    // This should FAIL validation but currently passes
+
+    let cddl_str = "root = {}";
+    let cddl = cddl_from_str(cddl_str, true).unwrap();
+
+    // Create a CBOR map with extra keys
+    use ciborium::Value;
+    let cbor_data = Value::Map(vec![(
+      Value::Text("x".to_string()),
+      Value::Text("y".to_string()),
+    )]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut validator = CBORValidator::new(&cddl, cbor_data);
+
+    // This should fail but currently passes (the bug)
+    let result = validator.validate();
+    assert!(
+      result.is_err(),
+      "CBOR validation should fail for extra keys in empty map schema"
+    );
+
+    // Verify the error message is what we expect
+    if let Err(Error::Validation(errors)) = result {
+      assert_eq!(errors.len(), 1);
+      assert!(errors[0].reason.contains("expected empty map"));
+    } else {
+      panic!("Expected validation error but got something else");
+    }
+  }
+
+  #[test]
+  fn test_empty_map_schema_with_empty_cbor() -> std::result::Result<(), Box<dyn std::error::Error>>
+  {
+    // This should pass - empty map schema with empty CBOR map
+    let cddl_str = "root = {}";
+    let cddl = cddl_from_str(cddl_str, true)?;
+
+    // Create an empty CBOR map
+    use ciborium::Value;
+    let cbor_data = Value::Map(vec![]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut validator = CBORValidator::new(&cddl, cbor_data);
+
+    let result = validator.validate();
+    assert!(
+      result.is_ok(),
+      "CBOR validation should pass for empty map with empty map schema"
+    );
+
+    Ok(())
+  }
+
+  #[test]
+  fn test_issue_221_reproduce_exact_scenario_cbor(
+  ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // This test reproduces the exact scenario from issue #221 for CBOR
+    let cddl_str = "root = {}";
+    let cddl = cddl_from_str(cddl_str, true)?;
+
+    // Create CBOR equivalent of {"x": "y"}
+    use ciborium::Value;
+    let cbor_data = Value::Map(vec![(
+      Value::Text("x".to_string()),
+      Value::Text("y".to_string()),
+    )]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut validator = CBORValidator::new(&cddl, cbor_data);
+
+    let result = validator.validate();
+
+    // Before the fix, this would incorrectly pass. After the fix, it should fail.
+    match result {
+      Err(Error::Validation(errors)) => {
+        assert!(!errors.is_empty(), "Should have validation errors");
+        let error_message = &errors[0].reason;
+        assert!(
+          error_message.contains("expected empty map"),
+          "Error message should indicate expected empty map, got: {}",
+          error_message
+        );
+      }
+      Ok(_) => panic!(
+        "Issue #221 bug detected: CBOR validation incorrectly passed for extra keys in empty map"
+      ),
+      Err(other) => panic!("Unexpected error type: {:?}", other),
+    }
 
     Ok(())
   }
