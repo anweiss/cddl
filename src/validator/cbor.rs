@@ -2282,7 +2282,7 @@ where
     if !self.is_colon_shortcut_present {
       if let Some(r) = rule_from_ident(self.cddl, ident) {
         // Check for recursion to prevent stack overflow
-        let rule_key = format!("{}", ident.ident);
+        let rule_key = ident.ident.to_string();
         if self.visited_rules.contains(&rule_key) {
           // We've already validated this rule in the current validation path
           // This is a recursive reference, so we allow it and assume it's valid
@@ -2306,12 +2306,10 @@ where
     // Special case for array values - check if we're in an array context and this
     // is a reference to another array type
     if let Value::Array(_) = &self.cbor {
-      if let Some(rule) = rule_from_ident(self.cddl, ident) {
-        if let Rule::Type { rule, .. } = rule {
-          for tc in rule.value.type_choices.iter() {
-            if let Type2::Array { .. } = &tc.type1.type2 {
-              return self.visit_type_choice(tc);
-            }
+      if let Some(Rule::Type { rule, .. }) = rule_from_ident(self.cddl, ident) {
+        for tc in rule.value.type_choices.iter() {
+          if let Type2::Array { .. } = &tc.type1.type2 {
+            return self.visit_type_choice(tc);
           }
         }
       }

@@ -1854,17 +1854,15 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     // Special case for array values - check if we're in an array context and this
     // is a reference to another array type
     if let Value::Array(_) = &self.json {
-      if let Some(rule) = rule_from_ident(self.cddl, ident) {
-        if let Rule::Type { rule, .. } = rule {
-          for tc in rule.value.type_choices.iter() {
-            if let Type2::Array { .. } = &tc.type1.type2 {
-              // Mark this rule as visited for array type processing
-              self.visited_rules.insert(ident.ident.to_string());
-              let result = self.visit_type_choice(tc);
-              // Remove this rule from visited set when we're done
-              self.visited_rules.remove(ident.ident);
-              return result;
-            }
+      if let Some(Rule::Type { rule, .. }) = rule_from_ident(self.cddl, ident) {
+        for tc in rule.value.type_choices.iter() {
+          if let Type2::Array { .. } = &tc.type1.type2 {
+            // Mark this rule as visited for array type processing
+            self.visited_rules.insert(ident.ident.to_string());
+            let result = self.visit_type_choice(tc);
+            // Remove this rule from visited set when we're done
+            self.visited_rules.remove(ident.ident);
+            return result;
           }
         }
       }
