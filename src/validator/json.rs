@@ -11,7 +11,7 @@ use crate::{
 
 use std::{
   borrow::Cow,
-  collections::HashMap,
+  collections::{HashMap, HashSet},
   convert::TryFrom,
   fmt::{self, Write},
 };
@@ -216,6 +216,9 @@ pub struct JSONValidator<'a> {
   has_feature_errors: bool,
   #[cfg(feature = "additional-controls")]
   disabled_features: Option<Vec<String>>,
+  // Track visited rules to prevent infinite recursion during validation
+  // This prevents stack overflow when validating recursive CDDL structures
+  visited_rules: HashSet<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -262,6 +265,7 @@ impl<'a> JSONValidator<'a> {
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
+      visited_rules: HashSet::new(),
     }
   }
 
@@ -298,6 +302,7 @@ impl<'a> JSONValidator<'a> {
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: HashSet::new(),
     }
   }
 
@@ -337,6 +342,7 @@ impl<'a> JSONValidator<'a> {
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
+      visited_rules: HashSet::new(),
     }
   }
 
@@ -373,6 +379,7 @@ impl<'a> JSONValidator<'a> {
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: HashSet::new(),
     }
   }
 
@@ -1804,11 +1811,26 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       }
     }
 
+    // Check for recursion before processing the identifier
+    if self.visited_rules.contains(ident.ident) {
+      // We've seen this rule before in the current validation path, indicating a cycle
+      self.add_error(format!(
+        "Recursive rule reference detected: {}. This may indicate a circular definition in the CDDL schema.",
+        ident.ident
+      ));
+      return Ok(());
+    }
+
     // self.is_colon_shortcut_present is only true when the ident is part of a
     // member key
     if !self.is_colon_shortcut_present {
       if let Some(r) = rule_from_ident(self.cddl, ident) {
-        return self.visit_rule(r);
+        // Mark this rule as visited
+        self.visited_rules.insert(ident.ident.to_string());
+        let result = self.visit_rule(r);
+        // Remove this rule from visited set when we're done
+        self.visited_rules.remove(ident.ident);
+        return result;
       }
     }
 
@@ -1823,7 +1845,12 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         if let Rule::Type { rule, .. } = rule {
           for tc in rule.value.type_choices.iter() {
             if let Type2::Array { .. } = &tc.type1.type2 {
-              return self.visit_type_choice(tc);
+              // Mark this rule as visited for array type processing
+              self.visited_rules.insert(ident.ident.to_string());
+              let result = self.visit_type_choice(tc);
+              // Remove this rule from visited set when we're done
+              self.visited_rules.remove(ident.ident);
+              return result;
             }
           }
         }
@@ -1909,7 +1936,12 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         // For arrays, check if this identifier refers to an array type rule first
         if let Some(r) = rule_from_ident(self.cddl, ident) {
           if is_array_type_rule(self.cddl, ident) {
-            return self.visit_rule(r);
+            // Mark this rule as visited for array type processing
+            self.visited_rules.insert(ident.ident.to_string());
+            let result = self.visit_rule(r);
+            // Remove this rule from visited set when we're done
+            self.visited_rules.remove(ident.ident);
+            return result;
           }
         }
 

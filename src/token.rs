@@ -342,7 +342,7 @@ impl<'a> TryFrom<Token<'a>> for RangeValue<'a> {
 
 impl RangeValue<'_> {
   /// Returns `Value` from given `RangeValue`
-  pub fn as_value(&self) -> Option<Value> {
+  pub fn as_value(&self) -> Option<Value<'_>> {
     match &self {
       RangeValue::UINT(ui) => Some(Value::UINT(*ui)),
       RangeValue::FLOAT(f) => Some(Value::FLOAT(*f)),
@@ -653,7 +653,7 @@ pub fn lookup_control_from_str(ident: &str) -> Option<ControlOperator> {
 ///
 /// assert_eq!(lookup_ident("false"), Token::FALSE);
 /// ```
-pub fn lookup_ident(ident: &str) -> Token {
+pub fn lookup_ident(ident: &str) -> Token<'_> {
   match ident {
     "false" => Token::FALSE,
     "true" => Token::TRUE,
