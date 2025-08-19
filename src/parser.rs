@@ -3520,7 +3520,7 @@ impl<'a> Parser<'a> {
 /// let _ = cddl_from_str(input, true);
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(feature = "std")]
-pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDDL, String> {
+pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDDL<'_>, String> {
   match Parser::new(input, Box::new(lexer::lexer_from_str(input).iter())).map_err(|e| e.to_string())
   {
     Ok(mut p) => match p.parse_cddl() {
@@ -3566,7 +3566,7 @@ impl CDDL<'_> {
   /// Parses CDDL from a byte slice
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "std")]
-  pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL, String> {
+  pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL<'_>, String> {
     let str_input = std::str::from_utf8(input).map_err(|e| e.to_string())?;
 
     match Parser::new(str_input, Box::new(lexer::Lexer::from_slice(input).iter()))
@@ -3590,7 +3590,7 @@ impl CDDL<'_> {
   /// Parses CDDL from a byte slice
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(not(feature = "std"))]
-  pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL, String> {
+  pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL<'_>, String> {
     let str_input = std::str::from_utf8(input).map_err(|e| e.to_string())?;
 
     match Parser::new(str_input, Box::new(lexer::Lexer::from_slice(input).iter()))
@@ -3631,7 +3631,7 @@ impl CDDL<'_> {
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(not(feature = "std"))]
-pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL, String> {
+pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL<'_>, String> {
   match Parser::new(input, Box::new(lexer::lexer_from_str(input).iter())).map_err(|e| e.to_string())
   {
     Ok(mut p) => match p.parse_cddl() {

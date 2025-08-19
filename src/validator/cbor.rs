@@ -12,7 +12,7 @@ use crate::{
 use core::convert::TryInto;
 use std::{
   borrow::Cow,
-  collections::{HashMap, HashSet},
+  collections::HashMap,
   convert::TryFrom,
   fmt::{self, Write},
 };
@@ -2275,13 +2275,13 @@ where
           // This is a recursive reference, so we allow it and assume it's valid
           return Ok(());
         }
-        
+
         // Mark this rule as visited before recursing
         self.visited_rules.insert(rule_key.clone());
         let result = self.visit_rule(r);
         // Remove the rule from visited set after processing
         self.visited_rules.remove(&rule_key);
-        
+
         return result;
       }
     }
@@ -4318,9 +4318,12 @@ mod tests {
 
     // The validation should complete without stack overflow
     let result = cv.validate();
-    
+
     // The structure should be valid
-    assert!(result.is_ok(), "Recursive structure validation should not cause stack overflow");
+    assert!(
+      result.is_ok(),
+      "Recursive structure validation should not cause stack overflow"
+    );
 
     Ok(())
   }

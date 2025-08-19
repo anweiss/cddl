@@ -299,7 +299,7 @@ impl<'a> Iterator for LexerIter<'a> {
 /// # Arguments
 ///
 /// `str_input` - String slice with input
-pub fn lexer_from_str(str_input: &str) -> Lexer {
+pub fn lexer_from_str(str_input: &str) -> Lexer<'_> {
   Lexer::new(str_input)
 }
 
@@ -320,7 +320,7 @@ impl<'a> Lexer<'a> {
   }
 
   /// Creates a Lexer from a byte slice
-  pub fn from_slice(input: &[u8]) -> Lexer {
+  pub fn from_slice(input: &[u8]) -> Lexer<'_> {
     let str_input = std::str::from_utf8(input).unwrap();
 
     Lexer::new(str_input)
