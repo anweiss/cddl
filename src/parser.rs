@@ -2513,7 +2513,7 @@ impl<'a> Parser<'a> {
 
         // If we have a simple identifier that could be a group reference (even if not yet defined),
         // create a TypeGroupname entry instead of a ValueMemberKey with no member_key
-        #[cfg(feature = "ast-span")]  
+        #[cfg(feature = "ast-span")]
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
           return Ok(GroupEntry::TypeGroupname {
             ge: TypeGroupnameEntry {
