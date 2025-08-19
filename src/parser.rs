@@ -2443,6 +2443,7 @@ impl<'a> Parser<'a> {
 
         #[cfg(feature = "ast-span")]
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
+          // Check if it's a known groupname OR if it could be a forward reference to a group
           if self.groupnames.contains(name.ident) || matches!(name.socket, Some(SocketPlug::GROUP))
           {
             if generic_args.is_some() && self.peek_token_is(&Token::LANGLEBRACKET) {
@@ -2508,6 +2509,39 @@ impl<'a> Parser<'a> {
               trailing_comments,
             });
           }
+        }
+
+        // If we have a simple identifier that could be a group reference (even if not yet defined),
+        // create a TypeGroupname entry instead of a ValueMemberKey with no member_key
+        #[cfg(feature = "ast-span")]  
+        if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
+          return Ok(GroupEntry::TypeGroupname {
+            ge: TypeGroupnameEntry {
+              occur,
+              name,
+              generic_args,
+            },
+            #[cfg(feature = "ast-comments")]
+            leading_comments: None,
+            #[cfg(feature = "ast-comments")]
+            trailing_comments,
+            span,
+          });
+        }
+
+        #[cfg(not(feature = "ast-span"))]
+        if let Some((name, generic_args)) = entry_type.groupname_entry() {
+          return Ok(GroupEntry::TypeGroupname {
+            ge: TypeGroupnameEntry {
+              occur,
+              name,
+              generic_args,
+            },
+            #[cfg(feature = "ast-comments")]
+            leading_comments: None,
+            #[cfg(feature = "ast-comments")]
+            trailing_comments,
+          });
         }
 
         Ok(GroupEntry::ValueMemberKey {
