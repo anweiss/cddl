@@ -928,7 +928,8 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
           let counts: Vec<String> = entry_counts.iter().map(|ec| ec.count.to_string()).collect();
           errors.push(format!(
             "expected array with length matching one of [{}], got {}",
-            counts.join(", "), len
+            counts.join(", "),
+            len
           ));
         } else {
           for ec in entry_counts.iter() {
