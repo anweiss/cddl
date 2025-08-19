@@ -3049,18 +3049,21 @@ mod tests {
     // CDDL schema defines an empty map: root = {}
     // JSON has extra keys: {"x": "y"}
     // This should FAIL validation but currently passes
-    
+
     let cddl_str = "root = {}";
     let json_str = r#"{"x": "y"}"#;
-    
+
     #[cfg(feature = "additional-controls")]
     let result = validate_json_from_str(cddl_str, json_str, None);
     #[cfg(not(feature = "additional-controls"))]
     let result = validate_json_from_str(cddl_str, json_str);
-    
+
     // This should fail but currently passes (the bug)
-    assert!(result.is_err(), "Validation should fail for extra keys in empty map schema");
-    
+    assert!(
+      result.is_err(),
+      "Validation should fail for extra keys in empty map schema"
+    );
+
     // Verify the error message is what we expect
     if let Err(Error::Validation(errors)) = result {
       assert_eq!(errors.len(), 1);
@@ -3075,13 +3078,16 @@ mod tests {
     // This should pass - empty map schema with empty JSON map
     let cddl_str = "root = {}";
     let json_str = r#"{}"#;
-    
+
     #[cfg(feature = "additional-controls")]
     let result = validate_json_from_str(cddl_str, json_str, None);
     #[cfg(not(feature = "additional-controls"))]
     let result = validate_json_from_str(cddl_str, json_str);
-    
-    assert!(result.is_ok(), "Validation should pass for empty map with empty map schema");
+
+    assert!(
+      result.is_ok(),
+      "Validation should pass for empty map with empty map schema"
+    );
   }
 
   #[test]
@@ -3089,21 +3095,26 @@ mod tests {
     // This test reproduces the exact scenario from issue #221
     let cddl_str = "root = {}";
     let json_str = r#"{"x": "y"}"#;
-    
+
     #[cfg(feature = "additional-controls")]
     let result = validate_json_from_str(cddl_str, json_str, None);
     #[cfg(not(feature = "additional-controls"))]
     let result = validate_json_from_str(cddl_str, json_str);
-    
+
     // Before the fix, this would incorrectly pass. After the fix, it should fail.
     match result {
       Err(Error::Validation(errors)) => {
         assert!(!errors.is_empty(), "Should have validation errors");
         let error_message = &errors[0].reason;
-        assert!(error_message.contains("expected empty map"), 
-                "Error message should indicate expected empty map, got: {}", error_message);
-      },
-      Ok(_) => panic!("Issue #221 bug detected: validation incorrectly passed for extra keys in empty map"),
+        assert!(
+          error_message.contains("expected empty map"),
+          "Error message should indicate expected empty map, got: {}",
+          error_message
+        );
+      }
+      Ok(_) => {
+        panic!("Issue #221 bug detected: validation incorrectly passed for extra keys in empty map")
+      }
       Err(other) => panic!("Unexpected error type: {:?}", other),
     }
   }
