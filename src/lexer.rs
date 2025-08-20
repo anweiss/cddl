@@ -5,6 +5,9 @@ use super::{
   },
   token::{self, ByteValue, Token, Value},
 };
+
+#[cfg(test)]
+use super::token::TagConstraint;
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
   files::SimpleFiles,
