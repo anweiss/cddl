@@ -515,15 +515,9 @@ impl<'a> Parser<'a> {
       return Err(Error::INCREMENTAL);
     }
 
-    if c.rules.is_empty() {
-      self.errors.push(Error::PARSER {
-        #[cfg(feature = "ast-span")]
-        position: self.parser_position,
-        msg: NoRulesDefined.into(),
-      });
-
-      return Err(Error::INCREMENTAL);
-    }
+    // RFC 9682 Section 3.1: Empty data models are now allowed
+    // The requirement for at least one rule is now a semantic constraint
+    // to be fulfilled after processing of all directives.
 
     Ok(c)
   }
@@ -1858,7 +1852,11 @@ impl<'a> Parser<'a> {
         #[cfg(feature = "ast-span")]
         let begin_type2_line = self.lexer_position.line;
 
-        match (*mt, *constraint) {
+        // Extract values to avoid borrow checker issues
+        let mt_val = *mt;
+        let constraint_val = *constraint;
+
+        match (mt_val, constraint_val) {
           // Tagged data item containing the given type as the tagged value
           (Some(6), tag) => {
             self.next_token()?;

@@ -9,6 +9,40 @@ use serde::{Deserialize, Serialize};
 #[cfg(not(feature = "std"))]
 use alloc::{borrow::Cow, string::String};
 
+/// Tag constraint for CBOR tags (RFC 9682 Section 3.2)
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub enum TagConstraint<'a> {
+  /// Literal tag number
+  Literal(u64),
+  /// Type expression for non-literal tag numbers
+  #[cfg_attr(target_arch = "wasm32", serde(borrow))]
+  Type(&'a str),
+}
+
+impl<'a> TagConstraint<'a> {
+  /// Extract the literal value if this is a literal constraint
+  pub fn as_literal(&self) -> Option<u64> {
+    match self {
+      TagConstraint::Literal(value) => Some(*value),
+      TagConstraint::Type(_) => None,
+    }
+  }
+
+  /// Check if this is a literal constraint with the given value
+  pub fn is_literal(&self, value: u64) -> bool {
+    matches!(self, TagConstraint::Literal(v) if *v == value)
+  }
+}
+
+impl fmt::Display for TagConstraint<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      TagConstraint::Literal(n) => write!(f, "{}", n),
+      TagConstraint::Type(t) => write!(f, "<{}>", t),
+    }
+  }
+}
+
 /// Token which represents a valid CDDL character or sequence
 #[derive(PartialEq, Debug, Clone)]
 pub enum Token<'a> {
@@ -30,8 +64,8 @@ pub enum Token<'a> {
   TAG(
     /// Major type
     Option<u8>,
-    /// Optional constraint
-    Option<u64>,
+    /// Optional constraint - either a literal number or a type expression
+    Option<TagConstraint<'a>>,
   ),
 
   // Operators
