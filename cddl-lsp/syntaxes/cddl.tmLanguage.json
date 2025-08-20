@@ -4,20 +4,78 @@
   "repository": {
     "expression": {
       "patterns": [
+        { "include": "#comments" },
+        { "include": "#rule-assignment" },
         { "include": "#group-expression" },
         { "include": "#map-expression" },
         { "include": "#array-expression" },
+        { "include": "#generic-arguments" },
         { "include": "#range-control-operator" },
         { "include": "#socketplug" },
         { "include": "#ruleidentifier" },
         { "include": "#number" },
         { "include": "#standard-prelude" },
         { "include": "#ruleidentifierref" },
-        { "include": "#comments" },
         { "include": "#literal-text-string" },
         { "include": "#literal-byte-string" },
         { "include": "#choiceseparator" },
-        { "include": "#occurrence" }
+        { "include": "#occurrence" },
+        { "include": "#operators" },
+        { "include": "#separators" }
+      ]
+    },
+    "rule-assignment": {
+      "patterns": [
+        {
+          "match": "\\s*(\\w[\\w\\-\\.]*)(\\s*<[^>]*>)?(\\s*)(=|//=|/=)",
+          "captures": {
+            "1": { "name": "entity.name.function.cddl" },
+            "2": { "name": "meta.generic.cddl" },
+            "4": { "name": "keyword.operator.assignment.cddl" }
+          }
+        }
+      ]
+    },
+    "generic-arguments": {
+      "begin": "<",
+      "end": ">",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.generic.begin.cddl" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.generic.end.cddl" }
+      },
+      "name": "meta.generic.cddl",
+      "patterns": [
+        { "include": "#expression" },
+        {
+          "match": ",",
+          "name": "punctuation.separator.generic.cddl"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "match": "=>",
+          "name": "keyword.operator.key-value.cddl"
+        },
+        {
+          "match": ":",
+          "name": "keyword.operator.type.cddl"
+        },
+        {
+          "match": "\\^",
+          "name": "keyword.operator.cut.cddl"
+        }
+      ]
+    },
+    "separators": {
+      "patterns": [
+        {
+          "match": ",",
+          "name": "punctuation.separator.cddl"
+        }
       ]
     },
     "group-expression": {
@@ -58,11 +116,11 @@
     },
     "range-control-operator": {
       "match": "\\.\\.\\.|\\.\\.|\\.size|\\.bits|\\.regex|\\.pcre|\\.cbor|\\.cborseq|\\.within|\\.and|\\.lt|\\.le|\\.gt|\\.ge|\\.eq|\\.ne|\\.default",
-      "name": "keyword.operator.cddl"
+      "name": "keyword.operator.control.cddl"
     },
     "standard-prelude": {
       "match": "(?<!-|_)\\bany\\b(?!-|_)|\\binteger\\b|\\buint\\b|\\bnint\\b|\\bint\\b|\\bbstr\\b|\\bbytes\\b|\\btstr\\b|\\btext\\b|\\btdate\\b|\\btime\\b|\\bnumber\\b|\\bbiguint\\b|\\bbignint\\b|\\bbigint\\b|\\bunsigned\\b|\\bdecfrac\\b|\\bbigfloat\\b|\\beb64url\\b|\\beb64legacy\\b|\\beb16\\b|\\bencoded\\-cbor\\b|(?<!-|_)\\buri\\b(?!-|_)|\\bb64url\\b|\\bb64legacy\\b|\\bregexp\\b|\\bmime\\-message\\b|\\bcbor\\-any\\b|\\bfloat16\\b|\\bfloat32\\b|\\bfloat64\\b|\\bfloat16\\-32\\b|\\bfloat32\\-64\\b|\\bfloat\\b|\\bfalse\\b|\\btrue\\b|\\bbool\\b|\\bnil\\b|\\bnull\\b|\\bundefined\\b",
-      "name": "keyword.standard-prelude.cddl"
+      "name": "keyword.type.builtin.cddl"
     },
     "comments": {
       "match": "(;).*$\\n?",
@@ -95,7 +153,7 @@
     },
     "literal-byte-string": {
       "begin": "(b64|h)?'",
-      "beginCaputres": {
+      "beginCaptures": {
         "0": {
           "name": "punctuation.definition.string.begin.cddl"
         }
@@ -122,24 +180,23 @@
       ]
     },
     "socketplug": {
-      "name": "keyword.operator.cddl",
+      "name": "keyword.operator.socketplug.cddl",
       "match": "\\$\\$|\\$"
     },
     "ruleidentifier": {
-      "name": "variable.cddl",
+      "name": "entity.name.type.cddl",
       "match": "(\\w|@|\\$)+((-|\\.)*(\\w|@|\\$|\\d))*(?=(<\\w+(,\\s*\\w+)*>)?\\s*(=(?!>)|//=|/=))"
     },
-
     "ruleidentifierref": {
-      "name": "ruleidentifierref.cddl",
+      "name": "variable.other.cddl",
       "match": "(\\w|@|\\$)+((-|\\.)*(\\w|@|\\$|\\d))*"
     },
     "choiceseparator": {
-      "name": "punctuation.separator.choice.cddl",
+      "name": "keyword.operator.choice.cddl",
       "match": "/|//"
     },
     "occurrence": {
-      "name": "keyword.operator.cddl",
+      "name": "keyword.operator.occurrence.cddl",
       "match": "\\?|\\+|\\*"
     },
     "number": {

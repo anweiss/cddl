@@ -133,7 +133,7 @@ impl fmt::Display for Comments<'_> {
       } else {
         // Add the comment with semicolon prefix
         let _ = write!(comment_str, ";{}", comment);
-        
+
         // Only add newline if the next item is not already a newline,
         // or if this is the last comment
         let next_is_newline = self.0.get(i + 1).map(|next| *next == "\n").unwrap_or(false);
