@@ -8,27 +8,27 @@ A Rust implementation of the Concise data definition language (CDDL). CDDL is an
 
 This crate includes a handwritten parser and lexer for CDDL, and its development has been heavily inspired by the techniques outlined in Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
-This crate supports validation of both CBOR and JSON data structures. The minimum supported Rust version (MSRV) is 1.78.0.
+This crate supports validation of both CBOR and JSON data structures. The minimum supported Rust version (MSRV) is 1.81.0.
 
 Also bundled into this repository is a basic language server implementation and extension for Visual Studio Code for editing CDDL. The implementation is backed by the compiled WebAssembly target included in this crate.
 
 ## Goals
 
-- [x] Parse CDDL documents into an AST
-- [x] Verify conformance of CDDL documents against RFC 8610
-- [x] Validate CBOR data structures
-- [x] Validate JSON documents
-- [ ] Generate dummy JSON from conformant CDDL
-- [x] As close to zero-copy as possible
-- [x] Compile WebAssembly target for browser and Node.js
-- [x] `no_std` support (lexing and parsing only)
-- [x] Language server implementation and Visual Studio Code Extension
+* [x] Parse CDDL documents into an AST
+* [x] Verify conformance of CDDL documents against RFC 8610
+* [x] Validate CBOR data structures
+* [x] Validate JSON documents
+* [ ] Generate dummy JSON from conformant CDDL
+* [x] As close to zero-copy as possible
+* [x] Compile WebAssembly target for browser and Node.js
+* [x] `no_std` support (lexing and parsing only)
+* [x] Language server implementation and Visual Studio Code Extension
 
 ## Non-goals
 
-- Performance (if this crate gains enough traction, it may be prudent to conduct more formal profiling and/or explore using a parser-combinator framework like [nom](https://github.com/Geal/nom))
-- Support CBOR diagnostic notation
-- I-JSON compatibility
+* Performance (if this crate gains enough traction, it may be prudent to conduct more formal profiling and/or explore using a parser-combinator framework like [nom](https://github.com/Geal/nom))
+* Support CBOR diagnostic notation
+* I-JSON compatibility
 
 ## Why Rust?
 
@@ -101,42 +101,42 @@ An extension for editing CDDL documents with Visual Studio Code has been publish
 
 ## Supported features
 
-- [x] maps
-  - [x] structs
-  - [x] tables
-  - [x] cuts
-- [x] groups
-- [x] arrays
-- [x] values
-- [x] choices
-- [x] ranges
-- [x] enumeration (building a choice from a group)
-- [x] root type
-- [x] occurrence
-- [x] predefined types
-- [x] tags
-- [x] unwrapping
-- [x] controls
-- [x] socket/plug
-- [x] generics
-- [x] operator precedence
-- [x] comments
-- [x] numerical int/uint values
-- [x] numerical hexfloat values
-- [x] numerical values with exponents
-- [x] unprefixed byte strings
-- [x] prefixed byte strings
+* [x] maps
+  + [x] structs
+  + [x] tables
+  + [x] cuts
+* [x] groups
+* [x] arrays
+* [x] values
+* [x] choices
+* [x] ranges
+* [x] enumeration (building a choice from a group)
+* [x] root type
+* [x] occurrence
+* [x] predefined types
+* [x] tags
+* [x] unwrapping
+* [x] controls
+* [x] socket/plug
+* [x] generics
+* [x] operator precedence
+* [x] comments
+* [x] numerical int/uint values
+* [x] numerical hexfloat values
+* [x] numerical values with exponents
+* [x] unprefixed byte strings
+* [x] prefixed byte strings
 
 ## Usage
 
-Simply add the dependency to `Cargo.toml`:
+Simply add the dependency to `Cargo.toml` :
 
 ```toml
 [dependencies]
 cddl = "0.10.0"
 ```
 
-Both JSON and CBOR validation require `std`.
+Both JSON and CBOR validation require `std` .
 
 ### Feature flags
 
@@ -244,21 +244,21 @@ The following types and features of CDDL are supported by this crate for validat
 | ---------------------- | ----------------------------------------------------------- |
 | structs                | objects                                                     |
 | arrays                 | arrays<sup>[1](#arrays)</sup>                               |
-| `text / tstr`          | string                                                      |
-| `uri`                  | string (valid RFC3986 URI)                                  |
-| `tdate`                | string (valid RFC3339 date/time)                            |
-| `b64url`               | string (base64url-encoded)                                  |
-| `time`                 | number (valid UNIX timestamp integer in seconds)            |
+| `text / tstr` | string                                                      |
+| `uri` | string (valid RFC3986 URI)                                  |
+| `tdate` | string (valid RFC3339 date/time)                            |
+| `b64url` | string (base64url-encoded)                                  |
+| `time` | number (valid UNIX timestamp integer in seconds)            |
 | `number / int / float` | number<sup>[2](#number)</sup>                               |
-| `bool / true / false`  | boolean                                                     |
-| `null / nil`           | null                                                        |
-| `any`                  | any valid JSON                                              |
+| `bool / true / false` | boolean                                                     |
+| `null / nil` | null                                                        |
+| `any` | any valid JSON                                              |
 | byte strings           | not yet implemented                                         |
-| unwrap (`~`)           | any JSON that matches unwrapped type from map, array or tag |
+| unwrap ( `~` )           | any JSON that matches unwrapped type from map, array or tag |
 
 CDDL groups, generics, sockets/plugs and group-to-choice enumerations can all be used when validating JSON.
 
-Since JSON objects only support keys whose types are JSON strings, when validating JSON, member keys defined in CDDL structs must use either the colon syntax (`mykey: tstr` or `"mykey": tstr`) or the double arrow syntax provided that the member key is either a text string value (`"mykey" => tstr`) or a bareword that resolves to either a string data type (`text` or `tstr`) or another text string value (`* tstr => any`).
+Since JSON objects only support keys whose types are JSON strings, when validating JSON, member keys defined in CDDL structs must use either the colon syntax ( `mykey: tstr` or `"mykey": tstr` ) or the double arrow syntax provided that the member key is either a text string value ( `"mykey" => tstr` ) or a bareword that resolves to either a string data type ( `text` or `tstr` ) or another text string value ( `* tstr => any` ).
 
 Occurrence indicators can be used to validate key/value pairs in a JSON object and the number of elements in a JSON array; depending on how the indicators are defined in a CDDL data definition.
 
@@ -266,23 +266,23 @@ Below is the table of supported control operators:
 
 | Control operator | Supported                                                                                                                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.pcre`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup>                     |
-| `.regex`         | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup> (alias for `.pcre`) |
-| `.size`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
-| `.bits`          | Ignored when validating JSON                                                                                                                                                                |
-| `.cbor`          | Ignored when validating JSON                                                                                                                                                                |
-| `.cborseq`       | Ignored when validating JSON                                                                                                                                                                |
-| `.within`        | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
-| `.and`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
-| `.lt`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
-| `.le`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
-| `.gt`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
-| `.ge`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
-| `.eq`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
-| `.ne`            | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
-| `.default`       | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.pcre` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup>                     |
+| `.regex` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji><sup>[3](#regex)</sup> (alias for `.pcre` ) |
+| `.size` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.bits` | Ignored when validating JSON                                                                                                                                                                |
+| `.cbor` | Ignored when validating JSON                                                                                                                                                                |
+| `.cborseq` | Ignored when validating JSON                                                                                                                                                                |
+| `.within` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.and` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.lt` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.le` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.gt` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.ge` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.eq` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.ne` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
+| `.default` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji>                                           |
 
-<a name="arrays">1</a>: When groups with multiple group entries are used to validate arrays, occurrence indicators are "greedy" in that only the first occurrence indicator that is come across is used in the validation. Subsequent entries with occurrence indicators are ignored due to complexities involved with processing these ambiguities. For proper JSON validation, avoid writing CDDL that looks like the following: `[ * a: int, b: tstr, ? c: int ]`.
+<a name="arrays">1</a>: When groups with multiple group entries are used to validate arrays, occurrence indicators are "greedy" in that only the first occurrence indicator that is come across is used in the validation. Subsequent entries with occurrence indicators are ignored due to complexities involved with processing these ambiguities. For proper JSON validation, avoid writing CDDL that looks like the following: `[ * a: int, b: tstr, ? c: int ]` .
 
 <a name="number">2</a>: While JSON itself does not distinguish between integers and floating-point numbers, this crate does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON. Refer to [Appendix E.](https://tools.ietf.org/html/rfc8610#appendix-E) of the standard for more details on the implications of using CDDL with JSON numbers.
 
@@ -292,12 +292,12 @@ If you've enabled the `additional-controls` feature, the table of controls below
 
 | Control operator | Supported                                                                                                                                         |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.plus`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `.cat`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `.det`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `.abnf`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `.abnfb`         | Ignored when validating JSON                                                                                                                      |
-| `.feature`       | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.plus` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.cat` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.det` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.abnf` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.abnfb` | Ignored when validating JSON                                                                                                                      |
+| `.feature` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 
 You can activate features during validation as follows:
 
@@ -330,39 +330,39 @@ let cbor = b"\xF4";
 assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
 ```
 
-This crate also uses [Serde](https://serde.rs/) and [ciborium](https://crates.io/crates/ciborium) for validating CBOR data structures. CBOR validation is done via the loosely typed [`ciborium::value::Value`](https://github.com/enarx/ciborium/blob/main/ciborium/src/value/mod.rs#L22) enum. In addition to all of the same features implemented by the JSON validator, this crate also supports validating CBOR tags (e.g. `#6.32(tstr)`), CBOR major types (e.g. `#1.2`), table types (e.g. `{ [ + tstr ] => int }`) and byte strings. The `.bits`, `.cbor` and `.cborseq` control operators are all supported as well.
+This crate also uses [Serde](https://serde.rs/) and [ciborium](https://crates.io/crates/ciborium) for validating CBOR data structures. CBOR validation is done via the loosely typed [ `ciborium::value::Value` ](https://github.com/enarx/ciborium/blob/main/ciborium/src/value/mod.rs#L22) enum. In addition to all of the same features implemented by the JSON validator, this crate also supports validating CBOR tags (e.g. `#6.32(tstr)` ), CBOR major types (e.g. `#1.2` ), table types (e.g. `{ [ + tstr ] => int }` ) and byte strings. The `.bits` , `.cbor` and `.cborseq` control operators are all supported as well.
 
 The following tags are supported when validating CBOR:
 
 | Tag                                      | Supported                                                                                                                                         |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tdate = #6.0(tstr)`                     | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `time = #6.1(number)`                    | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `biguint = #6.2(bstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `bignint = #6.3(bstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `tdate = #6.0(tstr)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `time = #6.1(number)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `biguint = #6.2(bstr)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `bignint = #6.3(bstr)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 | `decfrac = #6.4([e10: int, m: integer])` | not yet implemented                                                                                                                               |
 | `bigfloat = #6.5([e2: int, m: integer])` | not yet implemented                                                                                                                               |
-| `eb64url = #6.21(any)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `eb64legacy = #6.22(any)`                | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `eb16 = #6.23(any)`                      | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `encoded-cbor = #6.24(bstr)`             | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `uri = #6.32(tstr)`                      | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `b64url = #6.33(tstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `b64legacy = #6.34(tstr)`                | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `regexp = #6.35(tstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `mime-message = #6.36(tstr)`             | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `cbor-any = #6.55799(any)`               | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `eb64url = #6.21(any)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `eb64legacy = #6.22(any)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `eb16 = #6.23(any)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `encoded-cbor = #6.24(bstr)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `uri = #6.32(tstr)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `b64url = #6.33(tstr)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `b64legacy = #6.34(tstr)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `regexp = #6.35(tstr)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `mime-message = #6.36(tstr)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `cbor-any = #6.55799(any)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 
 If you've enabled the `additional-controls` feature, the table of controls below is also available for use:
 
 | Control operator | Supported                                                                                                                                         |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.plus`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `.cat`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `.det`           | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `.abnf`          | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `.abnfb`         | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-| `.feature`       | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.plus` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.cat` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.det` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.abnf` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.abnfb` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+| `.feature` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 
 You can activate features during validation by passing a slice of feature strings as follows:
 
@@ -390,11 +390,4 @@ cddl = { version = "0.10.0", default-features = false }
 
 Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling and diagnostics.
 
-Both JSON and CBOR validation are dependent on their respective heap allocated `Value` types, but since these types aren't supported in a `no_std` context, they subsequently aren't supported by this crate in `no_std`.
-
-## Projects using this crate
-
-Below are some known projects that leverage this crate:
-
-- [https://github.com/Emurgo/cddl-codegen](https://github.com/Emurgo/cddl-codegen)
-- [https://github.com/p2panda/p2panda](https://github.com/p2panda/p2panda)
+Both JSON and CBOR validation are dependent on their respective heap allocated `Value` types, but since these types aren't supported in a `no_std` context, they subsequently aren't supported by this crate in `no_std` .

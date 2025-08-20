@@ -2053,13 +2053,19 @@ where
       }
       Type2::TaggedData { tag, t, .. } => match &self.cbor {
         Value::Tag(actual_tag, value) => {
-          if let Some(tag) = tag {
-            if { *tag } != *actual_tag {
-              self.add_error(format!(
-                "expected tagged data #6.{}({}), got {:?}",
-                tag, t, self.cbor
-              ));
-              return Ok(());
+          if let Some(tag_constraint) = tag {
+            // For literal tag constraints, check the value matches
+            if let Some(expected_tag) = tag_constraint.as_literal() {
+              if expected_tag != *actual_tag {
+                self.add_error(format!(
+                  "expected tagged data #6.{}({}), got {:?}",
+                  expected_tag, t, self.cbor
+                ));
+                return Ok(());
+              }
+            } else {
+              // For type expression constraints, we would need to evaluate the type
+              // For now, accept any tag value (this could be enhanced later)
             }
           } else if *actual_tag > 0 {
             self.add_error(format!(
@@ -2112,8 +2118,12 @@ where
         Value::Integer(i) => {
           match mt {
             0u8 => match constraint {
-              Some(c) if i128::from(*i) == *c as i128 && i128::from(*i) >= 0i128 => return Ok(()),
               Some(c) => {
+                if let Some(literal_val) = c.as_literal() {
+                  if i128::from(*i) == literal_val as i128 && i128::from(*i) >= 0i128 {
+                    return Ok(());
+                  }
+                }
                 self.add_error(format!(
                   "expected uint data type with constraint {} (#{}.{}), got {:?}",
                   c, mt, c, self.cbor
@@ -2131,8 +2141,12 @@ where
               }
             },
             1u8 => match constraint {
-              Some(c) if i128::from(*i) == 0i128 - *c as i128 => return Ok(()),
               Some(c) => {
+                if let Some(literal_val) = c.as_literal() {
+                  if i128::from(*i) == 0i128 - literal_val as i128 {
+                    return Ok(());
+                  }
+                }
                 self.add_error(format!(
                   "expected nint type with constraint {} (#{}.{}), got {:?}",
                   c, mt, c, self.cbor
@@ -2160,7 +2174,7 @@ where
         Value::Bytes(b) => {
           match mt {
             2u8 => match constraint {
-              Some(c) if *c == b.len() as u64 => return Ok(()),
+              Some(c) if c.is_literal(b.len() as u64) => return Ok(()),
               Some(c) => self.add_error(format!(
                 "expected byte string type with constraint {} (#{}.{}), got {:?}",
                 c, mt, c, self.cbor
@@ -2178,7 +2192,7 @@ where
         Value::Text(t) => {
           match mt {
             3u8 => match constraint {
-              Some(c) if *c == t.len() as u64 => return Ok(()),
+              Some(c) if c.is_literal(t.len() as u64) => return Ok(()),
               Some(c) => self.add_error(format!(
                 "expected text string type with constraint {} (#{}.{}), got {:?}",
                 c, mt, c, self.cbor
@@ -2196,7 +2210,7 @@ where
         Value::Array(a) => {
           match mt {
             4u8 => match constraint {
-              Some(c) if *c == a.len() as u64 => return Ok(()),
+              Some(c) if c.is_literal(a.len() as u64) => return Ok(()),
               Some(c) => self.add_error(format!(
                 "expected array type with constraint {} (#{}.{}), got {:?}",
                 c, mt, c, self.cbor
@@ -2214,7 +2228,7 @@ where
         Value::Map(m) => {
           match mt {
             5u8 => match constraint {
-              Some(c) if *c == m.len() as u64 => return Ok(()),
+              Some(c) if c.is_literal(m.len() as u64) => return Ok(()),
               Some(c) => self.add_error(format!(
                 "expected map type with constraint {} (#{}.{}), got {:?}",
                 c, mt, c, self.cbor
