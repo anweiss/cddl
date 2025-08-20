@@ -126,6 +126,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d27c3610c36aee21ce8ac510e6224498de4228ad772a171ed65643a24693a5a8"
 
 [[package]]
+name = "base45"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3103f6d6af63726e86b026ac66769fc578ea38aba33f409e5855a4def97a564"
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -176,6 +182,7 @@ version = "0.10.0"
 dependencies = [
  "abnf_to_pest",
  "base16",
+ "base45",
  "base64-url",
  "chrono",
  "ciborium",

@@ -1607,6 +1607,463 @@ where
 
         Ok(())
       }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64U => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b64u_text(target, controller, s, false) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .b64u encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".b64u can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b64u can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64C => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b64c_text(target, controller, s, false) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .b64c encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".b64c can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b64c can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64USLOPPY => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b64u_text(target, controller, s, true) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .b64u-sloppy encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".b64u-sloppy can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b64u-sloppy can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64CSLOPPY => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b64c_text(target, controller, s, true) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .b64c-sloppy encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".b64c-sloppy can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b64c-sloppy can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::HEX => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_hex_text(
+                  target,
+                  controller,
+                  s,
+                  crate::validator::control::HexCase::Any,
+                ) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .hex encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".hex can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".hex can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::HEXLC => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_hex_text(
+                  target,
+                  controller,
+                  s,
+                  crate::validator::control::HexCase::Lower,
+                ) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .hexlc encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".hexlc can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".hexlc can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::HEXUC => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_hex_text(
+                  target,
+                  controller,
+                  s,
+                  crate::validator::control::HexCase::Upper,
+                ) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .hexuc encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".hexuc can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".hexuc can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B32 => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b32_text(target, controller, s, false) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .b32 encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".b32 can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b32 can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::H32 => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b32_text(target, controller, s, true) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .h32 encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".h32 can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".h32 can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B45 => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b45_text(target, controller, s) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .b45 encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".b45 can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b45 can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::BASE10 => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_base10_text(target, controller, s) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .base10 integer format",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".base10 can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".base10 can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::PRINTF => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_printf_text(target, controller, s) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .printf format",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".printf can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".printf can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::JSON => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_json_text(target, controller, s) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!("text string \"{}\" does not contain valid JSON", s));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".json can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".json can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::JOIN => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_join_text(target, controller, s) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!("text string \"{}\" does not match .join result", s));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".join can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".join can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
     }
   }
 
