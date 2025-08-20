@@ -11,6 +11,7 @@ use alloc::{borrow::Cow, string::String};
 
 /// Tag constraint for CBOR tags (RFC 9682 Section 3.2)
 #[derive(PartialEq, Debug, Clone, Copy)]
+#[cfg_attr(target_arch = "wasm32", derive(Serialize, Deserialize))]
 pub enum TagConstraint<'a> {
   /// Literal tag number
   Literal(u64),

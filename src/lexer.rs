@@ -3,7 +3,7 @@ use super::{
     ErrorMsg,
     MsgType::{self, *},
   },
-  token::{self, ByteValue, TagConstraint, Token, Value},
+  token::{self, ByteValue, Token, Value},
 };
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
