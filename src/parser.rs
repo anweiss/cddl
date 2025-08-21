@@ -2215,7 +2215,11 @@ impl<'a> Parser<'a> {
     self.parse_grpent_internal(from_rule, true)
   }
 
-  fn parse_grpent_internal(&mut self, from_rule: bool, in_array_context: bool) -> Result<GroupEntry<'a>> {
+  fn parse_grpent_internal(
+    &mut self,
+    from_rule: bool,
+    in_array_context: bool,
+  ) -> Result<GroupEntry<'a>> {
     #[cfg(feature = "ast-span")]
     let begin_grpent_range = self.lexer_position.range.0;
     #[cfg(feature = "ast-span")]
@@ -2545,7 +2549,7 @@ impl<'a> Parser<'a> {
 
         // If we have a simple identifier that could be a group reference (even if not yet defined),
         // create a TypeGroupname entry instead of a ValueMemberKey with no member_key.
-        // 
+        //
         // ISSUE #268 FIX: Only prevent TypeGroupname conversion when we're explicitly in an
         // array context. This maintains backwards compatibility for arrays while allowing
         // group references in parentheses.
