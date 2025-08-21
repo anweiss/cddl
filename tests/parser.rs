@@ -13,6 +13,73 @@ use indoc::indoc;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn test_issue_268_ast_behavior() -> Result<()> {
+  let input = indoc!(
+    r#"
+        CapabilityRequest = {}
+        CapabilitiesRequest = {
+          firstMatch: [*CapabilityRequest]
+        }
+      "#
+  );
+
+  let mut p = Parser::new(input, Box::new(Lexer::new(input).iter()))?;
+  let cddl = p.parse_cddl()?;
+  
+  // Get the CapabilitiesRequest rule
+  let rule = &cddl.rules[1]; // CapabilitiesRequest
+  if let Rule::Type { rule, .. } = rule {
+      if let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 {
+          if let GroupChoice { group_entries, .. } = &group.group_choices[0] {
+              let (entry, _) = &group_entries[0]; // firstMatch entry (tuple of entry and optional comma)
+              
+              match entry {
+                  GroupEntry::ValueMemberKey { ge, .. } => {
+                      if let Some(member_key) = &ge.member_key {
+                          if let MemberKey::Bareword { ident, .. } = member_key {
+                              assert_eq!(ident.ident, "firstMatch");
+                              
+                              // Check the entry_type (the array)
+                              if let Type { type_choices, .. } = &ge.entry_type {
+                                  if let Type1 { type2, .. } = &type_choices[0].type1 {
+                                      if let Type2::Array { group, .. } = type2 {
+                                          if let GroupChoice { group_entries, .. } = &group.group_choices[0] {
+                                              let (array_entry, _) = &group_entries[0];
+                                              
+                                              // This should be ValueMemberKey with no member_key (correct behavior)
+                                              match array_entry {
+                                                  GroupEntry::ValueMemberKey { ge, .. } => {
+                                                      assert!(ge.member_key.is_none());
+                                                      println!("PASS: Array entry is ValueMemberKey (correct behavior)");
+                                                  },
+                                                  GroupEntry::TypeGroupname { ge, .. } => {
+                                                      assert_eq!(ge.name.ident, "CapabilityRequest");
+                                                      println!("FAIL: Array entry is TypeGroupname (incorrect for arrays)");
+                                                      panic!("Array entries should use ValueMemberKey, not TypeGroupname");
+                                                  },
+                                                  _ => {
+                                                      panic!("Unexpected group entry type");
+                                                  }
+                                              }
+                                          }
+                                      }
+                                  }
+                              }
+                          }
+                      }
+                  },
+                  _ => {
+                      panic!("Expected ValueMemberKey for firstMatch entry");
+                  }
+              }
+          }
+      }
+  }
+
+  Ok(())
+}
+
+#[test]
 #[allow(unused_variables)]
 fn verify_cddl() -> Result<()> {
   let input = indoc!(
