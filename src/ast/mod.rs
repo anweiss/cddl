@@ -4,7 +4,9 @@ pub mod parent;
 #[cfg(target_arch = "wasm32")]
 extern crate console_error_panic_hook;
 
-use crate::token::{ByteValue, ControlOperator, RangeValue, SocketPlug, Token, Value};
+use crate::token::{
+  ByteValue, ControlOperator, RangeValue, SocketPlug, TagConstraint, Token, Value,
+};
 
 use std::{
   fmt::{self, Write},
@@ -1223,8 +1225,8 @@ pub enum Type2<'a> {
   /// Tagged data item where the first element is an optional tag and the second
   /// is the type of the tagged value
   TaggedData {
-    /// Tag
-    tag: Option<u64>,
+    /// Tag constraint - can be literal or type expression (RFC 9682)
+    tag: Option<TagConstraint<'a>>,
     /// Type
     t: Type<'a>,
     /// Span
@@ -1243,8 +1245,8 @@ pub enum Type2<'a> {
   DataMajorType {
     /// Major type
     mt: u8,
-    /// Constraint - Using u64 to support larger values in wasm32
-    constraint: Option<u64>,
+    /// Constraint - can be literal or type expression (RFC 9682)
+    constraint: Option<TagConstraint<'a>>,
     /// Span
     #[cfg(feature = "ast-span")]
     span: Span,
@@ -1537,8 +1539,8 @@ impl fmt::Display for Type2<'_> {
       } => {
         let mut t2_str = String::from("#6");
 
-        if let Some(tag_uint) = tag {
-          let _ = write!(t2_str, ".{}", tag_uint);
+        if let Some(tag_constraint) = tag {
+          let _ = write!(t2_str, ".{}", tag_constraint);
         }
 
         t2_str.push('(');
@@ -1565,10 +1567,10 @@ impl fmt::Display for Type2<'_> {
       }
       Type2::DataMajorType { mt, constraint, .. } => {
         if let Some(c) = constraint {
-          return write!(f, "{}.{}", mt, c);
+          return write!(f, "#{}.{}", mt, c);
         }
 
-        write!(f, "{}", mt)
+        write!(f, "#{}", mt)
       }
       Type2::Any { .. } => write!(f, "#"),
     }
@@ -1712,7 +1714,7 @@ impl<'a> From<ByteValue<'a>> for Type2<'a> {
 pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
   match token {
     Token::TDATE => Some(Type2::TaggedData {
-      tag: Some(0),
+      tag: Some(TagConstraint::Literal(0)),
       t: type_from_token(Token::TSTR),
       #[cfg(feature = "ast-comments")]
       comments_after_type: None,
@@ -1722,7 +1724,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       span: Span::default(),
     }),
     Token::TIME => Some(Type2::TaggedData {
-      tag: Some(1),
+      tag: Some(TagConstraint::Literal(1)),
       t: type_from_token(Token::NUMBER),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
@@ -1732,7 +1734,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       span: Span::default(),
     }),
     Token::BIGUINT => Some(Type2::TaggedData {
-      tag: Some(2),
+      tag: Some(TagConstraint::Literal(2)),
       t: type_from_token(Token::BSTR),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
@@ -1742,7 +1744,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       span: Span::default(),
     }),
     Token::BIGNINT => Some(Type2::TaggedData {
-      tag: Some(3),
+      tag: Some(TagConstraint::Literal(3)),
       t: type_from_token(Token::BSTR),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
@@ -1754,7 +1756,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
     Token::DECFRAC => unimplemented!(),
     Token::BIGFLOAT => unimplemented!(),
     Token::EB64URL => Some(Type2::TaggedData {
-      tag: Some(21),
+      tag: Some(TagConstraint::Literal(21)),
       t: type_from_token(Token::ANY),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
@@ -1764,7 +1766,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       span: Span::default(),
     }),
     Token::EB64LEGACY => Some(Type2::TaggedData {
-      tag: Some(22),
+      tag: Some(TagConstraint::Literal(22)),
       t: type_from_token(Token::ANY),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
@@ -1774,7 +1776,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       span: Span::default(),
     }),
     Token::EB16 => Some(Type2::TaggedData {
-      tag: Some(23),
+      tag: Some(TagConstraint::Literal(23)),
       t: type_from_token(Token::ANY),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
@@ -1784,7 +1786,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       span: Span::default(),
     }),
     Token::ENCODEDCBOR => Some(Type2::TaggedData {
-      tag: Some(24),
+      tag: Some(TagConstraint::Literal(24)),
       t: type_from_token(Token::BSTR),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
@@ -1794,7 +1796,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       span: Span::default(),
     }),
     Token::URI => Some(Type2::TaggedData {
-      tag: Some(32),
+      tag: Some(TagConstraint::Literal(32)),
       t: type_from_token(Token::TSTR),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
@@ -1804,7 +1806,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       span: Span::default(),
     }),
     Token::B64URL => Some(Type2::TaggedData {
-      tag: Some(33),
+      tag: Some(TagConstraint::Literal(33)),
       t: type_from_token(Token::TSTR),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
@@ -1814,7 +1816,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       span: Span::default(),
     }),
     Token::B64LEGACY => Some(Type2::TaggedData {
-      tag: Some(34),
+      tag: Some(TagConstraint::Literal(34)),
       t: type_from_token(Token::TSTR),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
@@ -1824,7 +1826,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       span: Span::default(),
     }),
     Token::REGEXP => Some(Type2::TaggedData {
-      tag: Some(35),
+      tag: Some(TagConstraint::Literal(35)),
       t: type_from_token(Token::TSTR),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
@@ -1834,7 +1836,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       span: Span::default(),
     }),
     Token::MIMEMESSAGE => Some(Type2::TaggedData {
-      tag: Some(36),
+      tag: Some(TagConstraint::Literal(36)),
       t: type_from_token(Token::TSTR),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,
@@ -1844,7 +1846,7 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       span: Span::default(),
     }),
     Token::CBORANY => Some(Type2::TaggedData {
-      tag: Some(55799),
+      tag: Some(TagConstraint::Literal(55799)),
       t: type_from_token(Token::ANY),
       #[cfg(feature = "ast-comments")]
       comments_before_type: None,

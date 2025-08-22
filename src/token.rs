@@ -9,6 +9,41 @@ use serde::{Deserialize, Serialize};
 #[cfg(not(feature = "std"))]
 use alloc::{borrow::Cow, string::String};
 
+/// Tag constraint for CBOR tags (RFC 9682 Section 3.2)
+#[derive(PartialEq, Debug, Clone, Copy)]
+#[cfg_attr(target_arch = "wasm32", derive(Serialize, Deserialize))]
+pub enum TagConstraint<'a> {
+  /// Literal tag number
+  Literal(u64),
+  /// Type expression for non-literal tag numbers
+  #[cfg_attr(target_arch = "wasm32", serde(borrow))]
+  Type(&'a str),
+}
+
+impl<'a> TagConstraint<'a> {
+  /// Extract the literal value if this is a literal constraint
+  pub fn as_literal(&self) -> Option<u64> {
+    match self {
+      TagConstraint::Literal(value) => Some(*value),
+      TagConstraint::Type(_) => None,
+    }
+  }
+
+  /// Check if this is a literal constraint with the given value
+  pub fn is_literal(&self, value: u64) -> bool {
+    matches!(self, TagConstraint::Literal(v) if *v == value)
+  }
+}
+
+impl fmt::Display for TagConstraint<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      TagConstraint::Literal(n) => write!(f, "{}", n),
+      TagConstraint::Type(t) => write!(f, "<{}>", t),
+    }
+  }
+}
+
 /// Token which represents a valid CDDL character or sequence
 #[derive(PartialEq, Debug, Clone)]
 pub enum Token<'a> {
@@ -30,8 +65,8 @@ pub enum Token<'a> {
   TAG(
     /// Major type
     Option<u8>,
-    /// Optional constraint
-    Option<u64>,
+    /// Optional constraint - either a literal number or a type expression
+    Option<TagConstraint<'a>>,
   ),
 
   // Operators
@@ -245,6 +280,48 @@ pub enum ControlOperator {
   #[cfg(feature = "additional-controls")]
   /// .feature control operator (rfc 9165)
   FEATURE,
+  #[cfg(feature = "additional-controls")]
+  /// .b64u control operator (rfc 9741)
+  B64U,
+  #[cfg(feature = "additional-controls")]
+  /// .b64c control operator (rfc 9741)
+  B64C,
+  #[cfg(feature = "additional-controls")]
+  /// .b64u-sloppy control operator (rfc 9741)
+  B64USLOPPY,
+  #[cfg(feature = "additional-controls")]
+  /// .b64c-sloppy control operator (rfc 9741)
+  B64CSLOPPY,
+  #[cfg(feature = "additional-controls")]
+  /// .hex control operator (rfc 9741)
+  HEX,
+  #[cfg(feature = "additional-controls")]
+  /// .hexlc control operator (rfc 9741)
+  HEXLC,
+  #[cfg(feature = "additional-controls")]
+  /// .hexuc control operator (rfc 9741)
+  HEXUC,
+  #[cfg(feature = "additional-controls")]
+  /// .b32 control operator (rfc 9741)
+  B32,
+  #[cfg(feature = "additional-controls")]
+  /// .h32 control operator (rfc 9741)
+  H32,
+  #[cfg(feature = "additional-controls")]
+  /// .b45 control operator (rfc 9741)
+  B45,
+  #[cfg(feature = "additional-controls")]
+  /// .base10 control operator (rfc 9741)
+  BASE10,
+  #[cfg(feature = "additional-controls")]
+  /// .printf control operator (rfc 9741)
+  PRINTF,
+  #[cfg(feature = "additional-controls")]
+  /// .json control operator (rfc 9741)
+  JSON,
+  #[cfg(feature = "additional-controls")]
+  /// .join control operator (rfc 9741)
+  JOIN,
 }
 
 impl Token<'_> {
@@ -505,6 +582,34 @@ impl fmt::Display for ControlOperator {
       ControlOperator::ABNFB => write!(f, ".abnfb"),
       #[cfg(feature = "additional-controls")]
       ControlOperator::FEATURE => write!(f, ".feature"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64U => write!(f, ".b64u"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64C => write!(f, ".b64c"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64USLOPPY => write!(f, ".b64u-sloppy"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64CSLOPPY => write!(f, ".b64c-sloppy"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::HEX => write!(f, ".hex"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::HEXLC => write!(f, ".hexlc"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::HEXUC => write!(f, ".hexuc"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B32 => write!(f, ".b32"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::H32 => write!(f, ".h32"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B45 => write!(f, ".b45"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::BASE10 => write!(f, ".base10"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::PRINTF => write!(f, ".printf"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::JSON => write!(f, ".json"),
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::JOIN => write!(f, ".join"),
       ControlOperator::AND => write!(f, ".and"),
       ControlOperator::LT => write!(f, ".lt"),
       ControlOperator::LE => write!(f, ".le"),
@@ -636,6 +741,34 @@ pub fn lookup_control_from_str(ident: &str) -> Option<ControlOperator> {
     ".abnfb" => Some(ControlOperator::ABNFB),
     #[cfg(feature = "additional-controls")]
     ".feature" => Some(ControlOperator::FEATURE),
+    #[cfg(feature = "additional-controls")]
+    ".b64u" => Some(ControlOperator::B64U),
+    #[cfg(feature = "additional-controls")]
+    ".b64c" => Some(ControlOperator::B64C),
+    #[cfg(feature = "additional-controls")]
+    ".b64u-sloppy" => Some(ControlOperator::B64USLOPPY),
+    #[cfg(feature = "additional-controls")]
+    ".b64c-sloppy" => Some(ControlOperator::B64CSLOPPY),
+    #[cfg(feature = "additional-controls")]
+    ".hex" => Some(ControlOperator::HEX),
+    #[cfg(feature = "additional-controls")]
+    ".hexlc" => Some(ControlOperator::HEXLC),
+    #[cfg(feature = "additional-controls")]
+    ".hexuc" => Some(ControlOperator::HEXUC),
+    #[cfg(feature = "additional-controls")]
+    ".b32" => Some(ControlOperator::B32),
+    #[cfg(feature = "additional-controls")]
+    ".h32" => Some(ControlOperator::H32),
+    #[cfg(feature = "additional-controls")]
+    ".b45" => Some(ControlOperator::B45),
+    #[cfg(feature = "additional-controls")]
+    ".base10" => Some(ControlOperator::BASE10),
+    #[cfg(feature = "additional-controls")]
+    ".printf" => Some(ControlOperator::PRINTF),
+    #[cfg(feature = "additional-controls")]
+    ".json" => Some(ControlOperator::JSON),
+    #[cfg(feature = "additional-controls")]
+    ".join" => Some(ControlOperator::JOIN),
     _ => None,
   }
 }

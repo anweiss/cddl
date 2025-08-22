@@ -12,7 +12,7 @@ use cddl::cddl_from_str;
 use cddl::{
   parser::root_type_name_from_cddl_str, validate_cbor_from_slice, validate_json_from_str,
 };
-use clap::{ArgGroup, Args, Parser, Subcommand};
+use clap::{ArgAction, ArgGroup, Args, Parser, Subcommand};
 
 use simplelog::*;
 use std::{
@@ -67,14 +67,14 @@ struct Validate {
     long = "json",
     help = "JSON document(s) to validate",
     use_value_delimiter = true,
-    multiple_values = true
+    action = ArgAction::Append
   )]
   json: Option<Vec<String>>,
   #[clap(
     short = 'c',
     long = "cbor",
     help = "CBOR binary file(s) to validate",
-    multiple_values = true,
+    action = ArgAction::Append,
     use_value_delimiter = true
   )]
   cbor: Option<Vec<String>>,

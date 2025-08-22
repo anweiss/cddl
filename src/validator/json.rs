@@ -578,6 +578,89 @@ impl<'a> JSONValidator<'a> {
 
     Ok(())
   }
+
+  #[cfg(feature = "additional-controls")]
+  fn validate_b64_control(
+    &mut self,
+    bytes: &[u8],
+    is_classic: bool,
+    is_sloppy: bool,
+  ) -> visitor::Result<Error> {
+    if let Value::String(s) = &self.json {
+      let decoded_result = if is_classic {
+        if is_sloppy {
+          data_encoding::BASE64.decode(s.as_bytes())
+        } else {
+          data_encoding::BASE64.decode(s.as_bytes())
+        }
+      } else {
+        if is_sloppy {
+          data_encoding::BASE64URL_NOPAD.decode(s.as_bytes())
+        } else {
+          data_encoding::BASE64URL_NOPAD.decode(s.as_bytes())
+        }
+      };
+
+      match decoded_result {
+        Ok(decoded_bytes) => {
+          if decoded_bytes == bytes {
+            // Validation succeeded
+          } else {
+            let expected_encoding = if is_classic {
+              data_encoding::BASE64.encode(bytes)
+            } else {
+              data_encoding::BASE64URL_NOPAD.encode(bytes)
+            };
+            self.add_error(format!(
+              "string \"{}\" does not match expected base64 encoding \"{}\"",
+              s, expected_encoding
+            ));
+          }
+        }
+        Err(e) => {
+          self.add_error(format!("invalid base64 encoding: {}", e));
+        }
+      }
+    } else {
+      self.add_error(format!(
+        "expected string for base64 validation, got {}",
+        self.json
+      ));
+    }
+    Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  fn validate_hex_control(&mut self, bytes: &[u8], is_lowercase: bool) -> visitor::Result<Error> {
+    if let Value::String(s) = &self.json {
+      match hex::decode(s) {
+        Ok(decoded_bytes) => {
+          if decoded_bytes == bytes {
+            // Validation succeeded
+          } else {
+            let expected_encoding = if is_lowercase {
+              hex::encode(bytes)
+            } else {
+              hex::encode_upper(bytes)
+            };
+            self.add_error(format!(
+              "string \"{}\" does not match expected hex encoding \"{}\"",
+              s, expected_encoding
+            ));
+          }
+        }
+        Err(e) => {
+          self.add_error(format!("invalid hex encoding: {}", e));
+        }
+      }
+    } else {
+      self.add_error(format!(
+        "expected string for hex validation, got {}",
+        self.json
+      ));
+    }
+    Ok(())
+  }
 }
 
 impl<'a> Validator<'a, '_, Error> for JSONValidator<'a> {
@@ -1518,6 +1601,335 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
         self.ctrl = None;
       }
+      #[cfg(feature = "additional-controls")]
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64U => {
+        self.ctrl = Some(ctrl);
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.json {
+              Value::String(_) => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                ".b64u can only be matched against JSON string, got {}",
+                self.json
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b64u can only be matched against string data type, got {}",
+            target
+          )),
+        }
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64C => {
+        self.ctrl = Some(ctrl);
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.json {
+              Value::String(_) => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                ".b64c can only be matched against JSON string, got {}",
+                self.json
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b64c can only be matched against string data type, got {}",
+            target
+          )),
+        }
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64USLOPPY => {
+        self.ctrl = Some(ctrl);
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.json {
+              Value::String(_) => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                ".b64u-sloppy can only be matched against JSON string, got {}",
+                self.json
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b64u-sloppy can only be matched against string data type, got {}",
+            target
+          )),
+        }
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64CSLOPPY => {
+        self.ctrl = Some(ctrl);
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.json {
+              Value::String(_) => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                ".b64c-sloppy can only be matched against JSON string, got {}",
+                self.json
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b64c-sloppy can only be matched against string data type, got {}",
+            target
+          )),
+        }
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::HEX => {
+        self.ctrl = Some(ctrl);
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.json {
+              Value::String(_) => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                ".hex can only be matched against JSON string, got {}",
+                self.json
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".hex can only be matched against string data type, got {}",
+            target
+          )),
+        }
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::HEXLC => {
+        self.ctrl = Some(ctrl);
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.json {
+              Value::String(_) => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                ".hexlc can only be matched against JSON string, got {}",
+                self.json
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".hexlc can only be matched against string data type, got {}",
+            target
+          )),
+        }
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::HEXUC => {
+        self.ctrl = Some(ctrl);
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.json {
+              Value::String(_) => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                ".hexuc can only be matched against JSON string, got {}",
+                self.json
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".hexuc can only be matched against string data type, got {}",
+            target
+          )),
+        }
+        self.ctrl = None;
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B32 => match target {
+        Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          match &self.json {
+            Value::String(s) => {
+              match crate::validator::control::validate_b32_text(target, controller, s, false) {
+                Ok(is_valid) => {
+                  if !is_valid {
+                    self.add_error(format!(
+                      "string \"{}\" does not match .b32 encoded bytes",
+                      s
+                    ));
+                  }
+                }
+                Err(e) => self.add_error(e),
+              }
+            }
+            _ => self.add_error(format!(
+              ".b32 can only be matched against JSON string, got {}",
+              self.json
+            )),
+          }
+        }
+        _ => self.add_error(format!(
+          ".b32 can only be matched against string data type, got {}",
+          target
+        )),
+      },
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::H32 => match target {
+        Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          match &self.json {
+            Value::String(s) => {
+              match crate::validator::control::validate_b32_text(target, controller, s, true) {
+                Ok(is_valid) => {
+                  if !is_valid {
+                    self.add_error(format!(
+                      "string \"{}\" does not match .h32 encoded bytes",
+                      s
+                    ));
+                  }
+                }
+                Err(e) => self.add_error(e),
+              }
+            }
+            _ => self.add_error(format!(
+              ".h32 can only be matched against JSON string, got {}",
+              self.json
+            )),
+          }
+        }
+        _ => self.add_error(format!(
+          ".h32 can only be matched against string data type, got {}",
+          target
+        )),
+      },
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B45 => match target {
+        Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          match &self.json {
+            Value::String(s) => {
+              match crate::validator::control::validate_b45_text(target, controller, s) {
+                Ok(is_valid) => {
+                  if !is_valid {
+                    self.add_error(format!(
+                      "string \"{}\" does not match .b45 encoded bytes",
+                      s
+                    ));
+                  }
+                }
+                Err(e) => self.add_error(e),
+              }
+            }
+            _ => self.add_error(format!(
+              ".b45 can only be matched against JSON string, got {}",
+              self.json
+            )),
+          }
+        }
+        _ => self.add_error(format!(
+          ".b45 can only be matched against string data type, got {}",
+          target
+        )),
+      },
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::BASE10 => match target {
+        Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          match &self.json {
+            Value::String(s) => {
+              match crate::validator::control::validate_base10_text(target, controller, s) {
+                Ok(is_valid) => {
+                  if !is_valid {
+                    self.add_error(format!(
+                      "string \"{}\" does not match .base10 integer format",
+                      s
+                    ));
+                  }
+                }
+                Err(e) => self.add_error(e),
+              }
+            }
+            _ => self.add_error(format!(
+              ".base10 can only be matched against JSON string, got {}",
+              self.json
+            )),
+          }
+        }
+        _ => self.add_error(format!(
+          ".base10 can only be matched against string data type, got {}",
+          target
+        )),
+      },
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::PRINTF => match target {
+        Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          match &self.json {
+            Value::String(s) => {
+              match crate::validator::control::validate_printf_text(target, controller, s) {
+                Ok(is_valid) => {
+                  if !is_valid {
+                    self.add_error(format!("string \"{}\" does not match .printf format", s));
+                  }
+                }
+                Err(e) => self.add_error(e),
+              }
+            }
+            _ => self.add_error(format!(
+              ".printf can only be matched against JSON string, got {}",
+              self.json
+            )),
+          }
+        }
+        _ => self.add_error(format!(
+          ".printf can only be matched against string data type, got {}",
+          target
+        )),
+      },
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::JSON => match target {
+        Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          match &self.json {
+            Value::String(s) => {
+              match crate::validator::control::validate_json_text(target, controller, s) {
+                Ok(is_valid) => {
+                  if !is_valid {
+                    self.add_error(format!("string \"{}\" does not contain valid JSON", s));
+                  }
+                }
+                Err(e) => self.add_error(e),
+              }
+            }
+            _ => self.add_error(format!(
+              ".json can only be matched against JSON string, got {}",
+              self.json
+            )),
+          }
+        }
+        _ => self.add_error(format!(
+          ".json can only be matched against string data type, got {}",
+          target
+        )),
+      },
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::JOIN => match target {
+        Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          match &self.json {
+            Value::String(s) => {
+              match crate::validator::control::validate_join_text(target, controller, s) {
+                Ok(is_valid) => {
+                  if !is_valid {
+                    self.add_error(format!("string \"{}\" does not match .join result", s));
+                  }
+                }
+                Err(e) => self.add_error(e),
+              }
+            }
+            _ => self.add_error(format!(
+              ".join can only be matched against JSON string, got {}",
+              self.json
+            )),
+          }
+        }
+        _ => self.add_error(format!(
+          ".join can only be matched against string data type, got {}",
+          target
+        )),
+      },
       _ => {
         self.add_error(format!("unsupported control operator {}", ctrl));
       }
@@ -1807,6 +2219,103 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       Type2::Any { .. } => Ok(()),
       #[cfg(not(feature = "ast-span"))]
       Type2::Any {} => Ok(()),
+      #[cfg(feature = "additional-controls")]
+      Type2::B16ByteString { value, .. } => {
+        if let Some(ctrl) = &self.ctrl {
+          // For B16ByteString, the value contains the hex string as bytes (ASCII representation)
+          // We need to decode it to get the actual bytes
+          let hex_str = match std::str::from_utf8(value) {
+            Ok(s) => s,
+            Err(_) => {
+              self.add_error("invalid UTF-8 in hex string".to_string());
+              return Ok(());
+            }
+          };
+
+          match hex::decode(hex_str.replace(' ', "")) {
+            Ok(actual_bytes) => match ctrl {
+              ControlOperator::B64U => self.validate_b64_control(&actual_bytes, false, false),
+              ControlOperator::B64C => self.validate_b64_control(&actual_bytes, true, false),
+              ControlOperator::B64USLOPPY => self.validate_b64_control(&actual_bytes, false, true),
+              ControlOperator::B64CSLOPPY => self.validate_b64_control(&actual_bytes, true, true),
+              ControlOperator::HEX => self.validate_hex_control(&actual_bytes, false),
+              ControlOperator::HEXLC => self.validate_hex_control(&actual_bytes, true),
+              ControlOperator::HEXUC => self.validate_hex_control(&actual_bytes, true),
+              _ => {
+                self.add_error(format!(
+                  "unsupported byte string data type for JSON validation with control {}, got {}",
+                  ctrl, t2
+                ));
+                Ok(())
+              }
+            },
+            Err(_) => {
+              self.add_error("invalid hex encoding in byte string".to_string());
+              Ok(())
+            }
+          }
+        } else {
+          self.add_error(format!(
+            "byte string data type not supported for JSON validation without control, got {}",
+            t2
+          ));
+          Ok(())
+        }
+      }
+      #[cfg(feature = "additional-controls")]
+      Type2::UTF8ByteString { value, .. } => {
+        if let Some(ctrl) = &self.ctrl {
+          match ctrl {
+            ControlOperator::B64U => self.validate_b64_control(value, false, false),
+            ControlOperator::B64C => self.validate_b64_control(value, true, false),
+            ControlOperator::B64USLOPPY => self.validate_b64_control(value, false, true),
+            ControlOperator::B64CSLOPPY => self.validate_b64_control(value, true, true),
+            ControlOperator::HEX => self.validate_hex_control(value, false),
+            ControlOperator::HEXLC => self.validate_hex_control(value, true),
+            ControlOperator::HEXUC => self.validate_hex_control(value, true),
+            _ => {
+              self.add_error(format!(
+                "unsupported byte string data type for JSON validation with control {}, got {}",
+                ctrl, t2
+              ));
+              Ok(())
+            }
+          }
+        } else {
+          self.add_error(format!(
+            "byte string data type not supported for JSON validation without control, got {}",
+            t2
+          ));
+          Ok(())
+        }
+      }
+      #[cfg(feature = "additional-controls")]
+      Type2::B64ByteString { value, .. } => {
+        if let Some(ctrl) = &self.ctrl {
+          match ctrl {
+            ControlOperator::B64U => self.validate_b64_control(value, false, false),
+            ControlOperator::B64C => self.validate_b64_control(value, true, false),
+            ControlOperator::B64USLOPPY => self.validate_b64_control(value, false, true),
+            ControlOperator::B64CSLOPPY => self.validate_b64_control(value, true, true),
+            ControlOperator::HEX => self.validate_hex_control(value, false),
+            ControlOperator::HEXLC => self.validate_hex_control(value, true),
+            ControlOperator::HEXUC => self.validate_hex_control(value, true),
+            _ => {
+              self.add_error(format!(
+                "unsupported byte string data type for JSON validation with control {}, got {}",
+                ctrl, t2
+              ));
+              Ok(())
+            }
+          }
+        } else {
+          self.add_error(format!(
+            "byte string data type not supported for JSON validation without control, got {}",
+            t2
+          ));
+          Ok(())
+        }
+      }
       _ => {
         self.add_error(format!(
           "unsupported data type for validating JSON, got {}",

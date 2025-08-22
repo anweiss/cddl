@@ -511,15 +511,9 @@ impl<'a> Parser<'a> {
       return Err(Error::INCREMENTAL);
     }
 
-    if c.rules.is_empty() {
-      self.errors.push(Error::PARSER {
-        #[cfg(feature = "ast-span")]
-        position: self.parser_position,
-        msg: NoRulesDefined.into(),
-      });
-
-      return Err(Error::INCREMENTAL);
-    }
+    // RFC 9682 Section 3.1: Empty data models are now allowed
+    // The requirement for at least one rule is now a semantic constraint
+    // to be fulfilled after processing of all directives.
 
     Ok(c)
   }
@@ -1854,7 +1848,11 @@ impl<'a> Parser<'a> {
         #[cfg(feature = "ast-span")]
         let begin_type2_line = self.lexer_position.line;
 
-        match (*mt, *constraint) {
+        // Extract values to avoid borrow checker issues
+        let mt_val = *mt;
+        let constraint_val = *constraint;
+
+        match (mt_val, constraint_val) {
           // Tagged data item containing the given type as the tagged value
           (Some(6), tag) => {
             self.next_token()?;
@@ -2059,6 +2057,9 @@ impl<'a> Parser<'a> {
       span: (self.lexer_position.range.0, 0, self.lexer_position.line),
     };
 
+    // Track whether we're in an array context to pass to parse_grpent
+    let mut in_array_context = false;
+
     if let Token::GCHOICE = &self.cur_token {
       self.next_token()?;
 
@@ -2073,7 +2074,24 @@ impl<'a> Parser<'a> {
       {
         grpchoice.span.0 = self.lexer_position.range.0;
       }
-    } else if let Token::LBRACE | Token::LBRACKET = &self.cur_token {
+    } else if let Token::LBRACKET = &self.cur_token {
+      // This is an array context
+      in_array_context = true;
+      self.next_token()?;
+
+      #[cfg(feature = "ast-span")]
+      {
+        grpchoice.span.0 = self.lexer_position.range.0;
+      }
+
+      #[cfg(feature = "ast-comments")]
+      {
+        grpchoice.comments_before_grpchoice = self.collect_comments()?;
+      }
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
+    } else if let Token::LBRACE = &self.cur_token {
+      // This is a map/object context, not an array
       self.next_token()?;
 
       #[cfg(feature = "ast-span")]
@@ -2097,7 +2115,13 @@ impl<'a> Parser<'a> {
       && !self.cur_token_is(Token::RBRACKET)
       && !self.cur_token_is(Token::EOF)
     {
-      let ge = self.parse_grpent(false)?;
+      let ge = if in_array_context {
+        // In array context, use from_rule=false and prevent TypeGroupname conversion
+        self.parse_grpent_array_context(false)?
+      } else {
+        // In other contexts (parentheses, braces), allow TypeGroupname conversion
+        self.parse_grpent(false)?
+      };
 
       if let Token::GCHOICE = &self.cur_token {
         grpchoice.group_entries.push((
@@ -2180,6 +2204,18 @@ impl<'a> Parser<'a> {
 
   #[allow(missing_docs)]
   pub fn parse_grpent(&mut self, from_rule: bool) -> Result<GroupEntry<'a>> {
+    self.parse_grpent_internal(from_rule, false)
+  }
+
+  fn parse_grpent_array_context(&mut self, from_rule: bool) -> Result<GroupEntry<'a>> {
+    self.parse_grpent_internal(from_rule, true)
+  }
+
+  fn parse_grpent_internal(
+    &mut self,
+    from_rule: bool,
+    in_array_context: bool,
+  ) -> Result<GroupEntry<'a>> {
     #[cfg(feature = "ast-span")]
     let begin_grpent_range = self.lexer_position.range.0;
     #[cfg(feature = "ast-span")]
@@ -2508,36 +2544,44 @@ impl<'a> Parser<'a> {
         }
 
         // If we have a simple identifier that could be a group reference (even if not yet defined),
-        // create a TypeGroupname entry instead of a ValueMemberKey with no member_key
+        // create a TypeGroupname entry instead of a ValueMemberKey with no member_key.
+        //
+        // ISSUE #268 FIX: Only prevent TypeGroupname conversion when we're explicitly in an
+        // array context. This maintains backwards compatibility for arrays while allowing
+        // group references in parentheses.
         #[cfg(feature = "ast-span")]
-        if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
-          return Ok(GroupEntry::TypeGroupname {
-            ge: TypeGroupnameEntry {
-              occur,
-              name,
-              generic_args,
-            },
-            #[cfg(feature = "ast-comments")]
-            leading_comments: None,
-            #[cfg(feature = "ast-comments")]
-            trailing_comments,
-            span,
-          });
+        if !from_rule && !in_array_context && member_key.is_none() {
+          if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
+            return Ok(GroupEntry::TypeGroupname {
+              ge: TypeGroupnameEntry {
+                occur,
+                name,
+                generic_args,
+              },
+              #[cfg(feature = "ast-comments")]
+              leading_comments: None,
+              #[cfg(feature = "ast-comments")]
+              trailing_comments,
+              span,
+            });
+          }
         }
 
         #[cfg(not(feature = "ast-span"))]
-        if let Some((name, generic_args)) = entry_type.groupname_entry() {
-          return Ok(GroupEntry::TypeGroupname {
-            ge: TypeGroupnameEntry {
-              occur,
-              name,
-              generic_args,
-            },
-            #[cfg(feature = "ast-comments")]
-            leading_comments: None,
-            #[cfg(feature = "ast-comments")]
-            trailing_comments,
-          });
+        if !from_rule && !in_array_context && member_key.is_none() {
+          if let Some((name, generic_args)) = entry_type.groupname_entry() {
+            return Ok(GroupEntry::TypeGroupname {
+              ge: TypeGroupnameEntry {
+                occur,
+                name,
+                generic_args,
+              },
+              #[cfg(feature = "ast-comments")]
+              leading_comments: None,
+              #[cfg(feature = "ast-comments")]
+              trailing_comments,
+            });
+          }
         }
 
         Ok(GroupEntry::ValueMemberKey {

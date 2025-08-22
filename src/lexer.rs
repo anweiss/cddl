@@ -5,6 +5,9 @@ use super::{
   },
   token::{self, ByteValue, Token, Value},
 };
+
+#[cfg(test)]
+use super::token::TagConstraint;
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
   files::SimpleFiles,
@@ -484,29 +487,59 @@ impl<'a> Lexer<'a> {
             match self.peek_char() {
               Some(&c) if c.1 == '.' => {
                 let _ = self.read_char()?;
-                let (idx, _) = self.read_char()?;
 
-                self.position.range = (token_offset, self.position.index + 1);
+                // Check if it's a type expression <type> or literal number
+                if let Some(&c) = self.peek_char() {
+                  if c.1 == '<' {
+                    // Type expression syntax: #6.<type>
+                    let _ = self.read_char()?; // consume '<'
+                    let type_start = c.0 + 1;
 
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                  Ok((
-                    self.position,
-                    Token::TAG(Some(t as u8), Some(self.read_number(idx)?.1)),
-                  ))
-                }
+                    // Find the closing '>'
+                    let mut nesting = 1;
+                    let mut type_end = type_start;
+                    while nesting > 0 {
+                      if let Some(&c) = self.peek_char() {
+                        if c.1 == '<' {
+                          nesting += 1;
+                        } else if c.1 == '>' {
+                          nesting -= 1;
+                        }
+                        type_end = self.read_char()?.0;
+                      } else {
+                        return Err((self.str_input, self.position, InvalidTagSyntax).into());
+                      }
+                    }
 
-                #[cfg(target_arch = "wasm32")]
-                {
-                  Ok((
-                    self.position,
-                    Token::TAG(Some(t as u8), Some(self.read_number(idx)?.1 as u64)),
-                  ))
+                    let type_expr = &self.str_input[type_start..type_end];
+                    self.position.range = (token_offset, self.position.index + 1);
+
+                    Ok((
+                      self.position,
+                      Token::TAG(Some(t as u8), Some(token::TagConstraint::Type(type_expr))),
+                    ))
+                  } else {
+                    // Literal number syntax: #6.123
+                    let (idx, _) = self.read_char()?;
+                    let constraint = self.read_number(idx)?.1;
+
+                    self.position.range = (token_offset, self.position.index + 1);
+
+                    Ok((
+                      self.position,
+                      Token::TAG(
+                        Some(t as u8),
+                        Some(token::TagConstraint::Literal(constraint)),
+                      ),
+                    ))
+                  }
+                } else {
+                  self.position.range = (token_offset, self.position.index + 1);
+                  Ok((self.position, Token::TAG(Some(t as u8), None)))
                 }
               }
               _ => {
                 self.position.range = (token_offset, self.position.index + 1);
-
                 Ok((self.position, Token::TAG(Some(t as u8), None)))
               }
             }
@@ -669,20 +702,80 @@ impl<'a> Lexer<'a> {
     Ok(&self.str_input[idx..=end_idx])
   }
 
+  fn read_unicode_escape(&mut self) -> Result<()> {
+    if let Some(&(_, ch)) = self.peek_char() {
+      if ch == '{' {
+        // \u{hex} format - new in RFC 9682
+        let _ = self.read_char()?; // consume '{'
+
+        // Read hex digits (1 to 6 digits allowed for Unicode scalar values)
+        let mut hex_count = 0;
+        while let Some(&(_, ch)) = self.peek_char() {
+          if ch == '}' {
+            let _ = self.read_char()?; // consume '}'
+            if hex_count == 0 {
+              return Err((self.str_input, self.position, InvalidEscapeCharacter).into());
+            }
+            return Ok(());
+          } else if ch.is_ascii_hexdigit() {
+            let _ = self.read_char()?;
+            hex_count += 1;
+            if hex_count > 6 {
+              return Err((self.str_input, self.position, InvalidEscapeCharacter).into());
+            }
+          } else {
+            return Err((self.str_input, self.position, InvalidEscapeCharacter).into());
+          }
+        }
+
+        // Missing closing '}'
+        Err((self.str_input, self.position, InvalidEscapeCharacter).into())
+      } else if ch.is_ascii_hexdigit() {
+        // \uXXXX format - must be exactly 4 hex digits
+        for _ in 0..4 {
+          if let Some(&(_, ch)) = self.peek_char() {
+            if ch.is_ascii_hexdigit() {
+              let _ = self.read_char()?;
+            } else {
+              return Err((self.str_input, self.position, InvalidEscapeCharacter).into());
+            }
+          } else {
+            return Err((self.str_input, self.position, InvalidEscapeCharacter).into());
+          }
+        }
+        Ok(())
+      } else {
+        Err((self.str_input, self.position, InvalidEscapeCharacter).into())
+      }
+    } else {
+      Err((self.str_input, self.position, InvalidEscapeCharacter).into())
+    }
+  }
+
   fn read_text_value(&mut self, idx: usize) -> Result<&'a str> {
     while let Some(&(_, ch)) = self.peek_char() {
       match ch {
-        // SCHAR
-        '\x20'..='\x21' | '\x23'..='\x5b' | '\x5d'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
+        // SCHAR - Updated per RFC 9682 Section 2.1.2: excludes C1 control chars and surrogates
+        '\x20'..='\x21' | '\x23'..='\x5b' | '\x5d'..='\x7e' => {
           let _ = self.read_char()?;
         }
-        // SESC
+        // NONASCII - Updated per RFC 9682 Section 2.1.2: excludes surrogates and C1 controls
+        '\u{00A0}'..='\u{D7FF}' | '\u{E000}'..='\u{10FFFD}' => {
+          let _ = self.read_char()?;
+        }
+        // SESC - Updated per RFC 9682 Section 2.1.1: more restrictive escape handling
         '\\' => {
           let _ = self.read_char();
           if let Some(&(_, ch)) = self.peek_char() {
             match ch {
-              '\x20'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
+              // Standard JSON escapes: \" \/ \\ \b \f \n \r \t
+              '"' | '/' | '\\' | 'b' | 'f' | 'n' | 'r' | 't' => {
                 let _ = self.read_char()?;
+              }
+              // Unicode escapes: \uXXXX or \u{hex}
+              'u' => {
+                let _ = self.read_char()?;
+                self.read_unicode_escape()?;
               }
               _ => return Err((self.str_input, self.position, InvalidEscapeCharacter).into()),
             }
@@ -711,16 +804,30 @@ impl<'a> Lexer<'a> {
   fn read_byte_string(&mut self, idx: usize) -> Result<&'a str> {
     while let Some(&(_, ch)) = self.peek_char() {
       match ch {
-        // BCHAR
-        '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
+        // BCHAR - Updated per RFC 9682 Section 2.1.2: excludes C1 control chars and surrogates
+        '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\x7e' => {
           let _ = self.read_char();
         }
-        // SESC
+        // NONASCII - Updated per RFC 9682 Section 2.1.2: excludes surrogates and C1 controls
+        '\u{00A0}'..='\u{D7FF}' | '\u{E000}'..='\u{10FFFD}' => {
+          let _ = self.read_char();
+        }
+        // SESC - Updated per RFC 9682 Section 2.1.1: more restrictive escape handling
         '\\' => {
           let _ = self.read_char();
           if let Some(&(_, ch)) = self.peek_char() {
             match ch {
-              '\x20'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
+              // Standard JSON escapes: \" \/ \\ \b \f \n \r \t
+              '"' | '/' | '\\' | 'b' | 'f' | 'n' | 'r' | 't' => {
+                let _ = self.read_char()?;
+              }
+              // Unicode escapes: \uXXXX or \u{hex}
+              'u' => {
+                let _ = self.read_char()?;
+                self.read_unicode_escape()?;
+              }
+              // Single quote needs to be escaped in byte strings
+              '\'' => {
                 let _ = self.read_char()?;
               }
               _ => return Err((self.str_input, self.position, InvalidEscapeCharacter).into()),
@@ -754,16 +861,30 @@ impl<'a> Lexer<'a> {
 
     while let Some(&(_, ch)) = self.peek_char() {
       match ch {
-        // BCHAR
-        '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
+        // BCHAR - Updated per RFC 9682 Section 2.1.2: excludes C1 control chars and surrogates
+        '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\x7e' => {
           let _ = self.read_char();
         }
-        // SESC
+        // NONASCII - Updated per RFC 9682 Section 2.1.2: excludes surrogates and C1 controls
+        '\u{00A0}'..='\u{D7FF}' | '\u{E000}'..='\u{10FFFD}' => {
+          let _ = self.read_char();
+        }
+        // SESC - Updated per RFC 9682 Section 2.1.1: more restrictive escape handling
         '\\' => {
           let _ = self.read_char();
           if let Some(&(_, ch)) = self.peek_char() {
             match ch {
-              '\x20'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
+              // Standard JSON escapes: \" \/ \\ \b \f \n \r \t
+              '"' | '/' | '\\' | 'b' | 'f' | 'n' | 'r' | 't' => {
+                let _ = self.read_char()?;
+              }
+              // Unicode escapes: \uXXXX or \u{hex}
+              'u' => {
+                let _ = self.read_char()?;
+                self.read_unicode_escape()?;
+              }
+              // Single quote needs to be escaped in byte strings
+              '\'' => {
                 let _ = self.read_char()?;
               }
               _ => return Err((self.str_input, self.position, InvalidEscapeCharacter).into()),
@@ -814,7 +935,22 @@ impl<'a> Lexer<'a> {
 
     while let Some(&(_, ch)) = self.peek_char() {
       if ch != '\x0a' && ch != '\x0d' {
-        comment_char = self.read_char()?;
+        // PCHAR - Updated per RFC 9682 Section 2.1.2: excludes C1 control chars and surrogates
+        match ch {
+          '\x20'..='\x7E' | '\u{00A0}'..='\u{D7FF}' | '\u{E000}'..='\u{10FFFD}' => {
+            comment_char = self.read_char()?;
+          }
+          _ => {
+            return Err(
+              (
+                self.str_input,
+                self.position,
+                InvalidTextStringLiteralCharacter,
+              )
+                .into(),
+            );
+          }
+        }
       } else {
         return Ok(&self.str_input[idx + 1..self.read_char()?.0]);
       }
@@ -1138,7 +1274,7 @@ mod tests {
       (NEWLINE, ""),
       (IDENT("mytag", None), "mytag"),
       (ASSIGN, "="),
-      (TAG(Some(6), Some(1234)), "#6.1234"),
+      (TAG(Some(6), Some(TagConstraint::Literal(1234))), "#6.1234"),
       (LPAREN, "("),
       (TSTR, "tstr"),
       (RPAREN, ")"),
