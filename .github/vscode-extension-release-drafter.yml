@@ -1,6 +1,8 @@
 name-template: 'VSCode Extension v$RESOLVED_VERSION'
 tag-template: '$RESOLVED_VERSION-vscode-extension'
 change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
+filter-by-commitish: true
+commitish: main
 template: |
   ## What's Changed
 
@@ -17,17 +19,23 @@ categories:
     labels:
       - 'feature'
       - 'enhancement'
+      - 'vscode-extension'
   - title: '🐛 Bug Fixes'
     labels:
       - 'fix'
       - 'bugfix'
       - 'bug'
+      - 'vscode-extension'
   - title: '🧰 Maintenance'
     labels:
       - 'chore'
       - 'dependencies'
+      - 'vscode-extension'
   - title: '📖 Documentation'
     labels:
       - 'documentation'
+      - 'vscode-extension'
+include-labels:
+  - 'vscode-extension'
 exclude-labels:
   - 'skip-changelog'

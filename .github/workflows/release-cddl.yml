@@ -113,12 +113,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Draft Release
         id: draft_release
         uses: release-drafter/release-drafter@v5
+        with:
+          config-name: cddl-release-drafter.yml
+          publish: ${{ startsWith(github.ref, 'refs/tags') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          publish: ${{ startsWith(github.ref, 'refs/tags') }}
+
+      - name: Output release info
+        run: |
+          echo "Release ID: ${{ steps.draft_release.outputs.id }}"
+          echo "Release URL: ${{ steps.draft_release.outputs.html_url }}"
+          echo "This is the main CDDL library release (not VSCode extension)"
