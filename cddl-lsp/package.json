@@ -43,6 +43,9 @@
           ".cddl"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "cddl-injection"
       }
     ],
     "grammars": [
@@ -50,6 +53,17 @@
         "language": "cddl",
         "scopeName": "source.cddl",
         "path": "./syntaxes/cddl.tmLanguage.json"
+      },
+      {
+        "language": "cddl-injection",
+        "scopeName": "markdown.cddl.codeblock",
+        "path": "./syntaxes/cddl-codeblock.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.cddl": "cddl"
+        }
       }
     ],
     "configuration": {
