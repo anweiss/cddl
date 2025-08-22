@@ -4,3 +4,22 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/www"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # Ignore the file-based dependency since it's locally built
+      - dependency-name: "cddl"
+  - package-ecosystem: "npm"
+    directory: "/cddl-lsp"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/cddl-lsp/client"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/cddl-lsp/server"
+    schedule:
+      interval: "weekly"
