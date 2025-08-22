@@ -98,6 +98,12 @@
           "type": "boolean",
           "default": true,
           "description": "Enable/disable trailing comma warnings."
+        },
+        "cddl.diagnostics.controlOperators": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable control operator validation."
         }
       }
     }

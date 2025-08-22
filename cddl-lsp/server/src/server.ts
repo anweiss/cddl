@@ -129,6 +129,7 @@ interface ExampleSettings {
   };
   diagnostics: {
     trailingCommas: boolean;
+    controlOperators: boolean;
   };
 }
 
@@ -142,6 +143,7 @@ const defaultSettings: ExampleSettings = {
   },
   diagnostics: {
     trailingCommas: true,
+    controlOperators: true,
   },
 };
 let globalSettings: ExampleSettings = defaultSettings;
@@ -200,7 +202,18 @@ function performEnhancedValidation(
   // Track defined and used rules
   let definedRules: Set<string> = new Set();
   let usedRules: Set<string> = new Set();
-  let ruleDefinitions: Map<string, { line: number; range: Range }> = new Map();
+  let ruleDefinitions: Map<
+    string,
+    { line: number; range: Range; nameRange: Range }
+  > = new Map();
+
+  // Add control operator validation
+  if (settings.diagnostics?.controlOperators) {
+    diagnostics.push(...validateControlOperators(textDocument, cddl, lines));
+
+    // Add pattern-based control operator validation (fallback for cases AST doesn't catch)
+    diagnostics.push(...validateControlOperatorPatterns(textDocument, lines));
+  }
 
   // Collect all defined rules
   for (let rule of cddl.rules) {
@@ -208,13 +221,23 @@ function performEnhancedValidation(
       let ruleName = rule.Group.rule.name.ident;
       definedRules.add(ruleName);
       let range = findRuleRange(ruleName, lines);
-      ruleDefinitions.set(ruleName, { line: range.start.line, range });
+      let nameRange = findRuleNameRange(ruleName, lines);
+      ruleDefinitions.set(ruleName, {
+        line: range.start.line,
+        range,
+        nameRange,
+      });
     }
     if (rule.Type) {
       let ruleName = rule.Type.rule.name.ident;
       definedRules.add(ruleName);
       let range = findRuleRange(ruleName, lines);
-      ruleDefinitions.set(ruleName, { line: range.start.line, range });
+      let nameRange = findRuleNameRange(ruleName, lines);
+      ruleDefinitions.set(ruleName, {
+        line: range.start.line,
+        range,
+        nameRange,
+      });
     }
   }
 
@@ -314,7 +337,7 @@ function performEnhancedValidation(
         if (!isIntegerConstant && !isStringConstant && !isLikelyRootRule) {
           diagnostics.push({
             severity: DiagnosticSeverity.Warning,
-            range: ruleInfo.range,
+            range: ruleInfo.nameRange, // Use nameRange instead of range for unused rule warnings
             message: `Rule '${ruleName}' is defined but never used`,
             source: "cddl-lint",
             code: "unused-rule",
@@ -379,6 +402,569 @@ function performEnhancedValidation(
         source: "cddl-style",
         code: "trailing-comma",
       });
+    }
+  }
+
+  return diagnostics;
+}
+
+// Helper function to get valid types for a control operator
+function getValidTypesForControlOperator(controlOp: string): string {
+  const validTypes: { [key: string]: string[] } = {
+    ".size": ["text", "tstr", "bytes", "bstr", "array", "map"],
+    ".bits": ["uint", "bytes", "bstr"],
+    ".regexp": ["text", "tstr"],
+    ".pcre": ["text", "tstr"],
+    ".cbor": ["bytes", "bstr"],
+    ".cborseq": ["bytes", "bstr"],
+    ".within": ["any"],
+    ".and": ["any"],
+    ".lt": ["uint", "int", "float", "number"],
+    ".le": ["uint", "int", "float", "number"],
+    ".gt": ["uint", "int", "float", "number"],
+    ".ge": ["uint", "int", "float", "number"],
+    ".eq": ["uint", "int", "float", "number"],
+    ".ne": ["uint", "int", "float", "number"],
+  };
+
+  const types = validTypes[controlOp];
+  if (!types || types.length === 0) {
+    return "no types";
+  } else if (types.includes("any")) {
+    return "any type";
+  } else if (types.length === 1) {
+    return types[0];
+  } else if (types.length === 2) {
+    return `${types[0]} or ${types[1]}`;
+  } else {
+    return `${types.slice(0, -1).join(", ")}, or ${types[types.length - 1]}`;
+  }
+}
+
+// Validate control operator usage for semantic errors
+function validateControlOperators(
+  textDocument: TextDocument,
+  cddl: any,
+  lines: string[]
+): Diagnostic[] {
+  let diagnostics: Diagnostic[] = [];
+
+  // Pattern-based validation for common invalid control operator combinations
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    let line = lines[lineIndex];
+
+    // Check for invalid control operators on uint/int with .regexp/.pcre
+    if (/\b(uint|int)\s+\.(?:regexp|pcre)/.test(line)) {
+      let match = line.match(/\b(uint|int)\s+(\.(?:regexp|pcre))/);
+      if (match) {
+        let startChar = match.index! + match[1].length + 1;
+        let endChar = startChar + match[2].length;
+        let validTypes = getValidTypesForControlOperator(match[2]);
+        diagnostics.push({
+          severity: DiagnosticSeverity.Error,
+          range: {
+            start: { line: lineIndex, character: startChar },
+            end: { line: lineIndex, character: endChar },
+          },
+          message: `Control operator ${match[2]} cannot be applied to ${match[1]} type. Valid types: ${validTypes}`,
+          source: "cddl-control",
+          code: "invalid-control-operator",
+        });
+      }
+    }
+
+    // Check for invalid .bits on text strings
+    if (/\b(text|tstr)\s+\.bits/.test(line)) {
+      let match = line.match(/\b(text|tstr)\s+(\.bits)/);
+      if (match) {
+        let startChar = match.index! + match[1].length + 1;
+        let endChar = startChar + match[2].length;
+        let validTypes = getValidTypesForControlOperator(match[2]);
+        diagnostics.push({
+          severity: DiagnosticSeverity.Error,
+          range: {
+            start: { line: lineIndex, character: startChar },
+            end: { line: lineIndex, character: endChar },
+          },
+          message: `Control operator ${match[2]} cannot be applied to ${match[1]} type. Valid types: ${validTypes}`,
+          source: "cddl-control",
+          code: "invalid-control-operator",
+        });
+      }
+    }
+
+    // Check for invalid .cbor on text strings
+    if (/\b(text|tstr)\s+\.cbor/.test(line)) {
+      let match = line.match(/\b(text|tstr)\s+(\.cbor)/);
+      if (match) {
+        let startChar = match.index! + match[1].length + 1;
+        let endChar = startChar + match[2].length;
+        let validTypes = getValidTypesForControlOperator(match[2]);
+        diagnostics.push({
+          severity: DiagnosticSeverity.Error,
+          range: {
+            start: { line: lineIndex, character: startChar },
+            end: { line: lineIndex, character: endChar },
+          },
+          message: `Control operator ${match[2]} cannot be applied to ${match[1]} type. Valid types: ${validTypes}`,
+          source: "cddl-control",
+          code: "invalid-control-operator",
+        });
+      }
+    }
+
+    // Check for invalid .size on bool
+    if (/\b(bool|true|false)\s+\.size/.test(line)) {
+      let match = line.match(/\b(bool|true|false)\s+(\.size)/);
+      if (match) {
+        let startChar = match.index! + match[1].length + 1;
+        let endChar = startChar + match[2].length;
+        let validTypes = getValidTypesForControlOperator(match[2]);
+        diagnostics.push({
+          severity: DiagnosticSeverity.Error,
+          range: {
+            start: { line: lineIndex, character: startChar },
+            end: { line: lineIndex, character: endChar },
+          },
+          message: `Control operator ${match[2]} cannot be applied to ${match[1]} type. Valid types: ${validTypes}`,
+          source: "cddl-control",
+          code: "invalid-control-operator",
+        });
+      }
+    }
+  }
+
+  return diagnostics;
+}
+
+function validateTypeRuleControlOperators(
+  typeRule: any,
+  textDocument: TextDocument,
+  diagnostics: Diagnostic[],
+  lines: string[]
+): void {
+  try {
+    traverseType(typeRule.value, textDocument, diagnostics, lines);
+  } catch (e) {
+    // Skip if we can't traverse the type
+  }
+}
+
+function validateGroupRuleControlOperators(
+  groupRule: any,
+  textDocument: TextDocument,
+  diagnostics: Diagnostic[],
+  lines: string[]
+): void {
+  try {
+    if (groupRule.entry && Array.isArray(groupRule.entry)) {
+      for (let entry of groupRule.entry) {
+        if (
+          entry.GroupEntry &&
+          entry.GroupEntry.member_key &&
+          entry.GroupEntry.member_key.type1
+        ) {
+          traverseType(
+            entry.GroupEntry.member_key.type1,
+            textDocument,
+            diagnostics,
+            lines
+          );
+        }
+        if (entry.GroupEntry && entry.GroupEntry.entry_type) {
+          traverseType(
+            entry.GroupEntry.entry_type,
+            textDocument,
+            diagnostics,
+            lines
+          );
+        }
+      }
+    }
+  } catch (e) {
+    // Skip if we can't traverse the group
+  }
+}
+
+function traverseType(
+  type: any,
+  textDocument: TextDocument,
+  diagnostics: Diagnostic[],
+  lines: string[]
+): void {
+  if (!type) return;
+
+  try {
+    // Handle Type1 (choice alternatives)
+    if (type.type2 && Array.isArray(type.type2)) {
+      for (let type2 of type.type2) {
+        traverseType2(type2, textDocument, diagnostics, lines);
+      }
+    } else if (type.type2) {
+      traverseType2(type.type2, textDocument, diagnostics, lines);
+    }
+  } catch (e) {
+    // Skip malformed types
+  }
+}
+
+function traverseType2(
+  type2: any,
+  textDocument: TextDocument,
+  diagnostics: Diagnostic[],
+  lines: string[]
+): void {
+  if (!type2) return;
+
+  try {
+    // Check for control operators
+    if (type2.operator && type2.controller) {
+      validateControlOperatorUsage(
+        type2,
+        type2.operator,
+        type2.controller,
+        textDocument,
+        diagnostics,
+        lines
+      );
+    }
+
+    // Recursively check nested types
+    if (type2.value) {
+      traverseValue(type2.value, textDocument, diagnostics, lines);
+    }
+  } catch (e) {
+    // Skip malformed type2
+  }
+}
+
+function traverseValue(
+  value: any,
+  textDocument: TextDocument,
+  diagnostics: Diagnostic[],
+  lines: string[]
+): void {
+  if (!value) return;
+
+  try {
+    // Handle arrays
+    if (value.Array && value.Array.group && value.Array.group.entry) {
+      if (Array.isArray(value.Array.group.entry)) {
+        for (let entry of value.Array.group.entry) {
+          if (entry.GroupEntry && entry.GroupEntry.entry_type) {
+            traverseType(
+              entry.GroupEntry.entry_type,
+              textDocument,
+              diagnostics,
+              lines
+            );
+          }
+        }
+      }
+    }
+
+    // Handle maps
+    if (value.Map && value.Map.group && value.Map.group.entry) {
+      if (Array.isArray(value.Map.group.entry)) {
+        for (let entry of value.Map.group.entry) {
+          if (entry.GroupEntry) {
+            if (
+              entry.GroupEntry.member_key &&
+              entry.GroupEntry.member_key.type1
+            ) {
+              traverseType(
+                entry.GroupEntry.member_key.type1,
+                textDocument,
+                diagnostics,
+                lines
+              );
+            }
+            if (entry.GroupEntry.entry_type) {
+              traverseType(
+                entry.GroupEntry.entry_type,
+                textDocument,
+                diagnostics,
+                lines
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // Handle groups
+    if (value.Group && value.Group.group && value.Group.group.entry) {
+      if (Array.isArray(value.Group.group.entry)) {
+        for (let entry of value.Group.group.entry) {
+          if (entry.GroupEntry && entry.GroupEntry.entry_type) {
+            traverseType(
+              entry.GroupEntry.entry_type,
+              textDocument,
+              diagnostics,
+              lines
+            );
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // Skip malformed values
+  }
+}
+
+function validateControlOperatorUsage(
+  type2: any,
+  operator: any,
+  controller: any,
+  textDocument: TextDocument,
+  diagnostics: Diagnostic[],
+  lines: string[]
+): void {
+  if (!operator || !operator.span || operator.span.length < 2) {
+    return;
+  }
+
+  try {
+    let startPos = textDocument.positionAt(operator.span[0]);
+    let endPos = textDocument.positionAt(operator.span[1]);
+
+    let targetType = getTargetTypeName(type2);
+    let controlOperatorName = getControlOperatorName(operator);
+
+    if (!controlOperatorName || !targetType) {
+      return;
+    }
+
+    let errorMessage = getControlOperatorError(
+      controlOperatorName,
+      targetType,
+      controller
+    );
+
+    if (errorMessage) {
+      diagnostics.push({
+        severity: DiagnosticSeverity.Error,
+        range: {
+          start: startPos,
+          end: endPos,
+        },
+        message: errorMessage,
+        source: "cddl-control-operator",
+        code: "invalid-control-operator",
+      });
+    }
+  } catch (e) {
+    // Skip if we can't create the diagnostic
+  }
+}
+
+function getTargetTypeName(type2: any): string | null {
+  if (!type2 || !type2.value) {
+    return null;
+  }
+
+  try {
+    // Check for direct typename
+    if (type2.value.Typename && type2.value.Typename.ident) {
+      return type2.value.Typename.ident;
+    }
+
+    // Check for value types
+    if (type2.value.Value) {
+      if (type2.value.Value.TEXT) return "tstr";
+      if (type2.value.Value.UINT !== undefined) return "uint";
+      if (type2.value.Value.NINT !== undefined) return "nint";
+      if (type2.value.Value.INT !== undefined) return "int";
+      if (type2.value.Value.FLOAT !== undefined) return "float";
+      if (type2.value.Value.BYTE) return "bstr";
+    }
+
+    // Check for literal values
+    if (type2.value.Array) return "array";
+    if (type2.value.Map) return "map";
+    if (type2.value.Group) return "group";
+
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function getControlOperatorName(operator: any): string | null {
+  try {
+    if (operator.SIZE !== undefined) return ".size";
+    if (operator.BITS !== undefined) return ".bits";
+    if (operator.REGEXP !== undefined) return ".regexp";
+    if (operator.PCRE !== undefined) return ".pcre";
+    if (operator.CBOR !== undefined) return ".cbor";
+    if (operator.CBORSEQ !== undefined) return ".cborseq";
+    if (operator.WITHIN !== undefined) return ".within";
+    if (operator.AND !== undefined) return ".and";
+    if (operator.LT !== undefined) return ".lt";
+    if (operator.LE !== undefined) return ".le";
+    if (operator.GT !== undefined) return ".gt";
+    if (operator.GE !== undefined) return ".ge";
+    if (operator.EQ !== undefined) return ".eq";
+    if (operator.NE !== undefined) return ".ne";
+    if (operator.DEFAULT !== undefined) return ".default";
+
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function getControlOperatorError(
+  controlOp: string,
+  targetType: string,
+  controller: any
+): string | null {
+  // Define type compatibility rules based on CDDL spec and implementation
+  const stringTypes = new Set(["tstr", "text", "bstr", "bytes"]);
+  const numericTypes = new Set([
+    "uint",
+    "nint",
+    "int",
+    "float",
+    "float16",
+    "float32",
+    "float64",
+    "number",
+    "time",
+  ]);
+  const uintTypes = new Set(["uint"]);
+  const textStringTypes = new Set(["tstr", "text"]);
+  const byteStringTypes = new Set(["bstr", "bytes"]);
+  const booleanTypes = new Set(["bool", "true", "false"]);
+  const nullTypes = new Set(["nil", "null", "undefined"]);
+
+  switch (controlOp) {
+    case ".size":
+      if (
+        !stringTypes.has(targetType) &&
+        !uintTypes.has(targetType) &&
+        targetType !== "array" &&
+        targetType !== "map"
+      ) {
+        return `Control operator .size can only be applied to string, uint, array, or map types, but got ${targetType}`;
+      }
+      break;
+
+    case ".bits":
+      if (!byteStringTypes.has(targetType) && !uintTypes.has(targetType)) {
+        return `Control operator .bits can only be applied to byte string or uint types, but got ${targetType}`;
+      }
+      break;
+
+    case ".regexp":
+    case ".pcre":
+      if (!textStringTypes.has(targetType)) {
+        return `Control operator ${controlOp} can only be applied to text string types, but got ${targetType}`;
+      }
+      break;
+
+    case ".cbor":
+    case ".cborseq":
+      if (!byteStringTypes.has(targetType)) {
+        return `Control operator ${controlOp} can only be applied to byte string types, but got ${targetType}`;
+      }
+      break;
+
+    case ".lt":
+    case ".le":
+    case ".gt":
+    case ".ge":
+      if (!numericTypes.has(targetType)) {
+        return `Control operator ${controlOp} can only be applied to numeric types, but got ${targetType}`;
+      }
+      break;
+
+    case ".eq":
+    case ".ne":
+      // These can be applied to any type
+      break;
+
+    case ".and":
+    case ".within":
+      // These have more complex validation rules that would require deeper analysis
+      break;
+
+    case ".default":
+      // Should only be used in optional map members - this would require context analysis
+      break;
+
+    default:
+      return null;
+  }
+
+  return null;
+}
+
+// Add pattern-based validation for control operators directly from text
+function validateControlOperatorPatterns(
+  textDocument: TextDocument,
+  lines: string[]
+): Diagnostic[] {
+  let diagnostics: Diagnostic[] = [];
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    let line = lines[lineIndex];
+
+    // Pattern to match type followed by control operator
+    let patterns = [
+      // uint/int/numeric types with string control operators
+      {
+        regex:
+          /(uint|nint|int|float(?:16|32|64)?|number|time)\s*(\\.(?:regexp|pcre|cbor|cborseq))/g,
+        message: (match: RegExpMatchArray) => {
+          const validTypes = getValidTypesForControlOperator(match[2]);
+          return `Control operator ${match[2]} cannot be applied to numeric type ${match[1]}. Valid types: ${validTypes}`;
+        },
+      },
+      // text string types with non-text control operators
+      {
+        regex: /(tstr|text)\s*(\\.(?:bits|cbor|cborseq))/g,
+        message: (match: RegExpMatchArray) => {
+          const validTypes = getValidTypesForControlOperator(match[2]);
+          return `Control operator ${match[2]} cannot be applied to text string type ${match[1]}. Valid types: ${validTypes}`;
+        },
+      },
+      // byte string types with text control operators
+      {
+        regex: /(bstr|bytes)\s*(\\.(?:regexp|pcre))/g,
+        message: (match: RegExpMatchArray) => {
+          const validTypes = getValidTypesForControlOperator(match[2]);
+          return `Control operator ${match[2]} cannot be applied to byte string type ${match[1]}. Valid types: ${validTypes}`;
+        },
+      },
+      // boolean and null types with inappropriate control operators
+      {
+        regex:
+          /(bool|true|false|nil|null|undefined)\s*(\\.(?:size|bits|regexp|pcre|cbor|cborseq|lt|le|gt|ge))/g,
+        message: (match: RegExpMatchArray) => {
+          const validTypes = getValidTypesForControlOperator(match[2]);
+          return `Control operator ${match[2]} cannot be applied to ${match[1]} type. Valid types: ${validTypes}`;
+        },
+      },
+    ];
+
+    for (let pattern of patterns) {
+      let match;
+      while ((match = pattern.regex.exec(line)) !== null) {
+        let startChar = match.index + match[1].length;
+        let endChar = match.index + match[0].length;
+
+        diagnostics.push({
+          severity: DiagnosticSeverity.Error,
+          range: {
+            start: { line: lineIndex, character: startChar },
+            end: { line: lineIndex, character: endChar },
+          },
+          message: pattern.message(match),
+          source: "cddl-syntax",
+          code: "invalid-control-operator-syntax",
+        });
+      }
     }
   }
 
@@ -708,12 +1294,27 @@ connection.onDocumentSymbol(
         if (!seenSymbols.has(ruleName)) {
           seenSymbols.add(ruleName);
           let range = findRuleRange(ruleName, lines);
+          let nameRange = findRuleNameRange(ruleName, lines);
+
+          // Ensure selectionRange is contained within range
+          // If nameRange is invalid or not contained, fall back to using range
+          let selectionRange = nameRange;
+          if (
+            nameRange.start.line < range.start.line ||
+            nameRange.end.line > range.end.line ||
+            (nameRange.start.line === range.start.line &&
+              nameRange.start.character < range.start.character) ||
+            (nameRange.end.line === range.end.line &&
+              nameRange.end.character > range.end.character)
+          ) {
+            selectionRange = range;
+          }
 
           symbols.push({
             name: ruleName,
             kind: SymbolKind.Class,
             range: range,
-            selectionRange: range,
+            selectionRange: selectionRange,
             detail: "Group rule",
           });
         }
@@ -724,12 +1325,27 @@ connection.onDocumentSymbol(
         if (!seenSymbols.has(ruleName)) {
           seenSymbols.add(ruleName);
           let range = findRuleRange(ruleName, lines);
+          let nameRange = findRuleNameRange(ruleName, lines);
+
+          // Ensure selectionRange is contained within range
+          // If nameRange is invalid or not contained, fall back to using range
+          let selectionRange = nameRange;
+          if (
+            nameRange.start.line < range.start.line ||
+            nameRange.end.line > range.end.line ||
+            (nameRange.start.line === range.start.line &&
+              nameRange.start.character < range.start.character) ||
+            (nameRange.end.line === range.end.line &&
+              nameRange.end.character > range.end.character)
+          ) {
+            selectionRange = range;
+          }
 
           symbols.push({
             name: ruleName,
             kind: SymbolKind.TypeParameter,
             range: range,
-            selectionRange: range,
+            selectionRange: selectionRange,
             detail: "Type rule",
           });
         }
@@ -770,7 +1386,56 @@ function findRuleRange(ruleName: string, lines: string[]): Range {
   return { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
 }
 
-// References provider for jump to definition
+function findRuleNameRange(ruleName: string, lines: string[]): Range {
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    if (
+      line.includes(ruleName) &&
+      (line.includes("=") || line.includes("//=") || line.includes("/="))
+    ) {
+      // Find the exact position of the rule name in the line
+      let ruleIndex = line.indexOf(ruleName);
+      if (ruleIndex !== -1) {
+        // Make sure this is actually the rule definition, not just a reference
+        let beforeRule = line.substring(0, ruleIndex).trim();
+        let afterRule = line.substring(ruleIndex + ruleName.length);
+
+        // Check if this looks like a rule definition (rule name should be at start or after whitespace)
+        if (beforeRule === "" || /^\s*$/.test(beforeRule)) {
+          // Check if there's an assignment operator after the rule name (possibly with generics)
+          if (/^\s*(<[^>]*>)?\s*(=|\/\/=|\/=)/.test(afterRule)) {
+            return {
+              start: { line: i, character: ruleIndex },
+              end: { line: i, character: ruleIndex + ruleName.length },
+            };
+          }
+        }
+      }
+    }
+  }
+
+  // Fallback: if we can't find the rule name specifically, return the start of the rule line
+  // This ensures the selection range is always contained within the full range
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    if (
+      line.includes(ruleName) &&
+      (line.includes("=") || line.includes("//=") || line.includes("/="))
+    ) {
+      // Find the first non-whitespace character (likely the start of the rule name)
+      let firstChar = line.search(/\S/);
+      if (firstChar !== -1) {
+        return {
+          start: { line: i, character: firstChar },
+          end: { line: i, character: firstChar + ruleName.length },
+        };
+      }
+    }
+  }
+
+  // Ultimate fallback: return a zero-width range at the start of the first line
+  return { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
+} // References provider for jump to definition
 connection.onReferences((params: ReferenceParams): Location[] => {
   let document = documents.get(params.textDocument.uri);
   if (!document || !cddl) {

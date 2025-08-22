@@ -10,6 +10,7 @@
         { "include": "#map-expression" },
         { "include": "#array-expression" },
         { "include": "#generic-arguments" },
+        { "include": "#invalid-control-operator" },
         { "include": "#range-control-operator" },
         { "include": "#socketplug" },
         { "include": "#ruleidentifier" },
@@ -117,6 +118,49 @@
     "range-control-operator": {
       "match": "\\.\\.\\.|\\.\\.|\\.size|\\.bits|\\.regexp|\\.pcre|\\.cbor|\\.cborseq|\\.within|\\.and|\\.lt|\\.le|\\.gt|\\.ge|\\.eq|\\.ne|\\.default",
       "name": "keyword.operator.control.cddl"
+    },
+    "invalid-control-operator": {
+      "patterns": [
+        {
+          "comment": "Numeric types with string-only control operators",
+          "match": "\\b(uint|nint|int|float(?:16|32|64)?|number|time)\\s*(\\.(?:regexp|pcre|cbor|cborseq))\\b",
+          "captures": {
+            "1": { "name": "keyword.type.builtin.cddl" },
+            "2": { "name": "invalid.illegal.control-operator.cddl" }
+          }
+        },
+        {
+          "comment": "Text strings with byte-string-only control operators",
+          "match": "\\b(tstr|text)\\s*(\\.(?:bits|cbor|cborseq))\\b",
+          "captures": {
+            "1": { "name": "keyword.type.builtin.cddl" },
+            "2": { "name": "invalid.illegal.control-operator.cddl" }
+          }
+        },
+        {
+          "comment": "Byte strings with text-string-only control operators",
+          "match": "\\b(bstr|bytes)\\s*(\\.(?:regexp|pcre))\\b",
+          "captures": {
+            "1": { "name": "keyword.type.builtin.cddl" },
+            "2": { "name": "invalid.illegal.control-operator.cddl" }
+          }
+        },
+        {
+          "comment": "Boolean and null types with inappropriate control operators",
+          "match": "\\b(bool|true|false|nil|null|undefined)\\s*(\\.(?:size|bits|regexp|pcre|cbor|cborseq|lt|le|gt|ge))\\b",
+          "captures": {
+            "1": { "name": "keyword.type.builtin.cddl" },
+            "2": { "name": "invalid.illegal.control-operator.cddl" }
+          }
+        },
+        {
+          "comment": "Array or map types with numeric control operators",
+          "match": "(\\[|\\{).*(\\.(?:lt|le|gt|ge|bits))\\b",
+          "captures": {
+            "2": { "name": "invalid.illegal.control-operator.cddl" }
+          }
+        }
+      ]
     },
     "standard-prelude": {
       "match": "(?<!-|_)\\bany\\b(?!-|_)|\\binteger\\b|\\buint\\b|\\bnint\\b|\\bint\\b|\\bbstr\\b|\\bbytes\\b|\\btstr\\b|\\btext\\b|\\btdate\\b|\\btime\\b|\\bnumber\\b|\\bbiguint\\b|\\bbignint\\b|\\bbigint\\b|\\bunsigned\\b|\\bdecfrac\\b|\\bbigfloat\\b|\\beb64url\\b|\\beb64legacy\\b|\\beb16\\b|\\bencoded\\-cbor\\b|(?<!-|_)\\buri\\b(?!-|_)|\\bb64url\\b|\\bb64legacy\\b|\\bregexp\\b|\\bmime\\-message\\b|\\bcbor\\-any\\b|\\bfloat16\\b|\\bfloat32\\b|\\bfloat64\\b|\\bfloat16\\-32\\b|\\bfloat32\\-64\\b|\\bfloat\\b|\\bfalse\\b|\\btrue\\b|\\bbool\\b|\\bnil\\b|\\bnull\\b|\\bundefined\\b",
