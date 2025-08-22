@@ -1,10 +1,14 @@
 {
 	"compilerOptions": {
 		"module": "commonjs",
-		"target": "es6",
+		"target": "es2018",
+		"lib": ["es2018"],
 		"outDir": "out",
 		"rootDir": "src",
-		"sourceMap": true
+		"sourceMap": true,
+		"moduleResolution": "node",
+		"skipLibCheck": true,
+		"strict": false
 	},
 	"include": ["src"],
 	"exclude": ["node_modules", ".vscode-test"]
