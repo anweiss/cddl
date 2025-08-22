@@ -230,7 +230,11 @@ function performEnhancedValidation(
 
         // Look for rule references on the right side of assignments
         for (let ruleName of definedRules) {
-          let regex = new RegExp(`\\b${ruleName}\\b`, "g");
+          // Use custom word boundaries for CDDL identifiers (including hyphens)
+          let regex = new RegExp(
+            `(?<![a-zA-Z0-9_-])${escapeRegex(ruleName)}(?![a-zA-Z0-9_-])`,
+            "g"
+          );
           if (regex.test(rightSide)) {
             usedRules.add(ruleName);
           }
@@ -239,7 +243,10 @@ function performEnhancedValidation(
     } else {
       // For lines without assignments, check the entire line
       for (let ruleName of definedRules) {
-        let regex = new RegExp(`\\b${ruleName}\\b`, "g");
+        let regex = new RegExp(
+          `(?<![a-zA-Z0-9_-])${escapeRegex(ruleName)}(?![a-zA-Z0-9_-])`,
+          "g"
+        );
         if (regex.test(line)) {
           usedRules.add(ruleName);
         }
@@ -248,7 +255,10 @@ function performEnhancedValidation(
 
     // Check for map key references (rule-name =>)
     for (let ruleName of definedRules) {
-      let mapKeyRegex = new RegExp(`\\b${ruleName}\\s*=>`, "g");
+      let mapKeyRegex = new RegExp(
+        `(?<![a-zA-Z0-9_-])${escapeRegex(ruleName)}\\s*=>`,
+        "g"
+      );
       if (mapKeyRegex.test(line)) {
         usedRules.add(ruleName);
       }
@@ -413,22 +423,43 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
   let diagnostics: Diagnostic[] = [];
 
   // Add syntax/parse errors
-  while (errors.length < settings.maxNumberOfProblems) {
-    for (const error of errors) {
+  for (const error of errors) {
+    if (diagnostics.length >= settings.maxNumberOfProblems) {
+      break;
+    }
+
+    // Check if error has position information
+    if (
+      !error.position ||
+      !error.position.range ||
+      !Array.isArray(error.position.range) ||
+      error.position.range.length < 2
+    ) {
+      // If no position info, create a diagnostic for the whole first line
       let diagnostic: Diagnostic = {
         severity: DiagnosticSeverity.Error,
         range: {
-          start: textDocument.positionAt(error.position.range[0]),
-          end: textDocument.positionAt(error.position.range[1]),
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: Number.MAX_VALUE },
         },
-        message: error.msg.short,
+        message: error.msg?.short || error.message || "Parse error",
         source: "cddl",
       };
-
       diagnostics.push(diagnostic);
+      continue;
     }
 
-    break;
+    let diagnostic: Diagnostic = {
+      severity: DiagnosticSeverity.Error,
+      range: {
+        start: textDocument.positionAt(error.position.range[0]),
+        end: textDocument.positionAt(error.position.range[1]),
+      },
+      message: error.msg.short,
+      source: "cddl",
+    };
+
+    diagnostics.push(diagnostic);
   }
 
   // Enhanced validation - add semantic errors and warnings
@@ -790,13 +821,16 @@ function getWordAtPosition(text: string, offset: number): string | null {
   let start = offset;
   let end = offset;
 
+  // CDDL identifiers can contain letters, digits, hyphens, and underscores
+  let identifierChar = /[a-zA-Z0-9_-]/;
+
   // Find start of word
-  while (start > 0 && /\w/.test(text[start - 1])) {
+  while (start > 0 && identifierChar.test(text[start - 1])) {
     start--;
   }
 
   // Find end of word
-  while (end < text.length && /\w/.test(text[end])) {
+  while (end < text.length && identifierChar.test(text[end])) {
     end++;
   }
 
@@ -805,6 +839,26 @@ function getWordAtPosition(text: string, offset: number): string | null {
   }
 
   return text.substring(start, end);
+}
+
+function escapeRegex(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function preserveBlankLines(text: string): string {
+  // Replace sequences of blank lines with comment markers
+  // This handles both single blank lines and multiple blank lines
+  return text.replace(/\n(\s*\n)+/g, (match) => {
+    // Count how many blank lines there are
+    const blankLineCount = (match.match(/\n/g) || []).length - 1;
+    // Preserve at most one blank line by using one marker
+    return "\n; __BLANK_LINE_MARKER__\n";
+  });
+}
+
+function restoreBlankLines(text: string): string {
+  // Replace the markers back with blank lines, normalizing to single blank lines
+  return text.replace(/\s*;\s*__BLANK_LINE_MARKER__\s*\n/g, "\n\n");
 }
 
 // Signature help provider for generic parameters and control operators
@@ -1074,14 +1128,24 @@ export function formatCDDLText(text: string): string {
   let lines = text.split("\n");
   let formatted: string[] = [];
   let indentLevel = 0;
+  let consecutiveEmptyLines = 0;
 
-  for (let line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
     let trimmed = line.trim();
 
+    // Handle empty lines - normalize multiple empty lines to single empty line
     if (!trimmed) {
-      formatted.push("");
+      consecutiveEmptyLines++;
+      // Only add one empty line, even if there were multiple consecutive ones
+      if (consecutiveEmptyLines === 1) {
+        formatted.push("");
+      }
       continue;
     }
+
+    // Reset empty line counter when we encounter content
+    consecutiveEmptyLines = 0;
 
     // Handle map entries that are all on one line - split them
     if (
@@ -1376,10 +1440,14 @@ connection.onDocumentFormatting(
     let originalText = document.getText();
 
     try {
-      // Try WASM formatter first
-      formatted_text = wasm.format_cddl_from_str(originalText);
+      // Preserve intentional blank lines by marking them
+      let textWithMarkers = preserveBlankLines(originalText);
 
-      // Apply additional formatting for better map entry handling
+      // Try WASM formatter first
+      formatted_text = wasm.format_cddl_from_str(textWithMarkers);
+
+      // Restore the blank lines and apply additional formatting
+      formatted_text = restoreBlankLines(formatted_text);
       formatted_text = formatCDDLText(formatted_text);
     } catch (e) {
       console.error(
@@ -1434,16 +1502,20 @@ function getIdentifierAtPosition(
     return undefined;
   }
 
-  let re = /\s|,|:|=|\*|\?|\+|<|>|{|}|\[|\]|\(|\)/;
+  // CDDL identifiers can contain letters, digits, hyphens, and underscores
+  let identifierChar = /[a-zA-Z0-9_-]/;
 
-  while (!re.test(documentText[start]) && start > 0) {
+  // Find start of identifier
+  while (start > 0 && identifierChar.test(documentText[start - 1])) {
     start--;
   }
-  while (!re.test(documentText[end]) && end < documentText.length) {
+
+  // Find end of identifier
+  while (end < documentText.length && identifierChar.test(documentText[end])) {
     end++;
   }
 
-  return documentText?.substring(start == 0 ? 0 : start + 1, end);
+  return documentText?.substring(start, end);
 }
 
 // Workspace Symbol Provider for searching across all CDDL files

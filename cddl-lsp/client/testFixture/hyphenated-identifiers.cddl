@@ -1,0 +1,42 @@
+; Test file for hyphenated identifier detection
+; These rules should have proper jump-to-definition support
+
+file-entry = {
+  name: text,
+  size: uint,
+  hash-value: bytes
+}
+
+directory-entry = {
+  name: text,
+  sub-files: [* file-entry],
+  permissions: access-rights
+}
+
+access-rights = {
+  read-only: bool,
+  write-access: bool,
+  execute-permission: bool
+}
+
+software-meta = {
+  product-name: text,
+  version-string: text,
+  build-number: uint,
+  release-date: time
+}
+
+; Test usage of hyphenated identifiers
+main-document = {
+  files: [* file-entry],
+  directories: [* directory-entry],
+  metadata: software-meta,
+  permissions: access-rights
+}
+
+; Test with various hyphen patterns
+multi-word-rule = text
+another-long-rule-name = uint
+rule-with-numbers-123 = bytes
+rule_with_underscores = bool
+mixed-rule_name = text

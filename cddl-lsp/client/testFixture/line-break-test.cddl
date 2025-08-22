@@ -1,0 +1,26 @@
+; Test file for line break formatting issues
+
+test = tstr .bits 128
+
+any-uri = text
+label = text / int
+$version-scheme /= multipartnumeric
+$version-scheme /= multipartnumeric-suffix
+$version-scheme /= alphanumeric
+$version-scheme /= decimal
+$version-scheme /= semver
+
+supersedes = 10 ; supplemental=11
+
+
+; "use" integer indexes
+optional = 1
+required = 2
+recommended = 3
+
+; This should preserve the intentional spacing above
+; But normalize multiple blank lines below
+
+
+
+final-rule = text
