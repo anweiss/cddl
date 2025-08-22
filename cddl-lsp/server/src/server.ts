@@ -1,5 +1,4 @@
 import {
-  createConnection,
   TextDocuments,
   Diagnostic,
   DiagnosticSeverity,
@@ -37,6 +36,7 @@ import {
   Command,
 } from "vscode-languageserver";
 
+import { createConnection } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 
 import * as wasm from "../pkg/";

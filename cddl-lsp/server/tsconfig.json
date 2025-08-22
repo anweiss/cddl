@@ -1,14 +1,16 @@
 {
 	"compilerOptions": {
-		"target": "es2018",
-		"lib": ["es2018"],
+		"target": "es2022",
+		"lib": ["es2022"],
 		"module": "commonjs",
 		"moduleResolution": "node",
 		"sourceMap": true,
 		"strict": false,
 		"outDir": "out",
 		"rootDir": "src",
-		"skipLibCheck": true
+		"skipLibCheck": true,
+		"esModuleInterop": true,
+		"allowSyntheticDefaultImports": true
 	},
 	"include": ["src"],
 	"exclude": ["node_modules", ".vscode-test"]
