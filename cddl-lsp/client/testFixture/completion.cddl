@@ -2,8 +2,7 @@
 person = {
 	name: tstr,
 	age: uint,
-	email: tstr
-	"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+	email: tstr .regexp "[A-Za-z0-9]+@[A-Za-z0-9]+(\\.[A-Za-z0-9]+)+"
 }
 
 address = { street: tstr, city: tstr, zipcode: tstr }

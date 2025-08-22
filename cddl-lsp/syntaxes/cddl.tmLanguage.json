@@ -115,7 +115,7 @@
       "patterns": [{ "include": "#expression" }]
     },
     "range-control-operator": {
-      "match": "\\.\\.\\.|\\.\\.|\\.size|\\.bits|\\.regex|\\.pcre|\\.cbor|\\.cborseq|\\.within|\\.and|\\.lt|\\.le|\\.gt|\\.ge|\\.eq|\\.ne|\\.default",
+      "match": "\\.\\.\\.|\\.\\.|\\.size|\\.bits|\\.regexp|\\.pcre|\\.cbor|\\.cborseq|\\.within|\\.and|\\.lt|\\.le|\\.gt|\\.ge|\\.eq|\\.ne|\\.default",
       "name": "keyword.operator.control.cddl"
     },
     "standard-prelude": {
