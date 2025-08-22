@@ -1,6 +1,6 @@
 # CDDL Language Server Extension
 
-[![](https://vsmarketplacebadge.apphb.com/version/anweiss.cddl-languageserver.svg)](https://marketplace.visualstudio.com/items?itemName=anweiss.cddl-languageserver)
+[![](https://vsmarketplacebadge.apphb.com/version/anweiss.cddl-languageserver.png)](https://marketplace.visualstudio.com/items?itemName=anweiss.cddl-languageserver)
 
 > This extension is a Preview. Report bugs and issues at https://github.com/anweiss/cddl/issues.
 
