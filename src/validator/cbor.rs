@@ -599,20 +599,37 @@ where
       if self.cbor.is_array() {
         self.is_multi_type_choice_type_rule_validating_array = true;
       }
-    }
 
-    let error_count = self.errors.len();
+      // When there are type choice alternates, we need to treat the main rule
+      // and all alternates as equal choices. According to RFC 8610 Section 2.2.2,
+      // "/=" extends a type by creating additional choices that should be
+      // combined with the main rule definition.
+      let error_count = self.errors.len();
 
-    for t in type_choice_alternates {
+      // First try the main rule
       let cur_errors = self.errors.len();
-      self.visit_type(t)?;
+      self.visit_type(&tr.value)?;
       if self.errors.len() == cur_errors {
         for _ in 0..self.errors.len() - error_count {
           self.errors.pop();
         }
-
         return Ok(());
       }
+
+      // Then try each alternate
+      for t in type_choice_alternates {
+        let cur_errors = self.errors.len();
+        self.visit_type(t)?;
+        if self.errors.len() == cur_errors {
+          for _ in 0..self.errors.len() - error_count {
+            self.errors.pop();
+          }
+          return Ok(());
+        }
+      }
+
+      // If we get here, none of the choices matched
+      return Ok(());
     }
 
     if tr.value.type_choices.len() > 1 && self.cbor.is_array() {
