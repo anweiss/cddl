@@ -127,7 +127,7 @@
     "@types/mocha": "^9.1.0",
     "@types/node": "^20",
     "@typescript-eslint/parser": "^5.16.0",
-    "eslint": "^8.11.0",
+    "eslint": "^9.33.0",
     "merge-options": "^2.0.0",
     "mocha": "^11.1.0",
     "rimraf": "^3.0.2",
