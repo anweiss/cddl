@@ -164,7 +164,7 @@ jobs:
           echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" > ~/.npmrc
           cp .npmrc pkg/
           cp .npmrc cddl-languageserver/
-          
+
           # Publish the main package
           cd pkg
           PKG_VERSION=$(node -p "require('./package.json').version")
@@ -178,7 +178,7 @@ jobs:
               exit $STATUS
             fi
           }
-          
+
           # Publish the language server package
           cd ../cddl-languageserver
           LSP_VERSION=$(node -p "require('./package.json').version")
@@ -192,33 +192,6 @@ jobs:
               exit $STATUS
             fi
           }
-
-  publish-vscode-extension:
-    name: Publish vscode extension
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v2
-
-      - name: Install Node.js
-        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a
-        with:
-          node-version: "20"
-
-      - name: Deploy to Marketplace
-        working-directory: ./cddl-lsp
-        env:
-          VSCODE_MARKETPLACE_TOKEN: ${{ secrets.VSCODE_MARKETPLACE_TOKEN }}
-        run: |
-          sudo apt-get update && sudo apt-get install -y jq
-          npm install -g vsce
-          export TAG=`jq -r '.version' package.json`
-          vsce show --json anweiss.cddl-languageserver | jq -e --arg TAG "$TAG" -e '.versions[] | select(.version == $TAG)'
-          if [ "$?" -ne 0 ]
-          then
-            npm install
-            npm run deploy -- -p $VSCODE_MARKETPLACE_TOKEN
-          fi
 
   publish-crate:
     name: Publish crate
@@ -244,7 +217,7 @@ jobs:
         run: |
           # Extract version from Cargo.toml
           VERSION=$(grep -m 1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
-          
+
           # Check if version already exists
           if cargo search cddl --limit 1 | grep -q "cddl = \"$VERSION\""; then
             echo "Version $VERSION already exists on crates.io, skipping publish"
