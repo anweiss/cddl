@@ -18,6 +18,9 @@
   "devDependencies": {
     "@types/vscode": "^1.97.0",
     "@types/node": "^20",
-    "@vscode/test-electron": "^2.4.1"
+    "@types/mocha": "^9.1.0",
+    "@vscode/test-electron": "^2.4.1",
+    "glob": "^10.3.0",
+    "mocha": "^11.1.0"
   }
 }
