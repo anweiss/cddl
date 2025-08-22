@@ -1,0 +1,4 @@
+; Unformatted CDDL for testing formatting configuration
+person={name:tstr,age:uint,email?:tstr}
+address={street:tstr,city:tstr,country:tstr}
+contact={person,address,phone?:tstr}

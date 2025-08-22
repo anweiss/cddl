@@ -1,0 +1,3 @@
+; Test control operator validation
+valid = tstr .regexp "[a-z]+"
+invalid = uint .regexp "[0-9]+"  ; Should show error
