@@ -10,32 +10,22 @@ template: |
 
   $CHANGES
 
-  ## Full Changelog
-
-  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...$RESOLVED_VERSION-vscode-extension
-
 categories:
   - title: '🚀 Features'
     labels:
       - 'feature'
       - 'enhancement'
-      - 'vscode-extension'
   - title: '🐛 Bug Fixes'
     labels:
       - 'fix'
       - 'bugfix'
       - 'bug'
-      - 'vscode-extension'
   - title: '🧰 Maintenance'
     labels:
       - 'chore'
       - 'dependencies'
-      - 'vscode-extension'
   - title: '📖 Documentation'
     labels:
       - 'documentation'
-      - 'vscode-extension'
-include-labels:
-  - 'vscode-extension'
 exclude-labels:
   - 'skip-changelog'
