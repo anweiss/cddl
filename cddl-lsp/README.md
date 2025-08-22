@@ -28,7 +28,28 @@ Language server implementation and Visual Studio Code Extension for the Concise 
   + Remove unused rules
   + Organize CDDL rules
   + Format document
-* **Advanced formatting**
+* **Advanced formatting** (configurable)
   + Multi-line map formatting
   + Proper indentation
   + Range formatting support
+  + Can be disabled via settings
+
+## Configuration
+
+This extension contributes the following settings:
+
+* `cddllsp.maxNumberOfProblems`: Controls the maximum number of problems produced by the server (default: 100)
+* `cddllsp.trace.server`: Traces the communication between VS Code and the language server (default: "off")
+* `cddllsp.formatting.enabled`: Enable/disable CDDL document formatting (default: true)
+
+### Disabling Formatting
+
+To disable CDDL formatting, add this to your VS Code settings:
+
+```json
+{
+  "cddllsp.formatting.enabled": false
+}
+```
+
+When disabled, the "Format Document" command and automatic formatting will not modify CDDL content.

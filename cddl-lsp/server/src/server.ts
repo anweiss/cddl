@@ -53,6 +53,7 @@ let documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
 
 let hasConfigurationCapability: boolean = false;
 let hasWorkspaceFolderCapability: boolean = false;
+let formattingEnabled: boolean = true;
 // let hasDiagnosticRelatedInformationCapability: boolean = false;
 
 let cddl: any;
@@ -123,12 +124,20 @@ connection.onInitialized(() => {
 // The example settings
 interface ExampleSettings {
   maxNumberOfProblems: number;
+  formatting: {
+    enabled: boolean;
+  };
 }
 
 // The global settings, used when the `workspace/configuration` request is not supported by the client.
 // Please note that this is not the case when using this server with the client provided in this example
 // but could happen with other clients.
-const defaultSettings: ExampleSettings = { maxNumberOfProblems: 1000 };
+const defaultSettings: ExampleSettings = {
+  maxNumberOfProblems: 1000,
+  formatting: {
+    enabled: true,
+  },
+};
 let globalSettings: ExampleSettings = defaultSettings;
 
 // Cache the settings of all open documents
@@ -791,62 +800,73 @@ connection.onSignatureHelp(
 );
 
 // Code Actions provider for quick fixes
-connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
-  let document = documents.get(params.textDocument.uri);
-  if (!document) {
-    return [];
-  }
+connection.onCodeAction(
+  async (params: CodeActionParams): Promise<CodeAction[]> => {
+    let document = documents.get(params.textDocument.uri);
+    if (!document) {
+      return [];
+    }
 
-  let codeActions: CodeAction[] = [];
-  let text = document.getText();
+    let codeActions: CodeAction[] = [];
+    let text = document.getText();
 
-  // Get diagnostics from the request
-  let diagnostics = params.context.diagnostics;
+    // Check if formatting is enabled for format-related actions
+    let settings = await getDocumentSettings(params.textDocument.uri);
 
-  for (let diagnostic of diagnostics) {
-    if (diagnostic.source === "cddl-style") {
-      switch (diagnostic.code) {
-        case "spacing-around-operators":
-          codeActions.push(createSpacingFixAction(document, diagnostic));
-          break;
-        case "trailing-comma":
-          codeActions.push(createTrailingCommaFixAction(document, diagnostic));
-          break;
+    // Get diagnostics from the request
+    let diagnostics = params.context.diagnostics;
+
+    for (let diagnostic of diagnostics) {
+      if (diagnostic.source === "cddl-style") {
+        switch (diagnostic.code) {
+          case "spacing-around-operators":
+            codeActions.push(createSpacingFixAction(document, diagnostic));
+            break;
+          case "trailing-comma":
+            codeActions.push(
+              createTrailingCommaFixAction(document, diagnostic)
+            );
+            break;
+        }
+      }
+
+      if (diagnostic.source === "cddl-lint") {
+        switch (diagnostic.code) {
+          case "unused-rule":
+            codeActions.push(
+              createRemoveUnusedRuleAction(document, diagnostic)
+            );
+            break;
+        }
       }
     }
 
-    if (diagnostic.source === "cddl-lint") {
-      switch (diagnostic.code) {
-        case "unused-rule":
-          codeActions.push(createRemoveUnusedRuleAction(document, diagnostic));
-          break;
-      }
+    // Add general formatting action only if formatting is enabled
+    if (settings.formatting?.enabled) {
+      codeActions.push({
+        title: "Format CDDL Document",
+        kind: CodeActionKind.Source,
+        command: {
+          title: "Format CDDL Document",
+          command: "editor.action.formatDocument",
+        },
+      });
     }
-  }
 
-  // Add general formatting action
-  codeActions.push({
-    title: "Format CDDL Document",
-    kind: CodeActionKind.Source,
-    command: {
-      title: "Format CDDL Document",
-      command: "editor.action.formatDocument",
-    },
-  });
-
-  // Add organize imports-like action for CDDL (organize rules)
-  codeActions.push({
-    title: "Organize CDDL Rules",
-    kind: CodeActionKind.Source,
-    edit: {
-      changes: {
-        [params.textDocument.uri]: createOrganizeRulesEdits(document),
+    // Add organize imports-like action for CDDL (organize rules)
+    codeActions.push({
+      title: "Organize CDDL Rules",
+      kind: CodeActionKind.Source,
+      edit: {
+        changes: {
+          [params.textDocument.uri]: createOrganizeRulesEdits(document),
+        },
       },
-    },
-  });
+    });
 
-  return codeActions;
-});
+    return codeActions;
+  }
+);
 
 function createSpacingFixAction(
   document: TextDocument,
@@ -952,9 +972,15 @@ function createOrganizeRulesEdits(document: TextDocument): TextEdit[] {
 
 // Document range formatting provider
 connection.onDocumentRangeFormatting(
-  (params: DocumentRangeFormattingParams): TextEdit[] => {
+  async (params: DocumentRangeFormattingParams): Promise<TextEdit[]> => {
     let document = documents.get(params.textDocument.uri);
     if (!document) {
+      return [];
+    }
+
+    // Check if formatting is enabled
+    let settings = await getDocumentSettings(params.textDocument.uri);
+    if (!settings.formatting?.enabled) {
       return [];
     }
 
@@ -1264,11 +1290,17 @@ connection.onDefinition((params: DefinitionParams) => {
 });
 
 connection.onDocumentFormatting(
-  (params: DocumentFormattingParams): TextEdit[] | undefined => {
+  async (params: DocumentFormattingParams): Promise<TextEdit[] | undefined> => {
     let document = documents.get(params.textDocument.uri);
 
     if (document === undefined) {
       return undefined;
+    }
+
+    // Check if formatting is enabled
+    let settings = await getDocumentSettings(params.textDocument.uri);
+    if (!settings.formatting?.enabled) {
+      return [];
     }
 
     let formatted_text = "";

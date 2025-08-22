@@ -86,6 +86,12 @@
           ],
           "default": "off",
           "description": "Traces the communication between VS Code and the language server."
+        },
+        "cddllsp.formatting.enabled": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable CDDL document formatting."
         }
       }
     }
