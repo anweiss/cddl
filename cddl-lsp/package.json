@@ -129,7 +129,7 @@
     "@typescript-eslint/eslint-plugin": "^8.8.0",
     "@typescript-eslint/parser": "^8.8.0",
     "eslint": "^9.33.0",
-    "merge-options": "^2.0.0",
+    "merge-options": "^3.0.4",
     "mocha": "^11.1.0",
     "rimraf": "^5.0.10",
     "ts-loader": "^9.5.1",
