@@ -127,6 +127,9 @@ interface ExampleSettings {
   formatting: {
     enabled: boolean;
   };
+  diagnostics: {
+    trailingCommas: boolean;
+  };
 }
 
 // The global settings, used when the `workspace/configuration` request is not supported by the client.
@@ -136,6 +139,9 @@ const defaultSettings: ExampleSettings = {
   maxNumberOfProblems: 1000,
   formatting: {
     enabled: true,
+  },
+  diagnostics: {
+    trailingCommas: true,
   },
 };
 let globalSettings: ExampleSettings = defaultSettings;
@@ -184,7 +190,8 @@ documents.onDidChangeContent((change) => {
 // Enhanced validation for semantic errors and warnings
 function performEnhancedValidation(
   textDocument: TextDocument,
-  cddl: any
+  cddl: any,
+  settings: ExampleSettings
 ): Diagnostic[] {
   let diagnostics: Diagnostic[] = [];
   let text = textDocument.getText();
@@ -347,6 +354,7 @@ function performEnhancedValidation(
 
     // Check for trailing commas in single-line definitions
     if (
+      settings.diagnostics?.trailingCommas &&
       line.trim().endsWith(",") &&
       !line.includes("{") &&
       !line.includes("[")
@@ -425,7 +433,9 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
 
   // Enhanced validation - add semantic errors and warnings
   if (cddl) {
-    diagnostics.push(...performEnhancedValidation(textDocument, cddl));
+    diagnostics.push(
+      ...performEnhancedValidation(textDocument, cddl, settings)
+    );
   }
 
   // Send the computed diagnostics to VSCode.

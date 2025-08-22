@@ -17,7 +17,7 @@ Language server implementation and Visual Studio Code Extension for the Concise 
 * **Document symbols** (outline view)
 * **Workspace symbol search** (search across all CDDL files)
 * **Signature help** for generics and control operators
-* **Enhanced diagnostics**
+* **Enhanced diagnostics** (configurable)
   + Syntax validation
   + Unused rule detection (with CDDL-aware reference tracking)
   + Style warnings (spacing, trailing commas)
@@ -41,6 +41,7 @@ This extension contributes the following settings:
 * `cddl.maxNumberOfProblems`: Controls the maximum number of problems produced by the server (default: 100)
 * `cddl.trace.server`: Traces the communication between VS Code and the language server (default: "off")
 * `cddl.formatting.enabled`: Enable/disable CDDL document formatting (default: true)
+* `cddl.diagnostics.trailingCommas`: Enable/disable trailing comma warnings (default: true)
 
 ### Disabling Formatting
 
@@ -53,3 +54,15 @@ To disable CDDL formatting, add this to your VS Code settings:
 ```
 
 When disabled, the "Format Document" command and automatic formatting will not modify CDDL content.
+
+### Disabling Trailing Comma Warnings
+
+To disable trailing comma warnings, add this to your VS Code settings:
+
+```json
+{
+  "cddl.diagnostics.trailingCommas": false
+}
+```
+
+When disabled, the language server will not show warnings about potentially unnecessary trailing commas.

@@ -1,0 +1,20 @@
+; Test file for trailing comma configuration
+; These lines should show trailing comma warnings when enabled
+
+person = text,
+age = uint,
+name = tstr,
+
+; These lines should NOT show warnings (inside brackets/braces)
+obj = {
+  field1: text,
+  field2: int,
+}
+
+arr = [
+  text,
+  int,
+]
+
+; This should show a warning when enabled
+simple-rule = tstr,
