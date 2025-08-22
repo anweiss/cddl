@@ -19,7 +19,7 @@ Language server implementation and Visual Studio Code Extension for the Concise 
 * **Signature help** for generics and control operators
 * **Enhanced diagnostics**
   + Syntax validation
-  + Unused rule detection
+  + Unused rule detection (with CDDL-aware reference tracking)
   + Style warnings (spacing, trailing commas)
   + Circular dependency detection
 * **Code actions & quick fixes**
@@ -38,9 +38,9 @@ Language server implementation and Visual Studio Code Extension for the Concise 
 
 This extension contributes the following settings:
 
-* `cddllsp.maxNumberOfProblems`: Controls the maximum number of problems produced by the server (default: 100)
-* `cddllsp.trace.server`: Traces the communication between VS Code and the language server (default: "off")
-* `cddllsp.formatting.enabled`: Enable/disable CDDL document formatting (default: true)
+* `cddl.maxNumberOfProblems`: Controls the maximum number of problems produced by the server (default: 100)
+* `cddl.trace.server`: Traces the communication between VS Code and the language server (default: "off")
+* `cddl.formatting.enabled`: Enable/disable CDDL document formatting (default: true)
 
 ### Disabling Formatting
 
@@ -48,7 +48,7 @@ To disable CDDL formatting, add this to your VS Code settings:
 
 ```json
 {
-  "cddllsp.formatting.enabled": false
+  "cddl.formatting.enabled": false
 }
 ```
 

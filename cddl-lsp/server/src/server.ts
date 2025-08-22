@@ -148,9 +148,7 @@ connection.onDidChangeConfiguration((change) => {
     // Reset all cached document settings
     documentSettings.clear();
   } else {
-    globalSettings = <ExampleSettings>(
-      (change.settings.cddllsp || defaultSettings)
-    );
+    globalSettings = <ExampleSettings>(change.settings.cddl || defaultSettings);
   }
 
   // Revalidate all open text documents
@@ -165,7 +163,7 @@ function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
   if (!result) {
     result = connection.workspace.getConfiguration({
       scopeUri: resource,
-      section: "cddllsp",
+      section: "cddl",
     });
     documentSettings.set(resource, result);
   }
@@ -217,17 +215,57 @@ function performEnhancedValidation(
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
 
-    // Skip rule definitions themselves
-    if (line.includes("=") || line.includes("//=") || line.includes("/=")) {
-      continue;
+    // For lines with assignments, only check the right side of the assignment
+    if (line.includes("=")) {
+      let assignmentMatch = line.match(/^([^=]*)(\/\/=|\/=|=)(.*)$/);
+      if (assignmentMatch) {
+        let rightSide = assignmentMatch[3]; // Everything after the assignment operator
+
+        // Look for rule references on the right side of assignments
+        for (let ruleName of definedRules) {
+          let regex = new RegExp(`\\b${ruleName}\\b`, "g");
+          if (regex.test(rightSide)) {
+            usedRules.add(ruleName);
+          }
+        }
+      }
+    } else {
+      // For lines without assignments, check the entire line
+      for (let ruleName of definedRules) {
+        let regex = new RegExp(`\\b${ruleName}\\b`, "g");
+        if (regex.test(line)) {
+          usedRules.add(ruleName);
+        }
+      }
     }
 
-    // Look for rule references (simple word matching)
+    // Check for map key references (rule-name =>)
     for (let ruleName of definedRules) {
-      let regex = new RegExp(`\\b${ruleName}\\b`, "g");
-      let match;
-      while ((match = regex.exec(line)) !== null) {
+      let mapKeyRegex = new RegExp(`\\b${ruleName}\\s*=>`, "g");
+      if (mapKeyRegex.test(line)) {
         usedRules.add(ruleName);
+      }
+    }
+
+    // Also check for socket/plug references ($$rule-name)
+    let socketPlugMatches = line.match(/\$\$([a-zA-Z][a-zA-Z0-9-_]*)/g);
+    if (socketPlugMatches) {
+      for (let match of socketPlugMatches) {
+        let plugName = match.substring(2); // Remove $$
+        if (definedRules.has(plugName)) {
+          usedRules.add(plugName);
+        }
+      }
+    }
+
+    // Check for $rule references (choice sockets)
+    let choiceSocketMatches = line.match(/\$([a-zA-Z][a-zA-Z0-9-_]*)/g);
+    if (choiceSocketMatches) {
+      for (let match of choiceSocketMatches) {
+        let choiceName = match.substring(1); // Remove $
+        if (definedRules.has(choiceName)) {
+          usedRules.add(choiceName);
+        }
       }
     }
   }
@@ -237,13 +275,34 @@ function performEnhancedValidation(
     if (!usedRules.has(ruleName)) {
       let ruleInfo = ruleDefinitions.get(ruleName);
       if (ruleInfo) {
-        diagnostics.push({
-          severity: DiagnosticSeverity.Warning,
-          range: ruleInfo.range,
-          message: `Rule '${ruleName}' is defined but never used`,
-          source: "cddl-lint",
-          code: "unused-rule",
-        });
+        // Skip warning for certain patterns that are typically used as external references
+        // - Integer constant definitions (rule = number)
+        // - String constant definitions (rule = "string")
+        // - Root/entry point rules (common naming patterns)
+        let ruleLineText = lines[ruleInfo.line] || "";
+
+        // Check if this is an integer constant definition
+        let isIntegerConstant = /=\s*\d+\s*$/.test(ruleLineText.trim());
+
+        // Check if this is a string constant definition
+        let isStringConstant = /=\s*"[^"]*"\s*$/.test(ruleLineText.trim());
+
+        // Check if this is likely a root rule (entry point)
+        let isLikelyRootRule =
+          ruleName.includes("tag") ||
+          ruleName.includes("entry") ||
+          ruleName.includes("root") ||
+          ruleName.includes("main");
+
+        if (!isIntegerConstant && !isStringConstant && !isLikelyRootRule) {
+          diagnostics.push({
+            severity: DiagnosticSeverity.Warning,
+            range: ruleInfo.range,
+            message: `Rule '${ruleName}' is defined but never used`,
+            source: "cddl-lint",
+            code: "unused-rule",
+          });
+        }
       }
     }
   }

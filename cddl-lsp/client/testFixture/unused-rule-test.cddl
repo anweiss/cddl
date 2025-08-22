@@ -1,0 +1,46 @@
+; Test file to verify unused rule detection works correctly
+; This should NOT show unused rule warnings
+
+; Root rule - should not be marked as unused (entry point)
+main-document = {
+  version => $version-scheme,
+  content => content-entry,
+  metadata => metadata-entry
+}
+
+; Choice socket definitions - should not be marked as unused
+$version-scheme /= simple-version
+$version-scheme /= complex-version
+
+; Rules used as map keys - should not be marked as unused  
+version = 1
+content = 2
+metadata = 3
+
+; Rules referenced in other rules - should not be marked as unused
+content-entry = {
+  title => text,
+  body => text,
+  * $$content-extension
+}
+
+metadata-entry = {
+  author => text,
+  created => time,
+  * $$metadata-extension
+}
+
+; String constants - should not be marked as unused (external references)
+simple-version = "1.0"
+complex-version = "2.0.1-beta"
+
+; Integer constants - should not be marked as unused (external references)  
+default-port = 8080
+max-retries = 3
+
+; Rules that are genuinely unused - these SHOULD show warnings
+truly-unused-rule = {
+  never-referenced => text
+}
+
+another-unused = "this is not used anywhere"

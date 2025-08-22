@@ -70,13 +70,13 @@
       "type": "object",
       "title": "CDDL Language Server configuration",
       "properties": {
-        "cddllsp.maxNumberOfProblems": {
+        "cddl.maxNumberOfProblems": {
           "scope": "resource",
           "type": "number",
           "default": 100,
           "description": "Controls the maximum number of problems produced by the server."
         },
-        "cddllsp.trace.server": {
+        "cddl.trace.server": {
           "scope": "window",
           "type": "string",
           "enum": [
@@ -87,7 +87,7 @@
           "default": "off",
           "description": "Traces the communication between VS Code and the language server."
         },
-        "cddllsp.formatting.enabled": {
+        "cddl.formatting.enabled": {
           "scope": "resource",
           "type": "boolean",
           "default": true,
