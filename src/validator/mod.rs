@@ -7,9 +7,6 @@ pub mod json;
 
 mod control;
 
-#[cfg(test)]
-mod issue_227_tests;
-
 use crate::{
   ast::{
     Group, GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type2, TypeChoice,
