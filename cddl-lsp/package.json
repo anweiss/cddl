@@ -124,7 +124,7 @@
     "deploy": "vsce publish"
   },
   "devDependencies": {
-    "@types/mocha": "^9.1.0",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^24",
     "@typescript-eslint/eslint-plugin": "^8.8.0",
     "@typescript-eslint/parser": "^8.8.0",
