@@ -124,18 +124,18 @@
     "deploy": "vsce publish"
   },
   "devDependencies": {
-    "@types/mocha": "^9.1.0",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^24",
     "@typescript-eslint/eslint-plugin": "^8.8.0",
     "@typescript-eslint/parser": "^8.8.0",
     "eslint": "^9.34.0",
     "merge-options": "^3.0.4",
     "mocha": "^11.1.0",
-    "rimraf": "^5.0.10",
     "ts-loader": "^9.5.4",
+    "rimraf": "^6.0.1",
     "typescript": "^5.6.3",
     "@vscode/vsce": "^3.2.2",
     "webpack": "^5.101.3",
-    "webpack-cli": "^5.1.4"
+    "webpack-cli": "^6.0.1"
   }
 }
