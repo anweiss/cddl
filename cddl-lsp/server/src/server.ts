@@ -90,6 +90,7 @@ connection.onInitialize((params: InitializeParams) => {
       signatureHelpProvider: {
         triggerCharacters: ["<", ","],
       },
+      // Re-enabled with conservative formatter that preserves syntax
       documentFormattingProvider: true,
       documentRangeFormattingProvider: true,
       codeActionProvider: true,
@@ -139,7 +140,7 @@ interface ExampleSettings {
 const defaultSettings: ExampleSettings = {
   maxNumberOfProblems: 1000,
   formatting: {
-    enabled: true,
+    enabled: true, // Re-enabled with conservative formatter
   },
   diagnostics: {
     trailingCommas: true,
@@ -198,6 +199,11 @@ function performEnhancedValidation(
   let diagnostics: Diagnostic[] = [];
   let text = textDocument.getText();
   let lines = text.split("\n");
+
+  // Return early if cddl is not available or doesn't have rules
+  if (!cddl || !cddl.rules) {
+    return diagnostics;
+  }
 
   // Track defined and used rules
   let definedRules: Set<string> = new Set();
@@ -975,6 +981,11 @@ function findCircularDependencies(cddl: any): string[] {
   let dependencies: Map<string, Set<string>> = new Map();
   let circular: string[] = [];
 
+  // Return early if cddl is not available or doesn't have rules
+  if (!cddl || !cddl.rules) {
+    return circular;
+  }
+
   // Build dependency graph
   for (let rule of cddl.rules) {
     let ruleName = "";
@@ -992,6 +1003,176 @@ function findCircularDependencies(cddl: any): string[] {
   return circular;
 }
 
+// Attempt to parse partial content to extract valid rules before errors
+function attemptPartialParsing(text: string, errors: any[]): any {
+  if (!errors || errors.length === 0) {
+    connection.console.log("attemptPartialParsing: No errors provided");
+    return null;
+  }
+
+  connection.console.log(
+    `attemptPartialParsing: Processing ${errors.length} errors`
+  );
+
+  // Try a simpler approach: extract well-formed rule definitions line by line
+  const textLines = text.split("\n");
+  let extractedRules: string[] = [];
+
+  for (let i = 0; i < textLines.length; i++) {
+    const line = textLines[i].trim();
+
+    // Skip empty lines and comments
+    if (!line || line.startsWith(";")) continue;
+
+    // Look for rule definitions (identifier = something)
+    if (line.match(/^[a-zA-Z_][a-zA-Z0-9_]*\s*=/)) {
+      // Try to extract a complete rule definition
+      let ruleLines = [textLines[i]];
+      let j = i + 1;
+      let braceCount = 0;
+      let bracketCount = 0;
+      let parenCount = 0;
+
+      // Count braces/brackets/parens in the first line
+      for (const char of line) {
+        if (char === "{") braceCount++;
+        else if (char === "}") braceCount--;
+        else if (char === "[") bracketCount++;
+        else if (char === "]") bracketCount--;
+        else if (char === "(") parenCount++;
+        else if (char === ")") parenCount--;
+      }
+
+      // Continue until we have balanced braces/brackets/parens or hit an error
+      while (
+        j < textLines.length &&
+        (braceCount > 0 || bracketCount > 0 || parenCount > 0)
+      ) {
+        const nextLine = textLines[j];
+        ruleLines.push(nextLine);
+
+        for (const char of nextLine) {
+          if (char === "{") braceCount++;
+          else if (char === "}") braceCount--;
+          else if (char === "[") bracketCount++;
+          else if (char === "]") bracketCount--;
+          else if (char === "(") parenCount++;
+          else if (char === ")") parenCount--;
+        }
+
+        j++;
+
+        // Safety break - don't go too far
+        if (j - i > 20) break;
+      }
+
+      // Try to parse this individual rule
+      const ruleText = ruleLines.join("\n");
+      try {
+        const ruleResult = wasm.cddl_from_str(ruleText);
+        if (ruleResult && ruleResult.rules && ruleResult.rules.length > 0) {
+          extractedRules.push(ruleText);
+          connection.console.log(
+            `Successfully extracted rule starting at line ${i + 1}`
+          );
+        }
+      } catch (ruleError) {
+        // This rule has issues, skip it
+        connection.console.log(
+          `Failed to parse rule at line ${i + 1}: ${JSON.stringify(ruleError)}`
+        );
+      }
+
+      // Skip the lines we already processed
+      i = j - 1;
+    }
+  }
+
+  // If we extracted any rules, try to combine them
+  if (extractedRules.length > 0) {
+    const combinedText = extractedRules.join("\n\n");
+    try {
+      const result = wasm.cddl_from_str(combinedText);
+      if (result && result.rules && result.rules.length > 0) {
+        connection.console.log(
+          `Successfully combined ${extractedRules.length} rules into ${result.rules.length} parsed rules`
+        );
+        return result;
+      }
+    } catch (combineError) {
+      connection.console.log(
+        `Failed to combine extracted rules: ${JSON.stringify(combineError)}`
+      );
+    }
+  }
+
+  // Fallback: Find the line number of the first error and try progressive truncation
+  let firstErrorLine = Number.MAX_SAFE_INTEGER;
+  for (const error of errors) {
+    connection.console.log(`Error: ${JSON.stringify(error)}`);
+    if (error.position && error.position.line) {
+      firstErrorLine = Math.min(firstErrorLine, error.position.line);
+    }
+  }
+
+  connection.console.log(`First error line: ${firstErrorLine}`);
+
+  if (firstErrorLine === Number.MAX_SAFE_INTEGER) {
+    connection.console.log(
+      "attemptPartialParsing: No line information available in errors"
+    );
+    return null; // No line information available
+  }
+
+  const lines = text.split("\n");
+  connection.console.log(`Total lines in file: ${lines.length}`);
+
+  // Try to parse progressively smaller portions, starting from just before the error
+  // Start with a wider range to handle files with errors far down
+  const maxLinesToTry = Math.min(50, firstErrorLine);
+  for (
+    let endLine = firstErrorLine - 1;
+    endLine >= Math.max(0, firstErrorLine - maxLinesToTry);
+    endLine--
+  ) {
+    if (endLine <= 0) break;
+
+    try {
+      const partialText = lines.slice(0, endLine).join("\n");
+      connection.console.log(
+        `Trying partial parse up to line ${endLine}, text length: ${partialText.length}`
+      );
+
+      if (partialText.trim().length === 0) {
+        connection.console.log(`Skipping empty text at line ${endLine}`);
+        continue;
+      }
+
+      const result = wasm.cddl_from_str(partialText);
+      if (result && result.rules && result.rules.length > 0) {
+        connection.console.log(
+          `Partial parsing succeeded at line ${endLine}, found ${result.rules.length} rules`
+        );
+        return result;
+      } else {
+        connection.console.log(
+          `Partial parsing returned no rules at line ${endLine}`
+        );
+      }
+    } catch (partialError) {
+      connection.console.log(
+        `Partial parsing failed at line ${endLine}: ${JSON.stringify(
+          partialError
+        )}`
+      );
+      // Continue trying with smaller portions
+      continue;
+    }
+  }
+
+  return null; // No partial parsing succeeded
+}
+
 async function validateTextDocument(textDocument: TextDocument): Promise<void> {
   // In this simple example we get the settings for every validate run.
   let settings = await getDocumentSettings(textDocument.uri);
@@ -1000,10 +1181,29 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
   let text = textDocument.getText();
 
   let errors: any[] = [];
+  let partialCddl: any = null;
+
   try {
     cddl = wasm.cddl_from_str(text);
+    connection.console.log(
+      `Full parsing succeeded, found ${cddl?.rules?.length || 0} rules`
+    );
   } catch (e) {
     errors = Array.isArray(e) ? e : [e];
+
+    // If full parsing failed, attempt partial parsing to extract valid rules
+    partialCddl = attemptPartialParsing(text, errors);
+    if (partialCddl) {
+      cddl = partialCddl;
+      connection.console.log(
+        `Partial parsing succeeded, extracted ${
+          cddl.rules ? cddl.rules.length : 0
+        } rules`
+      );
+    } else {
+      connection.console.log(`Partial parsing failed, no rules extracted`);
+      cddl = null;
+    }
   }
 
   let diagnostics: Diagnostic[] = [];
@@ -1126,7 +1326,7 @@ connection.onCompletion(
     if (beforeCursor.endsWith("$$") || beforeCursor.endsWith("$")) {
       triggeredOnPlug = true;
 
-      if (cddl) {
+      if (cddl && cddl.rules) {
         let groupPlugs: Set<string> = new Set();
         let typePlugs: Set<string> = new Set();
 
@@ -1196,7 +1396,7 @@ connection.onCompletion(
     }
 
     // Add user-defined rules from current document
-    if (cddl) {
+    if (cddl && cddl.rules) {
       let seenRules: Set<string> = new Set();
 
       for (let rule of cddl.rules) {
@@ -1279,7 +1479,7 @@ connection.onCompletionResolve((item: CompletionItem): CompletionItem => {
 connection.onDocumentSymbol(
   (params: DocumentSymbolParams): DocumentSymbol[] => {
     let document = documents.get(params.textDocument.uri);
-    if (!document || !cddl) {
+    if (!document || !cddl || !cddl.rules) {
       return [];
     }
 
@@ -1789,7 +1989,7 @@ connection.onDocumentRangeFormatting(
 );
 
 export function formatCDDLText(text: string): string {
-  // Enhanced CDDL formatting rules with better map entry handling
+  // Ultra-conservative CDDL formatting that preserves original structure
   let lines = text.split("\n");
   let formatted: string[] = [];
   let indentLevel = 0;
@@ -1812,81 +2012,96 @@ export function formatCDDLText(text: string): string {
     // Reset empty line counter when we encounter content
     consecutiveEmptyLines = 0;
 
-    // Handle map entries that are all on one line - split them
-    if (
-      trimmed.includes("{") &&
-      trimmed.includes("}") &&
-      !trimmed.endsWith("{")
-    ) {
-      // This is a single-line map definition, split it into multiple lines
-      formatted.push(...formatSingleLineMap(trimmed, indentLevel));
+    // Preserve comments exactly as they are - don't change anything about them
+    if (trimmed.startsWith(";")) {
+      formatted.push(line); // Keep original indentation and content
       continue;
     }
 
-    // Handle comma-separated entries within braces
-    if (
-      isInsideMap(trimmed) &&
-      trimmed.includes(",") &&
-      !trimmed.endsWith(",")
-    ) {
-      // Split comma-separated entries onto separate lines
-      let entries = splitMapEntries(trimmed);
-      for (let i = 0; i < entries.length; i++) {
-        let entry = entries[i].trim();
-        if (entry) {
-          let indent = "  ".repeat(indentLevel);
-          // Add comma to all entries except the last one (if it didn't already have one)
-          if (i < entries.length - 1 && !entry.endsWith(",")) {
-            entry += ",";
-          }
+    // Preserve hex literals (h'...') and their context exactly as they are
+    if (line.includes("h'") || /^\s*[0-9a-fA-F]+\s*$/.test(line)) {
+      formatted.push(line); // Keep exactly as-is
+      continue;
+    }
 
-          // Check if this entry contains a nested map and format it recursively
-          if (
-            entry.includes("{") &&
-            entry.includes("}") &&
-            !entry.endsWith("{")
-          ) {
-            let nestedFormatted = formatSingleLineMap(entry, indentLevel);
-            // Add comma to the last line of nested map if not the last entry
-            if (i < entries.length - 1 && nestedFormatted.length > 0) {
-              let lastLine = nestedFormatted[nestedFormatted.length - 1];
-              nestedFormatted[nestedFormatted.length - 1] = lastLine + ",";
-            }
-            formatted.push(...nestedFormatted);
-          } else {
-            formatted.push(indent + entry);
-          }
-        }
+    // For rule definitions with alignment, preserve the original formatting
+    if (trimmed.includes("=") && line.includes("  ")) {
+      // This looks like a carefully formatted rule definition, preserve it
+      formatted.push(line);
+      continue;
+    }
+
+    // For lines that are clearly part of multi-line structures with careful alignment,
+    // preserve them exactly
+    if (line.match(/^\s*,\s+\w+\s*:/)) {
+      // Lines like ", transaction_bodies         : [* transaction_body]"
+      formatted.push(line);
+      continue;
+    }
+
+    // For continuation lines with specific alignment, preserve them
+    if (line.match(/^\s{10,}/)) {
+      // Lines with lots of indentation suggesting careful alignment
+      formatted.push(line);
+      continue;
+    }
+
+    // Handle simple closing/opening braces with minimal changes
+    if (trimmed === "}" || trimmed === "]" || trimmed === ")") {
+      indentLevel = Math.max(0, indentLevel - 1);
+      formatted.push("  ".repeat(indentLevel) + trimmed);
+      continue;
+    }
+
+    if (trimmed === "{" || trimmed === "[" || trimmed === "(") {
+      formatted.push("  ".repeat(indentLevel) + trimmed);
+      indentLevel++;
+      continue;
+    }
+
+    // For lines that end with opening braces/brackets, be very minimal
+    if (
+      trimmed.endsWith("{") ||
+      trimmed.endsWith("[") ||
+      trimmed.endsWith("(")
+    ) {
+      // Only adjust if the indentation is clearly wrong
+      if (line.startsWith("  ".repeat(indentLevel))) {
+        formatted.push(line); // Keep as-is if indentation looks right
+      } else {
+        formatted.push("  ".repeat(indentLevel) + trimmed);
       }
+      indentLevel++;
       continue;
     }
 
-    // Decrease indent for closing braces/brackets
+    // For lines that start with closing braces/brackets
     if (
       trimmed.startsWith("}") ||
       trimmed.startsWith("]") ||
       trimmed.startsWith(")")
     ) {
       indentLevel = Math.max(0, indentLevel - 1);
+      formatted.push("  ".repeat(indentLevel) + trimmed);
+      continue;
     }
 
-    // Apply indentation
-    let indent = "  ".repeat(indentLevel);
-    formatted.push(indent + trimmed);
-
-    // Increase indent for opening braces/brackets
-    if (
-      trimmed.endsWith("{") ||
-      trimmed.endsWith("[") ||
-      trimmed.endsWith("(")
-    ) {
-      indentLevel++;
+    // For everything else, apply minimal formatting - preserve original if it looks reasonable
+    let expectedIndent = "  ".repeat(indentLevel);
+    if (line.startsWith(expectedIndent) || line.trim() === "") {
+      // Line already has correct indentation or is empty, keep as-is
+      formatted.push(line);
+    } else {
+      // Apply basic indentation
+      formatted.push(expectedIndent + trimmed);
     }
   }
 
   return formatted.join("\n");
 }
 
+// Deprecated formatting helper functions - no longer used by conservative formatter
+/*
 function formatSingleLineMap(line: string, currentIndent: number): string[] {
   let formatted: string[] = [];
   let indent = "  ".repeat(currentIndent);
@@ -1903,6 +2118,10 @@ function formatSingleLineMap(line: string, currentIndent: number): string[] {
   let content = line
     .substring(line.indexOf("{") + 1, line.lastIndexOf("}"))
     .trim();
+
+  // Extract content after the closing brace
+  let afterBrace = line.substring(line.lastIndexOf("}") + 1).trim();
+
   if (content) {
     let entries = splitMapEntries(content);
     for (let i = 0; i < entries.length; i++) {
@@ -1933,7 +2152,13 @@ function formatSingleLineMap(line: string, currentIndent: number): string[] {
     }
   }
 
-  formatted.push(indent + "}");
+  // Close the map and add any content that was after the closing brace
+  if (afterBrace) {
+    formatted.push(indent + "}" + " " + afterBrace);
+  } else {
+    formatted.push(indent + "}");
+  }
+
   return formatted;
 }
 
@@ -1979,6 +2204,7 @@ function isInsideMap(line: string): boolean {
   // This is not perfect but should work for most cases
   return line.includes(":") && !line.includes("=") && !line.includes("//");
 }
+*/
 
 connection.onHover((params: HoverParams): Hover | undefined => {
   // TODO: If identifier is a single character followed immediately by some
@@ -2016,6 +2242,32 @@ connection.onDefinition((params: DefinitionParams) => {
   if (document === undefined) {
     return undefined;
   }
+
+  // Check if cddl is available (parsing was successful or partial parsing worked)
+  if (
+    !cddl ||
+    !cddl.rules ||
+    !Array.isArray(cddl.rules) ||
+    cddl.rules.length === 0
+  ) {
+    connection.console.log(
+      `onDefinition: No rules available. cddl: ${!!cddl}, rules: ${
+        cddl?.rules?.length || 0
+      }`
+    );
+    return undefined;
+  }
+
+  if (!ident || ident.trim() === "") {
+    connection.console.log(
+      `onDefinition: No valid identifier found at position`
+    );
+    return undefined;
+  }
+
+  connection.console.log(
+    `onDefinition: Looking for identifier '${ident}' in ${cddl.rules.length} rules`
+  );
 
   if (ident) {
     for (const rule of cddl.rules) {
@@ -2105,23 +2357,13 @@ connection.onDocumentFormatting(
     let originalText = document.getText();
 
     try {
-      // Preserve intentional blank lines by marking them
-      let textWithMarkers = preserveBlankLines(originalText);
-
-      // Try WASM formatter first
-      formatted_text = wasm.format_cddl_from_str(textWithMarkers);
-
-      // Restore the blank lines and apply additional formatting
-      formatted_text = restoreBlankLines(formatted_text);
-      formatted_text = formatCDDLText(formatted_text);
-    } catch (e) {
-      console.error(
-        "WASM formatter failed, falling back to TypeScript formatter:",
-        e
-      );
-
-      // Fall back to TypeScript formatter
+      // Use only the conservative TypeScript formatter to avoid syntax corruption
+      // The WASM formatter is too aggressive and breaks CDDL syntax
       formatted_text = formatCDDLText(originalText);
+    } catch (e) {
+      console.error("TypeScript formatter failed:", e);
+      // If our formatter fails, don't change anything
+      return [];
     }
 
     // Only return edit if text actually changed
@@ -2168,11 +2410,34 @@ function getIdentifierAtPosition(
   }
 
   // CDDL identifiers can contain letters, digits, hyphens, and underscores
+  // But must start with a letter or underscore (not a digit)
   let identifierChar = /[a-zA-Z0-9_-]/;
+  let identifierStartChar = /[a-zA-Z_$]/; // Allow $ for socket identifiers
+
+  // Check if we're at a valid identifier start character
+  if (!identifierStartChar.test(documentText[offset])) {
+    // If not, maybe we're in the middle of an identifier, find the start
+    let testStart = offset;
+    while (testStart > 0 && identifierChar.test(documentText[testStart - 1])) {
+      testStart--;
+    }
+
+    // Check if this is a valid identifier (starts with letter/underscore/$)
+    if (!identifierStartChar.test(documentText[testStart])) {
+      return undefined; // Not a valid identifier
+    }
+
+    start = testStart;
+  }
 
   // Find start of identifier
   while (start > 0 && identifierChar.test(documentText[start - 1])) {
     start--;
+  }
+
+  // Ensure the identifier starts with a valid character
+  if (!identifierStartChar.test(documentText[start])) {
+    return undefined;
   }
 
   // Find end of identifier
@@ -2180,7 +2445,18 @@ function getIdentifierAtPosition(
     end++;
   }
 
-  return documentText?.substring(start, end);
+  let identifier = documentText?.substring(start, end);
+
+  // Additional validation: reject pure numeric strings or hex-like patterns
+  if (
+    !identifier ||
+    /^[0-9]+$/.test(identifier) ||
+    /^[0-9a-fA-F]{20,}$/.test(identifier)
+  ) {
+    return undefined;
+  }
+
+  return identifier;
 }
 
 // Workspace Symbol Provider for searching across all CDDL files
