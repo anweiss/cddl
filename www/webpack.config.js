@@ -9,6 +9,28 @@ module.exports = {
     filename: 'app.js',
   },
   mode: 'development',
+  resolve: {
+    fallback: {
+      "util": require.resolve("util/"),
+      "path": require.resolve("path-browserify"),
+      "fs": false
+    }
+  },
+  devServer: {
+    static: [
+      {
+        directory: path.join(__dirname, 'dist'),
+        publicPath: '/',
+      }
+    ],
+    compress: true,
+    port: 8080,
+    open: true,
+    hot: true,
+    client: {
+      logging: 'info',
+    },
+  },
   plugins: [
     new CopyWebpackPlugin({ patterns: ['index.html'] }),
     new MonacoWebpackPlugin(),
