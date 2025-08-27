@@ -2013,6 +2013,8 @@ impl<'a> Parser<'a> {
         self.lexer_position.range.0
       };
 
+    // Store the position of the opening delimiter for better error reporting
+    let opening_delimiter_position = self.lexer_position;
     let closing_delimiter = token::closing_delimiter(&self.cur_token);
 
     let mut group = Group {
@@ -2036,7 +2038,7 @@ impl<'a> Parser<'a> {
       if cd != &self.cur_token {
         self.errors.push(Error::PARSER {
           #[cfg(feature = "ast-span")]
-          position: self.lexer_position,
+          position: opening_delimiter_position,
           msg: MissingClosingDelimiter.into(),
         });
 
@@ -3743,8 +3745,58 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
 
         Err(JsValue::from(Error::INCREMENTAL.to_string()))
       }
+      Err(Error::LEXER(lexer_error)) => {
+        // Handle lexer errors with proper position information
+        let parser_error = ParserError {
+          position: lexer_error.position(),
+          msg: ErrorMsg {
+            short: match &lexer_error.error_type {
+              lexer::LexerErrorType::LEXER(msg_type) => {
+                crate::error::ErrorMsg::from(*msg_type).short
+              }
+              lexer::LexerErrorType::PARSEINT(_) => "number too large to fit in target type".into(),
+              lexer::LexerErrorType::PARSEFLOAT(_) => "invalid floating point number".into(),
+              lexer::LexerErrorType::PARSEHEXF(_) => {
+                "invalid hexadecimal floating point number".into()
+              }
+              lexer::LexerErrorType::UTF8(_) => "invalid UTF-8 sequence".into(),
+              lexer::LexerErrorType::BASE16(_) => "invalid base16 encoding".into(),
+              lexer::LexerErrorType::BASE64(_) => "invalid base64 encoding".into(),
+            },
+            extended: None,
+          },
+        };
+        Err(
+          serde_wasm_bindgen::to_value(&vec![parser_error])
+            .map_err(|e| JsValue::from(e.to_string()))?,
+        )
+      }
       Err(e) => Err(JsValue::from(e.to_string())),
     },
+    Err(Error::LEXER(lexer_error)) => {
+      // Handle lexer errors that occur during parser creation
+      let parser_error = ParserError {
+        position: lexer_error.position(),
+        msg: ErrorMsg {
+          short: match &lexer_error.error_type {
+            lexer::LexerErrorType::LEXER(msg_type) => crate::error::ErrorMsg::from(*msg_type).short,
+            lexer::LexerErrorType::PARSEINT(_) => "number too large to fit in target type".into(),
+            lexer::LexerErrorType::PARSEFLOAT(_) => "invalid floating point number".into(),
+            lexer::LexerErrorType::PARSEHEXF(_) => {
+              "invalid hexadecimal floating point number".into()
+            }
+            lexer::LexerErrorType::UTF8(_) => "invalid UTF-8 sequence".into(),
+            lexer::LexerErrorType::BASE16(_) => "invalid base16 encoding".into(),
+            lexer::LexerErrorType::BASE64(_) => "invalid base64 encoding".into(),
+          },
+          extended: None,
+        },
+      };
+      Err(
+        serde_wasm_bindgen::to_value(&vec![parser_error])
+          .map_err(|e| JsValue::from(e.to_string()))?,
+      )
+    }
     Err(e) => Err(JsValue::from(e.to_string())),
   }
 }

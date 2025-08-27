@@ -93,6 +93,13 @@ pub enum LexerErrorType {
 #[cfg(feature = "std")]
 impl std::error::Error for Error {}
 
+impl Error {
+  /// Get the position information for this error
+  pub fn position(&self) -> Position {
+    self.position
+  }
+}
+
 impl fmt::Display for Error {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut files = SimpleFiles::new();
@@ -1101,6 +1108,32 @@ impl<'a> Lexer<'a> {
     }
   }
 
+  // Helper function to calculate position at a specific index
+  fn calculate_position_at_index(&self, start_idx: usize, end_idx: usize) -> Position {
+    let mut line = 1;
+    let mut column = 1;
+
+    // Count lines and columns up to the start index
+    for (i, byte) in self.str_input.as_bytes().iter().enumerate() {
+      if i >= start_idx {
+        break;
+      }
+      if *byte == b'\n' {
+        line += 1;
+        column = 1;
+      } else {
+        column += 1;
+      }
+    }
+
+    Position {
+      line,
+      column,
+      range: (start_idx, end_idx),
+      index: start_idx,
+    }
+  }
+
   #[cfg(not(target_arch = "wasm32"))]
   fn read_number(&mut self, idx: usize) -> Result<(usize, u64)> {
     let mut end_index = idx;
@@ -1115,11 +1148,14 @@ impl<'a> Lexer<'a> {
       }
     }
 
+    // Calculate the position of the number token start
+    let number_position = self.calculate_position_at_index(idx, end_index + 1);
+
     Ok((
       end_index,
       self.str_input[idx..=end_index]
         .parse()
-        .map_err(|e| Error::from((self.str_input, self.position, e)))?,
+        .map_err(|e| Error::from((self.str_input, number_position, e)))?,
     ))
   }
 
@@ -1137,11 +1173,14 @@ impl<'a> Lexer<'a> {
       }
     }
 
+    // Calculate the position of the number token start
+    let number_position = self.calculate_position_at_index(idx, end_index + 1);
+
     Ok((
       end_index,
       self.str_input[idx..=end_index]
         .parse()
-        .map_err(|e| Error::from((self.str_input, self.position, e)))?,
+        .map_err(|e| Error::from((self.str_input, number_position, e)))?,
     ))
   }
 
