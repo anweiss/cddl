@@ -1,5 +1,6 @@
 const CopyWebpackPlugin = require('copy-webpack-plugin');
 const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin');
+const webpack = require('webpack');
 const path = require('path');
 
 module.exports = {
@@ -13,7 +14,12 @@ module.exports = {
     fallback: {
       "util": require.resolve("util/"),
       "path": require.resolve("path-browserify"),
-      "fs": false
+      "fs": false,
+      "process": require.resolve("process/browser"),
+      "text-encoding": require.resolve("text-encoding")
+    },
+    alias: {
+      'text-encoding': require.resolve('text-encoding')
     }
   },
   devServer: {
@@ -32,8 +38,21 @@ module.exports = {
     },
   },
   plugins: [
-    new CopyWebpackPlugin({ patterns: ['index.html'] }),
+    new CopyWebpackPlugin({ 
+      patterns: [
+        'index.html',
+        {
+          from: '../pkg/cddl_bg.wasm',
+          to: 'cddl_bg.wasm'
+        }
+      ] 
+    }),
     new MonacoWebpackPlugin(),
+    new webpack.ProvidePlugin({
+      process: 'process/browser',
+      TextEncoder: ['text-encoding', 'TextEncoder'],
+      TextDecoder: ['text-encoding', 'TextDecoder'],
+    }),
   ],
   module: {
     rules: [
