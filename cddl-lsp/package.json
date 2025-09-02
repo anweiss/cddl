@@ -126,8 +126,8 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "^24",
-    "@typescript-eslint/eslint-plugin": "^8.8.0",
-    "@typescript-eslint/parser": "^8.41.0",
+    "@typescript-eslint/eslint-plugin": "^8.41.0",
+    "@typescript-eslint/parser": "^8.8.0",
     "eslint": "^9.34.0",
     "merge-options": "^3.0.4",
     "mocha": "^11.1.0",
