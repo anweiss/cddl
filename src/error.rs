@@ -53,6 +53,7 @@ pub enum MsgType {
   EmptyTextStringLiteral,
   InvalidByteStringLiteralCharacter,
   EmptyByteStringLiteral,
+  UnterminatedByteStringLiteral,
   InvalidHexFloat,
   InvalidExponent,
 }
@@ -158,6 +159,10 @@ impl From<MsgType> for ErrorMsg {
       },
       MsgType::EmptyByteStringLiteral => ErrorMsg {
         short: "empty byte string literal".into(),
+        extended: None,
+      },
+      MsgType::UnterminatedByteStringLiteral => ErrorMsg {
+        short: "unterminated byte string literal, missing closing '".into(),
         extended: None,
       },
       MsgType::NoRulesDefined => ErrorMsg {

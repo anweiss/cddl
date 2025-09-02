@@ -2013,6 +2013,21 @@ impl<'a> Parser<'a> {
         self.lexer_position.range.0
       };
 
+    // Store the position of the opening delimiter for better error reporting
+    // When current token is a delimiter, peek_lexer_position contains the delimiter's position
+    let opening_delimiter_position =
+      if let Token::LBRACE | Token::LPAREN | Token::LBRACKET | Token::GCHOICE = &self.cur_token {
+        // Use peek_lexer_position because it contains the position of the current token before advancement
+        Position {
+          line: self.peek_lexer_position.line,
+          column: self.peek_lexer_position.column,
+          range: self.peek_lexer_position.range,
+          index: self.peek_lexer_position.index,
+        }
+      } else {
+        self.lexer_position
+      };
+
     let closing_delimiter = token::closing_delimiter(&self.cur_token);
 
     let mut group = Group {
@@ -2036,7 +2051,7 @@ impl<'a> Parser<'a> {
       if cd != &self.cur_token {
         self.errors.push(Error::PARSER {
           #[cfg(feature = "ast-span")]
-          position: self.lexer_position,
+          position: opening_delimiter_position, // Report error at opening delimiter position
           msg: MissingClosingDelimiter.into(),
         });
 
@@ -3721,23 +3736,45 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
       Ok(c) => serde_wasm_bindgen::to_value(&c).map_err(|e| JsValue::from(e.to_string())),
       Err(Error::INCREMENTAL) => {
         if !p.errors.is_empty() {
+          // Prioritize lexer and syntax errors over missing rule definition errors
+          let mut syntax_errors = Vec::new();
+          let mut missing_rule_errors = Vec::new();
+
+          for error in &p.errors {
+            if let Error::PARSER { position, msg } = error {
+              if msg.short.starts_with("missing definition for rule") {
+                missing_rule_errors.push(ParserError {
+                  position: *position,
+                  msg: msg.clone(),
+                });
+              } else {
+                syntax_errors.push(ParserError {
+                  position: *position,
+                  msg: msg.clone(),
+                });
+              }
+            } else if let Error::LEXER(lexer_error) = error {
+              // Convert lexer errors to the format expected by the frontend
+              syntax_errors.push(ParserError {
+                position: lexer_error.position,
+                msg: ErrorMsg {
+                  short: error.to_string(),
+                  extended: None,
+                },
+              });
+            }
+          }
+
+          // If we have syntax errors, prioritize them over missing rule errors
+          let errors_to_return = if !syntax_errors.is_empty() {
+            syntax_errors
+          } else {
+            missing_rule_errors
+          };
+
           return Err(
-            serde_wasm_bindgen::to_value(
-              &p.errors
-                .iter()
-                .filter_map(|e| {
-                  if let Error::PARSER { position, msg } = e {
-                    Some(ParserError {
-                      position: *position,
-                      msg: msg.clone(),
-                    })
-                  } else {
-                    None
-                  }
-                })
-                .collect::<Vec<ParserError>>(),
-            )
-            .map_err(|e| JsValue::from(e.to_string()))?,
+            serde_wasm_bindgen::to_value(&errors_to_return)
+              .map_err(|e| JsValue::from(e.to_string()))?,
           );
         }
 

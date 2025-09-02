@@ -68,7 +68,7 @@ pub struct Error {
   /// Error type
   pub error_type: LexerErrorType,
   input: String,
-  position: Position,
+  pub position: Position,
 }
 
 /// Various error types emitted by the lexer
@@ -602,14 +602,31 @@ impl<'a> Lexer<'a> {
             if ch == 'h' {
               if let Some(&c) = self.peek_char() {
                 if c.1 == '\'' {
-                  let _ = self.read_char()?;
-                  let (idx, _) = self.read_char()?;
+                  let _ = self.read_char()?; // advance past 'h'
+                                             // Capture position of the opening quote
+                  let mut quote_position = self.position;
+                  quote_position.range = (self.position.index, self.position.index + 1); // Range for just the quote
+                  let (idx, _) = self.read_char()?; // advance past opening quote
 
                   // Ensure that the byte string has been properly encoded.
-                  let b = self.read_prefixed_byte_string(idx)?;
+                  let b = self.read_prefixed_byte_string(idx, quote_position)?;
                   let mut buf = [0u8; 1024];
                   return base16::decode_slice(&b[..], &mut buf)
-                    .map_err(|e| (self.str_input, self.position, e).into())
+                    .map_err(|e| {
+                      // Check if this is an odd-length error, which often indicates an unterminated hex string
+                      let error_str = e.to_string();
+                      if error_str.contains("must be even") || error_str.contains("odd") {
+                        // This suggests the hex string might be unterminated
+                        (
+                          self.str_input,
+                          quote_position,
+                          UnterminatedByteStringLiteral,
+                        )
+                          .into()
+                      } else {
+                        (self.str_input, self.position, e).into()
+                      }
+                    })
                     .map(|_| {
                       self.position.range = (token_offset, self.position.index + 1);
 
@@ -629,12 +646,15 @@ impl<'a> Lexer<'a> {
                       let _ = self.read_char()?;
                       if let Some(&c) = self.peek_char() {
                         if c.1 == '\'' {
-                          let _ = self.read_char()?;
-                          let (idx, _) = self.read_char()?;
+                          let _ = self.read_char()?; // advance past 'b64'
+                                                     // Capture position of the opening quote
+                          let mut quote_position = self.position;
+                          quote_position.range = (self.position.index, self.position.index + 1); // Range for just the quote
+                          let (idx, _) = self.read_char()?; // advance past opening quote
 
                           // Ensure that the byte string has been properly
                           // encoded
-                          let bs = self.read_prefixed_byte_string(idx)?;
+                          let bs = self.read_prefixed_byte_string(idx, quote_position)?;
                           let mut buf =
                             vec![0; data_encoding::BASE64.decode_len(bs.len()).unwrap()];
                           return data_encoding::BASE64URL
@@ -856,21 +876,29 @@ impl<'a> Lexer<'a> {
     Err((self.str_input, self.position, EmptyByteStringLiteral).into())
   }
 
-  fn read_prefixed_byte_string(&mut self, idx: usize) -> Result<Cow<'a, [u8]>> {
+  fn read_prefixed_byte_string(
+    &mut self,
+    idx: usize,
+    quote_position: Position,
+  ) -> Result<Cow<'a, [u8]>> {
     let mut has_whitespace = false;
+    let mut has_content = false;
 
     while let Some(&(_, ch)) = self.peek_char() {
       match ch {
         // BCHAR - Updated per RFC 9682 Section 2.1.2: excludes C1 control chars and surrogates
         '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\x7e' => {
+          has_content = true;
           let _ = self.read_char();
         }
         // NONASCII - Updated per RFC 9682 Section 2.1.2: excludes surrogates and C1 controls
         '\u{00A0}'..='\u{D7FF}' | '\u{E000}'..='\u{10FFFD}' => {
+          has_content = true;
           let _ = self.read_char();
         }
         // SESC - Updated per RFC 9682 Section 2.1.1: more restrictive escape handling
         '\\' => {
+          has_content = true;
           let _ = self.read_char();
           if let Some(&(_, ch)) = self.peek_char() {
             match ch {
@@ -893,6 +921,11 @@ impl<'a> Lexer<'a> {
         }
         // Closing '
         '\x27' => {
+          // Check if this is an empty byte string literal
+          if !has_content {
+            return Err((self.str_input, quote_position, EmptyByteStringLiteral).into());
+          }
+
           // Whitespace is ignored for prefixed byte strings and requires allocation
           if has_whitespace {
             return Ok(
@@ -908,8 +941,6 @@ impl<'a> Lexer<'a> {
         }
         // CRLF
         _ => {
-          // TODO: if user forgets closing "'", but another "'" is found later
-          // in the string, the error emitted here can be confusing
           if ch.is_ascii_whitespace() {
             has_whitespace = true;
             let _ = self.read_char()?;
@@ -917,7 +948,7 @@ impl<'a> Lexer<'a> {
             return Err(
               (
                 self.str_input,
-                self.position,
+                quote_position, // Report error at opening quote position
                 InvalidByteStringLiteralCharacter,
               )
                 .into(),
@@ -927,7 +958,16 @@ impl<'a> Lexer<'a> {
       }
     }
 
-    Err((self.str_input, self.position, EmptyByteStringLiteral).into())
+    // If we reach here, we've hit EOF without finding a closing quote
+    // Report the error at the position of the opening quote
+    Err(
+      (
+        self.str_input,
+        quote_position,
+        UnterminatedByteStringLiteral,
+      )
+        .into(),
+    )
   }
 
   fn read_comment(&mut self, idx: usize) -> Result<&'a str> {
