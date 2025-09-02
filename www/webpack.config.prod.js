@@ -17,7 +17,15 @@ module.exports = {
     }
   },
   plugins: [
-    new CopyWebpackPlugin({ patterns: ['index.html'] }),
+    new CopyWebpackPlugin({ 
+      patterns: [
+        'index.html',
+        {
+          from: '../pkg/cddl_bg.wasm',
+          to: 'cddl_bg.wasm'
+        }
+      ] 
+    }),
     new MonacoWebpackPlugin(),
   ],
   module: {
