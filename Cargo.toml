@@ -59,7 +59,7 @@ simplelog = "0.12.1"
 [dev-dependencies]
 indoc = "2.0.1"
 pretty_assertions = "1.2.0"
-wasm-bindgen-test = "0.3.34"
+wasm-bindgen-test = "0.3.54"
 hex = "0.4.3"                # Add hex crate for tests
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -69,7 +69,7 @@ crossterm = { version = "0.29.0", optional = true }
 console_error_panic_hook = "0.1.6"
 serde-wasm-bindgen = { version = "0.6.5", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
-wasm-bindgen-test = "0.3.34"
+wasm-bindgen-test = "0.3.54"
 js-sys = "0.3.64"
 web-sys = { version = "0.3.64", features = ["console"] }
 
