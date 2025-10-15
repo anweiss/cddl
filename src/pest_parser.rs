@@ -153,7 +153,10 @@ person = {
 "#;
 
     // Test existing parser
+    #[cfg(all(not(target_arch = "wasm32"), feature = "std"))]
     let existing_result = cddl_from_str(input, true);
+    #[cfg(any(target_arch = "wasm32", not(feature = "std")))]
+    let existing_result = cddl_from_str(input);
     assert!(
       existing_result.is_ok(),
       "Existing parser failed: {:?}",
