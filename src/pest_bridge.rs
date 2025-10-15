@@ -606,17 +606,34 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
         });
       }
       Rule::group => {
-        // Check parent context to determine if this is a map or array
-        // For now, we'll treat it as a map
-        return Ok(ast::Type2::Map {
-          group: convert_group(inner, input)?,
-          #[cfg(feature = "ast-span")]
-          span,
-          #[cfg(feature = "ast-comments")]
-          comments_before_group: None,
-          #[cfg(feature = "ast-comments")]
-          comments_after_group: None,
-        });
+        // Check the original text to determine if this is a map { } or array [ ]
+        // We need to look at the full type2 pair's text to see the delimiters
+        let full_text = pair.as_str().trim();
+        let is_array = full_text.starts_with('[');
+        
+        let group = convert_group(inner, input)?;
+        
+        if is_array {
+          return Ok(ast::Type2::Array {
+            group,
+            #[cfg(feature = "ast-span")]
+            span,
+            #[cfg(feature = "ast-comments")]
+            comments_before_group: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_group: None,
+          });
+        } else {
+          return Ok(ast::Type2::Map {
+            group,
+            #[cfg(feature = "ast-span")]
+            span,
+            #[cfg(feature = "ast-comments")]
+            comments_before_group: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_group: None,
+          });
+        }
       }
       Rule::tag_expr => {
         return convert_tag_expr(inner, input);

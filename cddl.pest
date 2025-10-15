@@ -157,10 +157,8 @@ tag_value = { uint_value | "<" ~ S ~ type_expr ~ S ~ ">" }
 // Group choices are separated by "//"
 // Example: ( name: text // id: int )
 group = { group_choice ~ (S ~ group_choice_op ~ S ~ group_choice)* }
-group_choice = { (group_entry ~ (S ~ optional_comma ~ S ~ group_entry)*)? }
+group_choice = { (group_entry ~ (S ~ "," ~ S ~ group_entry)* ~ (S ~ ",")?)?  }
 group_choice_op = { "//" }
-
-optional_comma = _{ ","? }
 
 // =============================================================================
 // GROUP ENTRIES
