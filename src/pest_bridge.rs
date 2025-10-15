@@ -1647,7 +1647,10 @@ person = {
 "#;
     
     // Parse with existing parser
+    #[cfg(all(not(target_arch = "wasm32"), feature = "std"))]
     let existing_result = cddl_from_str(input, true);
+    #[cfg(any(target_arch = "wasm32", not(feature = "std")))]
+    let existing_result = cddl_from_str(input);
     assert!(existing_result.is_ok(), "Existing parser failed: {:?}", existing_result.err());
     
     // Parse with Pest parser
@@ -1655,9 +1658,12 @@ person = {
     assert!(pest_result.is_ok(), "Pest parser failed: {:?}", pest_result.err());
     
     // Both should produce 1 rule
-    let existing_cddl = existing_result.unwrap();
-    let pest_cddl = pest_result.unwrap();
-    assert_eq!(existing_cddl.rules.len(), pest_cddl.rules.len());
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+      let existing_cddl = existing_result.unwrap();
+      let pest_cddl = pest_result.unwrap();
+      assert_eq!(existing_cddl.rules.len(), pest_cddl.rules.len());
+    }
   }
   
   #[test]
