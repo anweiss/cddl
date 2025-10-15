@@ -48,7 +48,7 @@ base64-url = { version = "3.0.0", optional = true }
 base45 = { version = "3.0.1", optional = true }
 hex = { version = "0.4.3", optional = true }
 abnf_to_pest = "0.5.1"
-pest_meta = "2.8.0"
+pest_meta = "2.8.3"
 pest_vm = "2.8.0"
 pest = "2.8.0"
 pest_derive = "2.8.0"
