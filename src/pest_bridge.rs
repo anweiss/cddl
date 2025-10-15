@@ -918,17 +918,9 @@ fn convert_bytes_value_to_type2<'a>(
         let bytes_str = inner.as_str();
         // Remove quotes
         let content = &bytes_str[1..bytes_str.len() - 1];
-        let decoded = data_encoding::BASE64
-          .decode(content.as_bytes())
-          .map_err(|_| Error::PARSER {
-            position: pest_span_to_position(&inner.as_span(), input),
-            msg: ErrorMsg {
-              short: "Invalid base64 encoding".to_string(),
-              extended: None,
-            },
-          })?;
-        return Ok(ast::Type2::B64ByteString {
-          value: Cow::Owned(decoded),
+        // Single-quoted byte strings are UTF-8 encoded text, not base64
+        return Ok(ast::Type2::UTF8ByteString {
+          value: Cow::Owned(content.as_bytes().to_vec()),
           span,
         });
       }
@@ -984,16 +976,9 @@ fn convert_bytes_value_to_type2<'a>(
         let bytes_str = inner.as_str();
         // Remove quotes
         let content = &bytes_str[1..bytes_str.len() - 1];
-        let decoded = data_encoding::BASE64
-          .decode(content.as_bytes())
-          .map_err(|_| Error::PARSER {
-            msg: ErrorMsg {
-              short: "Invalid base64 encoding".to_string(),
-              extended: None,
-            },
-          })?;
-        return Ok(ast::Type2::B64ByteString {
-          value: Cow::Owned(decoded),
+        // Single-quoted byte strings are UTF-8 encoded text, not base64
+        return Ok(ast::Type2::UTF8ByteString {
+          value: Cow::Owned(content.as_bytes().to_vec()),
         });
       }
       Rule::bytes_b16 => {

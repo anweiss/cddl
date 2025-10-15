@@ -275,8 +275,10 @@ bytes_b64 = @{ "'" ~ BASE64_INNER ~ "'" }
 bytes_b16 = @{ "h'" ~ HEX_INNER ~ "'" }
 bytes_h_quoted = @{ "h" ~ "\"" ~ (!("\"") ~ ANY)* ~ "\"" }
 
-BASE64_INNER = { (ASCII_ALPHANUMERIC | "+" | "/" | "=")* }
+BASE64_INNER = { (!(QUOTE) ~ ANY)* }
 HEX_INNER = { (ASCII_HEX_DIGIT | WHITESPACE)* }
+
+QUOTE = _{ "'" }
 
 // =============================================================================
 // STANDARD PRELUDE TYPES
