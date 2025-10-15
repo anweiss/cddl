@@ -1,0 +1,158 @@
+// CDDL Pest Grammar
+// Based on RFC 8610 Appendix B: ABNF Grammar
+// This grammar defines the Concise Data Definition Language (CDDL)
+
+// Main entry point
+cddl = { SOI ~ S ~ (rule ~ S)+ ~ EOI }
+
+// Whitespace and comments (silent rules)
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = { ";" ~ (!NEWLINE ~ ANY)* }
+S = _{ (WHITESPACE | COMMENT)* }
+NEWLINE = _{ "\n" | "\r\n" }
+
+// Rules: type rules or group rules
+rule = { typename ~ generic_params? ~ S ~ assign_t ~ S ~ type_expr
+       | groupname ~ generic_params? ~ S ~ assign_g ~ S ~ group_entry }
+
+// Assignment operators
+assign_t = { assign | assign_t_choice }
+assign_g = { assign | assign_g_choice }
+assign = { "=" }
+assign_t_choice = { "/=" }
+assign_g_choice = { "//=" }
+
+// Generic parameters and arguments
+generic_params = { "<" ~ S ~ generic_param ~ (S ~ "," ~ S ~ generic_param)* ~ S ~ ">" }
+generic_param = { id }
+
+generic_args = { "<" ~ S ~ generic_arg ~ (S ~ "," ~ S ~ generic_arg)* ~ S ~ ">" }
+generic_arg = { type1 }
+
+// Type expressions
+type_expr = { type_choice ~ (S ~ type_choice_op ~ S ~ type_choice)* }
+type_choice = { type1 }
+type_choice_op = { "/" }
+
+// Type1: type with optional range or control operator
+type1 = { type2 ~ S ~ (range_op ~ S ~ type2 | control_op ~ S ~ controller)? }
+
+// Range operators
+range_op = { range_op_inclusive | range_op_exclusive }
+range_op_inclusive = { ".." }
+range_op_exclusive = { "..." }
+
+// Control operators
+control_op = { "." ~ control_name }
+control_name = { "size" | "bits" | "regexp" | "pcre" | "cbor" | "cborseq" 
+               | "within" | "and" | "lt" | "le" | "gt" | "ge" | "eq" | "ne" 
+               | "default" | "cat" | "det" | "plus" | "abnf" | "abnfb" 
+               | "feature" | "b64u" | "b64c" | "b64u-sloppy" | "b64c-sloppy"
+               | "hex" | "hexlc" | "hexuc" | "b32" | "h32" | "b45" 
+               | "base10" | "printf" | "json" | "join" }
+
+controller = { type2 }
+
+// Type2: primary type expressions
+type2 = { value
+        | typename ~ generic_args?
+        | "(" ~ S ~ type_expr ~ S ~ ")"
+        | "{" ~ S ~ group ~ S ~ "}"
+        | "[" ~ S ~ group ~ S ~ "]"
+        | "~" ~ S ~ typename ~ generic_args?
+        | "&" ~ S ~ "(" ~ S ~ group ~ S ~ ")"
+        | "&" ~ S ~ groupname ~ generic_args?
+        | tag_expr }
+
+// Tag expressions
+tag_expr = { "#" ~ DIGIT ~ ("." ~ tag_value)? ~ ("(" ~ S ~ type_expr ~ S ~ ")")? 
+           | "#" ~ ("(" ~ S ~ type_expr ~ S ~ ")")? }
+tag_value = { uint_value | "<" ~ S ~ type_expr ~ S ~ ">" }
+
+// Groups
+group = { group_choice ~ (S ~ group_choice_op ~ S ~ group_choice)* }
+group_choice = { (group_entry ~ (S ~ optional_comma ~ S ~ group_entry)*)? }
+group_choice_op = { "//" }
+
+optional_comma = _{ ","? }
+
+// Group entries
+group_entry = { occur? ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr
+              | occur? ~ S ~ member_key ~ S ~ "=>" ~ S ~ type_expr
+              | occur? ~ S ~ groupname ~ generic_args?
+              | occur? ~ S ~ "(" ~ S ~ group ~ S ~ ")"
+              | occur? ~ S ~ type_expr
+              | "^" ~ S ~ "=>" ~ S ~ type_expr
+              | "^" ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr }
+
+// Member keys (for maps)
+member_key = { bareword | typename ~ generic_args? | value }
+
+// Occurrence indicators
+occur = { occur_exact
+        | occur_range
+        | occur_zero_or_more
+        | occur_one_or_more
+        | occur_optional }
+
+occur_exact = { uint_value ~ "*" ~ !DIGIT }
+occur_range = { uint_value ~ "*" ~ uint_value | uint_value? ~ "*" ~ uint_value? }
+occur_zero_or_more = { "*" ~ !DIGIT }
+occur_one_or_more = { "+" ~ !DIGIT }
+occur_optional = { "?" ~ !DIGIT }
+
+// Identifiers
+id = @{ EALPHA ~ (("-" | ".")? ~ (EALPHA | DIGIT))* }
+typename = { socket_type? ~ id }
+groupname = { socket_group? ~ id }
+bareword = @{ id }
+
+// Socket/plug syntax
+socket_type = { "$" }
+socket_group = { "$$" }
+
+EALPHA = { ALPHA | "@" | "_" | "$" }
+ALPHA = { 'a'..'z' | 'A'..'Z' }
+DIGIT = { '0'..'9' }
+
+// Values
+value = { number | text_value | bytes_value }
+
+// Numbers
+number = { hexfloat | float_value | int_value | uint_value }
+
+uint_value = @{ DIGIT+ }
+int_value = @{ "-" ~ DIGIT+ }
+float_value = @{ "-"? ~ DIGIT+ ~ "." ~ DIGIT+ ~ (^"e" ~ ("+" | "-")? ~ DIGIT+)? }
+hexfloat = @{ "-"? ~ "0x" ~ ASCII_HEX_DIGIT+ ~ ("." ~ ASCII_HEX_DIGIT+)? ~ ("p" ~ ("+" | "-")? ~ DIGIT+)? }
+
+// Text values (strings)
+text_value = ${ "\"" ~ text_inner ~ "\"" }
+text_inner = @{ text_char* }
+text_char = { escape_sequence | (!("\"" | "\\") ~ ANY) }
+escape_sequence = @{ "\\" ~ (
+    "\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" 
+  | ("u" ~ ASCII_HEX_DIGIT{4})
+) }
+
+// Byte strings
+bytes_value = { bytes_b64 | bytes_b16 | bytes_h_quoted }
+
+bytes_b64 = @{ "'" ~ BASE64_INNER ~ "'" }
+bytes_b16 = @{ "h'" ~ HEX_INNER ~ "'" }
+bytes_h_quoted = @{ "h" ~ "\"" ~ (!("\"") ~ ANY)* ~ "\"" }
+
+BASE64_INNER = { (ASCII_ALPHANUMERIC | "+" | "/" | "=")* }
+HEX_INNER = { (ASCII_HEX_DIGIT | WHITESPACE)* }
+
+// Standard prelude types (keywords)
+// These are treated as identifiers that have special meaning
+prelude_type = { "any" | "uint" | "nint" | "int" | "bstr" | "bytes" 
+               | "tstr" | "text" | "tdate" | "time" | "number" 
+               | "biguint" | "bignint" | "bigint" | "integer" | "unsigned"
+               | "decfrac" | "bigfloat" | "eb64url" | "eb64legacy" | "eb16"
+               | "encoded-cbor" | "uri" | "b64url" | "b64legacy" 
+               | "regexp" | "mime-message" | "cbor-any" | "undefined"
+               | "float16" | "float32" | "float64" | "float16-32" 
+               | "float32-64" | "float" | "false" | "true" | "bool" 
+               | "nil" | "null" }
