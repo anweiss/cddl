@@ -1255,16 +1255,38 @@ fn convert_occurrence<'a>(
       Rule::occur_exact | Rule::occur_range => {
         // Parse the occurrence range
         let occur_str = inner.as_str();
+        
+        // Check if this is a simple "n*" pattern (n or more)
+        if occur_str.ends_with('*') && !occur_str.contains("**") {
+          let trimmed = occur_str.trim_end_matches('*').trim();
+          if !trimmed.is_empty() && trimmed.parse::<usize>().is_ok() {
+            // This is "n*" meaning "n or more"
+            let lower = Some(trimmed.parse::<usize>().unwrap());
+            return Ok(ast::Occurrence {
+              occur: ast::Occur::Exact {
+                lower,
+                upper: None,
+                #[cfg(feature = "ast-span")]
+                span: pest_span_to_ast_span(&inner.as_span(), input),
+              },
+              #[cfg(feature = "ast-comments")]
+              comments: None,
+              _a: std::marker::PhantomData,
+            });
+          }
+        }
+        
+        // Handle range patterns "n*m" or "*m" or "n*"
         let parts: Vec<&str> = occur_str.split('*').collect();
 
         let lower = if !parts[0].is_empty() {
-          Some(parts[0].parse::<usize>().unwrap_or(0))
+          Some(parts[0].trim().parse::<usize>().unwrap_or(0))
         } else {
           None
         };
 
-        let upper = if parts.len() > 1 && !parts[1].is_empty() {
-          Some(parts[1].parse::<usize>().unwrap_or(0))
+        let upper = if parts.len() > 1 && !parts[1].trim().is_empty() {
+          Some(parts[1].trim().parse::<usize>().unwrap_or(0))
         } else {
           None
         };
