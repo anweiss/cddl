@@ -2,6 +2,35 @@
 //!
 //! This module provides conversion functions to transform Pest parse trees into the existing
 //! AST structure, ensuring API compatibility while leveraging Pest's parsing capabilities.
+//!
+//! # Overview
+//!
+//! The bridge layer enables the use of Pest's powerful parsing library while maintaining
+//! complete backward compatibility with the existing AST structure. This allows gradual
+//! migration or dual-parser support.
+//!
+//! # Key Features
+//!
+//! - **AST Conversion**: Converts Pest `Pair` and `Pairs` to existing AST nodes
+//! - **Error Mapping**: Translates Pest errors to the existing error format
+//! - **Span Preservation**: Maintains position and span information for error reporting
+//! - **API Compatibility**: Produces identical AST structures to the handwritten parser
+//!
+//! # Example
+//!
+//! ```
+//! use cddl::pest_bridge::cddl_from_pest_str;
+//!
+//! let input = r#"
+//! person = {
+//!   name: tstr,
+//!   age: uint
+//! }
+//! "#;
+//!
+//! let cddl = cddl_from_pest_str(input).expect("Failed to parse CDDL");
+//! assert_eq!(cddl.rules.len(), 1);
+//! ```
 
 use crate::{
   ast,
@@ -1027,6 +1056,24 @@ fn convert_group_entry<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::
   let mut groupname_ident = None;
   let mut generic_args = None;
   let mut inline_group = None;
+  let mut is_cut = false;
+  let mut is_arrow_map = false;
+  
+  // Peek at the inner pairs to determine the structure
+  let inner_pairs: Vec<_> = pair.clone().into_inner().collect();
+  
+  // Check if this has a member key with colon or arrow
+  let has_colon = inner_pairs.iter().any(|p| p.as_str() == ":");
+  let has_arrow = inner_pairs.iter().any(|p| p.as_str() == "=>");
+  let has_cut = inner_pairs.iter().any(|p| p.as_str() == "^");
+  
+  if has_cut {
+    is_cut = true;
+  }
+  
+  if has_arrow {
+    is_arrow_map = true;
+  }
   
   for inner in pair.into_inner() {
     match inner.as_rule() {
@@ -1034,7 +1081,17 @@ fn convert_group_entry<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::
         occur = Some(convert_occurrence(inner, input)?);
       }
       Rule::member_key => {
-        member_key = Some(convert_member_key(inner, input)?);
+        if has_colon || has_arrow {
+          // This is a real member key
+          member_key = Some(convert_member_key_simple(
+            inner,
+            input,
+            is_arrow_map,
+            is_cut,
+            #[cfg(feature = "ast-span")]
+            span,
+          )?);
+        }
       }
       Rule::type_expr => {
         entry_type = Some(convert_type_expr(inner, input)?);
@@ -1165,8 +1222,270 @@ fn convert_occurrence<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::O
   })
 }
 
-/// Convert member key
-fn convert_member_key<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::MemberKey<'a>, Error> {
+/// Convert member key (simple version - operators handled in group_entry)
+#[cfg(feature = "ast-span")]
+fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_map: bool, is_cut: bool, span: ast::Span) -> Result<ast::MemberKey<'a>, Error> {
+  for inner in pair.into_inner() {
+    match inner.as_rule() {
+      Rule::bareword => {
+        if is_arrow_map {
+          // Convert bareword to Type1 for arrow map
+          let type1 = ast::Type1 {
+            type2: ast::Type2::Typename {
+              ident: ast::Identifier {
+                ident: inner.as_str(),
+                socket: None,
+                #[cfg(feature = "ast-span")]
+                span: pest_span_to_ast_span(&inner.as_span(), input),
+              },
+              generic_args: None,
+              #[cfg(feature = "ast-span")]
+              span: pest_span_to_ast_span(&inner.as_span(), input),
+            },
+            operator: None,
+            #[cfg(feature = "ast-span")]
+            span: pest_span_to_ast_span(&inner.as_span(), input),
+            #[cfg(feature = "ast-comments")]
+            comments_after_type: None,
+          };
+          return Ok(ast::MemberKey::Type1 {
+            t1: Box::new(type1),
+            is_cut,
+            #[cfg(feature = "ast-span")]
+            span,
+            #[cfg(feature = "ast-comments")]
+            comments_before_cut: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_cut: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_arrowmap: None,
+          });
+        } else {
+          return Ok(ast::MemberKey::Bareword {
+            ident: ast::Identifier {
+              ident: inner.as_str(),
+              socket: None,
+              #[cfg(feature = "ast-span")]
+              span: pest_span_to_ast_span(&inner.as_span(), input),
+            },
+            #[cfg(feature = "ast-span")]
+            span,
+            #[cfg(feature = "ast-comments")]
+            comments: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_colon: None,
+          });
+        }
+      }
+      Rule::typename => {
+        let ident = convert_identifier(inner.clone(), input, false)?;
+        
+        if is_arrow_map {
+          // Convert typename to Type1 for arrow map
+          let type1 = ast::Type1 {
+            type2: ast::Type2::Typename {
+              ident: ident.clone(),
+              generic_args: None,
+              #[cfg(feature = "ast-span")]
+              span: pest_span_to_ast_span(&inner.as_span(), input),
+            },
+            operator: None,
+            #[cfg(feature = "ast-span")]
+            span: pest_span_to_ast_span(&inner.as_span(), input),
+            #[cfg(feature = "ast-comments")]
+            comments_after_type: None,
+          };
+          return Ok(ast::MemberKey::Type1 {
+            t1: Box::new(type1),
+            is_cut,
+            #[cfg(feature = "ast-span")]
+            span,
+            #[cfg(feature = "ast-comments")]
+            comments_before_cut: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_cut: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_arrowmap: None,
+          });
+        } else {
+          return Ok(ast::MemberKey::Bareword {
+            ident,
+            #[cfg(feature = "ast-span")]
+            span,
+            #[cfg(feature = "ast-comments")]
+            comments: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_colon: None,
+          });
+        }
+      }
+      Rule::value => {
+        let value_type2 = convert_value_to_type2(
+          inner.clone(),
+          input,
+          #[cfg(feature = "ast-span")]
+          span,
+        )?;
+        
+        // Extract Value from Type2
+        let value = match value_type2 {
+          ast::Type2::IntValue { value, .. } => Value::INT(value),
+          ast::Type2::UintValue { value, .. } => Value::UINT(value),
+          ast::Type2::FloatValue { value, .. } => Value::FLOAT(value),
+          ast::Type2::TextValue { value, .. } => Value::TEXT(value),
+          _ => {
+            return Err(Error::PARSER {
+              #[cfg(feature = "ast-span")]
+              position: pest_span_to_position(&inner.as_span(), input),
+              msg: ErrorMsg {
+                short: "Invalid member key value".to_string(),
+                extended: None,
+              },
+            });
+          }
+        };
+        
+        return Ok(ast::MemberKey::Value {
+          value,
+          #[cfg(feature = "ast-span")]
+          span,
+          #[cfg(feature = "ast-comments")]
+          comments: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_colon: None,
+        });
+      }
+      _ => {}
+    }
+  }
+  
+  Err(Error::PARSER {
+    #[cfg(feature = "ast-span")]
+    position: Position::default(),
+    msg: ErrorMsg {
+      short: "Invalid member key".to_string(),
+      extended: None,
+    },
+  })
+}
+
+#[cfg(not(feature = "ast-span"))]
+fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_map: bool, is_cut: bool) -> Result<ast::MemberKey<'a>, Error> {
+  for inner in pair.into_inner() {
+    match inner.as_rule() {
+      Rule::bareword => {
+        if is_arrow_map {
+          // Convert bareword to Type1 for arrow map
+          let type1 = ast::Type1 {
+            type2: ast::Type2::Typename {
+              ident: ast::Identifier {
+                ident: inner.as_str(),
+                socket: None,
+              },
+              generic_args: None,
+            },
+            operator: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_type: None,
+          };
+          return Ok(ast::MemberKey::Type1 {
+            t1: Box::new(type1),
+            is_cut,
+            #[cfg(feature = "ast-comments")]
+            comments_before_cut: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_cut: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_arrowmap: None,
+          });
+        } else {
+          return Ok(ast::MemberKey::Bareword {
+            ident: ast::Identifier {
+              ident: inner.as_str(),
+              socket: None,
+            },
+            #[cfg(feature = "ast-comments")]
+            comments: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_colon: None,
+          });
+        }
+      }
+      Rule::typename => {
+        let ident = convert_identifier(inner.clone(), input, false)?;
+        
+        if is_arrow_map {
+          // Convert typename to Type1 for arrow map
+          let type1 = ast::Type1 {
+            type2: ast::Type2::Typename {
+              ident: ident.clone(),
+              generic_args: None,
+            },
+            operator: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_type: None,
+          };
+          return Ok(ast::MemberKey::Type1 {
+            t1: Box::new(type1),
+            is_cut,
+            #[cfg(feature = "ast-comments")]
+            comments_before_cut: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_cut: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_arrowmap: None,
+          });
+        } else {
+          return Ok(ast::MemberKey::Bareword {
+            ident,
+            #[cfg(feature = "ast-comments")]
+            comments: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_colon: None,
+          });
+        }
+      }
+      Rule::value => {
+        let value_type2 = convert_value_to_type2(inner.clone(), input)?;
+        
+        // Extract Value from Type2
+        let value = match value_type2 {
+          ast::Type2::IntValue { value, .. } => Value::INT(value),
+          ast::Type2::UintValue { value, .. } => Value::UINT(value),
+          ast::Type2::FloatValue { value, .. } => Value::FLOAT(value),
+          ast::Type2::TextValue { value, .. } => Value::TEXT(value),
+          _ => {
+            return Err(Error::PARSER {
+              msg: ErrorMsg {
+                short: "Invalid member key value".to_string(),
+                extended: None,
+              },
+            });
+          }
+        };
+        
+        return Ok(ast::MemberKey::Value {
+          value,
+          #[cfg(feature = "ast-comments")]
+          comments: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_colon: None,
+        });
+      }
+      _ => {}
+    }
+  }
+  
+  Err(Error::PARSER {
+    msg: ErrorMsg {
+      short: "Invalid member key".to_string(),
+      extended: None,
+    },
+  })
+}
+
+/// Convert member key (original - now unused but kept for reference)
+fn _convert_member_key<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::MemberKey<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
   
@@ -1282,6 +1601,7 @@ fn convert_member_key<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::M
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::cddl_from_str;
   
   #[test]
   fn test_basic_type_rule() {
@@ -1314,5 +1634,81 @@ my-map = map<text, int>
 "#;
     let result = cddl_from_pest_str(input);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+  }
+  
+  #[test]
+  fn test_pest_vs_existing_parser() {
+    // Test that Pest parser produces compatible AST
+    let input = r#"
+person = {
+  name: tstr,
+  age: uint
+}
+"#;
+    
+    // Parse with existing parser
+    let existing_result = cddl_from_str(input, true);
+    assert!(existing_result.is_ok(), "Existing parser failed: {:?}", existing_result.err());
+    
+    // Parse with Pest parser
+    let pest_result = cddl_from_pest_str(input);
+    assert!(pest_result.is_ok(), "Pest parser failed: {:?}", pest_result.err());
+    
+    // Both should produce 1 rule
+    let existing_cddl = existing_result.unwrap();
+    let pest_cddl = pest_result.unwrap();
+    assert_eq!(existing_cddl.rules.len(), pest_cddl.rules.len());
+  }
+  
+  #[test]
+  fn test_range_operator() {
+    let input = "port = 0..65535\n";
+    let result = cddl_from_pest_str(input);
+    assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+  }
+  
+  #[test]
+  fn test_array() {
+    let input = "my-array = [* int]\n";
+    let result = cddl_from_pest_str(input);
+    assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+  }
+  
+  #[test]
+  fn test_occurrence_indicators() {
+    let input = r#"
+optional-field = { ? name: tstr }
+zero-or-more = { * items: int }
+one-or-more = { + values: text }
+"#;
+    let result = cddl_from_pest_str(input);
+    assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+  }
+  
+  #[test]
+  fn test_comments() {
+    let input = r#"
+; This is a comment
+person = {
+  name: tstr,  ; person's name
+  age: uint    ; person's age
+}
+"#;
+    let result = cddl_from_pest_str(input);
+    assert!(result.is_ok(), "Failed to parse with comments: {:?}", result.err());
+  }
+  
+  #[test]
+  fn test_error_reporting() {
+    // Test that errors are properly converted
+    let input = "invalid syntax @#$";
+    let result = cddl_from_pest_str(input);
+    assert!(result.is_err(), "Should fail on invalid syntax");
+    
+    if let Err(e) = result {
+      // Verify error contains useful information
+      let error_str = format!("{:?}", e);
+      assert!(error_str.contains("Pest parsing error"), "Error should mention Pest");
+    }
   }
 }
