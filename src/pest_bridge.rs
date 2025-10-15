@@ -541,7 +541,9 @@ fn convert_control_operator<'a>(
   for inner in pair.into_inner() {
     if inner.as_rule() == Rule::control_name {
       let ctrl_str = inner.as_str();
-      return lookup_control_from_str(ctrl_str).ok_or_else(|| Error::PARSER {
+      // Prepend dot to match the expected format for lookup_control_from_str
+      let ctrl_with_dot = format!(".{}", ctrl_str);
+      return lookup_control_from_str(&ctrl_with_dot).ok_or_else(|| Error::PARSER {
         #[cfg(feature = "ast-span")]
         position: pest_span_to_position(&inner.as_span(), input),
         msg: ErrorMsg {
