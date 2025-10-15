@@ -84,10 +84,10 @@ pub fn convert_pest_error(error: pest::error::Error<Rule>, _input: &str) -> Erro
 fn pest_span_to_ast_span(span: &PestSpan, input: &str) -> ast::Span {
   let start = span.start();
   let end = span.end();
-  
+
   // Calculate line number by counting newlines up to start position
   let line = input[..start].chars().filter(|&c| c == '\n').count() + 1;
-  
+
   (start, end, line)
 }
 
@@ -95,11 +95,11 @@ fn pest_span_to_ast_span(span: &PestSpan, input: &str) -> ast::Span {
 fn pest_span_to_position(span: &PestSpan, input: &str) -> Position {
   let start = span.start();
   let end = span.end();
-  
+
   // Calculate line and column
   let mut line = 1;
   let mut column = 1;
-  
+
   for (_idx, ch) in input[..start].chars().enumerate() {
     if ch == '\n' {
       line += 1;
@@ -108,7 +108,7 @@ fn pest_span_to_position(span: &PestSpan, input: &str) -> Position {
       column += 1;
     }
   }
-  
+
   Position {
     line,
     column,
@@ -119,9 +119,8 @@ fn pest_span_to_position(span: &PestSpan, input: &str) -> Position {
 
 /// Parse CDDL from string using Pest parser and convert to AST
 pub fn cddl_from_pest_str<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
-  let pairs = CddlParser::parse(Rule::cddl, input)
-    .map_err(|e| convert_pest_error(e, input))?;
-  
+  let pairs = CddlParser::parse(Rule::cddl, input).map_err(|e| convert_pest_error(e, input))?;
+
   convert_cddl(pairs, input)
 }
 
@@ -135,9 +134,9 @@ fn convert_cddl<'a>(mut pairs: Pairs<'a, Rule>, input: &'a str) -> Result<ast::C
       extended: None,
     },
   })?;
-  
+
   let mut rules = Vec::new();
-  
+
   for inner_pair in pair.into_inner() {
     match inner_pair.as_rule() {
       Rule::rule => {
@@ -147,7 +146,7 @@ fn convert_cddl<'a>(mut pairs: Pairs<'a, Rule>, input: &'a str) -> Result<ast::C
       _ => {}
     }
   }
-  
+
   Ok(ast::CDDL {
     rules,
     #[cfg(feature = "ast-comments")]
@@ -159,7 +158,7 @@ fn convert_cddl<'a>(mut pairs: Pairs<'a, Rule>, input: &'a str) -> Result<ast::C
 fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
-  
+
   let mut inner = pair.into_inner();
   let first = inner.next().ok_or_else(|| Error::PARSER {
     #[cfg(feature = "ast-span")]
@@ -169,7 +168,7 @@ fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a
       extended: None,
     },
   })?;
-  
+
   // Determine if this is a type rule or group rule based on first identifier
   match first.as_rule() {
     Rule::typename => {
@@ -177,7 +176,7 @@ fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a
       let mut generic_params = None;
       let mut is_type_choice_alternate = false;
       let mut value = None;
-      
+
       for p in inner {
         match p.as_rule() {
           Rule::generic_params => {
@@ -196,7 +195,7 @@ fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a
           _ => {}
         }
       }
-      
+
       let value = value.ok_or_else(|| Error::PARSER {
         #[cfg(feature = "ast-span")]
         position: Position::default(),
@@ -205,7 +204,7 @@ fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a
           extended: None,
         },
       })?;
-      
+
       Ok(ast::Rule::Type {
         rule: ast::TypeRule {
           name,
@@ -228,7 +227,7 @@ fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a
       let mut generic_params = None;
       let mut is_group_choice_alternate = false;
       let mut entry = None;
-      
+
       for p in inner {
         match p.as_rule() {
           Rule::generic_params => {
@@ -247,7 +246,7 @@ fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a
           _ => {}
         }
       }
-      
+
       let entry = entry.ok_or_else(|| Error::PARSER {
         #[cfg(feature = "ast-span")]
         position: Position::default(),
@@ -256,7 +255,7 @@ fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a
           extended: None,
         },
       })?;
-      
+
       Ok(ast::Rule::Group {
         rule: Box::new(ast::GroupRule {
           name,
@@ -286,13 +285,17 @@ fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a
 }
 
 /// Convert identifier (typename or groupname)
-fn convert_identifier<'a>(pair: Pair<'a, Rule>, input: &'a str, _is_group: bool) -> Result<ast::Identifier<'a>, Error> {
+fn convert_identifier<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+  _is_group: bool,
+) -> Result<ast::Identifier<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
-  
+
   let mut socket = None;
   let mut ident = pair.as_str();
-  
+
   for inner in pair.into_inner() {
     match inner.as_rule() {
       Rule::socket_type => {
@@ -309,7 +312,7 @@ fn convert_identifier<'a>(pair: Pair<'a, Rule>, input: &'a str, _is_group: bool)
       _ => {}
     }
   }
-  
+
   Ok(ast::Identifier {
     ident,
     socket,
@@ -319,12 +322,15 @@ fn convert_identifier<'a>(pair: Pair<'a, Rule>, input: &'a str, _is_group: bool)
 }
 
 /// Convert generic parameters
-fn convert_generic_params<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::GenericParams<'a>, Error> {
+fn convert_generic_params<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+) -> Result<ast::GenericParams<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
-  
+
   let mut params = Vec::new();
-  
+
   for inner in pair.into_inner() {
     if inner.as_rule() == Rule::generic_param {
       for id_pair in inner.into_inner() {
@@ -345,7 +351,7 @@ fn convert_generic_params<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<as
       }
     }
   }
-  
+
   Ok(ast::GenericParams {
     params,
     #[cfg(feature = "ast-span")]
@@ -354,12 +360,15 @@ fn convert_generic_params<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<as
 }
 
 /// Convert generic arguments
-fn convert_generic_args<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::GenericArgs<'a>, Error> {
+fn convert_generic_args<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+) -> Result<ast::GenericArgs<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
-  
+
   let mut args = Vec::new();
-  
+
   for inner in pair.into_inner() {
     if inner.as_rule() == Rule::generic_arg {
       for type1_pair in inner.into_inner() {
@@ -375,7 +384,7 @@ fn convert_generic_args<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast:
       }
     }
   }
-  
+
   Ok(ast::GenericArgs {
     args,
     #[cfg(feature = "ast-span")]
@@ -387,9 +396,9 @@ fn convert_generic_args<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast:
 fn convert_type_expr<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
-  
+
   let mut type_choices = Vec::new();
-  
+
   for inner in pair.into_inner() {
     if inner.as_rule() == Rule::type_choice {
       for type1_pair in inner.into_inner() {
@@ -405,7 +414,7 @@ fn convert_type_expr<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Ty
       }
     }
   }
-  
+
   Ok(ast::Type {
     type_choices,
     #[cfg(feature = "ast-span")]
@@ -417,13 +426,13 @@ fn convert_type_expr<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Ty
 fn convert_type1<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type1<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
-  
+
   let mut type2 = None;
   let mut operator = None;
-  
+
   // Clone the pair to allow multiple iterations
   let pair_clone = pair.clone();
-  
+
   for inner in pair_clone.into_inner() {
     match inner.as_rule() {
       Rule::type2 => {
@@ -438,7 +447,10 @@ fn convert_type1<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type1<
         }
       }
       Rule::range_op => {
-        let is_inclusive = inner.clone().into_inner().any(|p| p.as_rule() == Rule::range_op_inclusive);
+        let is_inclusive = inner
+          .clone()
+          .into_inner()
+          .any(|p| p.as_rule() == Rule::range_op_inclusive);
         operator = Some(ast::Operator {
           operator: ast::RangeCtlOp::RangeOp {
             is_inclusive,
@@ -486,19 +498,22 @@ fn convert_type1<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type1<
       _ => {}
     }
   }
-  
+
   // Fill in the second type2 for range operators if we have an operator but its type2 is Any
   let pairs_vec: Vec<_> = pair.into_inner().collect();
   if let Some(ref mut op) = operator {
     if matches!(op.type2, ast::Type2::Any { .. }) {
       // Find the second type2
-      let type2_pairs: Vec<_> = pairs_vec.iter().filter(|p| p.as_rule() == Rule::type2).collect();
+      let type2_pairs: Vec<_> = pairs_vec
+        .iter()
+        .filter(|p| p.as_rule() == Rule::type2)
+        .collect();
       if type2_pairs.len() > 1 {
         op.type2 = convert_type2(type2_pairs[1].clone(), input)?;
       }
     }
   }
-  
+
   let type2 = type2.ok_or_else(|| Error::PARSER {
     #[cfg(feature = "ast-span")]
     position: Position::default(),
@@ -507,7 +522,7 @@ fn convert_type1<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type1<
       extended: None,
     },
   })?;
-  
+
   Ok(ast::Type1 {
     type2,
     operator,
@@ -519,7 +534,10 @@ fn convert_type1<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type1<
 }
 
 /// Convert control operator
-fn convert_control_operator<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ControlOperator, Error> {
+fn convert_control_operator<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+) -> Result<ControlOperator, Error> {
   for inner in pair.into_inner() {
     if inner.as_rule() == Rule::control_name {
       let ctrl_str = inner.as_str();
@@ -533,7 +551,7 @@ fn convert_control_operator<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<
       });
     }
   }
-  
+
   Err(Error::PARSER {
     #[cfg(feature = "ast-span")]
     position: Position::default(),
@@ -548,10 +566,10 @@ fn convert_control_operator<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<
 fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
-  
+
   // Clone the pair to allow multiple iterations
   let pair_clone = pair.clone();
-  
+
   for inner in pair_clone.into_inner() {
     match inner.as_rule() {
       Rule::value => {
@@ -560,7 +578,7 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
       Rule::typename => {
         let ident = convert_identifier(inner.clone(), input, false)?;
         let generic_args = None;
-        
+
         // Check if there are generic args (they would be siblings in the parent)
         // We need to re-examine the parent's children
         return Ok(ast::Type2::Typename {
@@ -604,11 +622,11 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
       _ => {}
     }
   }
-  
+
   // Handle typename with generic_args by checking all children
   let mut typename_ident = None;
   let mut generic_args = None;
-  
+
   for inner in pair.clone().into_inner() {
     match inner.as_rule() {
       Rule::typename => {
@@ -620,7 +638,7 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
       _ => {}
     }
   }
-  
+
   if let Some(ident) = typename_ident {
     return Ok(ast::Type2::Typename {
       ident,
@@ -629,7 +647,7 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
       span,
     });
   }
-  
+
   // Default to Any if we can't determine the type
   Ok(ast::Type2::Any {
     #[cfg(feature = "ast-span")]
@@ -639,7 +657,11 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
 
 /// Convert value to Type2
 #[cfg(feature = "ast-span")]
-fn convert_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str, span: ast::Span) -> Result<ast::Type2<'a>, Error> {
+fn convert_value_to_type2<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+  span: ast::Span,
+) -> Result<ast::Type2<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
       Rule::number => {
@@ -648,7 +670,7 @@ fn convert_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str, span: ast::S
       Rule::text_value => {
         let text = inner.as_str();
         // Remove quotes
-        let text_content = &text[1..text.len()-1];
+        let text_content = &text[1..text.len() - 1];
         // Handle escape sequences
         let unescaped = unescape_text(text_content);
         return Ok(ast::Type2::TextValue {
@@ -662,7 +684,7 @@ fn convert_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str, span: ast::S
       _ => {}
     }
   }
-  
+
   Err(Error::PARSER {
     position: Position::default(),
     msg: ErrorMsg {
@@ -673,7 +695,10 @@ fn convert_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str, span: ast::S
 }
 
 #[cfg(not(feature = "ast-span"))]
-fn convert_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<'a>, Error> {
+fn convert_value_to_type2<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+) -> Result<ast::Type2<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
       Rule::number => {
@@ -682,7 +707,7 @@ fn convert_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<as
       Rule::text_value => {
         let text = inner.as_str();
         // Remove quotes
-        let text_content = &text[1..text.len()-1];
+        let text_content = &text[1..text.len() - 1];
         // Handle escape sequences
         let unescaped = unescape_text(text_content);
         return Ok(ast::Type2::TextValue {
@@ -695,7 +720,7 @@ fn convert_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<as
       _ => {}
     }
   }
-  
+
   Err(Error::PARSER {
     msg: ErrorMsg {
       short: "Invalid value".to_string(),
@@ -708,7 +733,7 @@ fn convert_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<as
 fn unescape_text(text: &str) -> String {
   let mut result = String::new();
   let mut chars = text.chars();
-  
+
   while let Some(ch) = chars.next() {
     if ch == '\\' {
       if let Some(next_ch) = chars.next() {
@@ -740,13 +765,17 @@ fn unescape_text(text: &str) -> String {
       result.push(ch);
     }
   }
-  
+
   result
 }
 
 /// Convert number to Type2
 #[cfg(feature = "ast-span")]
-fn convert_number_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str, span: ast::Span) -> Result<ast::Type2<'a>, Error> {
+fn convert_number_to_type2<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+  span: ast::Span,
+) -> Result<ast::Type2<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
       Rule::uint_value => {
@@ -792,7 +821,7 @@ fn convert_number_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str, span: ast::
       _ => {}
     }
   }
-  
+
   Err(Error::PARSER {
     position: Position::default(),
     msg: ErrorMsg {
@@ -803,7 +832,10 @@ fn convert_number_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str, span: ast::
 }
 
 #[cfg(not(feature = "ast-span"))]
-fn convert_number_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<'a>, Error> {
+fn convert_number_to_type2<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+) -> Result<ast::Type2<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
       Rule::uint_value => {
@@ -845,7 +877,7 @@ fn convert_number_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<a
       _ => {}
     }
   }
-  
+
   Err(Error::PARSER {
     msg: ErrorMsg {
       short: "Invalid number".to_string(),
@@ -856,20 +888,26 @@ fn convert_number_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<a
 
 /// Convert bytes value to Type2
 #[cfg(feature = "ast-span")]
-fn convert_bytes_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str, span: ast::Span) -> Result<ast::Type2<'a>, Error> {
+fn convert_bytes_value_to_type2<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+  span: ast::Span,
+) -> Result<ast::Type2<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
       Rule::bytes_b64 => {
         let bytes_str = inner.as_str();
         // Remove quotes
-        let content = &bytes_str[1..bytes_str.len()-1];
-        let decoded = data_encoding::BASE64.decode(content.as_bytes()).map_err(|_| Error::PARSER {
-          position: pest_span_to_position(&inner.as_span(), input),
-          msg: ErrorMsg {
-            short: "Invalid base64 encoding".to_string(),
-            extended: None,
-          },
-        })?;
+        let content = &bytes_str[1..bytes_str.len() - 1];
+        let decoded = data_encoding::BASE64
+          .decode(content.as_bytes())
+          .map_err(|_| Error::PARSER {
+            position: pest_span_to_position(&inner.as_span(), input),
+            msg: ErrorMsg {
+              short: "Invalid base64 encoding".to_string(),
+              extended: None,
+            },
+          })?;
         return Ok(ast::Type2::B64ByteString {
           value: Cow::Owned(decoded),
           span,
@@ -878,15 +916,17 @@ fn convert_bytes_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str, span: 
       Rule::bytes_b16 => {
         let bytes_str = inner.as_str();
         // Remove h' and '
-        let content = &bytes_str[2..bytes_str.len()-1];
+        let content = &bytes_str[2..bytes_str.len() - 1];
         let cleaned: String = content.chars().filter(|c| !c.is_whitespace()).collect();
-        let decoded = data_encoding::HEXUPPER.decode(cleaned.as_bytes()).map_err(|_| Error::PARSER {
-          position: pest_span_to_position(&inner.as_span(), input),
-          msg: ErrorMsg {
-            short: "Invalid base16 encoding".to_string(),
-            extended: None,
-          },
-        })?;
+        let decoded = data_encoding::HEXUPPER
+          .decode(cleaned.as_bytes())
+          .map_err(|_| Error::PARSER {
+            position: pest_span_to_position(&inner.as_span(), input),
+            msg: ErrorMsg {
+              short: "Invalid base16 encoding".to_string(),
+              extended: None,
+            },
+          })?;
         return Ok(ast::Type2::B16ByteString {
           value: Cow::Owned(decoded),
           span,
@@ -895,7 +935,7 @@ fn convert_bytes_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str, span: 
       Rule::bytes_h_quoted => {
         let bytes_str = inner.as_str();
         // Remove h" and "
-        let content = &bytes_str[2..bytes_str.len()-1];
+        let content = &bytes_str[2..bytes_str.len() - 1];
         return Ok(ast::Type2::UTF8ByteString {
           value: Cow::Owned(content.as_bytes().to_vec()),
           span,
@@ -904,7 +944,7 @@ fn convert_bytes_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str, span: 
       _ => {}
     }
   }
-  
+
   Err(Error::PARSER {
     position: Position::default(),
     msg: ErrorMsg {
@@ -915,19 +955,24 @@ fn convert_bytes_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str, span: 
 }
 
 #[cfg(not(feature = "ast-span"))]
-fn convert_bytes_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<'a>, Error> {
+fn convert_bytes_value_to_type2<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+) -> Result<ast::Type2<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
       Rule::bytes_b64 => {
         let bytes_str = inner.as_str();
         // Remove quotes
-        let content = &bytes_str[1..bytes_str.len()-1];
-        let decoded = data_encoding::BASE64.decode(content.as_bytes()).map_err(|_| Error::PARSER {
-          msg: ErrorMsg {
-            short: "Invalid base64 encoding".to_string(),
-            extended: None,
-          },
-        })?;
+        let content = &bytes_str[1..bytes_str.len() - 1];
+        let decoded = data_encoding::BASE64
+          .decode(content.as_bytes())
+          .map_err(|_| Error::PARSER {
+            msg: ErrorMsg {
+              short: "Invalid base64 encoding".to_string(),
+              extended: None,
+            },
+          })?;
         return Ok(ast::Type2::B64ByteString {
           value: Cow::Owned(decoded),
         });
@@ -935,14 +980,16 @@ fn convert_bytes_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Res
       Rule::bytes_b16 => {
         let bytes_str = inner.as_str();
         // Remove h' and '
-        let content = &bytes_str[2..bytes_str.len()-1];
+        let content = &bytes_str[2..bytes_str.len() - 1];
         let cleaned: String = content.chars().filter(|c| !c.is_whitespace()).collect();
-        let decoded = data_encoding::HEXUPPER.decode(cleaned.as_bytes()).map_err(|_| Error::PARSER {
-          msg: ErrorMsg {
-            short: "Invalid base16 encoding".to_string(),
-            extended: None,
-          },
-        })?;
+        let decoded = data_encoding::HEXUPPER
+          .decode(cleaned.as_bytes())
+          .map_err(|_| Error::PARSER {
+            msg: ErrorMsg {
+              short: "Invalid base16 encoding".to_string(),
+              extended: None,
+            },
+          })?;
         return Ok(ast::Type2::B16ByteString {
           value: Cow::Owned(decoded),
         });
@@ -950,7 +997,7 @@ fn convert_bytes_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Res
       Rule::bytes_h_quoted => {
         let bytes_str = inner.as_str();
         // Remove h" and "
-        let content = &bytes_str[2..bytes_str.len()-1];
+        let content = &bytes_str[2..bytes_str.len() - 1];
         return Ok(ast::Type2::UTF8ByteString {
           value: Cow::Owned(content.as_bytes().to_vec()),
         });
@@ -958,7 +1005,7 @@ fn convert_bytes_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Res
       _ => {}
     }
   }
-  
+
   Err(Error::PARSER {
     msg: ErrorMsg {
       short: "Invalid bytes value".to_string(),
@@ -971,21 +1018,21 @@ fn convert_bytes_value_to_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Res
 fn convert_tag_expr<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
-  
+
   // Tag expressions can be:
   // #6.32(tstr) - tagged data with literal tag
   // #6.<typename> - tagged data with type constraint
   // # - any
-  
+
   let full_str = pair.as_str();
-  
+
   if full_str == "#" {
     return Ok(ast::Type2::Any {
       #[cfg(feature = "ast-span")]
       span,
     });
   }
-  
+
   // Parse tag expressions - this is complex, so we'll do a basic implementation
   // A full implementation would parse the internal structure
   Ok(ast::Type2::Any {
@@ -998,15 +1045,15 @@ fn convert_tag_expr<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Typ
 fn convert_group<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Group<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
-  
+
   let mut group_choices = Vec::new();
-  
+
   for inner in pair.into_inner() {
     if inner.as_rule() == Rule::group_choice {
       group_choices.push(convert_group_choice(inner, input)?);
     }
   }
-  
+
   Ok(ast::Group {
     group_choices,
     #[cfg(feature = "ast-span")]
@@ -1015,12 +1062,15 @@ fn convert_group<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Group<
 }
 
 /// Convert group choice
-fn convert_group_choice<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::GroupChoice<'a>, Error> {
+fn convert_group_choice<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+) -> Result<ast::GroupChoice<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
-  
+
   let mut group_entries = Vec::new();
-  
+
   for inner in pair.into_inner() {
     if inner.as_rule() == Rule::group_entry {
       let entry = convert_group_entry(inner, input)?;
@@ -1035,7 +1085,7 @@ fn convert_group_choice<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast:
       ));
     }
   }
-  
+
   Ok(ast::GroupChoice {
     group_entries,
     #[cfg(feature = "ast-span")]
@@ -1046,10 +1096,13 @@ fn convert_group_choice<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast:
 }
 
 /// Convert group entry
-fn convert_group_entry<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::GroupEntry<'a>, Error> {
+fn convert_group_entry<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+) -> Result<ast::GroupEntry<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
-  
+
   let mut occur = None;
   let mut member_key = None;
   let mut entry_type = None;
@@ -1058,23 +1111,23 @@ fn convert_group_entry<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::
   let mut inline_group = None;
   let mut is_cut = false;
   let mut is_arrow_map = false;
-  
+
   // Peek at the inner pairs to determine the structure
   let inner_pairs: Vec<_> = pair.clone().into_inner().collect();
-  
+
   // Check if this has a member key with colon or arrow
   let has_colon = inner_pairs.iter().any(|p| p.as_str() == ":");
   let has_arrow = inner_pairs.iter().any(|p| p.as_str() == "=>");
   let has_cut = inner_pairs.iter().any(|p| p.as_str() == "^");
-  
+
   if has_cut {
     is_cut = true;
   }
-  
+
   if has_arrow {
     is_arrow_map = true;
   }
-  
+
   for inner in pair.into_inner() {
     match inner.as_rule() {
       Rule::occur => {
@@ -1108,7 +1161,7 @@ fn convert_group_entry<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::
       _ => {}
     }
   }
-  
+
   // Determine the type of group entry
   if let Some(group) = inline_group {
     return Ok(ast::GroupEntry::InlineGroup {
@@ -1122,7 +1175,7 @@ fn convert_group_entry<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::
       comments_after_group: None,
     });
   }
-  
+
   if let Some(name) = groupname_ident {
     return Ok(ast::GroupEntry::TypeGroupname {
       ge: ast::TypeGroupnameEntry {
@@ -1138,14 +1191,14 @@ fn convert_group_entry<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::
       trailing_comments: None,
     });
   }
-  
+
   // Default to ValueMemberKey
   let entry_type = entry_type.unwrap_or_else(|| ast::Type {
     type_choices: vec![],
     #[cfg(feature = "ast-span")]
     span: ast::Span::default(),
   });
-  
+
   Ok(ast::GroupEntry::ValueMemberKey {
     ge: Box::new(ast::ValueMemberKeyEntry {
       occur,
@@ -1162,7 +1215,10 @@ fn convert_group_entry<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::
 }
 
 /// Convert occurrence indicator
-fn convert_occurrence<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Occurrence<'a>, Error> {
+fn convert_occurrence<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+) -> Result<ast::Occurrence<'a>, Error> {
   for inner in pair.into_inner() {
     let occur = match inner.as_rule() {
       Rule::occur_optional => ast::Occur::Optional {
@@ -1181,19 +1237,19 @@ fn convert_occurrence<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::O
         // Parse the occurrence range
         let occur_str = inner.as_str();
         let parts: Vec<&str> = occur_str.split('*').collect();
-        
+
         let lower = if !parts[0].is_empty() {
           Some(parts[0].parse::<usize>().unwrap_or(0))
         } else {
           None
         };
-        
+
         let upper = if parts.len() > 1 && !parts[1].is_empty() {
           Some(parts[1].parse::<usize>().unwrap_or(0))
         } else {
           None
         };
-        
+
         ast::Occur::Exact {
           lower,
           upper,
@@ -1203,7 +1259,7 @@ fn convert_occurrence<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::O
       }
       _ => continue,
     };
-    
+
     return Ok(ast::Occurrence {
       occur,
       #[cfg(feature = "ast-comments")]
@@ -1211,7 +1267,7 @@ fn convert_occurrence<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::O
       _a: std::marker::PhantomData,
     });
   }
-  
+
   Err(Error::PARSER {
     #[cfg(feature = "ast-span")]
     position: Position::default(),
@@ -1224,7 +1280,13 @@ fn convert_occurrence<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::O
 
 /// Convert member key (simple version - operators handled in group_entry)
 #[cfg(feature = "ast-span")]
-fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_map: bool, is_cut: bool, span: ast::Span) -> Result<ast::MemberKey<'a>, Error> {
+fn convert_member_key_simple<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+  is_arrow_map: bool,
+  is_cut: bool,
+  span: ast::Span,
+) -> Result<ast::MemberKey<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
       Rule::bareword => {
@@ -1279,7 +1341,7 @@ fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_
       }
       Rule::typename => {
         let ident = convert_identifier(inner.clone(), input, false)?;
-        
+
         if is_arrow_map {
           // Convert typename to Type1 for arrow map
           let type1 = ast::Type1 {
@@ -1326,7 +1388,7 @@ fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_
           #[cfg(feature = "ast-span")]
           span,
         )?;
-        
+
         // Extract Value from Type2
         let value = match value_type2 {
           ast::Type2::IntValue { value, .. } => Value::INT(value),
@@ -1344,7 +1406,7 @@ fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_
             });
           }
         };
-        
+
         return Ok(ast::MemberKey::Value {
           value,
           #[cfg(feature = "ast-span")]
@@ -1358,7 +1420,7 @@ fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_
       _ => {}
     }
   }
-  
+
   Err(Error::PARSER {
     #[cfg(feature = "ast-span")]
     position: Position::default(),
@@ -1370,7 +1432,12 @@ fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_
 }
 
 #[cfg(not(feature = "ast-span"))]
-fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_map: bool, is_cut: bool) -> Result<ast::MemberKey<'a>, Error> {
+fn convert_member_key_simple<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+  is_arrow_map: bool,
+  is_cut: bool,
+) -> Result<ast::MemberKey<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
       Rule::bareword => {
@@ -1413,7 +1480,7 @@ fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_
       }
       Rule::typename => {
         let ident = convert_identifier(inner.clone(), input, false)?;
-        
+
         if is_arrow_map {
           // Convert typename to Type1 for arrow map
           let type1 = ast::Type1 {
@@ -1447,7 +1514,7 @@ fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_
       }
       Rule::value => {
         let value_type2 = convert_value_to_type2(inner.clone(), input)?;
-        
+
         // Extract Value from Type2
         let value = match value_type2 {
           ast::Type2::IntValue { value, .. } => Value::INT(value),
@@ -1463,7 +1530,7 @@ fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_
             });
           }
         };
-        
+
         return Ok(ast::MemberKey::Value {
           value,
           #[cfg(feature = "ast-comments")]
@@ -1475,7 +1542,7 @@ fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_
       _ => {}
     }
   }
-  
+
   Err(Error::PARSER {
     msg: ErrorMsg {
       short: "Invalid member key".to_string(),
@@ -1485,18 +1552,21 @@ fn convert_member_key_simple<'a>(pair: Pair<'a, Rule>, input: &'a str, is_arrow_
 }
 
 /// Convert member key (original - now unused but kept for reference)
-fn _convert_member_key<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::MemberKey<'a>, Error> {
+fn _convert_member_key<'a>(
+  pair: Pair<'a, Rule>,
+  input: &'a str,
+) -> Result<ast::MemberKey<'a>, Error> {
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
-  
+
   // Member keys can be:
   // - bareword :
   // - typename :
   // - value :
   // - type1 =>
-  
+
   let full_str = pair.as_str();
-  
+
   if full_str.contains("=>") {
     // Type1 with arrow
     for inner in pair.into_inner() {
@@ -1554,7 +1624,7 @@ fn _convert_member_key<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::
             #[cfg(feature = "ast-span")]
             span,
           )?;
-          
+
           // Extract Value from Type2
           let value = match value_type2 {
             ast::Type2::IntValue { value, .. } => Value::INT(value),
@@ -1572,7 +1642,7 @@ fn _convert_member_key<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::
               });
             }
           };
-          
+
           return Ok(ast::MemberKey::Value {
             value,
             #[cfg(feature = "ast-span")]
@@ -1587,7 +1657,7 @@ fn _convert_member_key<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::
       }
     }
   }
-  
+
   Err(Error::PARSER {
     #[cfg(feature = "ast-span")]
     position: Position::default(),
@@ -1602,31 +1672,31 @@ fn _convert_member_key<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::
 mod tests {
   use super::*;
   use crate::cddl_from_str;
-  
+
   #[test]
   fn test_basic_type_rule() {
     let input = "myrule = int\n";
     let result = cddl_from_pest_str(input);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
-    
+
     let cddl = result.unwrap();
     assert_eq!(cddl.rules.len(), 1);
   }
-  
+
   #[test]
   fn test_simple_struct() {
     let input = "person = { name: tstr, age: uint }\n";
     let result = cddl_from_pest_str(input);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
   }
-  
+
   #[test]
   fn test_type_choice() {
     let input = "value = int / text / bool\n";
     let result = cddl_from_pest_str(input);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
   }
-  
+
   #[test]
   fn test_generic() {
     let input = r#"map<K, V> = { * K => V }
@@ -1635,7 +1705,7 @@ my-map = map<text, int>
     let result = cddl_from_pest_str(input);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
   }
-  
+
   #[test]
   fn test_pest_vs_existing_parser() {
     // Test that Pest parser produces compatible AST
@@ -1645,18 +1715,26 @@ person = {
   age: uint
 }
 "#;
-    
+
     // Parse with existing parser
     #[cfg(all(not(target_arch = "wasm32"), feature = "std"))]
     let existing_result = cddl_from_str(input, true);
     #[cfg(any(target_arch = "wasm32", not(feature = "std")))]
     let existing_result = cddl_from_str(input);
-    assert!(existing_result.is_ok(), "Existing parser failed: {:?}", existing_result.err());
-    
+    assert!(
+      existing_result.is_ok(),
+      "Existing parser failed: {:?}",
+      existing_result.err()
+    );
+
     // Parse with Pest parser
     let pest_result = cddl_from_pest_str(input);
-    assert!(pest_result.is_ok(), "Pest parser failed: {:?}", pest_result.err());
-    
+    assert!(
+      pest_result.is_ok(),
+      "Pest parser failed: {:?}",
+      pest_result.err()
+    );
+
     // Both should produce 1 rule
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -1665,21 +1743,21 @@ person = {
       assert_eq!(existing_cddl.rules.len(), pest_cddl.rules.len());
     }
   }
-  
+
   #[test]
   fn test_range_operator() {
     let input = "port = 0..65535\n";
     let result = cddl_from_pest_str(input);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
   }
-  
+
   #[test]
   fn test_array() {
     let input = "my-array = [* int]\n";
     let result = cddl_from_pest_str(input);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
   }
-  
+
   #[test]
   fn test_occurrence_indicators() {
     let input = r#"
@@ -1690,7 +1768,7 @@ one-or-more = { + values: text }
     let result = cddl_from_pest_str(input);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
   }
-  
+
   #[test]
   fn test_comments() {
     let input = r#"
@@ -1701,20 +1779,27 @@ person = {
 }
 "#;
     let result = cddl_from_pest_str(input);
-    assert!(result.is_ok(), "Failed to parse with comments: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse with comments: {:?}",
+      result.err()
+    );
   }
-  
+
   #[test]
   fn test_error_reporting() {
     // Test that errors are properly converted
     let input = "invalid syntax @#$";
     let result = cddl_from_pest_str(input);
     assert!(result.is_err(), "Should fail on invalid syntax");
-    
+
     if let Err(e) = result {
       // Verify error contains useful information
       let error_str = format!("{:?}", e);
-      assert!(error_str.contains("Pest parsing error"), "Error should mention Pest");
+      assert!(
+        error_str.contains("Pest parsing error"),
+        "Error should mention Pest"
+      );
     }
   }
 }
