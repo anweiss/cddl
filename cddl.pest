@@ -86,7 +86,8 @@ type1 = { type2 ~ S ~ (range_op ~ S ~ type2 | control_op ~ S ~ controller)? }
 // Range operators define numeric or value ranges
 // ".." is inclusive range (e.g., 0..100)
 // "..." is exclusive range (e.g., 0...100)
-range_op = { range_op_inclusive | range_op_exclusive }
+// Note: Order matters - try longer match first
+range_op = { range_op_exclusive | range_op_inclusive }
 range_op_inclusive = { ".." }
 range_op_exclusive = { "..." }
 
