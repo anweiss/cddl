@@ -11,9 +11,11 @@ use pest_derive::Parser;
 /// This parser is generated from the `cddl.pest` grammar file using pest_derive.
 /// It provides an alternative parsing approach that can coexist with the existing
 /// handwritten parser.
+///
+/// The grammar file is located at the repository root as `cddl.pest`.
 #[allow(missing_docs)]
 #[derive(Parser)]
-#[grammar = "cddl.pest"]
+#[grammar = "../cddl.pest"]
 pub struct CddlParser;
 
 #[cfg(test)]
@@ -108,5 +110,44 @@ my-map = map<text, int>
         let input = "tagged-value = #6.32(tstr)\n";
         let result = CddlParser::parse(Rule::cddl, input);
         assert!(result.is_ok(), "Failed to parse tag: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_pest_parser_coexistence_with_existing_parser() {
+        // Demonstrate that both the existing handwritten parser and Pest parser
+        // can parse the same CDDL input
+        use crate::cddl_from_str;
+        
+        let input = r#"
+person = {
+  name: tstr,
+  age: uint
+}
+"#;
+        
+        // Test existing parser
+        let existing_result = cddl_from_str(input, true);
+        assert!(existing_result.is_ok(), "Existing parser failed: {:?}", existing_result.err());
+        
+        // Test Pest parser
+        let pest_result = CddlParser::parse(Rule::cddl, input);
+        assert!(pest_result.is_ok(), "Pest parser failed: {:?}", pest_result.err());
+    }
+
+    #[test]
+    fn test_pest_parser_rfc8610_examples() {
+        // Test various examples from RFC 8610
+        let examples = vec![
+            "reputation-object = { application: tstr, reputons: [* reputon] }\n",
+            "reputon = { rating: float16-32, ? confidence: float16-32, ? sample-size: uint }\n",
+            "CDDLtest = thing\n",
+            "thing = ( int / float )\n",
+            "size = uint .size 4\n",
+        ];
+        
+        for example in examples {
+            let result = CddlParser::parse(Rule::cddl, example);
+            assert!(result.is_ok(), "Failed to parse: {}\nError: {:?}", example, result.err());
+        }
     }
 }
