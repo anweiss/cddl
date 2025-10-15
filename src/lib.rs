@@ -551,6 +551,9 @@ pub mod parser;
 /// Pest-based parser for CDDL (alternative implementation)
 #[cfg(feature = "std")]
 pub mod pest_parser;
+/// Bridge layer between Pest parser and existing AST
+#[cfg(feature = "std")]
+pub mod pest_bridge;
 /// CDDL tokens for lexing
 pub mod token;
 /// Validators for JSON and CBOR data structures
