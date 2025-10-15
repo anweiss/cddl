@@ -110,10 +110,10 @@ range_op_exclusive = { "..." }
 control_op = { "." ~ control_name }
 control_name = { "size" | "bits" | "regexp" | "pcre" | "cbor" | "cborseq" 
                | "within" | "and" | "lt" | "le" | "gt" | "ge" | "eq" | "ne" 
-               | "default" | "cat" | "det" | "plus" | "abnf" | "abnfb" 
-               | "feature" | "b64u" | "b64c" | "b64u-sloppy" | "b64c-sloppy"
-               | "hex" | "hexlc" | "hexuc" | "b32" | "h32" | "b45" 
-               | "base10" | "printf" | "json" | "join" }
+               | "default" | "cat" | "det" | "plus" | "abnfb" | "abnf" 
+               | "feature" | "b64u-sloppy" | "b64c-sloppy" | "b64u" | "b64c"
+               | "hexuc" | "hexlc" | "hex" | "base10" | "printf" | "json" | "join" 
+               | "b32" | "h32" | "b45" }
 
 controller = { type2 }
 
