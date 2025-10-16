@@ -610,9 +610,9 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
         // We need to look at the full type2 pair's text to see the delimiters
         let full_text = pair.as_str().trim();
         let is_array = full_text.starts_with('[');
-        
+
         let group = convert_group(inner, input)?;
-        
+
         if is_array {
           return Ok(ast::Type2::Array {
             group,
@@ -1243,7 +1243,7 @@ fn convert_occurrence<'a>(
       Rule::occur_exact | Rule::occur_range => {
         // Parse the occurrence range
         let occur_str = inner.as_str();
-        
+
         // Check if this is a simple "n*" pattern (n or more)
         if occur_str.ends_with('*') && !occur_str.contains("**") {
           let trimmed = occur_str.trim_end_matches('*').trim();
@@ -1263,7 +1263,7 @@ fn convert_occurrence<'a>(
             });
           }
         }
-        
+
         // Handle range patterns "n*m" or "*m" or "n*"
         let parts: Vec<&str> = occur_str.split('*').collect();
 

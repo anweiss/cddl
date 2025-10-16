@@ -3577,7 +3577,7 @@ impl<'a> Parser<'a> {
 #[cfg(feature = "std")]
 pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDDL<'_>, String> {
   use crate::pest_bridge::cddl_from_pest_str;
-  
+
   match cddl_from_pest_str(input) {
     Ok(c) => Ok(c),
     Err(e) => {
@@ -3613,7 +3613,7 @@ impl CDDL<'_> {
   #[cfg(feature = "std")]
   pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL<'_>, String> {
     use crate::pest_bridge::cddl_from_pest_str;
-    
+
     let str_input = std::str::from_utf8(input).map_err(|e| e.to_string())?;
     cddl_from_pest_str(str_input).map_err(|e| format!("{}", e))
   }
@@ -3702,7 +3702,7 @@ pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL<'_>, String> {
 #[wasm_bindgen]
 pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
   use crate::pest_bridge::cddl_from_pest_str;
-  
+
   match cddl_from_pest_str(input) {
     Ok(c) => serde_wasm_bindgen::to_value(&c).map_err(|e| JsValue::from(e.to_string())),
     Err(e) => {
@@ -3712,13 +3712,10 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
         position: Position,
         msg: ErrorMsg,
       }
-      
+
       if let Error::PARSER { position, msg } = e {
         let error = ParserError { position, msg };
-        Err(
-          serde_wasm_bindgen::to_value(&vec![error])
-            .map_err(|e| JsValue::from(e.to_string()))?,
-        )
+        Err(serde_wasm_bindgen::to_value(&vec![error]).map_err(|e| JsValue::from(e.to_string()))?)
       } else {
         Err(JsValue::from(e.to_string()))
       }
