@@ -221,18 +221,30 @@ impl<'a> Parser<'a> {
         msg,
       } = error
       {
+        // Use the short message for the label
+        let label_message = msg.to_string();
+
         labels.push(
           #[cfg(feature = "ast-span")]
-          Label::primary(file_id, position.range.0..position.range.1).with_message(msg.to_string()),
+          Label::primary(file_id, position.range.0..position.range.1).with_message(label_message),
           #[cfg(not(feature = "ast-span"))]
-          Label::primary(file_id, 0..0).with_message(msg.to_string()),
+          Label::primary(file_id, 0..0).with_message(label_message),
         );
       }
     }
 
-    let diagnostic = Diagnostic::error()
+    let mut diagnostic = Diagnostic::error()
       .with_message("parser errors")
       .with_labels(labels);
+
+    // Add extended messages as notes if available (enhanced error reporting)
+    for error in self.errors.iter() {
+      if let Error::PARSER { msg, .. } = error {
+        if let Some(ref extended) = msg.extended {
+          diagnostic = diagnostic.with_notes(vec![extended.clone()]);
+        }
+      }
+    }
 
     let config = term::Config::default();
 
@@ -288,18 +300,30 @@ impl<'a> Parser<'a> {
         msg,
       } = error
       {
+        // Use the short message for the label
+        let label_message = msg.to_string();
+
         labels.push(
           #[cfg(feature = "ast-span")]
-          Label::primary(file_id, position.range.0..position.range.1).with_message(msg.to_string()),
+          Label::primary(file_id, position.range.0..position.range.1).with_message(label_message),
           #[cfg(not(feature = "ast-span"))]
-          Label::primary(file_id, 0..0).with_message(msg.to_string()),
+          Label::primary(file_id, 0..0).with_message(label_message),
         );
       }
     }
 
-    let diagnostic = Diagnostic::error()
+    let mut diagnostic = Diagnostic::error()
       .with_message("parser errors")
       .with_labels(labels);
+
+    // Add extended messages as notes if available (enhanced error reporting)
+    for error in self.errors.iter() {
+      if let Error::PARSER { msg, .. } = error {
+        if let Some(ref extended) = msg.extended {
+          diagnostic = diagnostic.with_notes(vec![extended.clone()]);
+        }
+      }
+    }
 
     let config = term::Config::default();
 
