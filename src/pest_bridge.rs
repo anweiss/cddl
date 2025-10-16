@@ -2054,3 +2054,52 @@ person = {
     }
   }
 }
+
+#[cfg(test)]
+mod wasm_compat_tests {
+  use super::*;
+  
+  #[test]
+  fn test_error_msg_serialization_compat() {
+    // Test that ErrorMsg structure is compatible with serialization
+    let input = "invalid syntax @#$";
+    let result = cddl_from_pest_str(input);
+    
+    assert!(result.is_err(), "Should fail on invalid syntax");
+    
+    if let Err(Error::PARSER { msg, .. }) = result {
+      // Verify both fields are present
+      assert!(!msg.short.is_empty(), "Short message should not be empty");
+      assert!(msg.extended.is_some(), "Extended message should be present for enhanced errors");
+      
+      // Verify the structure can be cloned (required for WASM serialization)
+      let _cloned = msg.clone();
+      
+      // Verify Display trait works
+      let display_str = msg.to_string();
+      assert!(!display_str.is_empty(), "Display should produce non-empty string");
+    }
+  }
+  
+  #[cfg(target_arch = "wasm32")]
+  #[test]
+  fn test_wasm_error_serialization() {
+    use serde::Serialize;
+    
+    let msg = ErrorMsg {
+      short: "test error".to_string(),
+      extended: Some("extended details".to_string()),
+    };
+    
+    // Verify ErrorMsg can be serialized (this is what WASM needs)
+    #[derive(Serialize)]
+    struct TestError {
+      msg: ErrorMsg,
+    }
+    
+    let test_error = TestError { msg };
+    
+    // This should not panic if serialization works
+    let _serialized = serde_json::to_string(&test_error).expect("Should serialize");
+  }
+}
