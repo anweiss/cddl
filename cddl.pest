@@ -86,7 +86,8 @@ type1 = { type2 ~ S ~ (range_op ~ S ~ type2 | control_op ~ S ~ controller)? }
 // Range operators define numeric or value ranges
 // ".." is inclusive range (e.g., 0..100)
 // "..." is exclusive range (e.g., 0...100)
-range_op = { range_op_inclusive | range_op_exclusive }
+// Note: Order matters - try longer match first
+range_op = { range_op_exclusive | range_op_inclusive }
 range_op_inclusive = { ".." }
 range_op_exclusive = { "..." }
 
@@ -109,10 +110,10 @@ range_op_exclusive = { "..." }
 control_op = { "." ~ control_name }
 control_name = { "size" | "bits" | "regexp" | "pcre" | "cbor" | "cborseq" 
                | "within" | "and" | "lt" | "le" | "gt" | "ge" | "eq" | "ne" 
-               | "default" | "cat" | "det" | "plus" | "abnf" | "abnfb" 
-               | "feature" | "b64u" | "b64c" | "b64u-sloppy" | "b64c-sloppy"
-               | "hex" | "hexlc" | "hexuc" | "b32" | "h32" | "b45" 
-               | "base10" | "printf" | "json" | "join" }
+               | "default" | "cat" | "det" | "plus" | "abnfb" | "abnf" 
+               | "feature" | "b64u-sloppy" | "b64c-sloppy" | "b64u" | "b64c"
+               | "hexuc" | "hexlc" | "hex" | "base10" | "printf" | "json" | "join" 
+               | "b32" | "h32" | "b45" }
 
 controller = { type2 }
 
@@ -156,10 +157,8 @@ tag_value = { uint_value | "<" ~ S ~ type_expr ~ S ~ ">" }
 // Group choices are separated by "//"
 // Example: ( name: text // id: int )
 group = { group_choice ~ (S ~ group_choice_op ~ S ~ group_choice)* }
-group_choice = { (group_entry ~ (S ~ optional_comma ~ S ~ group_entry)*)? }
+group_choice = { (group_entry ~ (S ~ ","? ~ S ~ group_entry)* ~ (S ~ ",")?)?  }
 group_choice_op = { "//" }
-
-optional_comma = _{ ","? }
 
 // =============================================================================
 // GROUP ENTRIES
@@ -213,7 +212,7 @@ occur_optional = { "?" ~ !DIGIT }
 // Identifiers for types, groups, and barewords
 // Can contain letters, digits, hyphens, and periods
 // Must start with a letter, @, _, or $
-id = @{ EALPHA ~ (("-" | ".")? ~ (EALPHA | DIGIT))* }
+id = @{ EALPHA_START ~ (("-" | ".")? ~ (EALPHA | DIGIT))* }
 typename = { socket_type? ~ id }
 groupname = { socket_group? ~ id }
 bareword = @{ id }
@@ -224,7 +223,10 @@ bareword = @{ id }
 socket_type = { "$" }
 socket_group = { "$$" }
 
+// EALPHA for identifier content (can include $ in middle)
 EALPHA = { ALPHA | "@" | "_" | "$" }
+// EALPHA_START for identifier start (cannot start with $)
+EALPHA_START = { ALPHA | "@" | "_" }
 ALPHA = { 'a'..'z' | 'A'..'Z' }
 DIGIT = { '0'..'9' }
 
@@ -276,8 +278,10 @@ bytes_b64 = @{ "'" ~ BASE64_INNER ~ "'" }
 bytes_b16 = @{ "h'" ~ HEX_INNER ~ "'" }
 bytes_h_quoted = @{ "h" ~ "\"" ~ (!("\"") ~ ANY)* ~ "\"" }
 
-BASE64_INNER = { (ASCII_ALPHANUMERIC | "+" | "/" | "=")* }
+BASE64_INNER = { (!(QUOTE) ~ ANY)* }
 HEX_INNER = { (ASCII_HEX_DIGIT | WHITESPACE)* }
+
+QUOTE = _{ "'" }
 
 // =============================================================================
 // STANDARD PRELUDE TYPES

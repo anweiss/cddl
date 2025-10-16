@@ -541,7 +541,9 @@ fn convert_control_operator<'a>(
   for inner in pair.into_inner() {
     if inner.as_rule() == Rule::control_name {
       let ctrl_str = inner.as_str();
-      return lookup_control_from_str(ctrl_str).ok_or_else(|| Error::PARSER {
+      // Prepend dot to match the expected format for lookup_control_from_str
+      let ctrl_with_dot = format!(".{}", ctrl_str);
+      return lookup_control_from_str(&ctrl_with_dot).ok_or_else(|| Error::PARSER {
         #[cfg(feature = "ast-span")]
         position: pest_span_to_position(&inner.as_span(), input),
         msg: ErrorMsg {
@@ -604,17 +606,34 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
         });
       }
       Rule::group => {
-        // Check parent context to determine if this is a map or array
-        // For now, we'll treat it as a map
-        return Ok(ast::Type2::Map {
-          group: convert_group(inner, input)?,
-          #[cfg(feature = "ast-span")]
-          span,
-          #[cfg(feature = "ast-comments")]
-          comments_before_group: None,
-          #[cfg(feature = "ast-comments")]
-          comments_after_group: None,
-        });
+        // Check the original text to determine if this is a map { } or array [ ]
+        // We need to look at the full type2 pair's text to see the delimiters
+        let full_text = pair.as_str().trim();
+        let is_array = full_text.starts_with('[');
+
+        let group = convert_group(inner, input)?;
+
+        if is_array {
+          return Ok(ast::Type2::Array {
+            group,
+            #[cfg(feature = "ast-span")]
+            span,
+            #[cfg(feature = "ast-comments")]
+            comments_before_group: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_group: None,
+          });
+        } else {
+          return Ok(ast::Type2::Map {
+            group,
+            #[cfg(feature = "ast-span")]
+            span,
+            #[cfg(feature = "ast-comments")]
+            comments_before_group: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_group: None,
+          });
+        }
       }
       Rule::tag_expr => {
         return convert_tag_expr(inner, input);
@@ -899,17 +918,9 @@ fn convert_bytes_value_to_type2<'a>(
         let bytes_str = inner.as_str();
         // Remove quotes
         let content = &bytes_str[1..bytes_str.len() - 1];
-        let decoded = data_encoding::BASE64
-          .decode(content.as_bytes())
-          .map_err(|_| Error::PARSER {
-            position: pest_span_to_position(&inner.as_span(), input),
-            msg: ErrorMsg {
-              short: "Invalid base64 encoding".to_string(),
-              extended: None,
-            },
-          })?;
-        return Ok(ast::Type2::B64ByteString {
-          value: Cow::Owned(decoded),
+        // Single-quoted byte strings are UTF-8 encoded text, not base64
+        return Ok(ast::Type2::UTF8ByteString {
+          value: Cow::Owned(content.as_bytes().to_vec()),
           span,
         });
       }
@@ -965,16 +976,9 @@ fn convert_bytes_value_to_type2<'a>(
         let bytes_str = inner.as_str();
         // Remove quotes
         let content = &bytes_str[1..bytes_str.len() - 1];
-        let decoded = data_encoding::BASE64
-          .decode(content.as_bytes())
-          .map_err(|_| Error::PARSER {
-            msg: ErrorMsg {
-              short: "Invalid base64 encoding".to_string(),
-              extended: None,
-            },
-          })?;
-        return Ok(ast::Type2::B64ByteString {
-          value: Cow::Owned(decoded),
+        // Single-quoted byte strings are UTF-8 encoded text, not base64
+        return Ok(ast::Type2::UTF8ByteString {
+          value: Cow::Owned(content.as_bytes().to_vec()),
         });
       }
       Rule::bytes_b16 => {
@@ -1116,9 +1120,12 @@ fn convert_group_entry<'a>(
   let inner_pairs: Vec<_> = pair.clone().into_inner().collect();
 
   // Check if this has a member key with colon or arrow
-  let has_colon = inner_pairs.iter().any(|p| p.as_str() == ":");
-  let has_arrow = inner_pairs.iter().any(|p| p.as_str() == "=>");
-  let has_cut = inner_pairs.iter().any(|p| p.as_str() == "^");
+  // We need to check the full matched text since : and => are literals in the grammar
+  let full_text = pair.as_str();
+  let has_member_key = inner_pairs.iter().any(|p| p.as_rule() == Rule::member_key);
+  let has_colon = has_member_key && full_text.contains(':') && !full_text.contains("=>");
+  let has_arrow = has_member_key && full_text.contains("=>");
+  let has_cut = full_text.starts_with('^');
 
   if has_cut {
     is_cut = true;
@@ -1236,16 +1243,38 @@ fn convert_occurrence<'a>(
       Rule::occur_exact | Rule::occur_range => {
         // Parse the occurrence range
         let occur_str = inner.as_str();
+
+        // Check if this is a simple "n*" pattern (n or more)
+        if occur_str.ends_with('*') && !occur_str.contains("**") {
+          let trimmed = occur_str.trim_end_matches('*').trim();
+          if !trimmed.is_empty() && trimmed.parse::<usize>().is_ok() {
+            // This is "n*" meaning "n or more"
+            let lower = Some(trimmed.parse::<usize>().unwrap());
+            return Ok(ast::Occurrence {
+              occur: ast::Occur::Exact {
+                lower,
+                upper: None,
+                #[cfg(feature = "ast-span")]
+                span: pest_span_to_ast_span(&inner.as_span(), input),
+              },
+              #[cfg(feature = "ast-comments")]
+              comments: None,
+              _a: std::marker::PhantomData,
+            });
+          }
+        }
+
+        // Handle range patterns "n*m" or "*m" or "n*"
         let parts: Vec<&str> = occur_str.split('*').collect();
 
         let lower = if !parts[0].is_empty() {
-          Some(parts[0].parse::<usize>().unwrap_or(0))
+          Some(parts[0].trim().parse::<usize>().unwrap_or(0))
         } else {
           None
         };
 
-        let upper = if parts.len() > 1 && !parts[1].is_empty() {
-          Some(parts[1].parse::<usize>().unwrap_or(0))
+        let upper = if parts.len() > 1 && !parts[1].trim().is_empty() {
+          Some(parts[1].trim().parse::<usize>().unwrap_or(0))
         } else {
           None
         };
