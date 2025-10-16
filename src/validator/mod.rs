@@ -30,10 +30,8 @@ use serde::de::Deserialize;
 use crate::{
   error::ErrorMsg,
   lexer::Position,
-  parser,
+  parser::{self, Parser},
 };
-#[cfg(target_arch = "wasm32")]
-use crate::pest_bridge::cddl_from_pest_str;
 #[cfg(target_arch = "wasm32")]
 use serde::Serialize;
 #[cfg(target_arch = "wasm32")]
@@ -126,7 +124,29 @@ pub fn validate_json_from_str(
   json: &str,
   enabled_features: Option<Box<[JsValue]>>,
 ) -> std::result::Result<JsValue, JsValue> {
-  let c = cddl_from_pest_str(cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let mut p = Parser::new(cddl, Box::new(crate::lexer::lexer_from_str(cddl).iter()))
+    .map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      serde_wasm_bindgen::to_value(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
 
   let json =
     serde_json::from_str::<serde_json::Value>(json).map_err(|e| JsValue::from(e.to_string()))?;
@@ -143,7 +163,29 @@ pub fn validate_json_from_str(
 #[wasm_bindgen]
 /// Validate JSON string from a given CDDL document string
 pub fn validate_json_from_str(cddl: &str, json: &str) -> std::result::Result<JsValue, JsValue> {
-  let c = cddl_from_pest_str(cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let mut l = Lexer::new(cddl);
+  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      JsValue::from_serde(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
 
   let json =
     serde_json::from_str::<serde_json::Value>(json).map_err(|e| JsValue::from(e.to_string()))?;
@@ -196,7 +238,29 @@ pub fn validate_cbor_from_slice(
   cbor_slice: &[u8],
   enabled_features: Option<Box<[JsValue]>>,
 ) -> std::result::Result<JsValue, JsValue> {
-  let c = cddl_from_pest_str(cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let mut p = Parser::new(cddl, Box::new(crate::lexer::lexer_from_str(cddl).iter()))
+    .map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      serde_wasm_bindgen::to_value(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
 
   let cbor: ciborium::value::Value =
     ciborium::de::from_reader(cbor_slice).map_err(|e| JsValue::from(e.to_string()))?;
@@ -216,7 +280,29 @@ pub fn validate_cbor_from_slice(
   cddl: &str,
   cbor_slice: &[u8],
 ) -> std::result::Result<JsValue, JsValue> {
-  let c = cddl_from_pest_str(cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let mut l = Lexer::new(cddl);
+  let mut p = Parser::new((&mut l).iter(), cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = p.parse_cddl().map_err(|e| JsValue::from(e.to_string()))?;
+  if !p.errors.is_empty() {
+    return Err(
+      JsValue::from_serde(
+        &p.errors
+          .iter()
+          .filter_map(|e| {
+            if let parser::Error::PARSER { position, msg } = e {
+              Some(ParserError {
+                position: *position,
+                msg: msg.clone(),
+              })
+            } else {
+              None
+            }
+          })
+          .collect::<Vec<ParserError>>(),
+      )
+      .map_err(|e| JsValue::from(e.to_string()))?,
+    );
+  }
 
   let cbor: ciborium::value::Value =
     ciborium::de::from_reader(cbor_slice).map_err(|e| JsValue::from(e.to_string()))?;

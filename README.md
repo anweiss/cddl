@@ -6,7 +6,7 @@
 
 A Rust implementation of the Concise data definition language (CDDL). CDDL is an IETF standard that "proposes a notational convention to express CBOR and JSON data structures." As of 2019-06-12, it is published as RFC 8610 (Proposed Standard) at [https://tools.ietf.org/html/rfc8610](https://tools.ietf.org/html/rfc8610).
 
-This crate uses the [Pest](https://pest.rs/) parsing library to parse CDDL according to the grammar defined in RFC 8610. The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
+This crate includes a handwritten parser and lexer for CDDL, and its development has been heavily inspired by the techniques outlined in Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
 This crate supports validation of both CBOR and JSON data structures. The minimum supported Rust version (MSRV) is 1.81.0.
 
@@ -26,6 +26,7 @@ Also bundled into this repository is a basic language server implementation and 
 
 ## Non-goals
 
+* Performance (if this crate gains enough traction, it may be prudent to conduct more formal profiling and/or explore using a parser-combinator framework like [nom](https://github.com/Geal/nom))
 * Support CBOR diagnostic notation
 * I-JSON compatibility
 

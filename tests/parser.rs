@@ -6,13 +6,14 @@ use std::marker::PhantomData;
 
 use cddl::{
   ast::*,
-  cddl_from_str,
+  lexer::Lexer,
+  parser::{Error, Parser, Result},
 };
 use indoc::indoc;
 use pretty_assertions::assert_eq;
 
 #[test]
-fn test_issue_268_ast_behavior() -> std::result::Result<(), String> {
+fn test_issue_268_ast_behavior() -> Result<()> {
   let input = indoc!(
     r#"
         CapabilityRequest = {}
@@ -22,7 +23,8 @@ fn test_issue_268_ast_behavior() -> std::result::Result<(), String> {
       "#
   );
 
-  let cddl = cddl_from_str(input, false)?;
+  let mut p = Parser::new(input, Box::new(Lexer::new(input).iter()))?;
+  let cddl = p.parse_cddl()?;
 
   // Get the CapabilitiesRequest rule
   let rule = &cddl.rules[1]; // CapabilitiesRequest
@@ -94,9 +96,10 @@ fn verify_cddl() -> Result<()> {
       "#
   );
 
-  match cddl_from_str(input, false) {
-    Ok(cddl) => {
-      let expected_output = CDDL {
+  match Parser::new(input, Box::new(Lexer::new(input).iter())) {
+    Ok(mut p) => match p.parse_cddl() {
+      Ok(cddl) => {
+        let expected_output = CDDL {
           rules: vec![
             Rule::Type {
               rule: TypeRule {
@@ -686,11 +689,26 @@ fn verify_cddl() -> Result<()> {
           comments: None,
         };
 
-      assert_eq!(cddl, expected_output);
-      assert_eq!(cddl.to_string(), expected_output.to_string());
+        assert_eq!(cddl, expected_output);
+        assert_eq!(cddl.to_string(), expected_output.to_string());
 
-      Ok(())
-    }
+        Ok(())
+      }
+
+      #[cfg(feature = "std")]
+      Err(Error::INCREMENTAL) if !p.errors.is_empty() => {
+        let _ = p.report_errors(true);
+
+        Err(Error::CDDL(p.report_errors(false).unwrap().unwrap()))
+      }
+      #[cfg(not(feature = "std"))]
+      Err(Error::INCREMENTAL) if !p.errors.is_empty() => {
+        let _ = p.report_errors();
+
+        Err(Error::CDDL(p.report_errors().unwrap()))
+      }
+      Err(e) => Err(e),
+    },
     Err(e) => Err(e),
   }
 }

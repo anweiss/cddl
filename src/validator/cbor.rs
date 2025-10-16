@@ -4229,7 +4229,8 @@ mod tests {
 
     let cbor = ciborium::value::Value::Bytes(vec![0x90, 0x6d]);
 
-    let cddl = crate::cddl_from_str(cddl, true)?;
+    let mut lexer = lexer_from_str(cddl);
+    let cddl = cddl_from_str(&mut lexer, cddl, true)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor);
     cv.validate()?;

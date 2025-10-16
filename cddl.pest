@@ -191,14 +191,13 @@ member_key = { bareword | typename ~ generic_args? | value }
 // ? - optional (0 or 1)
 // * - zero or more
 // + - one or more
-// ? - optional
-// n* - n or more times
+// n* - exactly n times
 // n*m - between n and m times
-occur = { occur_zero_or_more
+occur = { occur_exact
+        | occur_range
+        | occur_zero_or_more
         | occur_one_or_more
-        | occur_optional
-        | occur_exact
-        | occur_range }
+        | occur_optional }
 
 occur_exact = { uint_value ~ "*" ~ !DIGIT }
 occur_range = { uint_value ~ "*" ~ uint_value | uint_value? ~ "*" ~ uint_value? }

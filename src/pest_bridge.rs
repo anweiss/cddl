@@ -2117,38 +2117,3 @@ mod wasm_compat_tests {
     let _serialized = serde_json::to_string(&test_error).expect("Should serialize");
   }
 }
-
-#[cfg(test)]
-mod occur_bug_test {
-  use super::*;
-
-  #[test]
-  fn test_zero_or_more_occurrence() {
-    let input = r#"thing = {* minor: bool}"#;
-    let result = cddl_from_pest_str(input).unwrap();
-    
-    if let ast::Rule::Type { rule, .. } = &result.rules[0] {
-      if let ast::Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 {
-        if let Some((entry, _)) = group.group_choices[0].group_entries.first() {
-          if let ast::GroupEntry::ValueMemberKey { ge, .. } = entry {
-            if let Some(occur) = &ge.occur {
-              match &occur.occur {
-                ast::Occur::ZeroOrMore { .. } => {
-                  // Correct!
-                }
-                ast::Occur::Exact { lower, upper, .. } => {
-                  panic!("Expected ZeroOrMore but got Exact {{ lower: {:?}, upper: {:?} }}", lower, upper);
-                }
-                other => {
-                  panic!("Expected ZeroOrMore but got {:?}", other);
-                }
-              }
-            } else {
-              panic!("Expected occurrence indicator");
-            }
-          }
-        }
-      }
-    }
-  }
-}
