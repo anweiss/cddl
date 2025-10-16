@@ -57,12 +57,21 @@ use alloc::{
   vec::Vec,
 };
 
-/// Convert a Pest error to the existing parser error format
-pub fn convert_pest_error(error: pest::error::Error<Rule>, _input: &str) -> Error {
-  let (line, column, index) = match error.line_col {
-    pest::error::LineColLocation::Pos((line, col)) => (line, col, 0),
-    pest::error::LineColLocation::Span((line, col), _) => (line, col, 0),
+/// Convert a Pest error to the existing parser error format with enhanced messages
+pub fn convert_pest_error(error: pest::error::Error<Rule>, input: &str) -> Error {
+  let (line, column, byte_pos) = match error.line_col {
+    pest::error::LineColLocation::Pos((line, col)) => (line, col, error.location.clone()),
+    pest::error::LineColLocation::Span((line, col), _) => (line, col, error.location.clone()),
   };
+
+  // Extract byte position from location
+  let index = match byte_pos {
+    pest::error::InputLocation::Pos(pos) => pos,
+    pest::error::InputLocation::Span((start, _)) => start,
+  };
+
+  // Create enhanced error message with user-friendly rule names
+  let (short_msg, extended_msg) = create_enhanced_error_message(&error, input);
 
   Error::PARSER {
     #[cfg(feature = "ast-span")]
@@ -73,10 +82,163 @@ pub fn convert_pest_error(error: pest::error::Error<Rule>, _input: &str) -> Erro
       index,
     },
     msg: ErrorMsg {
-      short: format!("Pest parsing error: {}", error),
-      extended: None,
+      short: short_msg,
+      extended: extended_msg,
     },
   }
+}
+
+/// Create enhanced error messages using Pest's error information
+fn create_enhanced_error_message(
+  error: &pest::error::Error<Rule>,
+  _input: &str,
+) -> (String, Option<String>) {
+  use pest::error::ErrorVariant;
+
+  match &error.variant {
+    ErrorVariant::ParsingError { positives, negatives } => {
+      // Map internal rule names to user-friendly descriptions
+      let friendly_positives: Vec<String> = positives
+        .iter()
+        .filter_map(|r| get_friendly_rule_name(r))
+        .collect();
+
+      let friendly_negatives: Vec<String> = negatives
+        .iter()
+        .filter_map(|r| get_friendly_rule_name(r))
+        .collect();
+
+      let short = if !friendly_positives.is_empty() {
+        if friendly_positives.len() == 1 {
+          format!("expected {}", friendly_positives[0])
+        } else {
+          format!(
+            "expected one of: {}",
+            friendly_positives.join(", ")
+          )
+        }
+      } else if !friendly_negatives.is_empty() {
+        format!("unexpected {}", friendly_negatives.join(", "))
+      } else {
+        "syntax error".to_string()
+      };
+
+      // Create extended message with context
+      let extended = if !friendly_positives.is_empty() || !friendly_negatives.is_empty() {
+        Some(create_error_context(&error, &friendly_positives, &friendly_negatives))
+      } else {
+        None
+      };
+
+      (short, extended)
+    }
+    ErrorVariant::CustomError { message } => (message.clone(), None),
+  }
+}
+
+/// Map Pest rule names to user-friendly descriptions
+fn get_friendly_rule_name(rule_type: &Rule) -> Option<String> {
+  match rule_type {
+    Rule::cddl => Some("CDDL specification".to_string()),
+    Rule::rule => Some("rule definition".to_string()),
+    Rule::typename => Some("type name".to_string()),
+    Rule::groupname => Some("group name".to_string()),
+    Rule::assign => Some("assignment operator '='".to_string()),
+    Rule::assign_t => Some("type assignment ('=' or '/=')".to_string()),
+    Rule::assign_g => Some("group assignment ('=' or '//=')".to_string()),
+    Rule::assign_t_choice => Some("type choice assignment '/='".to_string()),
+    Rule::assign_g_choice => Some("group choice assignment '//='".to_string()),
+    Rule::generic_params => Some("generic parameters '<...>'".to_string()),
+    Rule::generic_param => Some("generic parameter".to_string()),
+    Rule::generic_args => Some("generic arguments '<...>'".to_string()),
+    Rule::generic_arg => Some("generic argument".to_string()),
+    Rule::type_expr => Some("type expression".to_string()),
+    Rule::type_choice => Some("type choice".to_string()),
+    Rule::type_choice_op => Some("type choice operator '/'".to_string()),
+    Rule::type1 => Some("type".to_string()),
+    Rule::type2 => Some("type value".to_string()),
+    Rule::range_op => Some("range operator ('..' or '...')".to_string()),
+    Rule::range_op_inclusive => Some("inclusive range '..'".to_string()),
+    Rule::range_op_exclusive => Some("exclusive range '...'".to_string()),
+    Rule::control_op => Some("control operator".to_string()),
+    Rule::control_name => Some("control operator name".to_string()),
+    Rule::controller => Some("control argument".to_string()),
+    Rule::group => Some("group definition".to_string()),
+    Rule::group_choice => Some("group choice".to_string()),
+    Rule::group_entry => Some("group entry".to_string()),
+    Rule::occur => Some("occurrence indicator".to_string()),
+    Rule::occur_optional => Some("optional '?'".to_string()),
+    Rule::occur_zero_or_more => Some("zero or more '*'".to_string()),
+    Rule::occur_one_or_more => Some("one or more '+'".to_string()),
+    Rule::occur_exact => Some("exact occurrence".to_string()),
+    Rule::occur_range => Some("occurrence range".to_string()),
+    Rule::member_key => Some("member key".to_string()),
+    Rule::bareword => Some("bareword identifier".to_string()),
+    Rule::value => Some("value".to_string()),
+    Rule::number => Some("number".to_string()),
+    Rule::int_value => Some("integer".to_string()),
+    Rule::uint_value => Some("unsigned integer".to_string()),
+    Rule::float_value => Some("floating-point number".to_string()),
+    Rule::hexfloat => Some("hexadecimal float".to_string()),
+    Rule::text_value => Some("text string".to_string()),
+    Rule::bytes_value => Some("byte string".to_string()),
+    Rule::bytes_b16 => Some("base16 byte string".to_string()),
+    Rule::bytes_b64 => Some("base64 byte string".to_string()),
+    Rule::bytes_h_quoted => Some("hex-quoted byte string".to_string()),
+    Rule::tag_expr => Some("tag expression".to_string()),
+    Rule::id => Some("identifier".to_string()),
+    Rule::socket_type => Some("type socket '$'".to_string()),
+    Rule::socket_group => Some("group socket '$$'".to_string()),
+    // Skip internal/whitespace rules
+    Rule::COMMENT | Rule::S | Rule::EOI => None,
+    _ => Some(format!("{:?}", rule_type)),
+  }
+}
+
+/// Create contextual error message with suggestions
+fn create_error_context(
+  error: &pest::error::Error<Rule>,
+  positives: &[String],
+  negatives: &[String],
+) -> String {
+  let mut context = String::new();
+  
+  // Add location context
+  match &error.line_col {
+    pest::error::LineColLocation::Pos((line, col)) => {
+      context.push_str(&format!("At line {}, column {}: ", line, col));
+    }
+    pest::error::LineColLocation::Span((line1, col1), (line2, col2)) => {
+      context.push_str(&format!("From line {}, column {} to line {}, column {}: ", line1, col1, line2, col2));
+    }
+  }
+
+  // Add helpful suggestions based on what was expected
+  if !positives.is_empty() {
+    context.push_str("Expected ");
+    context.push_str(&positives.join(" or "));
+    context.push('.');
+    
+    // Add specific suggestions
+    if positives.iter().any(|p| p.contains("assignment")) {
+      context.push_str("\n\nHint: Every rule needs an assignment operator ('=' for new rules, '/=' for type alternatives, or '//=' for group alternatives).");
+    } else if positives.iter().any(|p| p.contains("type")) {
+      context.push_str("\n\nHint: Make sure your type expression is complete and properly formatted.");
+    } else if positives.iter().any(|p| p.contains("group")) {
+      context.push_str("\n\nHint: Group definitions should contain valid group entries.");
+    }
+  }
+
+  if !negatives.is_empty() {
+    if !context.is_empty() {
+      context.push_str(" ");
+    }
+    context.push_str("Did not expect ");
+    context.push_str(&negatives.join(" or "));
+    context.push('.');
+  }
+
+  context
 }
 
 /// Convert Pest span to AST span
@@ -1817,7 +1979,7 @@ person = {
 
   #[test]
   fn test_error_reporting() {
-    // Test that errors are properly converted
+    // Test that errors are properly converted with enhanced messages
     let input = "invalid syntax @#$";
     let result = cddl_from_pest_str(input);
     assert!(result.is_err(), "Should fail on invalid syntax");
@@ -1825,9 +1987,69 @@ person = {
     if let Err(e) = result {
       // Verify error contains useful information
       let error_str = format!("{:?}", e);
+      // Check that the error contains the enhanced user-friendly message
       assert!(
-        error_str.contains("Pest parsing error"),
-        "Error should mention Pest"
+        error_str.contains("expected") || error_str.contains("assignment"),
+        "Error should contain user-friendly message about expectations, got: {}",
+        error_str
+      );
+    }
+  }
+
+  #[test]
+  fn test_enhanced_error_messages() {
+    // Test various error scenarios to ensure enhanced messages are working
+
+    // Missing assignment operator
+    let input = "myrule";
+    if let Err(e) = cddl_from_pest_str(input) {
+      let error_str = format!("{:?}", e);
+      assert!(
+        error_str.contains("assignment"),
+        "Error should mention assignment, got: {}",
+        error_str
+      );
+      assert!(
+        error_str.contains("Hint"),
+        "Error should include a hint, got: {}",
+        error_str
+      );
+    }
+
+    // Missing value after assignment
+    let input = "myrule = ";
+    if let Err(e) = cddl_from_pest_str(input) {
+      let error_str = format!("{:?}", e);
+      assert!(
+        error_str.contains("type value") || error_str.contains("group entry"),
+        "Error should mention expected elements, got: {}",
+        error_str
+      );
+    }
+
+    // Invalid syntax
+    let input = "x = !!invalid!!";
+    if let Err(e) = cddl_from_pest_str(input) {
+      let error_str = format!("{:?}", e);
+      assert!(
+        error_str.contains("expected"),
+        "Error should mention expectations, got: {}",
+        error_str
+      );
+    }
+  }
+
+  #[test]
+  fn test_error_position_tracking() {
+    // Test that position information is correctly preserved
+    let input = "myrule = \n  invalid @#$";
+    if let Err(e) = cddl_from_pest_str(input) {
+      let error_str = format!("{:?}", e);
+      // Should have line 2 information
+      assert!(
+        error_str.contains("line: 2"),
+        "Error should have correct line number, got: {}",
+        error_str
       );
     }
   }
