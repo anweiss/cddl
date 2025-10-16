@@ -212,7 +212,7 @@ occur_optional = { "?" ~ !DIGIT }
 // Identifiers for types, groups, and barewords
 // Can contain letters, digits, hyphens, and periods
 // Must start with a letter, @, _, or $
-id = @{ EALPHA ~ (("-" | ".")? ~ (EALPHA | DIGIT))* }
+id = @{ EALPHA_START ~ (("-" | ".")? ~ (EALPHA | DIGIT))* }
 typename = { socket_type? ~ id }
 groupname = { socket_group? ~ id }
 bareword = @{ id }
@@ -223,7 +223,10 @@ bareword = @{ id }
 socket_type = { "$" }
 socket_group = { "$$" }
 
+// EALPHA for identifier content (can include $ in middle)
 EALPHA = { ALPHA | "@" | "_" | "$" }
+// EALPHA_START for identifier start (cannot start with $)
+EALPHA_START = { ALPHA | "@" | "_" }
 ALPHA = { 'a'..'z' | 'A'..'Z' }
 DIGIT = { '0'..'9' }
 

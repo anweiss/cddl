@@ -1120,9 +1120,12 @@ fn convert_group_entry<'a>(
   let inner_pairs: Vec<_> = pair.clone().into_inner().collect();
 
   // Check if this has a member key with colon or arrow
-  let has_colon = inner_pairs.iter().any(|p| p.as_str() == ":");
-  let has_arrow = inner_pairs.iter().any(|p| p.as_str() == "=>");
-  let has_cut = inner_pairs.iter().any(|p| p.as_str() == "^");
+  // We need to check the full matched text since : and => are literals in the grammar
+  let full_text = pair.as_str();
+  let has_member_key = inner_pairs.iter().any(|p| p.as_rule() == Rule::member_key);
+  let has_colon = has_member_key && full_text.contains(':') && !full_text.contains("=>");
+  let has_arrow = has_member_key && full_text.contains("=>");
+  let has_cut = full_text.starts_with('^');
 
   if has_cut {
     is_cut = true;
