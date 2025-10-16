@@ -3622,10 +3622,24 @@ impl CDDL<'_> {
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(not(feature = "std"))]
   pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL<'_>, String> {
-    use crate::pest_bridge::cddl_from_pest_str;
-    
     let str_input = std::str::from_utf8(input).map_err(|e| e.to_string())?;
-    cddl_from_pest_str(str_input).map_err(|e| format!("{}", e))
+
+    match Parser::new(str_input, Box::new(lexer::Lexer::from_slice(input).iter()))
+      .map_err(|e| e.to_string())
+    {
+      Ok(mut p) => match p.parse_cddl() {
+        Ok(c) => Ok(c),
+        Err(Error::INCREMENTAL) => {
+          if let Some(e) = p.report_errors() {
+            return Err(e);
+          }
+
+          Err(Error::INCREMENTAL.to_string())
+        }
+        Err(e) => Err(e.to_string()),
+      },
+      Err(e) => Err(e),
+    }
   }
 }
 
@@ -3649,9 +3663,21 @@ impl CDDL<'_> {
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(not(feature = "std"))]
 pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL<'_>, String> {
-  use crate::pest_bridge::cddl_from_pest_str;
-  
-  cddl_from_pest_str(input).map_err(|e| format!("{}", e))
+  match Parser::new(input, Box::new(lexer::lexer_from_str(input).iter())).map_err(|e| e.to_string())
+  {
+    Ok(mut p) => match p.parse_cddl() {
+      Ok(c) => Ok(c),
+      Err(Error::INCREMENTAL) => {
+        if let Some(e) = p.report_errors() {
+          return Err(e);
+        }
+
+        Err(Error::INCREMENTAL.to_string())
+      }
+      Err(e) => Err(e.to_string()),
+    },
+    Err(e) => Err(e),
+  }
 }
 
 /// Returns a `ast::CDDL` wrapped in `JsValue` from a `&str`
