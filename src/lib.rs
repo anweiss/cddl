@@ -19,12 +19,11 @@
 //! (Proposed Standard) at
 //! [https://tools.ietf.org/html/rfc8610](https://tools.ietf.org/html/rfc8610).
 //!
-//! This crate includes a handwritten parser and lexer for CDDL, and its
-//! development has been heavily inspired by the techniques outlined in Thorsten
-//! Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/).
-//! The AST has been built to closely match the rules defined by the ABNF
-//! grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of
-//! the spec. All CDDL must use UTF-8 for its encoding per the spec.
+//! This crate uses the [Pest](https://pest.rs/) parsing library to parse CDDL
+//! according to the grammar defined in RFC 8610. The AST has been built to
+//! closely match the rules defined by the ABNF grammar in
+//! [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec.
+//! All CDDL must use UTF-8 for its encoding per the spec.
 //!
 //! This crate supports validation of both CBOR and JSON data structures. An
 //! extremely basic REPL is included as well. This crate's minimum supported
@@ -494,9 +493,9 @@
 //!
 //! ## `no_std` support
 //!
-//! Only the lexer and parser can be used in a `no_std` context provided that a
-//! heap allocator is available. This can be enabled by opting out of the
-//! default features in your `Cargo.toml` file as follows:
+//! Parsing can be used in a `no_std` context provided that a heap allocator is
+//! available. This can be enabled by opting out of the default features in your
+//! `Cargo.toml` file as follows:
 //!
 //! ```toml
 //! [dependencies]
