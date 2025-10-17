@@ -4144,7 +4144,7 @@ where
         } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.ctrl {
           None
         } else {
-          Some(format!("object missing key: \"{}\"", value))
+          Some(format!("object missing key: {}", value))
         }
 
         #[cfg(not(feature = "ast-span"))]
@@ -4165,7 +4165,7 @@ where
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
           None
         } else {
-          Some(format!("object missing key: \"{}\"", value))
+          Some(format!("object missing key: {}", value))
         }
       }
       _ => Some(format!("expected {}, got {:?}", value, self.cbor)),
