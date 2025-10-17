@@ -843,7 +843,7 @@ mod tests {
 
   #[cfg(feature = "ast-span")]
   use crate::ast::Span;
-  use crate::{cddl_from_str, lexer_from_str};
+  use crate::cddl_from_str;
 
   use super::*;
   use indoc::indoc;
