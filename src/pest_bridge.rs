@@ -38,7 +38,7 @@ use crate::{
   lexer::Position,
   parser::Error,
   pest_parser::{CddlParser, Rule},
-  token::{lookup_control_from_str, ControlOperator, SocketPlug, Value},
+  token::{lookup_control_from_str, ControlOperator, SocketPlug, TagConstraint, Value},
 };
 
 use pest::{
@@ -1207,8 +1207,117 @@ fn convert_tag_expr<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Typ
     });
   }
 
-  // Parse tag expressions - this is complex, so we'll do a basic implementation
-  // A full implementation would parse the internal structure
+  // Parse the tag expression structure
+  let mut major_type = None;
+  let mut tag_constraint = None;
+  let mut tagged_type = None;
+
+  for inner in pair.into_inner() {
+    match inner.as_rule() {
+      Rule::DIGIT => {
+        // Major type (e.g., the '6' in '#6.42(tstr)')
+        major_type = Some(inner.as_str().parse::<u8>().map_err(|_| Error::PARSER {
+          #[cfg(feature = "ast-span")]
+          position: pest_span_to_position(&inner.as_span(), input),
+          msg: ErrorMsg {
+            short: "Invalid major type".to_string(),
+            extended: None,
+          },
+        })?);
+      }
+      Rule::tag_value => {
+        // Tag value - can be uint_value or type expression
+        for tag_inner in inner.into_inner() {
+          match tag_inner.as_rule() {
+            Rule::uint_value => {
+              let tag_num = tag_inner.as_str().parse::<u64>().map_err(|_| Error::PARSER {
+                #[cfg(feature = "ast-span")]
+                position: pest_span_to_position(&tag_inner.as_span(), input),
+                msg: ErrorMsg {
+                  short: "Invalid tag number".to_string(),
+                  extended: None,
+                },
+              })?;
+              tag_constraint = Some(TagConstraint::Literal(tag_num));
+            }
+            Rule::type_expr => {
+              // Type expression in angle brackets: <typename>
+              tag_constraint = Some(TagConstraint::Type(tag_inner.as_str()));
+            }
+            _ => {}
+          }
+        }
+      }
+      Rule::type_expr => {
+        // The type inside the parentheses
+        tagged_type = Some(convert_type_expr(inner, input)?);
+      }
+      _ => {}
+    }
+  }
+
+  // Check if this is a major type expression (e.g., #1.5) or a tag expression (e.g., #6.42(tstr))
+  if let Some(mt) = major_type {
+    if mt == 6 {
+      // This is a CBOR tag expression (#6.x(type))
+      if let Some(t) = tagged_type {
+        return Ok(ast::Type2::TaggedData {
+          tag: tag_constraint,
+          t,
+          #[cfg(feature = "ast-span")]
+          span,
+          #[cfg(feature = "ast-comments")]
+          comments_before_type: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_type: None,
+        });
+      } else if tag_constraint.is_some() {
+        // Tag without type specified - this is less common but valid
+        // Create a default type (any)
+        return Ok(ast::Type2::TaggedData {
+          tag: tag_constraint,
+          t: ast::Type {
+            type_choices: vec![ast::TypeChoice {
+              type1: ast::Type1 {
+                type2: ast::Type2::Any {
+                  #[cfg(feature = "ast-span")]
+                  span: ast::Span::default(),
+                },
+                operator: None,
+                #[cfg(feature = "ast-span")]
+                span: ast::Span::default(),
+                #[cfg(feature = "ast-comments")]
+                comments_after_type: None,
+              },
+              #[cfg(feature = "ast-comments")]
+              comments_before_type: None,
+              #[cfg(feature = "ast-comments")]
+              comments_after_type: None,
+            }],
+            #[cfg(feature = "ast-span")]
+            span: ast::Span::default(),
+          },
+          #[cfg(feature = "ast-span")]
+          span,
+          #[cfg(feature = "ast-comments")]
+          comments_before_type: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_type: None,
+        });
+      }
+    } else {
+      // This is a major type expression (e.g., #1.5)
+      // Create a DataMajorType
+      return Ok(ast::Type2::DataMajorType {
+        mt,
+        constraint: tag_constraint,
+        #[cfg(feature = "ast-span")]
+        span,
+      });
+    }
+  }
+
+  // If we couldn't parse it properly, return Any
   Ok(ast::Type2::Any {
     #[cfg(feature = "ast-span")]
     span,

@@ -4141,10 +4141,14 @@ where
         {
           self.advance_to_next_entry = true;
           None
+        } else if let Some(Occur::Exact { lower: None, upper: None, .. }) = &self.occurrence.take() {
+          // Handle Exact { lower: None, upper: None } as zero-or-more (for backward compatibility)
+          self.advance_to_next_entry = true;
+          None
         } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.ctrl {
           None
         } else {
-          Some(format!("object missing key: \"{}\"", value))
+          Some(format!("object missing key: {}", value))
         }
 
         #[cfg(not(feature = "ast-span"))]
@@ -4165,7 +4169,7 @@ where
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
           None
         } else {
-          Some(format!("object missing key: \"{}\"", value))
+          Some(format!("object missing key: {}", value))
         }
       }
       _ => Some(format!("expected {}, got {:?}", value, self.cbor)),

@@ -543,7 +543,7 @@ impl<'a> JSONValidator<'a> {
         } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.ctrl {
           return Ok(());
         } else {
-          self.add_error(format!("object missing key: \"{}\"", t))
+          self.add_error(format!("object missing key: {}", t))
         }
 
         // Retrieve the value from key unless optional/zero or more, in which
@@ -566,7 +566,7 @@ impl<'a> JSONValidator<'a> {
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
           return Ok(());
         } else {
-          self.add_error(format!("object missing key: \"{}\"", t))
+          self.add_error(format!("object missing key: {}", t))
         }
       } else {
         self.add_error(format!(
