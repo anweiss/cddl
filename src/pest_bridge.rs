@@ -745,7 +745,10 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
   for inner in pair_clone.into_inner() {
     match inner.as_rule() {
       Rule::value => {
+        #[cfg(feature = "ast-span")]
         return convert_value_to_type2(inner, input, span);
+        #[cfg(not(feature = "ast-span"))]
+        return convert_value_to_type2(inner, input);
       }
       Rule::typename => {
         let ident = convert_identifier(inner.clone(), input, false)?;

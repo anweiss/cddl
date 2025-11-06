@@ -549,8 +549,10 @@ pub mod lexer;
 /// Parser for CDDL
 pub mod parser;
 /// Bridge layer between Pest parser and existing AST
+#[cfg(feature = "std")]
 pub mod pest_bridge;
 /// Pest-based parser for CDDL (alternative implementation)
+#[cfg(feature = "std")]
 pub mod pest_parser;
 /// CDDL tokens for lexing
 pub mod token;

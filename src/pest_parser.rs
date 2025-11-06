@@ -3,6 +3,9 @@
 //! This module provides an alternative parser implementation using the Pest parsing library.
 //! It parses CDDL grammar as defined in RFC 8610 using the grammar file `cddl.pest`.
 
+#[cfg(not(feature = "std"))]
+extern crate alloc;
+
 use pest::Parser;
 use pest_derive::Parser;
 

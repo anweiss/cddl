@@ -5,9 +5,14 @@
 
 use super::{ast::*, error::ErrorMsg, lexer::Position};
 
+#[cfg(feature = "std")]
 use crate::pest_bridge::cddl_from_pest_str;
 
-use std::result;
+#[cfg(not(feature = "std"))]
+#[allow(unused_imports)]
+use alloc::{borrow::ToOwned, string::String};
+
+use core::result;
 
 use displaydoc::Display;
 
@@ -64,7 +69,7 @@ impl std::error::Error for Error {}
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(feature = "std")]
-pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDDL<'_>, String> {
+pub fn cddl_from_str(input: &str, print_stderr: bool) -> result::Result<CDDL<'_>, String> {
   match cddl_from_pest_str(input) {
     Ok(cddl) => Ok(cddl),
     Err(e) => {
@@ -84,17 +89,21 @@ pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDD
 ///
 /// # Example
 ///
-/// ```
+/// ```ignore
 /// use cddl::cddl_from_str;
 ///
 /// let input = r#"myrule = int"#;
 ///
 /// let _ = cddl_from_str(input);
 /// ```
+///
+/// Note: This function is not available in no_std mode since the Pest parser requires std.
+/// For no_std parsing support, the handwritten parser would need to be restored.
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(not(feature = "std"))]
-pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL<'_>, String> {
-  cddl_from_pest_str(input).map_err(|e| e.to_string())
+pub fn cddl_from_str(_input: &str) -> result::Result<CDDL<'_>, String> {
+  use alloc::borrow::ToOwned;
+  Err("cddl_from_str is not available in no_std mode. The Pest parser requires std. Use with the 'std' feature enabled.".to_owned())
 }
 
 /// Returns a `ast::CDDL` wrapped in `JsValue` from a `&str`
@@ -167,6 +176,8 @@ impl CDDL<'_> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "std")]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests {
   use super::*;
 
