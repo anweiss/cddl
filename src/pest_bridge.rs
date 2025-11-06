@@ -1478,6 +1478,50 @@ fn convert_group_entry<'a>(
     });
   }
 
+  // Check if entry_type is a simple bare typename and convert to group reference
+  // This handles cases like ( NullPart // SinglePart ) where the identifiers should be group refs
+  if let Some(ref et) = entry_type {
+    if member_key.is_none() && et.type_choices.len() == 1 {
+      let tc = &et.type_choices[0];
+      // Only convert if there's no operator and it's a simple typename
+      if tc.type1.operator.is_none() {
+        if let ast::Type2::Typename { ident, generic_args: ga, .. } = &tc.type1.type2 {
+          // Don't convert if the identifier is a common CDDL prelude type or looks like a generic parameter
+          let name = ident.ident;
+          let is_prelude_type = matches!(name, 
+            "any" | "uint" | "nint" | "int" | "bstr" | "bytes" | "tstr" | "text" |
+            "tdate" | "time" | "number" | "biguint" | "bignint" | "bigint" |
+            "integer" | "unsigned" | "decfrac" | "bigfloat" | "eb64url" |
+            "eb64legacy" | "eb16" | "encoded-cbor" | "uri" | "b64url" | "b64legacy" |
+            "regexp" | "mime-message" | "cbor-any" | "float16" | "float32" |
+            "float64" | "float16-32" | "float32-64" | "float" | "false" | "true" |
+            "bool" | "nil" | "null" | "undefined"
+          );
+          
+          // Check if it looks like a generic parameter (single word, all caps, length <= 8)
+          let is_likely_generic = name.chars().all(|c| c.is_uppercase() || c == '_') && name.len() <= 8;
+          
+          if !is_prelude_type && !is_likely_generic {
+            // This is likely a group reference, not a type
+            return Ok(ast::GroupEntry::TypeGroupname {
+              ge: ast::TypeGroupnameEntry {
+                occur,
+                name: ident.clone(),
+                generic_args: ga.clone(),
+              },
+              #[cfg(feature = "ast-span")]
+              span,
+              #[cfg(feature = "ast-comments")]
+              leading_comments: None,
+              #[cfg(feature = "ast-comments")]
+              trailing_comments: None,
+            });
+          }
+        }
+      }
+    }
+  }
+
   // Default to ValueMemberKey
   let entry_type = entry_type.unwrap_or_else(|| ast::Type {
     type_choices: vec![],

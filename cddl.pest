@@ -171,7 +171,15 @@ group_choice_op = { "//" }
 // - Occurrence with type: ? type, * type, + type, n*m type
 // - Named group reference: groupname
 // - Nested group: ( group )
-// - Cut entries: ^label or ^ => type (prevents backtracking)
+// Group entries can be:
+// - Member key with colon: key: type
+// - Member key with arrow: key => type
+// - Cut with arrow: ^ => type
+// - Cut with member key: ^key: type
+// - Inline group: ( group )
+// - Type expression: any type (includes operators, choices, etc.)
+// - Group reference: groupname (bare identifier)
+// Note: type_expr tried first to handle operators, but groupname still needed for bare identifiers
 group_entry = { occur? ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr
               | occur? ~ S ~ member_key ~ S ~ "=>" ~ S ~ type_expr
               | "^" ~ S ~ "=>" ~ S ~ type_expr
