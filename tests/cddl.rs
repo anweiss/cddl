@@ -18,7 +18,11 @@ fn verify_cddl_compiles() -> Result<(), parser::Error> {
     match parser::cddl_from_str(&file_content, true) {
       Ok(_) => println!("file: {:#?} ... success", file.path()),
       Err(e) => {
-        return Err(parser::Error::CDDL(format!("Failed to parse {}: {}", file.path().display(), e)));
+        return Err(parser::Error::CDDL(format!(
+          "Failed to parse {}: {}",
+          file.path().display(),
+          e
+        )));
       }
     }
   }

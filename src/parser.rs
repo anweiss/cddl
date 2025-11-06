@@ -3,13 +3,8 @@
 //! This module provides the public API for parsing CDDL documents.
 //! The implementation uses the Pest parser through the pest_bridge module.
 
-use super::{
-  ast::*,
-  error::ErrorMsg,
-  lexer::Position,
-};
+use super::{ast::*, error::ErrorMsg, lexer::Position};
 
-#[cfg(feature = "std")]
 use crate::pest_bridge::cddl_from_pest_str;
 
 use std::result;

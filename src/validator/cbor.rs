@@ -4141,7 +4141,12 @@ where
         {
           self.advance_to_next_entry = true;
           None
-        } else if let Some(Occur::Exact { lower: None, upper: None, .. }) = &self.occurrence.take() {
+        } else if let Some(Occur::Exact {
+          lower: None,
+          upper: None,
+          ..
+        }) = &self.occurrence.take()
+        {
           // Handle Exact { lower: None, upper: None } as zero-or-more (for backward compatibility)
           self.advance_to_next_entry = true;
           None
@@ -4233,8 +4238,7 @@ mod tests {
 
     let cbor = ciborium::value::Value::Bytes(vec![0x90, 0x6d]);
 
-    let mut lexer = lexer_from_str(cddl);
-    let cddl = cddl_from_str(&mut lexer, cddl, true)?;
+    let cddl = crate::cddl_from_str(cddl, true)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor);
     cv.validate()?;

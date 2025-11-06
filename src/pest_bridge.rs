@@ -1230,14 +1230,17 @@ fn convert_tag_expr<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Typ
         for tag_inner in inner.into_inner() {
           match tag_inner.as_rule() {
             Rule::uint_value => {
-              let tag_num = tag_inner.as_str().parse::<u64>().map_err(|_| Error::PARSER {
-                #[cfg(feature = "ast-span")]
-                position: pest_span_to_position(&tag_inner.as_span(), input),
-                msg: ErrorMsg {
-                  short: "Invalid tag number".to_string(),
-                  extended: None,
-                },
-              })?;
+              let tag_num = tag_inner
+                .as_str()
+                .parse::<u64>()
+                .map_err(|_| Error::PARSER {
+                  #[cfg(feature = "ast-span")]
+                  position: pest_span_to_position(&tag_inner.as_span(), input),
+                  msg: ErrorMsg {
+                    short: "Invalid tag number".to_string(),
+                    extended: None,
+                  },
+                })?;
               tag_constraint = Some(TagConstraint::Literal(tag_num));
             }
             Rule::type_expr => {
@@ -1485,22 +1488,62 @@ fn convert_group_entry<'a>(
       let tc = &et.type_choices[0];
       // Only convert if there's no operator and it's a simple typename
       if tc.type1.operator.is_none() {
-        if let ast::Type2::Typename { ident, generic_args: ga, .. } = &tc.type1.type2 {
+        if let ast::Type2::Typename {
+          ident,
+          generic_args: ga,
+          ..
+        } = &tc.type1.type2
+        {
           // Don't convert if the identifier is a common CDDL prelude type or looks like a generic parameter
           let name = ident.ident;
-          let is_prelude_type = matches!(name, 
-            "any" | "uint" | "nint" | "int" | "bstr" | "bytes" | "tstr" | "text" |
-            "tdate" | "time" | "number" | "biguint" | "bignint" | "bigint" |
-            "integer" | "unsigned" | "decfrac" | "bigfloat" | "eb64url" |
-            "eb64legacy" | "eb16" | "encoded-cbor" | "uri" | "b64url" | "b64legacy" |
-            "regexp" | "mime-message" | "cbor-any" | "float16" | "float32" |
-            "float64" | "float16-32" | "float32-64" | "float" | "false" | "true" |
-            "bool" | "nil" | "null" | "undefined"
+          let is_prelude_type = matches!(
+            name,
+            "any"
+              | "uint"
+              | "nint"
+              | "int"
+              | "bstr"
+              | "bytes"
+              | "tstr"
+              | "text"
+              | "tdate"
+              | "time"
+              | "number"
+              | "biguint"
+              | "bignint"
+              | "bigint"
+              | "integer"
+              | "unsigned"
+              | "decfrac"
+              | "bigfloat"
+              | "eb64url"
+              | "eb64legacy"
+              | "eb16"
+              | "encoded-cbor"
+              | "uri"
+              | "b64url"
+              | "b64legacy"
+              | "regexp"
+              | "mime-message"
+              | "cbor-any"
+              | "float16"
+              | "float32"
+              | "float64"
+              | "float16-32"
+              | "float32-64"
+              | "float"
+              | "false"
+              | "true"
+              | "bool"
+              | "nil"
+              | "null"
+              | "undefined"
           );
-          
+
           // Check if it looks like a generic parameter (single word, all caps, length <= 8)
-          let is_likely_generic = name.chars().all(|c| c.is_uppercase() || c == '_') && name.len() <= 8;
-          
+          let is_likely_generic =
+            name.chars().all(|c| c.is_uppercase() || c == '_') && name.len() <= 8;
+
           if !is_prelude_type && !is_likely_generic {
             // This is likely a group reference, not a type
             return Ok(ast::GroupEntry::TypeGroupname {
