@@ -171,22 +171,14 @@ group_choice_op = { "//" }
 // - Occurrence with type: ? type, * type, + type, n*m type
 // - Named group reference: groupname
 // - Nested group: ( group )
-// Group entries can be:
-// - Member key with colon: key: type
-// - Member key with arrow: key => type
-// - Cut with arrow: ^ => type
-// - Cut with member key: ^key: type
-// - Inline group: ( group )
-// - Type expression: any type (includes operators, choices, etc.)
-// - Group reference: groupname (bare identifier)
-// Note: type_expr tried first to handle operators, but groupname still needed for bare identifiers
+// - Cut entries: ^label or ^ => type (prevents backtracking)
 group_entry = { occur? ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr
               | occur? ~ S ~ member_key ~ S ~ "=>" ~ S ~ type_expr
-              | "^" ~ S ~ "=>" ~ S ~ type_expr
-              | "^" ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr
+              | occur? ~ S ~ groupname ~ generic_args?
               | occur? ~ S ~ "(" ~ S ~ group ~ S ~ ")"
               | occur? ~ S ~ type_expr
-              | occur? ~ S ~ groupname ~ generic_args? }
+              | "^" ~ S ~ "=>" ~ S ~ type_expr
+              | "^" ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr }
 
 // Member keys can be barewords, type names, or literal values
 member_key = { bareword | typename ~ generic_args? | value }
@@ -201,9 +193,9 @@ member_key = { bareword | typename ~ generic_args? | value }
 // + - one or more
 // n* - exactly n times
 // n*m - between n and m times
-occur = { occur_optional
+occur = { occur_zero_or_more
         | occur_one_or_more
-        | occur_zero_or_more
+        | occur_optional
         | occur_exact
         | occur_range }
 
