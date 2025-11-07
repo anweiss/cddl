@@ -174,9 +174,9 @@ group_choice_op = { "//" }
 // - Cut entries: ^label or ^ => type (prevents backtracking)
 group_entry = { occur? ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr
               | occur? ~ S ~ member_key ~ S ~ "=>" ~ S ~ type_expr
+              | occur? ~ S ~ type_expr
               | occur? ~ S ~ groupname ~ generic_args?
               | occur? ~ S ~ "(" ~ S ~ group ~ S ~ ")"
-              | occur? ~ S ~ type_expr
               | "^" ~ S ~ "=>" ~ S ~ type_expr
               | "^" ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr }
 

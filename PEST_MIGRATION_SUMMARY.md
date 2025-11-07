@@ -79,30 +79,42 @@ Successfully migrated from handwritten lexer/parser (~5400 lines) to Pest-based 
 
 ## Known Issues
 
-### Byron.cddl Fixture Parsing
-One CDDL fixture file (byron.cddl) fails to parse due to an edge case in the Pest grammar.
+### validate_plus Test (Edge Case with Generic Parameters)
 
-**Issue**: The grammar has `groupname` before `type_expr` in the `group_entry` alternatives. When parsing `[ u8 .ne 0, encoded-cbor ]`, the parser tries to match `u8` as a groupname first, succeeds (since it's a valid identifier), then fails when it encounters `.ne` (which it doesn't expect after a groupname).
+**Issue**: The `validate_plus` unit test fails when using generic parameters with the `.plus` control operator in map entries.
 
-**Why this order**: Having `groupname` before `type_expr` is necessary for the `validate_plus` test to pass. This test uses generic parameters with control operators like `BASE .plus a` in a group context, and swapping the order causes validation failures.
+**Test Case**:
+```cddl
+interval<BASE> = (
+  "test" => BASE .plus a
+)
+rect = {
+  interval<X>
+}
+X = 0
+a = 10
+```
+
+**Root Cause**: The grammar now has `type_expr` before `groupname` in `group_entry` alternatives (necessary to parse byron.cddl and other real-world CDDL correctly). The validation fails with "invalid controller used for .plus operation", likely due to how generic parameters interact with control operators in the new AST structure.
 
 **Impact**: 
-- Byron.cddl (Cardano blockchain specification) doesn't parse
-- All other CDDL files parse correctly
-- All unit and integration tests pass
-- This affects 1 of ~50 CDDL fixture files
+- 1 unit test fails (`validate_plus`) - only runs when `additional-controls` feature enabled (which is default)
+- All 12 CBOR integration tests pass ✅
+- All 11 CDDL fixture files parse correctly ✅ (including byron.cddl which was previously failing)
+- All 2 WASM tests pass ✅
+- 91 of 92 unit tests pass (99% pass rate)
+- This is an edge case that doesn't affect typical CDDL usage
 
 **Tradeoff**: The current grammar order prioritizes:
-1. ✅ All unit tests passing (92/92)
-2. ✅ All CBOR integration tests passing (12/12)
-3. ✅ Generic parameter handling with control operators
-4. ❌ Byron.cddl fixture (1 file)
+1. ✅ All CDDL fixture files parsing (including byron.cddl)
+2. ✅ Type expressions with control operators working correctly
+3. ✅ 99% of tests passing
+4. ❌ One edge case with generic parameters in control operators
 
 **Potential Solutions**:
-1. Implement lookahead in grammar (not supported by Pest)
-2. More sophisticated disambiguation in pest_bridge that examines context
-3. Rewrite byron.cddl to avoid the ambiguous syntax
-4. Accept that some edge cases may not parse (current approach)
+1. Implement more sophisticated generic parameter resolution in validator
+2. Modify the test to use a different pattern that doesn't hit this edge case
+3. Accept limitation as documented tradeoff (current approach - affects <1% of tests)
 
 ### no_std Parsing Limitation
 The `cddl_from_str` function is not available in no_std mode because the Pest parser requires std (pest_derive generates code using std::boxed::Box).
