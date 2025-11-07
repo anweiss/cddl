@@ -739,6 +739,11 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
 
+  // Declare these at function scope so they can be set in the first loop
+  // and used later
+  let mut typename_ident = None;
+  let mut generic_args = None;
+
   // Clone the pair to allow multiple iterations
   let pair_clone = pair.clone();
 
@@ -751,20 +756,13 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
         return convert_value_to_type2(inner, input);
       }
       Rule::typename => {
-        let ident = convert_identifier(inner.clone(), input, false)?;
-        let generic_args = None;
-
-        // Check if there are generic args (they would be siblings in the parent)
-        // We need to re-examine the parent's children
-        return Ok(ast::Type2::Typename {
-          ident,
-          generic_args,
-          #[cfg(feature = "ast-span")]
-          span,
-        });
+        // Don't return immediately - we need to check for generic_args
+        // which may come as a sibling rule
+        typename_ident = Some(convert_identifier(inner.clone(), input, false)?);
       }
       Rule::generic_args => {
-        // This will be handled together with typename
+        // Store for later - will be combined with typename
+        generic_args = Some(convert_generic_args(inner, input)?);
       }
       Rule::type_expr => {
         // Parenthesized type
@@ -816,18 +814,20 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
   }
 
   // Handle typename with generic_args by checking all children
-  let mut typename_ident = None;
-  let mut generic_args = None;
-
-  for inner in pair.clone().into_inner() {
-    match inner.as_rule() {
-      Rule::typename => {
-        typename_ident = Some(convert_identifier(inner, input, false)?);
+  // (may have already been partially set in first loop)
+  if typename_ident.is_none() {
+    for inner in pair.clone().into_inner() {
+      match inner.as_rule() {
+        Rule::typename => {
+          typename_ident = Some(convert_identifier(inner, input, false)?);
+        }
+        Rule::generic_args => {
+          if generic_args.is_none() {
+            generic_args = Some(convert_generic_args(inner, input)?);
+          }
+        }
+        _ => {}
       }
-      Rule::generic_args => {
-        generic_args = Some(convert_generic_args(inner, input)?);
-      }
-      _ => {}
     }
   }
 

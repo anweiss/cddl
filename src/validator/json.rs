@@ -661,6 +661,26 @@ impl<'a> JSONValidator<'a> {
     }
     Ok(())
   }
+
+  #[cfg(feature = "additional-controls")]
+  /// Substitute generic parameters in a Type2 expression
+  /// Returns the substituted Type2 if successful, or the original if no substitution needed
+  fn substitute_generic_param(&self, t2: &Type2<'a>) -> Option<Type2<'a>> {
+    if let Type2::Typename { ident, .. } = t2 {
+      // Check if this typename matches a generic parameter in any of our generic rules
+      for gr in self.generic_rules.iter() {
+        for (idx, param) in gr.params.iter().enumerate() {
+          if ident.ident == *param {
+            // Found a match! Return the corresponding argument
+            if let Some(arg) = gr.args.get(idx) {
+              return Some(arg.type2.clone());
+            }
+          }
+        }
+      }
+    }
+    None
+  }
 }
 
 impl<'a> Validator<'a, '_, Error> for JSONValidator<'a> {
@@ -1469,7 +1489,11 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       ControlOperator::PLUS => {
         self.ctrl = Some(ctrl);
 
-        match plus_operation(self.cddl, target, controller) {
+        // Substitute generic parameters in target and controller before calling plus_operation
+        let substituted_target = self.substitute_generic_param(target).unwrap_or_else(|| target.clone());
+        let substituted_controller = self.substitute_generic_param(controller).unwrap_or_else(|| controller.clone());
+
+        match plus_operation(self.cddl, &substituted_target, &substituted_controller) {
           Ok(values) => {
             let error_count = self.errors.len();
             for v in values.iter() {
@@ -2060,10 +2084,11 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
                 gr.args.push((*arg.arg).clone());
               }
             } else if let Some(params) = generic_params_from_rule(rule) {
+              let args_vec: Vec<Type1> = ga.args.iter().cloned().map(|arg| *arg.arg).collect();
               self.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
-                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                args: args_vec,
               });
             }
 
@@ -2772,10 +2797,11 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             gr.args.push((*arg.arg).clone());
           }
         } else if let Some(params) = generic_params_from_rule(rule) {
+          let args_vec: Vec<Type1> = ga.args.iter().cloned().map(|arg| *arg.arg).collect();
           self.generic_rules.push(GenericRule {
             name: entry.name.ident,
             params,
-            args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+            args: args_vec,
           });
         }
 
