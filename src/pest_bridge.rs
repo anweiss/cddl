@@ -815,19 +815,28 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
 
   // Handle typename with generic_args by checking all children
   // (may have already been partially set in first loop)
-  if typename_ident.is_none() {
-    for inner in pair.clone().into_inner() {
-      match inner.as_rule() {
-        Rule::typename => {
-          typename_ident = Some(convert_identifier(inner, input, false)?);
-        }
-        Rule::generic_args => {
-          if generic_args.is_none() {
-            generic_args = Some(convert_generic_args(inner, input)?);
-          }
-        }
-        _ => {}
+  if typename_ident.is_some() {
+    // Already found typename in first loop, return it
+    return Ok(ast::Type2::Typename {
+      ident: typename_ident.unwrap(),
+      generic_args,
+      #[cfg(feature = "ast-span")]
+      span,
+    });
+  }
+
+  // Typename not found in first loop, scan again (shouldn't normally happen)
+  for inner in pair.clone().into_inner() {
+    match inner.as_rule() {
+      Rule::typename => {
+        typename_ident = Some(convert_identifier(inner, input, false)?);
       }
+      Rule::generic_args => {
+        if generic_args.is_none() {
+          generic_args = Some(convert_generic_args(inner, input)?);
+        }
+      }
+      _ => {}
     }
   }
 

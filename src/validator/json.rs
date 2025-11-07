@@ -663,8 +663,24 @@ impl<'a> JSONValidator<'a> {
   }
 
   #[cfg(feature = "additional-controls")]
-  /// Substitute generic parameters in a Type2 expression
-  /// Returns the substituted Type2 if successful, or the original if no substitution needed
+  /// Substitute generic parameters in a Type2 expression.
+  /// 
+  /// When validating generic rules, generic parameters need to be replaced with
+  /// their actual argument values before control operations are evaluated.
+  /// 
+  /// For example, given:
+  /// ```cddl
+  /// interval<BASE> = ( "test" => BASE .plus a )
+  /// rect = { interval<X> }
+  /// ```
+  /// When validating rect with X=0, this function substitutes BASE with X (which resolves to 0).
+  ///
+  /// # Arguments
+  /// * `t2` - The Type2 expression to check for generic parameters
+  ///
+  /// # Returns
+  /// * `Some(Type2)` - The substituted Type2 if the expression is a generic parameter
+  /// * `None` - If the expression is not a generic parameter or no substitution is available
   fn substitute_generic_param(&self, t2: &Type2<'a>) -> Option<Type2<'a>> {
     if let Type2::Typename { ident, .. } = t2 {
       // Check if this typename matches a generic parameter in any of our generic rules
