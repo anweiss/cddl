@@ -539,6 +539,30 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
       span: (0, 0, 1),
     }),
 
+    ParsedType::ChoiceFromGroup { name, generic_args } => {
+      let gen_args = if let Some(args) = generic_args {
+        Some(ast::GenericArgs {
+          args: args
+            .iter()
+            .map(|arg| convert_generic_arg(arg, input))
+            .collect::<Result<Vec<_>, _>>()?,
+          #[cfg(feature = "ast-span")]
+          span: (0, 0, 1),
+        })
+      } else {
+        None
+      };
+
+      Ok(ast::Type2::ChoiceFromGroup {
+        ident: convert_identifier(name, false),
+        generic_args: gen_args,
+        #[cfg(feature = "ast-comments")]
+        comments: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 1),
+      })
+    }
+
     ParsedType::Choice(choices) => {
       // Shouldn't happen at this level, but handle it
       if let Some(first) = choices.first() {

@@ -93,6 +93,10 @@ pub enum ParsedType<'a> {
   Array(Vec<ParsedGroupEntry<'a>>),
   Map(Vec<ParsedGroupEntry<'a>>),
   InlineGroup(Vec<ParsedGroupEntry<'a>>),
+  ChoiceFromGroup {
+    name: &'a str,
+    generic_args: Option<Vec<ParsedType<'a>>>,
+  },
   Choice(Vec<ParsedType<'a>>),
   Range {
     start: Box<ParsedType<'a>>,
@@ -387,6 +391,15 @@ fn parenthesized_type(input: &str) -> NomResult<ParsedType> {
   )(input)
 }
 
+/// Parse a choice from group (&groupname or &groupname<args>)
+fn choice_from_group(input: &str) -> NomResult<ParsedType> {
+  let (input, _) = char('&')(input)?;
+  let (input, name) = bareword(input)?;
+  let (input, generic_args) = opt(generic_args)(input)?;
+
+  Ok((input, ParsedType::ChoiceFromGroup { name, generic_args }))
+}
+
 /// Parse a base type (type2 in CDDL grammar)
 fn parse_type2(input: &str) -> NomResult<ParsedType> {
   context(
@@ -394,6 +407,7 @@ fn parse_type2(input: &str) -> NomResult<ParsedType> {
     alt((
       tagged_type,
       unwrap_type,
+      choice_from_group,
       array_type,
       map_type,
       parenthesized_type,
