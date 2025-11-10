@@ -356,8 +356,9 @@ fn convert_type1<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
       operator,
       controller,
     } => {
-      // Convert operator string to ControlOperator
-      let ctrl = token::lookup_control_from_str(operator).ok_or_else(|| Error::PARSER {
+      // Convert operator string to ControlOperator (add dot prefix)
+      let op_with_dot = format!(".{}", operator);
+      let ctrl = token::lookup_control_from_str(&op_with_dot).ok_or_else(|| Error::PARSER {
         #[cfg(feature = "ast-span")]
         position: Position::default(),
         msg: ErrorMsg {
