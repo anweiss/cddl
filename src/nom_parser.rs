@@ -32,7 +32,7 @@ use nom::{
     alpha1, alphanumeric1, char, digit1, hex_digit1, line_ending, multispace0, multispace1,
     not_line_ending, one_of, space0, space1,
   },
-  combinator::{map, opt, recognize, value, verify},
+  combinator::{map, not, opt, peek, recognize, value, verify},
   error::{context, ErrorKind, ParseError, VerboseError},
   multi::{many0, many1, separated_list0, separated_list1},
   sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
@@ -378,13 +378,13 @@ fn parse_type2(input: &str) -> NomResult<ParsedType> {
   context(
     "type2",
     alt((
-      map(value_parser, ParsedType::Value),
       tagged_type,
       unwrap_type,
       array_type,
       map_type,
       parenthesized_type,
       type_with_generics,
+      map(value_parser, ParsedType::Value),
     )),
   )(input)
 }
@@ -446,35 +446,71 @@ fn occurrence(input: &str) -> NomResult<ParsedOccurrence> {
   )(input)
 }
 
-/// Parse a member key
+/// Parse a member key (just bareword for simplicity - values as keys are rare)
 fn member_key(input: &str) -> NomResult<ParsedMemberKey> {
   context(
     "member_key",
-    alt((
-      map(bareword, ParsedMemberKey::Bareword),
-      map(value_parser, ParsedMemberKey::Value),
-      map(parse_type2, ParsedMemberKey::Type),
-    )),
+    map(bareword, ParsedMemberKey::Bareword),
   )(input)
 }
 
 /// Parse a group entry
 fn group_entry(input: &str) -> NomResult<ParsedGroupEntry> {
-  let (input, occur) = opt(terminated(occurrence, ws))(input)?;
+  // Try to parse occurrence indicator
+  // Occurrences like ?, *, + don't need following whitespace
+  // Numeric occurrences need whitespace to distinguish from values
+  let (input, occur) = if let Ok((after_occ, occ)) = occurrence(input) {
+    match occ {
+      // These are unambiguous single-character occurrences
+      ParsedOccurrence::Optional
+      | ParsedOccurrence::ZeroOrMore
+      | ParsedOccurrence::OneOrMore => {
+        // Consume optional whitespace after the occurrence
+        let (after_ws, _) = ws(after_occ)?;
+        (after_ws, Some(occ))
+      }
+      // Numeric occurrences (Exact or Range) need whitespace to distinguish from values
+      ParsedOccurrence::Exact(_) | ParsedOccurrence::Range { .. } => {
+        // Must be followed by whitespace
+        if let Ok((after_ws, _)) = multispace1::<&str, VerboseError<&str>>(after_occ) {
+          (after_ws, Some(occ))
+        } else {
+          // No whitespace, this is a value not an occurrence
+          (input, None)
+        }
+      }
+    }
+  } else {
+    (input, None)
+  };
 
-  // Try to parse as key-value pair (with : or =>)
-  let (input, key_value) = opt(tuple((member_key, ws, alt((tag(":"), tag("=>"))), ws)))(input)?;
+  // Try to parse as key:value or key=>value first
+  let key_value_result = tuple((member_key, ws, alt((tag(":"), tag("=>"))), ws))(input);
 
-  let (input, value) = parse_type(input)?;
-
-  let key = key_value.map(|(k, _, _, _)| k);
+  let (input, key, value) = if let Ok((after_separator, (k, _, _, _))) = key_value_result {
+    // Successfully parsed key and separator, now parse the value
+    let (input, v) = parse_type(after_separator)?;
+    (input, Some(k), v)
+  } else {
+    // No key, just parse the value
+    let (input, v) = parse_type(input)?;
+    (input, None, v)
+  };
 
   Ok((input, ParsedGroupEntry { occur, key, value }))
 }
 
-/// Parse multiple group entries
+/// Parse multiple group entries (allowing trailing comma)
 fn group_entries(input: &str) -> NomResult<Vec<ParsedGroupEntry>> {
-  separated_list0(delimited(ws, char(','), ws), delimited(ws, group_entry, ws))(input)
+  let (input, entries) = separated_list0(
+    delimited(ws, char(','), ws),
+    delimited(ws, group_entry, ws),
+  )(input)?;
+  
+  // Consume optional trailing comma
+  let (input, _) = opt(delimited(ws, char(','), ws))(input)?;
+  
+  Ok((input, entries))
 }
 
 // =============================================================================
@@ -707,5 +743,123 @@ one-or-more = { + key: value }
       "Failed to parse parenthesized: {:?}",
       result.err()
     );
+  }
+
+  #[test]
+  fn test_nom_parser_nested_array() {
+    let input = "array = [0, [* int]]";
+    let result = parse_cddl(input);
+    assert!(
+      result.is_ok(),
+      "Failed to parse nested array: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_occurrence_zero_or_more() {
+    let input = "* int";
+    let result = occurrence(input);
+    assert!(
+      result.is_ok(),
+      "Failed to parse * occurrence: {:?}",
+      result.err()
+    );
+    if let Ok((remaining, occ)) = result {
+      assert_eq!(remaining, " int");
+      assert_eq!(occ, ParsedOccurrence::ZeroOrMore);
+    }
+  }
+
+  #[test]
+  fn test_group_entry_with_occurrence() {
+    let input = "* int";
+    let result = group_entry(input);
+    assert!(
+      result.is_ok(),
+      "Failed to parse group entry with occurrence: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_array_with_occurrence() {
+    let input = "[* int]";
+    let result = array_type(input);
+    assert!(
+      result.is_ok(),
+      "Failed to parse array with occurrence: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_nested_array_direct() {
+    let input = "[0, [* int]]";
+    let result = array_type(input);
+    assert!(
+      result.is_ok(),
+      "Failed to parse nested array directly: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_group_entries_multiple() {
+    let input = "0, 1, 2";
+    let result = group_entries(input);
+    assert!(
+      result.is_ok(),
+      "Failed to parse multiple group entries: {:?}",
+      result.err()
+    );
+    if let Ok((remaining, entries)) = result {
+      assert_eq!(entries.len(), 3, "Expected 3 entries, got {}", entries.len());
+      assert_eq!(remaining, "");
+    }
+  }
+
+  #[test]
+  fn test_group_entry_simple_value() {
+    let input = "0";
+    let result = group_entry(input);
+    assert!(
+      result.is_ok(),
+      "Failed to parse simple value as group entry: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_optional_entry_in_map() {
+    let input = r#"argument = {
+      name: text,
+      ? valid: text,
+    }"#;
+    let result = parse_cddl(input);
+    assert!(result.is_ok(), "Failed to parse optional entry: {:?}", result.err());
+  }
+
+  #[test]
+  fn test_simple_map() {
+    let input = "{ name: text }";
+    let result = map_type(input);
+    assert!(result.is_ok(), "Failed to parse simple map: {:?}", result.err());
+  }
+
+  #[test]
+  fn test_map_with_optional() {
+    let input = "{ ? valid: text }";
+    let result = map_type(input);
+    assert!(result.is_ok(), "Failed to parse map with optional: {:?}", result.err());
+  }
+
+  #[test]
+  fn test_multiline_map_simple() {
+    let input = "{
+      name: text,
+    }";
+    let result = map_type(input);
+    assert!(result.is_ok(), "Failed to parse multiline map: {:?}", result.err());
   }
 }
