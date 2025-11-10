@@ -260,9 +260,18 @@ fn convert_group_rule<'a>(
 
 /// Convert a string identifier to AST Identifier
 fn convert_identifier<'a>(name: &'a str, _is_group: bool) -> ast::Identifier<'a> {
+  // Check for socket prefix
+  let (ident, socket) = if name.starts_with("$$") {
+    (&name[2..], Some(token::SocketPlug::GROUP))
+  } else if name.starts_with('$') {
+    (&name[1..], Some(token::SocketPlug::TYPE))
+  } else {
+    (name, None)
+  };
+
   ast::Identifier {
-    ident: name,
-    socket: None,
+    ident,
+    socket,
     #[cfg(feature = "ast-span")]
     span: (0, 0, 1),
   }
