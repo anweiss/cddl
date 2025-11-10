@@ -92,6 +92,7 @@ pub enum ParsedType<'a> {
   Value(ParsedValue<'a>),
   Array(Vec<ParsedGroupEntry<'a>>),
   Map(Vec<ParsedGroupEntry<'a>>),
+  InlineGroup(Vec<ParsedGroupEntry<'a>>),
   Choice(Vec<ParsedType<'a>>),
   Range {
     start: Box<ParsedType<'a>>,
@@ -367,14 +368,22 @@ fn map_type(input: &str) -> NomResult<ParsedType> {
   )(input)
 }
 
-/// Parse a parenthesized type
+/// Parse an inline group or parenthesized type
 fn parenthesized_type(input: &str) -> NomResult<ParsedType> {
   context(
     "parenthesized",
-    map(
-      delimited(char('('), delimited(ws, parse_type, ws), char(')')),
-      |t| ParsedType::Parenthesized(Box::new(t)),
-    ),
+    alt((
+      // Try inline group first: ( group_entries )
+      map(
+        delimited(char('('), delimited(ws, group_entries, ws), char(')')),
+        ParsedType::InlineGroup,
+      ),
+      // Otherwise try parenthesized type: ( type )
+      map(
+        delimited(char('('), delimited(ws, parse_type, ws), char(')')),
+        |t| ParsedType::Parenthesized(Box::new(t)),
+      ),
+    )),
   )(input)
 }
 
@@ -497,9 +506,15 @@ fn occurrence(input: &str) -> NomResult<ParsedOccurrence> {
   )(input)
 }
 
-/// Parse a member key (just bareword for simplicity - values as keys are rare)
+/// Parse a member key (bareword or value)
 fn member_key(input: &str) -> NomResult<ParsedMemberKey> {
-  context("member_key", map(bareword, ParsedMemberKey::Bareword))(input)
+  context(
+    "member_key",
+    alt((
+      map(bareword, ParsedMemberKey::Bareword),
+      map(value_parser, ParsedMemberKey::Value),
+    )),
+  )(input)
 }
 
 /// Parse a group entry
@@ -941,6 +956,43 @@ one-or-more = { + key: value }
       "test" => BASE .plus a
     )"#;
     let result = parse_cddl(input);
-    assert!(result.is_ok(), "Failed to parse control op in group: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse control op in group: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_simple_inline_group() {
+    let input = "x = ( a: int )";
+    let result = parse_cddl(input);
+    assert!(
+      result.is_ok(),
+      "Failed to parse simple inline group: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_inline_group_with_generic() {
+    let input = "interval<BASE> = ( a: BASE )";
+    let result = parse_cddl(input);
+    assert!(
+      result.is_ok(),
+      "Failed to parse inline group with generic: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_inline_group_with_arrow_map() {
+    let input = r#"x = ( "test" => y )"#;
+    let result = parse_cddl(input);
+    assert!(
+      result.is_ok(),
+      "Failed to parse inline group with =>: {:?}",
+      result.err()
+    );
   }
 }

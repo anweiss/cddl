@@ -463,6 +463,21 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
       })
     }
 
+    ParsedType::InlineGroup(entries) => {
+      let group = convert_group_from_entries(entries, input)?;
+      Ok(ast::Type2::ChoiceFromInlineGroup {
+        group,
+        #[cfg(feature = "ast-comments")]
+        comments: None,
+        #[cfg(feature = "ast-comments")]
+        comments_before_group: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_group: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 1),
+      })
+    }
+
     ParsedType::Tagged { tag, t } => Ok(ast::Type2::TaggedData {
       tag: Some(token::TagConstraint::Literal(*tag)),
       t: convert_type(t, input)?,
