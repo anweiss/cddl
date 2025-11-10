@@ -351,6 +351,43 @@ fn convert_type1<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
         span: (0, 0, 1),
       })
     }
+    ParsedType::ControlOp {
+      target,
+      operator,
+      controller,
+    } => {
+      // Convert operator string to ControlOperator
+      let ctrl = token::lookup_control_from_str(operator).ok_or_else(|| Error::PARSER {
+        #[cfg(feature = "ast-span")]
+        position: Position::default(),
+        msg: ErrorMsg {
+          short: format!("Unknown control operator: {}", operator),
+          extended: None,
+        },
+      })?;
+
+      let operator = ast::RangeCtlOp::CtlOp {
+        ctrl,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 1),
+      };
+
+      Ok(ast::Type1 {
+        type2: convert_type2(target, input)?,
+        operator: Some(ast::Operator {
+          operator,
+          type2: convert_type2(controller, input)?,
+          #[cfg(feature = "ast-comments")]
+          comments_before_operator: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_operator: None,
+        }),
+        #[cfg(feature = "ast-comments")]
+        comments_after_type: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 1),
+      })
+    }
     _ => Ok(ast::Type1 {
       type2: convert_type2(parsed, input)?,
       operator: None,
@@ -507,6 +544,15 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
       position: Position::default(),
       msg: ErrorMsg {
         short: "Range should be handled at Type1 level".to_string(),
+        extended: None,
+      },
+    }),
+
+    ParsedType::ControlOp { .. } => Err(Error::PARSER {
+      #[cfg(feature = "ast-span")]
+      position: Position::default(),
+      msg: ErrorMsg {
+        short: "ControlOp should be handled at Type1 level".to_string(),
         extended: None,
       },
     }),

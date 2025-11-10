@@ -98,6 +98,11 @@ pub enum ParsedType<'a> {
     end: Box<ParsedType<'a>>,
     inclusive: bool,
   },
+  ControlOp {
+    target: Box<ParsedType<'a>>,
+    operator: &'a str,
+    controller: Box<ParsedType<'a>>,
+  },
   Tagged {
     tag: u64,
     t: Box<ParsedType<'a>>,
@@ -389,29 +394,75 @@ fn parse_type2(input: &str) -> NomResult<ParsedType> {
   )(input)
 }
 
-/// Parse a type with range operator
+/// Parse a control operator name
+fn control_operator(input: &str) -> NomResult<&str> {
+  context(
+    "control_operator",
+    preceded(
+      char('.'),
+      alt((
+        tag("size"),
+        tag("bits"),
+        tag("regexp"),
+        tag("cbor"),
+        tag("cborseq"),
+        tag("within"),
+        tag("and"),
+        tag("lt"),
+        tag("le"),
+        tag("gt"),
+        tag("ge"),
+        tag("eq"),
+        tag("ne"),
+        tag("default"),
+        tag("pcre"),
+        tag("cat"),
+        tag("det"),
+        tag("plus"),
+        tag("abnf"),
+        tag("abnfb"),
+        tag("feature"),
+      )),
+    ),
+  )(input)
+}
+
+/// Parse a type with range or control operator
 fn parse_type1(input: &str) -> NomResult<ParsedType> {
   let (input, first) = parse_type2(input)?;
   let (input, _) = ws(input)?;
 
   // Check for range operator
-  let (input, range_op) = opt(alt((tag("..."), tag(".."))))(input)?;
-
-  if let Some(op) = range_op {
+  if let Ok((after_range, op)) = alt::<_, _, VerboseError<&str>, _>((tag("..."), tag("..")))(input)
+  {
     let inclusive = op == "..";
-    let (input, _) = ws(input)?;
+    let (input, _) = ws(after_range)?;
     let (input, second) = parse_type2(input)?;
-    Ok((
+    return Ok((
       input,
       ParsedType::Range {
         start: Box::new(first),
         end: Box::new(second),
         inclusive,
       },
-    ))
-  } else {
-    Ok((input, first))
+    ));
   }
+
+  // Check for control operator
+  if let Ok((after_ctrl, ctrl)) = control_operator(input) {
+    let (input, _) = ws(after_ctrl)?;
+    let (input, second) = parse_type2(input)?;
+    return Ok((
+      input,
+      ParsedType::ControlOp {
+        target: Box::new(first),
+        operator: ctrl,
+        controller: Box::new(second),
+      },
+    ));
+  }
+
+  Ok((input, first))
 }
 
 /// Parse a type choice (type separated by /)
@@ -875,5 +926,21 @@ one-or-more = { + key: value }
       "Failed to parse multiline map: {:?}",
       result.err()
     );
+  }
+
+  #[test]
+  fn test_control_operator_plus() {
+    let input = "x = y .plus z";
+    let result = parse_cddl(input);
+    assert!(result.is_ok(), "Failed to parse .plus: {:?}", result.err());
+  }
+
+  #[test]
+  fn test_control_op_in_group() {
+    let input = r#"interval<BASE> = (
+      "test" => BASE .plus a
+    )"#;
+    let result = parse_cddl(input);
+    assert!(result.is_ok(), "Failed to parse control op in group: {:?}", result.err());
   }
 }
