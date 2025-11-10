@@ -546,6 +546,12 @@ pub mod ast;
 pub mod error;
 /// Lexer for CDDL
 pub mod lexer;
+/// Bridge layer between nom parser and existing AST
+#[cfg(feature = "std")]
+pub mod nom_bridge;
+/// Nom-based parser for CDDL (alternative implementation)
+#[cfg(feature = "std")]
+pub mod nom_parser;
 /// Parser for CDDL
 pub mod parser;
 /// Bridge layer between Pest parser and existing AST
@@ -554,12 +560,6 @@ pub mod pest_bridge;
 /// Pest-based parser for CDDL (alternative implementation)
 #[cfg(feature = "std")]
 pub mod pest_parser;
-/// Bridge layer between nom parser and existing AST
-#[cfg(feature = "std")]
-pub mod nom_bridge;
-/// Nom-based parser for CDDL (alternative implementation)
-#[cfg(feature = "std")]
-pub mod nom_parser;
 /// CDDL tokens for lexing
 pub mod token;
 /// Validators for JSON and CBOR data structures

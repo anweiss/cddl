@@ -36,11 +36,11 @@ use crate::{
   ast,
   error::ErrorMsg,
   lexer::Position,
-  parser::Error,
   nom_parser::{
     parse_cddl, ParsedCDDL, ParsedGroupEntry, ParsedGroupRule, ParsedMemberKey, ParsedOccurrence,
     ParsedRule, ParsedType, ParsedTypeRule, ParsedValue,
   },
+  parser::Error,
   token::{self, ControlOperator, SocketPlug, Value},
 };
 
@@ -66,9 +66,7 @@ pub fn convert_nom_error(error: nom::Err<VerboseError<&str>>, input: &str) -> Er
       "Unexpected end of input".to_string(),
       Some("The CDDL specification appears to be incomplete".to_string()),
     ),
-    nom::Err::Error(e) | nom::Err::Failure(e) => {
-      create_error_message_from_verbose(&e, input)
-    }
+    nom::Err::Error(e) | nom::Err::Failure(e) => create_error_message_from_verbose(&e, input),
   };
 
   Error::PARSER {
@@ -92,20 +90,29 @@ fn create_error_message_from_verbose(
 
   // Get the first error entry
   let (error_input, kind) = &error.errors[0];
-  
+
   // Calculate how far we got
   let consumed = input.len() - error_input.len();
   let position = calculate_position(input, consumed);
 
   let short = match kind {
     nom::error::VerboseErrorKind::Context(ctx) => {
-      format!("Expected {} at line {}, column {}", ctx, position.line, position.column)
+      format!(
+        "Expected {} at line {}, column {}",
+        ctx, position.line, position.column
+      )
     }
     nom::error::VerboseErrorKind::Char(c) => {
-      format!("Expected '{}' at line {}, column {}", c, position.line, position.column)
+      format!(
+        "Expected '{}' at line {}, column {}",
+        c, position.line, position.column
+      )
     }
     nom::error::VerboseErrorKind::Nom(error_kind) => {
-      format!("Parse error at line {}, column {}: {:?}", position.line, position.column, error_kind)
+      format!(
+        "Parse error at line {}, column {}: {:?}",
+        position.line, position.column, error_kind
+      )
     }
   };
 
@@ -127,14 +134,14 @@ fn calculate_position(input: &str, byte_offset: usize) -> Position {
     if index >= byte_offset {
       break;
     }
-    
+
     if ch == '\n' {
       line += 1;
       column = 1;
     } else {
       column += 1;
     }
-    
+
     index += ch.len_utf8();
   }
 
@@ -149,18 +156,18 @@ fn calculate_position(input: &str, byte_offset: usize) -> Position {
 /// Parse CDDL from string using nom parser and convert to AST
 pub fn cddl_from_nom_str<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
   let (_, parsed) = parse_cddl(input).map_err(|e| convert_nom_error(e, input))?;
-  
+
   convert_cddl(&parsed, input)
 }
 
 /// Convert ParsedCDDL to AST CDDL
 fn convert_cddl<'a>(parsed: &ParsedCDDL<'a>, input: &'a str) -> Result<ast::CDDL<'a>, Error> {
   let mut rules = Vec::new();
-  
+
   for rule in &parsed.rules {
     rules.push(convert_rule(rule, input)?);
   }
-  
+
   Ok(ast::CDDL {
     rules,
     #[cfg(feature = "ast-comments")]
@@ -182,22 +189,20 @@ fn convert_type_rule<'a>(
   input: &'a str,
 ) -> Result<ast::Rule<'a>, Error> {
   let name = convert_identifier(type_rule.name, false);
-  let generic_params = type_rule.generic_params.as_ref().map(|params| {
-    ast::GenericParams {
-      params: params
-        .iter()
-        .map(|p| convert_generic_param(p))
-        .collect(),
+  let generic_params = type_rule
+    .generic_params
+    .as_ref()
+    .map(|params| ast::GenericParams {
+      params: params.iter().map(|p| convert_generic_param(p)).collect(),
       #[cfg(feature = "ast-span")]
       span: (0, 0, 1),
-    }
-  });
-  
+    });
+
   let value = convert_type(&type_rule.value, input)?;
-  
+
   #[cfg(feature = "ast-span")]
   let span = (type_rule.span.0, type_rule.span.1, 1);
-  
+
   Ok(ast::Rule::Type {
     rule: ast::TypeRule {
       name,
@@ -222,22 +227,20 @@ fn convert_group_rule<'a>(
   input: &'a str,
 ) -> Result<ast::Rule<'a>, Error> {
   let name = convert_identifier(group_rule.name, true);
-  let generic_params = group_rule.generic_params.as_ref().map(|params| {
-    ast::GenericParams {
-      params: params
-        .iter()
-        .map(|p| convert_generic_param(p))
-        .collect(),
+  let generic_params = group_rule
+    .generic_params
+    .as_ref()
+    .map(|params| ast::GenericParams {
+      params: params.iter().map(|p| convert_generic_param(p)).collect(),
       #[cfg(feature = "ast-span")]
       span: (0, 0, 1),
-    }
-  });
-  
+    });
+
   let entry = convert_group_entry(&group_rule.entry, input)?;
-  
+
   #[cfg(feature = "ast-span")]
   let span = (group_rule.span.0, group_rule.span.1, 1);
-  
+
   Ok(ast::Rule::Group {
     rule: Box::new(ast::GroupRule {
       name,
@@ -289,7 +292,7 @@ fn convert_type<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Type
     }
     _ => vec![convert_type_choice(parsed, input)?],
   };
-  
+
   Ok(ast::Type {
     type_choices,
     #[cfg(feature = "ast-span")]
@@ -314,7 +317,11 @@ fn convert_type_choice<'a>(
 /// Convert to AST Type1
 fn convert_type1<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Type1<'a>, Error> {
   match parsed {
-    ParsedType::Range { start, end, inclusive } => {
+    ParsedType::Range {
+      start,
+      end,
+      inclusive,
+    } => {
       let operator = if *inclusive {
         ast::RangeCtlOp::RangeOp {
           is_inclusive: true,
@@ -328,7 +335,7 @@ fn convert_type1<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
           span: (0, 0, 1),
         }
       };
-      
+
       Ok(ast::Type1 {
         type2: convert_type2(start, input)?,
         operator: Some(ast::Operator {
@@ -365,7 +372,7 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
       #[cfg(feature = "ast-span")]
       span: (0, 0, 1),
     }),
-    
+
     ParsedType::Value(val) => match val {
       ParsedValue::Int(i) => Ok(ast::Type2::IntValue {
         value: *i as isize,
@@ -393,7 +400,7 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
         span: (0, 0, 1),
       }),
     },
-    
+
     ParsedType::Array(entries) => {
       let group = convert_group_from_entries(entries, input)?;
       Ok(ast::Type2::Array {
@@ -406,7 +413,7 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
         span: (0, 0, 1),
       })
     }
-    
+
     ParsedType::Map(entries) => {
       let group = convert_group_from_entries(entries, input)?;
       Ok(ast::Type2::Map {
@@ -419,7 +426,7 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
         span: (0, 0, 1),
       })
     }
-    
+
     ParsedType::Tagged { tag, t } => Ok(ast::Type2::TaggedData {
       tag: Some(token::TagConstraint::Literal(*tag)),
       t: convert_type(t, input)?,
@@ -430,7 +437,7 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
       #[cfg(feature = "ast-comments")]
       comments_after_type: None,
     }),
-    
+
     ParsedType::Unwrap(t) => Ok(ast::Type2::Unwrap {
       ident: match t.as_ref() {
         ParsedType::Identifier(name) => convert_identifier(name, false),
@@ -451,7 +458,7 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
       #[cfg(feature = "ast-span")]
       span: (0, 0, 1),
     }),
-    
+
     ParsedType::Generic { name, args } => {
       let generic_args = Some(ast::GenericArgs {
         args: args
@@ -461,7 +468,7 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
         #[cfg(feature = "ast-span")]
         span: (0, 0, 1),
       });
-      
+
       Ok(ast::Type2::Typename {
         ident: convert_identifier(name, false),
         generic_args,
@@ -469,7 +476,7 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
         span: (0, 0, 1),
       })
     }
-    
+
     ParsedType::Parenthesized(t) => Ok(ast::Type2::ParenthesizedType {
       pt: convert_type(t, input)?,
       #[cfg(feature = "ast-comments")]
@@ -479,7 +486,7 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
       #[cfg(feature = "ast-span")]
       span: (0, 0, 1),
     }),
-    
+
     ParsedType::Choice(choices) => {
       // Shouldn't happen at this level, but handle it
       if let Some(first) = choices.first() {
@@ -495,17 +502,15 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
         })
       }
     }
-    
-    ParsedType::Range { .. } => {
-      Err(Error::PARSER {
-        #[cfg(feature = "ast-span")]
-        position: Position::default(),
-        msg: ErrorMsg {
-          short: "Range should be handled at Type1 level".to_string(),
-          extended: None,
-        },
-      })
-    }
+
+    ParsedType::Range { .. } => Err(Error::PARSER {
+      #[cfg(feature = "ast-span")]
+      position: Position::default(),
+      msg: ErrorMsg {
+        short: "Range should be handled at Type1 level".to_string(),
+        extended: None,
+      },
+    }),
   }
 }
 
@@ -540,12 +545,12 @@ fn convert_group_from_entries<'a>(
   input: &'a str,
 ) -> Result<ast::Group<'a>, Error> {
   let mut group_entries_with_commas = Vec::new();
-  
+
   for entry in entries {
     let converted = convert_group_entry(entry, input)?;
     group_entries_with_commas.push((converted, opt_comma()));
   }
-  
+
   let group_choices = vec![ast::GroupChoice {
     group_entries: group_entries_with_commas,
     #[cfg(feature = "ast-span")]
@@ -553,7 +558,7 @@ fn convert_group_from_entries<'a>(
     #[cfg(feature = "ast-comments")]
     comments_before_grpchoice: None,
   }];
-  
+
   Ok(ast::Group {
     group_choices,
     #[cfg(feature = "ast-span")]
@@ -577,9 +582,13 @@ fn convert_group_entry<'a>(
   input: &'a str,
 ) -> Result<ast::GroupEntry<'a>, Error> {
   let occur = entry.occur.as_ref().map(|o| convert_occurrence(o));
-  
-  let member_key = entry.key.as_ref().map(|k| convert_member_key(k, input)).transpose()?;
-  
+
+  let member_key = entry
+    .key
+    .as_ref()
+    .map(|k| convert_member_key(k, input))
+    .transpose()?;
+
   Ok(ast::GroupEntry::ValueMemberKey {
     ge: Box::new(ast::ValueMemberKeyEntry {
       occur,
@@ -681,8 +690,12 @@ mod tests {
   fn test_nom_bridge_basic() {
     let input = "myrule = int\n";
     let result = cddl_from_nom_str(input);
-    assert!(result.is_ok(), "Failed to parse basic CDDL: {:?}", result.err());
-    
+    assert!(
+      result.is_ok(),
+      "Failed to parse basic CDDL: {:?}",
+      result.err()
+    );
+
     if let Ok(cddl) = result {
       assert_eq!(cddl.rules.len(), 1);
     }
@@ -704,7 +717,11 @@ person = {
   fn test_nom_bridge_type_choice() {
     let input = "value = int / text / bool\n";
     let result = cddl_from_nom_str(input);
-    assert!(result.is_ok(), "Failed to parse type choice: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse type choice: {:?}",
+      result.err()
+    );
   }
 
   #[test]
@@ -721,7 +738,11 @@ map<K, V> = { * K => V }
 my-map = map<text, int>
 "#;
     let result = cddl_from_nom_str(input);
-    assert!(result.is_ok(), "Failed to parse generic: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse generic: {:?}",
+      result.err()
+    );
   }
 
   #[test]
@@ -741,13 +762,17 @@ person = {
 }
 "#;
     let result = cddl_from_nom_str(input);
-    assert!(result.is_ok(), "Failed to parse with comments: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse with comments: {:?}",
+      result.err()
+    );
   }
 
   #[test]
   fn test_nom_bridge_coexistence_with_existing_parser() {
     use crate::cddl_from_str;
-    
+
     let input = r#"
 person = {
   name: tstr,

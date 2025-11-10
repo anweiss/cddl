@@ -152,18 +152,12 @@ pub enum ParsedOccurrence {
 
 /// Parse a CDDL comment
 fn comment(input: &str) -> NomResult<&str> {
-  context(
-    "comment",
-    preceded(char(';'), not_line_ending),
-  )(input)
+  context("comment", preceded(char(';'), not_line_ending))(input)
 }
 
 /// Parse whitespace including comments
 fn ws(input: &str) -> NomResult<&str> {
-  recognize(many0(alt((
-    multispace1,
-    comment,
-  ))))(input)
+  recognize(many0(alt((multispace1, comment))))(input)
 }
 
 // =============================================================================
@@ -176,25 +170,26 @@ fn bareword(input: &str) -> NomResult<&str> {
     "bareword",
     recognize(pair(
       alt((alpha1, tag("_"), tag("@"), tag("$"))),
-      many0(alt((alphanumeric1, tag("_"), tag("-"), tag("@"), tag("$"), tag(".")))),
+      many0(alt((
+        alphanumeric1,
+        tag("_"),
+        tag("-"),
+        tag("@"),
+        tag("$"),
+        tag("."),
+      ))),
     )),
   )(input)
 }
 
 /// Parse a typename
 fn typename(input: &str) -> NomResult<&str> {
-  context(
-    "typename",
-    bareword,
-  )(input)
+  context("typename", bareword)(input)
 }
 
 /// Parse a groupname
 fn groupname(input: &str) -> NomResult<&str> {
-  context(
-    "groupname",
-    bareword,
-  )(input)
+  context("groupname", bareword)(input)
 }
 
 // =============================================================================
@@ -207,10 +202,7 @@ fn generic_params(input: &str) -> NomResult<Vec<&str>> {
     "generic_params",
     delimited(
       char('<'),
-      separated_list1(
-        delimited(ws, char(','), ws),
-        delimited(ws, bareword, ws),
-      ),
+      separated_list1(delimited(ws, char(','), ws), delimited(ws, bareword, ws)),
       preceded(ws, char('>')),
     ),
   )(input)
@@ -222,10 +214,7 @@ fn generic_args(input: &str) -> NomResult<Vec<ParsedType>> {
     "generic_args",
     delimited(
       char('<'),
-      separated_list1(
-        delimited(ws, char(','), ws),
-        delimited(ws, parse_type, ws),
-      ),
+      separated_list1(delimited(ws, char(','), ws), delimited(ws, parse_type, ws)),
       preceded(ws, char('>')),
     ),
   )(input)
@@ -237,20 +226,16 @@ fn generic_args(input: &str) -> NomResult<Vec<ParsedType>> {
 
 /// Parse an unsigned integer
 fn uint_value(input: &str) -> NomResult<u64> {
-  context(
-    "uint",
-    map(digit1, |s: &str| s.parse().unwrap()),
-  )(input)
+  context("uint", map(digit1, |s: &str| s.parse().unwrap()))(input)
 }
 
 /// Parse an integer (can be negative)
 fn int_value(input: &str) -> NomResult<i128> {
   context(
     "int",
-    map(
-      recognize(pair(opt(char('-')), digit1)),
-      |s: &str| s.parse().unwrap(),
-    ),
+    map(recognize(pair(opt(char('-')), digit1)), |s: &str| {
+      s.parse().unwrap()
+    }),
   )(input)
 }
 
@@ -274,11 +259,7 @@ fn float_value(input: &str) -> NomResult<f64> {
 fn text_value(input: &str) -> NomResult<&str> {
   context(
     "text_value",
-    delimited(
-      char('"'),
-      take_while(|c| c != '"'),
-      char('"'),
-    ),
+    delimited(char('"'), take_while(|c| c != '"'), char('"')),
   )(input)
 }
 
@@ -331,11 +312,14 @@ fn tagged_type(input: &str) -> NomResult<ParsedType> {
   let (input, t) = parse_type(input)?;
   let (input, _) = ws(input)?;
   let (input, _) = char(')')(input)?;
-  
-  Ok((input, ParsedType::Tagged {
-    tag: tag_num,
-    t: Box::new(t),
-  }))
+
+  Ok((
+    input,
+    ParsedType::Tagged {
+      tag: tag_num,
+      t: Box::new(t),
+    },
+  ))
 }
 
 /// Parse an unwrapped type like ~identifier
@@ -349,7 +333,7 @@ fn unwrap_type(input: &str) -> NomResult<ParsedType> {
 fn type_with_generics(input: &str) -> NomResult<ParsedType> {
   let (input, name) = bareword(input)?;
   let (input, args) = opt(generic_args)(input)?;
-  
+
   match args {
     Some(args) => Ok((input, ParsedType::Generic { name, args })),
     None => Ok((input, ParsedType::Identifier(name))),
@@ -361,11 +345,7 @@ fn array_type(input: &str) -> NomResult<ParsedType> {
   context(
     "array",
     map(
-      delimited(
-        char('['),
-        delimited(ws, group_entries, ws),
-        char(']'),
-      ),
+      delimited(char('['), delimited(ws, group_entries, ws), char(']')),
       ParsedType::Array,
     ),
   )(input)
@@ -376,11 +356,7 @@ fn map_type(input: &str) -> NomResult<ParsedType> {
   context(
     "map",
     map(
-      delimited(
-        char('{'),
-        delimited(ws, group_entries, ws),
-        char('}'),
-      ),
+      delimited(char('{'), delimited(ws, group_entries, ws), char('}')),
       ParsedType::Map,
     ),
   )(input)
@@ -391,11 +367,7 @@ fn parenthesized_type(input: &str) -> NomResult<ParsedType> {
   context(
     "parenthesized",
     map(
-      delimited(
-        char('('),
-        delimited(ws, parse_type, ws),
-        char(')'),
-      ),
+      delimited(char('('), delimited(ws, parse_type, ws), char(')')),
       |t| ParsedType::Parenthesized(Box::new(t)),
     ),
   )(input)
@@ -421,19 +393,22 @@ fn parse_type2(input: &str) -> NomResult<ParsedType> {
 fn parse_type1(input: &str) -> NomResult<ParsedType> {
   let (input, first) = parse_type2(input)?;
   let (input, _) = ws(input)?;
-  
+
   // Check for range operator
   let (input, range_op) = opt(alt((tag("..."), tag(".."))))(input)?;
-  
+
   if let Some(op) = range_op {
     let inclusive = op == "..";
     let (input, _) = ws(input)?;
     let (input, second) = parse_type2(input)?;
-    Ok((input, ParsedType::Range {
-      start: Box::new(first),
-      end: Box::new(second),
-      inclusive,
-    }))
+    Ok((
+      input,
+      ParsedType::Range {
+        start: Box::new(first),
+        end: Box::new(second),
+        inclusive,
+      },
+    ))
   } else {
     Ok((input, first))
   }
@@ -441,11 +416,8 @@ fn parse_type1(input: &str) -> NomResult<ParsedType> {
 
 /// Parse a type choice (type separated by /)
 fn parse_type(input: &str) -> NomResult<ParsedType> {
-  let (input, types) = separated_list1(
-    delimited(ws, char('/'), ws),
-    parse_type1,
-  )(input)?;
-  
+  let (input, types) = separated_list1(delimited(ws, char('/'), ws), parse_type1)(input)?;
+
   if types.len() == 1 {
     Ok((input, types.into_iter().next().unwrap()))
   } else {
@@ -466,11 +438,7 @@ fn occurrence(input: &str) -> NomResult<ParsedOccurrence> {
       value(ParsedOccurrence::ZeroOrMore, char('*')),
       value(ParsedOccurrence::OneOrMore, char('+')),
       map(
-        separated_pair(
-          uint_value,
-          char('*'),
-          opt(uint_value),
-        ),
+        separated_pair(uint_value, char('*'), opt(uint_value)),
         |(lower, upper)| ParsedOccurrence::Range { lower, upper },
       ),
       map(uint_value, ParsedOccurrence::Exact),
@@ -493,28 +461,20 @@ fn member_key(input: &str) -> NomResult<ParsedMemberKey> {
 /// Parse a group entry
 fn group_entry(input: &str) -> NomResult<ParsedGroupEntry> {
   let (input, occur) = opt(terminated(occurrence, ws))(input)?;
-  
+
   // Try to parse as key-value pair (with : or =>)
-  let (input, key_value) = opt(tuple((
-    member_key,
-    ws,
-    alt((tag(":"), tag("=>"))),
-    ws,
-  )))(input)?;
-  
+  let (input, key_value) = opt(tuple((member_key, ws, alt((tag(":"), tag("=>"))), ws)))(input)?;
+
   let (input, value) = parse_type(input)?;
-  
+
   let key = key_value.map(|(k, _, _, _)| k);
-  
+
   Ok((input, ParsedGroupEntry { occur, key, value }))
 }
 
 /// Parse multiple group entries
 fn group_entries(input: &str) -> NomResult<Vec<ParsedGroupEntry>> {
-  separated_list0(
-    delimited(ws, char(','), ws),
-    delimited(ws, group_entry, ws),
-  )(input)
+  separated_list0(delimited(ws, char(','), ws), delimited(ws, group_entry, ws))(input)
 }
 
 // =============================================================================
@@ -523,18 +483,12 @@ fn group_entries(input: &str) -> NomResult<Vec<ParsedGroupEntry>> {
 
 /// Parse a type rule assignment operator
 fn type_assign(input: &str) -> NomResult<bool> {
-  alt((
-    value(true, tag("/=")),
-    value(false, char('=')),
-  ))(input)
+  alt((value(true, tag("/=")), value(false, char('='))))(input)
 }
 
 /// Parse a group rule assignment operator
 fn group_assign(input: &str) -> NomResult<bool> {
-  alt((
-    value(true, tag("//=")),
-    value(false, char('=')),
-  ))(input)
+  alt((value(true, tag("//=")), value(false, char('='))))(input)
 }
 
 /// Parse a type rule
@@ -548,14 +502,17 @@ fn type_rule(input: &str) -> NomResult<ParsedRule> {
   let (input, _) = ws(input)?;
   let (input, value) = parse_type(input)?;
   let end_pos = input.as_ptr() as usize;
-  
-  Ok((input, ParsedRule::Type(ParsedTypeRule {
-    name,
-    generic_params: gen_params,
-    is_choice_alternate: is_choice,
-    value,
-    span: (start_pos, end_pos),
-  })))
+
+  Ok((
+    input,
+    ParsedRule::Type(ParsedTypeRule {
+      name,
+      generic_params: gen_params,
+      is_choice_alternate: is_choice,
+      value,
+      span: (start_pos, end_pos),
+    }),
+  ))
 }
 
 /// Parse a group rule
@@ -569,22 +526,22 @@ fn group_rule(input: &str) -> NomResult<ParsedRule> {
   let (input, _) = ws(input)?;
   let (input, entry) = group_entry(input)?;
   let end_pos = input.as_ptr() as usize;
-  
-  Ok((input, ParsedRule::Group(ParsedGroupRule {
-    name,
-    generic_params: gen_params,
-    is_choice_alternate: is_choice,
-    entry,
-    span: (start_pos, end_pos),
-  })))
+
+  Ok((
+    input,
+    ParsedRule::Group(ParsedGroupRule {
+      name,
+      generic_params: gen_params,
+      is_choice_alternate: is_choice,
+      entry,
+      span: (start_pos, end_pos),
+    }),
+  ))
 }
 
 /// Parse a CDDL rule (type or group)
 fn rule(input: &str) -> NomResult<ParsedRule> {
-  context(
-    "rule",
-    alt((type_rule, group_rule)),
-  )(input)
+  context("rule", alt((type_rule, group_rule)))(input)
 }
 
 /// Parse a complete CDDL specification
@@ -592,7 +549,7 @@ pub fn parse_cddl(input: &str) -> NomResult<ParsedCDDL> {
   let (input, _) = ws(input)?;
   let (input, rules) = many1(delimited(ws, rule, ws))(input)?;
   let (input, _) = ws(input)?;
-  
+
   Ok((input, ParsedCDDL { rules }))
 }
 
@@ -608,14 +565,22 @@ mod tests {
   fn test_nom_parser_basic() {
     let input = "myrule = int\n";
     let result = parse_cddl(input);
-    assert!(result.is_ok(), "Failed to parse basic CDDL: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse basic CDDL: {:?}",
+      result.err()
+    );
   }
 
   #[test]
   fn test_nom_parser_simple_rule() {
     let input = "person = { name: tstr, age: uint }\n";
     let result = parse_cddl(input);
-    assert!(result.is_ok(), "Failed to parse struct rule: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse struct rule: {:?}",
+      result.err()
+    );
   }
 
   #[test]
@@ -632,8 +597,12 @@ address = {
 }
 "#;
     let result = parse_cddl(input);
-    assert!(result.is_ok(), "Failed to parse multiple rules: {:?}", result.err());
-    
+    assert!(
+      result.is_ok(),
+      "Failed to parse multiple rules: {:?}",
+      result.err()
+    );
+
     if let Ok((_, cddl)) = result {
       assert_eq!(cddl.rules.len(), 2);
     }
@@ -649,14 +618,22 @@ person = {
 }
 "#;
     let result = parse_cddl(input);
-    assert!(result.is_ok(), "Failed to parse with comments: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse with comments: {:?}",
+      result.err()
+    );
   }
 
   #[test]
   fn test_nom_parser_choice() {
     let input = "value = int / text / bool\n";
     let result = parse_cddl(input);
-    assert!(result.is_ok(), "Failed to parse type choice: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse type choice: {:?}",
+      result.err()
+    );
   }
 
   #[test]
@@ -673,7 +650,11 @@ map<K, V> = { * K => V }
 my-map = map<text, int>
 "#;
     let result = parse_cddl(input);
-    assert!(result.is_ok(), "Failed to parse generic: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse generic: {:?}",
+      result.err()
+    );
   }
 
   #[test]
@@ -710,13 +691,21 @@ zero-or-more = { * key: value }
 one-or-more = { + key: value }
 "#;
     let result = parse_cddl(input);
-    assert!(result.is_ok(), "Failed to parse occurrence: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse occurrence: {:?}",
+      result.err()
+    );
   }
 
   #[test]
   fn test_nom_parser_parenthesized() {
     let input = "thing = ( int / float )\n";
     let result = parse_cddl(input);
-    assert!(result.is_ok(), "Failed to parse parenthesized: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse parenthesized: {:?}",
+      result.err()
+    );
   }
 }
