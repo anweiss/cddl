@@ -250,16 +250,28 @@ fn int_value(input: &str) -> NomResult<i128> {
   )(input)
 }
 
-/// Parse a floating-point number
+/// Parse a floating-point number (must have decimal point or exponent)
 fn float_value(input: &str) -> NomResult<f64> {
   context(
     "float",
     map(
-      recognize(tuple((
-        opt(char('-')),
-        digit1,
-        opt(pair(char('.'), digit1)),
-        opt(pair(one_of("eE"), pair(opt(one_of("+-")), digit1))),
+      recognize(alt((
+        // Number with decimal point: 1.0, 1.5, -2.3
+        recognize(tuple((
+          opt(char('-')),
+          digit1,
+          char('.'),
+          digit1,
+          opt(recognize(tuple((one_of("eE"), opt(one_of("+-")), digit1)))),
+        ))),
+        // Number with exponent but no decimal: 1e5, 2E-3
+        recognize(tuple((
+          opt(char('-')),
+          digit1,
+          one_of("eE"),
+          opt(one_of("+-")),
+          digit1,
+        ))),
       ))),
       |s: &str| s.parse().unwrap(),
     ),
@@ -296,7 +308,7 @@ fn value_parser(input: &str) -> NomResult<ParsedValue> {
     alt((
       map(text_value, ParsedValue::Text),
       map(bytes_value, ParsedValue::Bytes),
-      map(float_value, ParsedValue::Float),
+      // Try int_value before float_value so integers don't get parsed as floats
       map(int_value, |i| {
         if i >= 0 && i <= u64::MAX as i128 {
           ParsedValue::Uint(i as u64)
@@ -304,6 +316,7 @@ fn value_parser(input: &str) -> NomResult<ParsedValue> {
           ParsedValue::Int(i)
         }
       }),
+      map(float_value, ParsedValue::Float),
     )),
   )(input)
 }
