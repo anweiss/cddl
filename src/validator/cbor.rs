@@ -3909,15 +3909,8 @@ where
           }
           Some(ControlOperator::REGEXP) | Some(ControlOperator::PCRE) => {
             let re = regex::Regex::new(
-              &format_regex(
-                // Text strings must be JSON escaped per
-                // https://datatracker.ietf.org/doc/html/rfc8610#section-3.1
-                serde_json::from_str::<serde_json::Value>(&format!("\"{}\"", t))
-                  .map_err(Error::JSONParsing)?
-                  .as_str()
-                  .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
-              )
-              .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
+              &format_regex(t)
+                .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
             )
             .map_err(|e| Error::from_validator(self, e.to_string()))?;
 

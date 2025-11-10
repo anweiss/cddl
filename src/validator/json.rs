@@ -664,10 +664,10 @@ impl<'a> JSONValidator<'a> {
 
   #[cfg(feature = "additional-controls")]
   /// Substitute generic parameters in a Type2 expression.
-  /// 
+  ///
   /// When validating generic rules, generic parameters need to be replaced with
   /// their actual argument values before control operations are evaluated.
-  /// 
+  ///
   /// For example, given:
   /// ```cddl
   /// interval<BASE> = ( "test" => BASE .plus a )
@@ -1506,8 +1506,12 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         self.ctrl = Some(ctrl);
 
         // Substitute generic parameters in target and controller before calling plus_operation
-        let substituted_target = self.substitute_generic_param(target).unwrap_or_else(|| target.clone());
-        let substituted_controller = self.substitute_generic_param(controller).unwrap_or_else(|| controller.clone());
+        let substituted_target = self
+          .substitute_generic_param(target)
+          .unwrap_or_else(|| target.clone());
+        let substituted_controller = self
+          .substitute_generic_param(controller)
+          .unwrap_or_else(|| controller.clone());
 
         match plus_operation(self.cddl, &substituted_target, &substituted_controller) {
           Ok(values) => {
@@ -3070,15 +3074,8 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
           }
           Some(ControlOperator::REGEXP) | Some(ControlOperator::PCRE) => {
             let re = regex::Regex::new(
-              &format_regex(
-                // Text strings must be JSON escaped per
-                // https://datatracker.ietf.org/doc/html/rfc8610#section-3.1
-                serde_json::from_str::<Value>(&format!("\"{}\"", t))
-                  .map_err(Error::JSONParsing)?
-                  .as_str()
-                  .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
-              )
-              .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
+              &format_regex(t)
+                .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
             )
             .map_err(|e| Error::from_validator(self, e.to_string()))?;
 
