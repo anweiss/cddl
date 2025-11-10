@@ -199,6 +199,7 @@ dependencies = [
  "js-sys",
  "lexical-core",
  "log",
+ "nom",
  "pest",
  "pest_derive",
  "pest_meta",
