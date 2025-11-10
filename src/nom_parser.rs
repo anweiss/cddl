@@ -135,6 +135,7 @@ pub enum ParsedValue<'a> {
 pub struct ParsedGroupEntry<'a> {
   pub occur: Option<ParsedOccurrence>,
   pub key: Option<ParsedMemberKey<'a>>,
+  pub is_arrow_map: bool, // true for =>, false for :
   pub value: ParsedType<'a>,
 }
 
@@ -562,17 +563,26 @@ fn group_entry(input: &str) -> NomResult<ParsedGroupEntry> {
   // Try to parse as key:value or key=>value first
   let key_value_result = tuple((member_key, ws, alt((tag(":"), tag("=>"))), ws))(input);
 
-  let (input, key, value) = if let Ok((after_separator, (k, _, _, _))) = key_value_result {
-    // Successfully parsed key and separator, now parse the value
-    let (input, v) = parse_type(after_separator)?;
-    (input, Some(k), v)
-  } else {
-    // No key, just parse the value
-    let (input, v) = parse_type(input)?;
-    (input, None, v)
-  };
+  let (input, key, is_arrow_map, value) =
+    if let Ok((after_separator, (k, _, sep, _))) = key_value_result {
+      // Successfully parsed key and separator, now parse the value
+      let (input, v) = parse_type(after_separator)?;
+      (input, Some(k), sep == "=>", v)
+    } else {
+      // No key, just parse the value
+      let (input, v) = parse_type(input)?;
+      (input, None, false, v)
+    };
 
-  Ok((input, ParsedGroupEntry { occur, key, value }))
+  Ok((
+    input,
+    ParsedGroupEntry {
+      occur,
+      key,
+      is_arrow_map,
+      value,
+    },
+  ))
 }
 
 /// Parse multiple group entries (allowing trailing comma)

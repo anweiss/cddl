@@ -677,10 +677,59 @@ fn convert_group_entry<'a>(
 ) -> Result<ast::GroupEntry<'a>, Error> {
   let occur = entry.occur.as_ref().map(|o| convert_occurrence(o));
 
+  // Check if this is an entry without a member key (TypeGroupname variant)
+  if entry.key.is_none() {
+    // This is a plain type reference, use TypeGroupname variant
+    // Extract the identifier from the value type
+    match &entry.value {
+      ParsedType::Identifier(name) => {
+        return Ok(ast::GroupEntry::TypeGroupname {
+          ge: ast::TypeGroupnameEntry {
+            occur,
+            name: convert_identifier(name, false),
+            generic_args: None,
+          },
+          #[cfg(feature = "ast-span")]
+          span: (0, 0, 1),
+          #[cfg(feature = "ast-comments")]
+          leading_comments: None,
+          #[cfg(feature = "ast-comments")]
+          trailing_comments: None,
+        });
+      }
+      ParsedType::Generic { name, args } => {
+        let generic_args = Some(ast::GenericArgs {
+          args: args
+            .iter()
+            .map(|arg| convert_generic_arg(arg, input))
+            .collect::<Result<Vec<_>, _>>()?,
+          #[cfg(feature = "ast-span")]
+          span: (0, 0, 1),
+        });
+        return Ok(ast::GroupEntry::TypeGroupname {
+          ge: ast::TypeGroupnameEntry {
+            occur,
+            name: convert_identifier(name, false),
+            generic_args,
+          },
+          #[cfg(feature = "ast-span")]
+          span: (0, 0, 1),
+          #[cfg(feature = "ast-comments")]
+          leading_comments: None,
+          #[cfg(feature = "ast-comments")]
+          trailing_comments: None,
+        });
+      }
+      _ => {
+        // Fall through to ValueMemberKey
+      }
+    }
+  }
+
   let member_key = entry
     .key
     .as_ref()
-    .map(|k| convert_member_key(k, input))
+    .map(|k| convert_member_key(k, entry.is_arrow_map, input))
     .transpose()?;
 
   Ok(ast::GroupEntry::ValueMemberKey {
@@ -736,39 +785,135 @@ fn convert_occurrence<'a>(occur: &ParsedOccurrence) -> ast::Occurrence<'a> {
 /// Convert ParsedMemberKey to AST MemberKey
 fn convert_member_key<'a>(
   key: &ParsedMemberKey<'a>,
+  is_arrow_map: bool,
   input: &'a str,
 ) -> Result<ast::MemberKey<'a>, Error> {
-  match key {
-    ParsedMemberKey::Bareword(name) => Ok(ast::MemberKey::Bareword {
-      ident: convert_identifier(name, false),
-      #[cfg(feature = "ast-comments")]
-      comments: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_colon: None,
-      #[cfg(feature = "ast-span")]
-      span: (0, 0, 1),
-    }),
-    ParsedMemberKey::Value(val) => Ok(ast::MemberKey::Value {
-      value: convert_value(val),
-      #[cfg(feature = "ast-comments")]
-      comments: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_colon: None,
-      #[cfg(feature = "ast-span")]
-      span: (0, 0, 1),
-    }),
-    ParsedMemberKey::Type(t) => Ok(ast::MemberKey::Type1 {
-      t1: Box::new(convert_type1(t, input)?),
-      is_cut: false,
-      #[cfg(feature = "ast-comments")]
-      comments_before_cut: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_cut: None,
-      #[cfg(feature = "ast-comments")]
-      comments_after_arrowmap: None,
-      #[cfg(feature = "ast-span")]
-      span: (0, 0, 1),
-    }),
+  // If using => operator, convert to Type1 variant
+  if is_arrow_map {
+    match key {
+      ParsedMemberKey::Bareword(name) => {
+        let t1 = ast::Type1 {
+          type2: ast::Type2::Typename {
+            ident: convert_identifier(name, false),
+            generic_args: None,
+            #[cfg(feature = "ast-span")]
+            span: (0, 0, 1),
+          },
+          operator: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_type: None,
+          #[cfg(feature = "ast-span")]
+          span: (0, 0, 1),
+        };
+        Ok(ast::MemberKey::Type1 {
+          t1: Box::new(t1),
+          is_cut: false,
+          #[cfg(feature = "ast-comments")]
+          comments_before_cut: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_cut: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_arrowmap: None,
+          #[cfg(feature = "ast-span")]
+          span: (0, 0, 1),
+        })
+      }
+      ParsedMemberKey::Value(val) => {
+        let type2 = match val {
+          ParsedValue::Int(i) => ast::Type2::IntValue {
+            value: *i as isize,
+            #[cfg(feature = "ast-span")]
+            span: (0, 0, 1),
+          },
+          ParsedValue::Uint(u) => ast::Type2::UintValue {
+            value: *u as usize,
+            #[cfg(feature = "ast-span")]
+            span: (0, 0, 1),
+          },
+          ParsedValue::Float(f) => ast::Type2::FloatValue {
+            value: *f,
+            #[cfg(feature = "ast-span")]
+            span: (0, 0, 1),
+          },
+          ParsedValue::Text(s) => ast::Type2::TextValue {
+            value: Cow::Borrowed(s),
+            #[cfg(feature = "ast-span")]
+            span: (0, 0, 1),
+          },
+          ParsedValue::Bytes(s) => ast::Type2::UTF8ByteString {
+            value: Cow::Borrowed(s.as_bytes()),
+            #[cfg(feature = "ast-span")]
+            span: (0, 0, 1),
+          },
+        };
+        let t1 = ast::Type1 {
+          type2,
+          operator: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_type: None,
+          #[cfg(feature = "ast-span")]
+          span: (0, 0, 1),
+        };
+        Ok(ast::MemberKey::Type1 {
+          t1: Box::new(t1),
+          is_cut: false,
+          #[cfg(feature = "ast-comments")]
+          comments_before_cut: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_cut: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_arrowmap: None,
+          #[cfg(feature = "ast-span")]
+          span: (0, 0, 1),
+        })
+      }
+      ParsedMemberKey::Type(t) => Ok(ast::MemberKey::Type1 {
+        t1: Box::new(convert_type1(t, input)?),
+        is_cut: false,
+        #[cfg(feature = "ast-comments")]
+        comments_before_cut: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_cut: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_arrowmap: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 1),
+      }),
+    }
+  } else {
+    // Using : operator, use Bareword or Value variant
+    match key {
+      ParsedMemberKey::Bareword(name) => Ok(ast::MemberKey::Bareword {
+        ident: convert_identifier(name, false),
+        #[cfg(feature = "ast-comments")]
+        comments: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_colon: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 1),
+      }),
+      ParsedMemberKey::Value(val) => Ok(ast::MemberKey::Value {
+        value: convert_value(val),
+        #[cfg(feature = "ast-comments")]
+        comments: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_colon: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 1),
+      }),
+      ParsedMemberKey::Type(t) => Ok(ast::MemberKey::Type1 {
+        t1: Box::new(convert_type1(t, input)?),
+        is_cut: false,
+        #[cfg(feature = "ast-comments")]
+        comments_before_cut: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_cut: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_arrowmap: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 1),
+      }),
+    }
   }
 }
 
