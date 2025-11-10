@@ -448,10 +448,7 @@ fn occurrence(input: &str) -> NomResult<ParsedOccurrence> {
 
 /// Parse a member key (just bareword for simplicity - values as keys are rare)
 fn member_key(input: &str) -> NomResult<ParsedMemberKey> {
-  context(
-    "member_key",
-    map(bareword, ParsedMemberKey::Bareword),
-  )(input)
+  context("member_key", map(bareword, ParsedMemberKey::Bareword))(input)
 }
 
 /// Parse a group entry
@@ -462,9 +459,7 @@ fn group_entry(input: &str) -> NomResult<ParsedGroupEntry> {
   let (input, occur) = if let Ok((after_occ, occ)) = occurrence(input) {
     match occ {
       // These are unambiguous single-character occurrences
-      ParsedOccurrence::Optional
-      | ParsedOccurrence::ZeroOrMore
-      | ParsedOccurrence::OneOrMore => {
+      ParsedOccurrence::Optional | ParsedOccurrence::ZeroOrMore | ParsedOccurrence::OneOrMore => {
         // Consume optional whitespace after the occurrence
         let (after_ws, _) = ws(after_occ)?;
         (after_ws, Some(occ))
@@ -502,14 +497,12 @@ fn group_entry(input: &str) -> NomResult<ParsedGroupEntry> {
 
 /// Parse multiple group entries (allowing trailing comma)
 fn group_entries(input: &str) -> NomResult<Vec<ParsedGroupEntry>> {
-  let (input, entries) = separated_list0(
-    delimited(ws, char(','), ws),
-    delimited(ws, group_entry, ws),
-  )(input)?;
-  
+  let (input, entries) =
+    separated_list0(delimited(ws, char(','), ws), delimited(ws, group_entry, ws))(input)?;
+
   // Consume optional trailing comma
   let (input, _) = opt(delimited(ws, char(','), ws))(input)?;
-  
+
   Ok((input, entries))
 }
 
@@ -814,7 +807,12 @@ one-or-more = { + key: value }
       result.err()
     );
     if let Ok((remaining, entries)) = result {
-      assert_eq!(entries.len(), 3, "Expected 3 entries, got {}", entries.len());
+      assert_eq!(
+        entries.len(),
+        3,
+        "Expected 3 entries, got {}",
+        entries.len()
+      );
       assert_eq!(remaining, "");
     }
   }
@@ -837,21 +835,33 @@ one-or-more = { + key: value }
       ? valid: text,
     }"#;
     let result = parse_cddl(input);
-    assert!(result.is_ok(), "Failed to parse optional entry: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse optional entry: {:?}",
+      result.err()
+    );
   }
 
   #[test]
   fn test_simple_map() {
     let input = "{ name: text }";
     let result = map_type(input);
-    assert!(result.is_ok(), "Failed to parse simple map: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse simple map: {:?}",
+      result.err()
+    );
   }
 
   #[test]
   fn test_map_with_optional() {
     let input = "{ ? valid: text }";
     let result = map_type(input);
-    assert!(result.is_ok(), "Failed to parse map with optional: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse map with optional: {:?}",
+      result.err()
+    );
   }
 
   #[test]
@@ -860,6 +870,10 @@ one-or-more = { + key: value }
       name: text,
     }";
     let result = map_type(input);
-    assert!(result.is_ok(), "Failed to parse multiline map: {:?}", result.err());
+    assert!(
+      result.is_ok(),
+      "Failed to parse multiline map: {:?}",
+      result.err()
+    );
   }
 }

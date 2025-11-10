@@ -4,7 +4,11 @@
 //! the nom parser combinator library. It maintains API compatibility with the
 //! previous handwritten parser.
 
-use crate::{ast::CDDL, error::{ErrorMsg, Position}, nom_bridge::cddl_from_nom_str};
+use crate::{
+  ast::CDDL,
+  error::{ErrorMsg, Position},
+  nom_bridge::cddl_from_nom_str,
+};
 
 use std::result;
 
