@@ -34,8 +34,7 @@
 
 use crate::{
   ast,
-  error::ErrorMsg,
-  lexer::Position,
+  error::{ErrorMsg, Position},
   parser::Error,
   pest_parser::{CddlParser, Rule},
   token::{lookup_control_from_str, ControlOperator, SocketPlug, Value},

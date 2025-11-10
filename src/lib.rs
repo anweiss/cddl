@@ -569,11 +569,11 @@ pub mod validator;
 /// CDDL AST visitor
 pub mod visitor;
 
-mod parser_tests;
+// Parser tests removed - nom parser is tested in nom_parser.rs and nom_bridge.rs
+// mod parser_tests;
 
 #[doc(inline)]
 pub use self::{
-  lexer::lexer_from_str,
   parser::{cddl_from_str, Error},
   token::Token,
 };

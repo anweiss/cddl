@@ -6,6 +6,20 @@ use serde::Serialize;
 #[cfg(not(feature = "std"))]
 use alloc::string::String;
 
+/// Position in the input string for error reporting
+#[cfg_attr(target_arch = "wasm32", derive(Serialize))]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+pub struct Position {
+  /// Line number
+  pub line: usize,
+  /// Column number
+  pub column: usize,
+  /// Token begin and end index range
+  pub range: (usize, usize),
+  /// Lexer index
+  pub index: usize,
+}
+
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct ErrorMsg {

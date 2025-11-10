@@ -34,8 +34,7 @@
 
 use crate::{
   ast,
-  error::ErrorMsg,
-  lexer::Position,
+  error::{ErrorMsg, Position},
   nom_parser::{
     parse_cddl, ParsedCDDL, ParsedGroupEntry, ParsedGroupRule, ParsedMemberKey, ParsedOccurrence,
     ParsedRule, ParsedType, ParsedTypeRule, ParsedValue,
