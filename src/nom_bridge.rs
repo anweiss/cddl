@@ -1085,4 +1085,13 @@ $$vals //= 12
       }
     }
   }
+
+  #[test]
+  fn test_range_parsing() {
+    let cddl_input = "thing = 5..10\n";
+    let result = cddl_from_nom_str(cddl_input);
+    assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    let cddl = result.unwrap();
+    println!("\nRange AST: {:#?}", cddl);
+  }
 }

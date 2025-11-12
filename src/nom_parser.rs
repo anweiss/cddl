@@ -334,18 +334,21 @@ fn value_parser(input: &str) -> NomResult<ParsedValue> {
 fn tagged_type(input: &str) -> NomResult<ParsedType> {
   let _start = input;
   let (input, _) = char('#')(input)?;
-  let (input, tag_num) = uint_value(input)?;
-  let (input, _) = opt(preceded(char('.'), uint_value))(input)?;
+  let (input, _major_type) = uint_value(input)?; // major type (usually 6 for tags)
+  let (input, tag_num) = opt(preceded(char('.'), uint_value))(input)?;
   let (input, _) = char('(')(input)?;
   let (input, _) = ws(input)?;
   let (input, t) = parse_type(input)?;
   let (input, _) = ws(input)?;
   let (input, _) = char(')')(input)?;
 
+  // If there's a dot-separated number, use it as the tag, otherwise use the first number
+  let actual_tag = tag_num.unwrap_or(_major_type);
+
   Ok((
     input,
     ParsedType::Tagged {
-      tag: tag_num,
+      tag: actual_tag,
       t: Box::new(t),
     },
   ))
