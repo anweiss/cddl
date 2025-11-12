@@ -1094,4 +1094,26 @@ $$vals //= 12
     let cddl = result.unwrap();
     println!("\nRange AST: {:#?}", cddl);
   }
+
+  #[test]
+  fn test_conditional_array_cddl() {
+    let cddl_str = r#"
+        NestedPart = [
+          disposition: 0,
+          language: tstr,
+          partIndex: uint,
+          ( NullPart // SinglePart )
+        ]
+
+        NullPart = ( cardinality: 0 )
+        SinglePart = (
+            cardinality: 1,
+            contentType: tstr,
+            content: bstr
+        )
+    "#;
+
+    let result = cddl_from_nom_str(cddl_str);
+    assert!(result.is_ok(), "Failed to parse conditional array CDDL: {:?}", result.err());
+  }
 }
