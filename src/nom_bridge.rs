@@ -1096,6 +1096,21 @@ $$vals //= 12
   }
 
   #[test]
+  fn test_simple_cut_syntax() {
+    let cddl_str = r#"
+        test = [ ( NullPart // SinglePart ) ]
+        NullPart = ( cardinality: 0 )
+        SinglePart = ( cardinality: 1 )
+    "#;
+
+    let result = cddl_from_nom_str(cddl_str);
+    if let Err(e) = &result {
+      println!("Error parsing simple cut syntax: {:?}", e);
+    }
+    assert!(result.is_ok(), "Failed to parse simple cut syntax: {:?}", result.err());
+  }
+
+  #[test]
   fn test_conditional_array_cddl() {
     let cddl_str = r#"
         NestedPart = [

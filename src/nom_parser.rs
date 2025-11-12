@@ -582,18 +582,44 @@ fn group_entry(input: &str) -> NomResult<ParsedGroupEntry> {
   };
 
   // Try to parse as key:value or key=>value first
-  let key_value_result = tuple((member_key, ws, alt((tag(":"), tag("=>"))), ws))(input);
-
-  let (input, key, is_arrow_map, value) =
-    if let Ok((after_separator, (k, _, sep, _))) = key_value_result {
-      // Successfully parsed key and separator, now parse the value
-      let (input, v) = parse_type(after_separator)?;
-      (input, Some(k), sep == "=>", v)
+  // More carefully avoid consuming input if not a key:value pair
+  let (input, key, is_arrow_map, value) = {
+    // First try to parse bareword : or bareword =>
+    if let Ok((after_key, bareword_key)) = bareword(input) {
+      if let Ok((after_sep, (_, sep, _))) = tuple::<_, _, VerboseError<&str>, _>((
+        ws,
+        alt((tag(":"), tag("=>"))),
+        ws
+      ))(after_key) {
+        // We have bareword : or bareword =>, parse the value
+        let (input, v) = parse_type(after_sep)?;
+        (input, Some(ParsedMemberKey::Bareword(bareword_key)), sep == "=>", v)
+      } else {
+        // Bareword but not followed by : or =>, this is a type not a member key
+        let (input, v) = parse_type(input)?;
+        (input, None, false, v)
+      }
+    } else if let Ok((after_key, value_key)) = value_parser(input) {
+      // Try value followed by : or =>
+      if let Ok((after_sep, (_, sep, _))) = tuple::<_, _, VerboseError<&str>, _>((
+        ws,
+        alt((tag(":"), tag("=>"))),
+        ws
+      ))(after_key) {
+        // We have value : or value =>, parse the value
+        let (input, v) = parse_type(after_sep)?;
+        (input, Some(ParsedMemberKey::Value(value_key)), sep == "=>", v)
+      } else {
+        // Value but not followed by : or =>, parse as type
+        let (input, v) = parse_type(input)?;
+        (input, None, false, v)
+      }
     } else {
-      // No key, just parse the value
+      // Not a member key, just parse the value
       let (input, v) = parse_type(input)?;
       (input, None, false, v)
-    };
+    }
+  };
 
   Ok((
     input,
