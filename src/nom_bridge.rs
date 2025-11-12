@@ -1057,4 +1057,32 @@ person = {
       );
     }
   }
+
+  #[test]
+  fn test_group_socket_in_type_position() {
+    let cddl_input = r#"
+tester = $$vals
+$$vals //= 18
+$$vals //= 12
+"#;
+
+    let result = cddl_from_nom_str(cddl_input);
+    assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    let cddl = result.unwrap();
+
+    println!("\nTotal rules: {}", cddl.rules.len());
+    for (i, rule) in cddl.rules.iter().enumerate() {
+      println!("\nRule {}:", i);
+      match rule {
+        ast::Rule::Type { rule, .. } => {
+          println!("  Type rule: {}", rule.name);
+          println!("  is_type_choice_alternate: {}", rule.is_type_choice_alternate);
+        }
+        ast::Rule::Group { rule, .. } => {
+          println!("  Group rule: {}", rule.name);
+          println!("  is_group_choice_alternate: {}", rule.is_group_choice_alternate);
+        }
+      }
+    }
+  }
 }

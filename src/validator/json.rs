@@ -2372,6 +2372,50 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       return Ok(());
     }
 
+    // Special handling for GROUP socket in TYPE position
+    // When $$name is used in a TYPE context, we need to treat the group choice
+    // alternates as type choices
+    if let Some(token::SocketPlug::GROUP) = ident.socket {
+      let group_choice_alternates = group_choice_alternates_from_ident(self.cddl, ident);
+      if !group_choice_alternates.is_empty() {
+        // Try each group choice alternate as a type
+        let error_count = self.errors.len();
+        for ge in group_choice_alternates {
+          let cur_errors = self.errors.len();
+          // Extract the type from the group entry and validate against it
+          match ge {
+            GroupEntry::ValueMemberKey { ge, .. } => {
+              self.visit_type(&ge.entry_type)?;
+              if self.errors.len() == cur_errors {
+                // This alternate matched, clear all errors from this attempt
+                for _ in 0..self.errors.len() - error_count {
+                  self.errors.pop();
+                }
+                return Ok(());
+              }
+            }
+            GroupEntry::TypeGroupname { ge, .. } => {
+              // For TypeGroupname, we need to visit the referenced type
+              if let Some(rule) = rule_from_ident(self.cddl, &ge.name) {
+                self.visited_rules.insert(ge.name.ident.to_string());
+                let result = self.visit_rule(rule);
+                self.visited_rules.remove(ge.name.ident);
+                if result.is_ok() && self.errors.len() == cur_errors {
+                  for _ in 0..self.errors.len() - error_count {
+                    self.errors.pop();
+                  }
+                  return Ok(());
+                }
+              }
+            }
+            _ => {}
+          }
+        }
+        // None of the alternates matched, keep the errors
+        return Ok(());
+      }
+    }
+
     // self.is_colon_shortcut_present is only true when the ident is part of a
     // member key
     if !self.is_colon_shortcut_present {
