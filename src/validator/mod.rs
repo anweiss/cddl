@@ -908,10 +908,13 @@ pub fn entry_counts_from_group<'a, 'b: 'a>(
           // to each of the nested entry counts, not replace the entire list
           let nested_entry_counts = entry_counts_from_group(cddl, group);
           if group.group_choices.len() > 1 {
-            // Add current accumulated count to each nested choice count
+            // Process remaining entries after this inline group
+            let remaining_count = gc.group_entries.iter().skip(idx + 1).count() as u64;
+            
+            // Add current accumulated count to each nested choice count, plus remaining entries
             for nested_ec in nested_entry_counts {
               entry_counts.push(EntryCount {
-                count: count + nested_ec.count,
+                count: count + nested_ec.count + remaining_count,
                 entry_occurrence: nested_ec.entry_occurrence.or(entry_occurrence),
               });
             }
@@ -943,7 +946,18 @@ pub fn entry_counts_from_group<'a, 'b: 'a>(
                   0
                 };
               } else {
-                entry_counts.append(&mut entry_counts_from_group(cddl, group));
+                // Multiple group choices - similar to inline groups, need to account for accumulated and remaining counts
+                let remaining_count = gc.group_entries.iter().skip(idx + 1).count() as u64;
+                let nested_entry_counts = entry_counts_from_group(cddl, group);
+                
+                for nested_ec in nested_entry_counts {
+                  entry_counts.push(EntryCount {
+                    count: count + nested_ec.count + remaining_count,
+                    entry_occurrence: nested_ec.entry_occurrence.or(entry_occurrence),
+                  });
+                }
+                skip_final_push = true;
+                break;
               }
             } else {
               entry_counts.append(&mut entry_counts_from_group(cddl, &gr.entry.clone().into()));
@@ -951,9 +965,20 @@ pub fn entry_counts_from_group<'a, 'b: 'a>(
           } else if group_choice_alternates_from_ident(cddl, &ge.name).is_empty() {
             count += 1;
           } else {
+            // Multiple group choice alternates - similar to above
+            let remaining_count = gc.group_entries.iter().skip(idx + 1).count() as u64;
+            
             for ge in group_choice_alternates_from_ident(cddl, &ge.name).into_iter() {
-              entry_counts.append(&mut entry_counts_from_group(cddl, &ge.clone().into()));
+              let nested_entry_counts = entry_counts_from_group(cddl, &ge.clone().into());
+              for nested_ec in nested_entry_counts {
+                entry_counts.push(EntryCount {
+                  count: count + nested_ec.count + remaining_count,
+                  entry_occurrence: nested_ec.entry_occurrence.or(entry_occurrence),
+                });
+              }
             }
+            skip_final_push = true;
+            break;
           }
         }
       }
