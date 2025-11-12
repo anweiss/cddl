@@ -488,6 +488,43 @@ fn convert_type2<'a>(parsed: &ParsedType<'a>, input: &'a str) -> Result<ast::Typ
       })
     }
 
+    ParsedType::GroupChoice(group_choices) => {
+      // Convert each group in the choice
+      let mut converted_choices = Vec::new();
+      for entries in group_choices {
+        let mut group_entries_with_commas = Vec::new();
+        for entry in entries {
+          let converted = convert_group_entry(entry, input)?;
+          group_entries_with_commas.push((converted, opt_comma()));
+        }
+
+        converted_choices.push(ast::GroupChoice {
+          group_entries: group_entries_with_commas,
+          #[cfg(feature = "ast-span")]
+          span: (0, 0, 1),
+          #[cfg(feature = "ast-comments")]
+          comments_before_grpchoice: None,
+        });
+      }
+
+      // Create the group choice AST node
+      Ok(ast::Type2::ChoiceFromInlineGroup {
+        group: ast::Group {
+          group_choices: converted_choices,
+          #[cfg(feature = "ast-span")]
+          span: (0, 0, 1),
+        },
+        #[cfg(feature = "ast-comments")]
+        comments: None,
+        #[cfg(feature = "ast-comments")]
+        comments_before_group: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_group: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 1),
+      })
+    }
+
     ParsedType::Tagged { tag, t } => Ok(ast::Type2::TaggedData {
       tag: Some(token::TagConstraint::Literal(*tag)),
       t: convert_type(t, input)?,

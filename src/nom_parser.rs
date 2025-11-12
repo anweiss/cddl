@@ -93,6 +93,7 @@ pub enum ParsedType<'a> {
   Array(Vec<ParsedGroupEntry<'a>>),
   Map(Vec<ParsedGroupEntry<'a>>),
   InlineGroup(Vec<ParsedGroupEntry<'a>>),
+  GroupChoice(Vec<Vec<ParsedGroupEntry<'a>>>),  // Group choice: ( group // group // ... )
   ChoiceFromGroup {
     name: &'a str,
     generic_args: Option<Vec<ParsedType<'a>>>,
@@ -399,10 +400,18 @@ fn parenthesized_type(input: &str) -> NomResult<ParsedType> {
   context(
     "parenthesized",
     alt((
-      // Try inline group first: ( group_entries )
+      // Try group choice first: ( group // group // ... )
       map(
-        delimited(char('('), delimited(ws, group_entries, ws), char(')')),
-        ParsedType::InlineGroup,
+        delimited(char('('), delimited(ws, group_choice, ws), char(')')),
+        |choices| {
+          if choices.len() == 1 {
+            // Single group, not a choice
+            ParsedType::InlineGroup(choices.into_iter().next().unwrap())
+          } else {
+            // Multiple groups - this is a group choice
+            ParsedType::GroupChoice(choices)
+          }
+        },
       ),
       // Otherwise try parenthesized type: ( type )
       map(
@@ -556,6 +565,14 @@ fn member_key(input: &str) -> NomResult<ParsedMemberKey> {
 /// Helper to check if a character could start a value literal
 fn could_start_value(c: char) -> bool {
   matches!(c, '"' | '\'' | 'h' | '-' | '0'..='9')
+}
+
+/// Parse group choices separated by //
+fn group_choice(input: &str) -> NomResult<Vec<Vec<ParsedGroupEntry>>> {
+  separated_list1(
+    delimited(ws, tag("//"), ws),
+    delimited(ws, group_entries, ws),
+  )(input)
 }
 
 /// Parse a group entry
