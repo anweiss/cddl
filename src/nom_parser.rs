@@ -553,6 +553,11 @@ fn member_key(input: &str) -> NomResult<ParsedMemberKey> {
   )(input)
 }
 
+/// Helper to check if a character could start a value literal
+fn could_start_value(c: char) -> bool {
+  matches!(c, '"' | '\'' | 'h' | '-' | '0'..='9')
+}
+
 /// Parse a group entry
 fn group_entry(input: &str) -> NomResult<ParsedGroupEntry> {
   // Try to parse occurrence indicator
@@ -599,25 +604,38 @@ fn group_entry(input: &str) -> NomResult<ParsedGroupEntry> {
         let (input, v) = parse_type(input)?;
         (input, None, false, v)
       }
-    } else if let Ok((after_key, value_key)) = value_parser(input) {
-      // Try value followed by : or =>
-      if let Ok((after_sep, (_, sep, _))) = tuple::<_, _, VerboseError<&str>, _>((
-        ws,
-        alt((tag(":"), tag("=>"))),
-        ws
-      ))(after_key) {
-        // We have value : or value =>, parse the value
-        let (input, v) = parse_type(after_sep)?;
-        (input, Some(ParsedMemberKey::Value(value_key)), sep == "=>", v)
+    } else {
+      // Try value as member key only if input starts with something that could be a value
+      // This prevents unnecessary parsing attempts that would fail
+      let first_char = input.chars().next();
+      let could_be_value = first_char.map_or(false, could_start_value);
+      
+      if could_be_value {
+        if let Ok((after_key, value_key)) = value_parser(input) {
+          // Try value followed by : or =>
+          if let Ok((after_sep, (_, sep, _))) = tuple::<_, _, VerboseError<&str>, _>((
+            ws,
+            alt((tag(":"), tag("=>"))),
+            ws
+          ))(after_key) {
+            // We have value : or value =>, parse the value
+            let (input, v) = parse_type(after_sep)?;
+            (input, Some(ParsedMemberKey::Value(value_key)), sep == "=>", v)
+          } else {
+            // Value but not followed by : or =>, parse as type
+            let (input, v) = parse_type(input)?;
+            (input, None, false, v)
+          }
+        } else {
+          // value_parser failed, parse as type
+          let (input, v) = parse_type(input)?;
+          (input, None, false, v)
+        }
       } else {
-        // Value but not followed by : or =>, parse as type
+        // Not a member key, just parse the value
         let (input, v) = parse_type(input)?;
         (input, None, false, v)
       }
-    } else {
-      // Not a member key, just parse the value
-      let (input, v) = parse_type(input)?;
-      (input, None, false, v)
     }
   };
 

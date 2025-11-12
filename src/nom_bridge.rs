@@ -1096,6 +1096,16 @@ $$vals //= 12
   }
 
   #[test]
+  fn test_simplest_array() {
+    let cddl_str = r#"test = [ ( x // y ) ]"#;
+    let result = cddl_from_nom_str(cddl_str);
+    if let Err(e) = &result {
+      println!("Error: {:?}", e);
+    }
+    assert!(result.is_ok());
+  }
+
+  #[test]
   fn test_simple_cut_syntax() {
     let cddl_str = r#"
         test = [ ( NullPart // SinglePart ) ]
