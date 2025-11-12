@@ -282,7 +282,12 @@ fn float_value(input: &str) -> NomResult<f64> {
 fn text_value(input: &str) -> NomResult<&str> {
   context(
     "text_value",
-    delimited(char('"'), take_while(|c| c != '"'), char('"')),
+    alt((
+      // Double-quoted text: "..."
+      delimited(char('"'), take_while(|c| c != '"'), char('"')),
+      // Single-quoted text: '...' (can be multi-line)
+      delimited(char('\''), take_while(|c| c != '\''), char('\'')),
+    )),
   )(input)
 }
 
