@@ -1,0 +1,28 @@
+; Test file for demonstrating enhanced intellisense
+; Hover over any of these control operators or standard types to see rich documentation
+
+; Size constraints
+hash = bstr .size 32           ; Hover over .size
+message = tstr .size (1..1000) ; Hover over tstr
+
+; Numeric constraints  
+age = uint .ge 18              ; Hover over .ge
+temperature = int .lt 100      ; Hover over .lt
+
+; Pattern matching
+email = tstr .regexp "[^@]+@[^@]+"  ; Hover over .regexp
+phone = tstr .pcre "^\\+?[1-9]\\d{1,14}$"  ; Hover over .pcre
+
+; Embedded data
+config = bstr .cbor { timeout: uint }  ; Hover over .cbor
+
+; Default values
+settings = {
+  ? retries: uint .default 3,     ; Hover over .default
+  ? debug: bool .default false
+}
+
+; Standard types with enhanced docs
+timestamp = time               ; Hover over time
+coordinates = [float64, float64]  ; Hover over float64
+metadata = any                 ; Hover over any

@@ -1,25 +1,56 @@
 name: Draft release for VSCode Extension
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 on:
   push:
     branches:
       - main
     paths:
-      - '.github/workflows/release-vscode-extension.yml'
-      - 'cddl-lsp/**'
+      - ".github/workflows/release-vscode-extension.yml"
+      - "cddl-lsp/**"
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: "Override version (leave empty to use package.json version)"
+        required: false
+        type: string
 
 jobs:
   draft-release:
     name: Draft Release for VSCode Extension
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Get VSCode Extension Version
+        id: get_version
+        run: |
+          if [ -n "${{ github.event.inputs.version_override }}" ]; then
+            VERSION="${{ github.event.inputs.version_override }}"
+            echo "Using manually provided version: $VERSION"
+          else
+            VERSION=$(jq -r '.version' cddl-lsp/package.json)
+            echo "Using version from package.json: $VERSION"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "VSCode Extension version: $VERSION"
+
       - name: Draft Release
         id: draft_release
         uses: release-drafter/release-drafter@v5
         with:
           config-name: vscode-extension-release-drafter.yml
-          publish: ${{ startsWith(github.ref, 'refs/tags') }}
+          version: ${{ steps.get_version.outputs.version }}
+          tag: ${{ steps.get_version.outputs.version }}-vscode-extension
+          name: VSCode Extension v${{ steps.get_version.outputs.version }}
+          publish: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Output release info
+        run: |
+          echo "Release ID: ${{ steps.draft_release.outputs.id }}"
+          echo "Release URL: ${{ steps.draft_release.outputs.html_url }}"
+          echo "Release tag: ${{ steps.get_version.outputs.version }}-vscode-extension"

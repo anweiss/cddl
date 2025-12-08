@@ -1,0 +1,7 @@
+; Test file for .regexp control operator from RFC 8610 section 3.8.3
+nai = tstr .regexp "[A-Za-z0-9]+@[A-Za-z0-9]+(\\.[A-Za-z0-9]+)+"
+
+; Another example
+email-format = tstr .regexp "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"
+
+; Valid CDDL with .regexp should not produce errors

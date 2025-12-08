@@ -9,8 +9,23 @@ module.exports = {
     filename: 'app.js',
   },
   mode: 'production',
+  resolve: {
+    fallback: {
+      "util": require.resolve("util/"),
+      "path": require.resolve("path-browserify"),
+      "fs": false
+    }
+  },
   plugins: [
-    new CopyWebpackPlugin({ patterns: ['index.html'] }),
+    new CopyWebpackPlugin({ 
+      patterns: [
+        'index.html',
+        {
+          from: '../pkg/cddl_bg.wasm',
+          to: 'cddl_bg.wasm'
+        }
+      ] 
+    }),
     new MonacoWebpackPlugin(),
   ],
   module: {

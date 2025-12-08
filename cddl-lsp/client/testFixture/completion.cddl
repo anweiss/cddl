@@ -1,0 +1,10 @@
+; Basic CDDL test file for completion testing
+person = {
+	name: tstr,
+	age: uint,
+	email: tstr .regexp "[A-Za-z0-9]+@[A-Za-z0-9]+(\\.[A-Za-z0-9]+)+"
+}
+
+address = { street: tstr, city: tstr, zipcode: tstr }
+
+; Test completion at beginning of file

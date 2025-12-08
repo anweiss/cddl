@@ -5,6 +5,9 @@ use super::{
   },
   token::{self, ByteValue, Token, Value},
 };
+
+#[cfg(test)]
+use super::token::TagConstraint;
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
   files::SimpleFiles,
@@ -65,7 +68,7 @@ pub struct Error {
   /// Error type
   pub error_type: LexerErrorType,
   input: String,
-  position: Position,
+  pub position: Position,
 }
 
 /// Various error types emitted by the lexer
@@ -299,7 +302,7 @@ impl<'a> Iterator for LexerIter<'a> {
 /// # Arguments
 ///
 /// `str_input` - String slice with input
-pub fn lexer_from_str(str_input: &str) -> Lexer {
+pub fn lexer_from_str(str_input: &str) -> Lexer<'_> {
   Lexer::new(str_input)
 }
 
@@ -320,7 +323,7 @@ impl<'a> Lexer<'a> {
   }
 
   /// Creates a Lexer from a byte slice
-  pub fn from_slice(input: &[u8]) -> Lexer {
+  pub fn from_slice(input: &[u8]) -> Lexer<'_> {
     let str_input = std::str::from_utf8(input).unwrap();
 
     Lexer::new(str_input)
@@ -484,29 +487,59 @@ impl<'a> Lexer<'a> {
             match self.peek_char() {
               Some(&c) if c.1 == '.' => {
                 let _ = self.read_char()?;
-                let (idx, _) = self.read_char()?;
 
-                self.position.range = (token_offset, self.position.index + 1);
+                // Check if it's a type expression <type> or literal number
+                if let Some(&c) = self.peek_char() {
+                  if c.1 == '<' {
+                    // Type expression syntax: #6.<type>
+                    let _ = self.read_char()?; // consume '<'
+                    let type_start = c.0 + 1;
 
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                  Ok((
-                    self.position,
-                    Token::TAG(Some(t as u8), Some(self.read_number(idx)?.1)),
-                  ))
-                }
+                    // Find the closing '>'
+                    let mut nesting = 1;
+                    let mut type_end = type_start;
+                    while nesting > 0 {
+                      if let Some(&c) = self.peek_char() {
+                        if c.1 == '<' {
+                          nesting += 1;
+                        } else if c.1 == '>' {
+                          nesting -= 1;
+                        }
+                        type_end = self.read_char()?.0;
+                      } else {
+                        return Err((self.str_input, self.position, InvalidTagSyntax).into());
+                      }
+                    }
 
-                #[cfg(target_arch = "wasm32")]
-                {
-                  Ok((
-                    self.position,
-                    Token::TAG(Some(t as u8), Some(self.read_number(idx)?.1 as u64)),
-                  ))
+                    let type_expr = &self.str_input[type_start..type_end];
+                    self.position.range = (token_offset, self.position.index + 1);
+
+                    Ok((
+                      self.position,
+                      Token::TAG(Some(t as u8), Some(token::TagConstraint::Type(type_expr))),
+                    ))
+                  } else {
+                    // Literal number syntax: #6.123
+                    let (idx, _) = self.read_char()?;
+                    let constraint = self.read_number(idx)?.1;
+
+                    self.position.range = (token_offset, self.position.index + 1);
+
+                    Ok((
+                      self.position,
+                      Token::TAG(
+                        Some(t as u8),
+                        Some(token::TagConstraint::Literal(constraint)),
+                      ),
+                    ))
+                  }
+                } else {
+                  self.position.range = (token_offset, self.position.index + 1);
+                  Ok((self.position, Token::TAG(Some(t as u8), None)))
                 }
               }
               _ => {
                 self.position.range = (token_offset, self.position.index + 1);
-
                 Ok((self.position, Token::TAG(Some(t as u8), None)))
               }
             }
@@ -569,14 +602,31 @@ impl<'a> Lexer<'a> {
             if ch == 'h' {
               if let Some(&c) = self.peek_char() {
                 if c.1 == '\'' {
-                  let _ = self.read_char()?;
-                  let (idx, _) = self.read_char()?;
+                  let _ = self.read_char()?; // advance past 'h'
+                                             // Capture position of the opening quote
+                  let mut quote_position = self.position;
+                  quote_position.range = (self.position.index, self.position.index + 1); // Range for just the quote
+                  let (idx, _) = self.read_char()?; // advance past opening quote
 
                   // Ensure that the byte string has been properly encoded.
-                  let b = self.read_prefixed_byte_string(idx)?;
+                  let b = self.read_prefixed_byte_string(idx, quote_position)?;
                   let mut buf = [0u8; 1024];
                   return base16::decode_slice(&b[..], &mut buf)
-                    .map_err(|e| (self.str_input, self.position, e).into())
+                    .map_err(|e| {
+                      // Check if this is an odd-length error, which often indicates an unterminated hex string
+                      let error_str = e.to_string();
+                      if error_str.contains("must be even") || error_str.contains("odd") {
+                        // This suggests the hex string might be unterminated
+                        (
+                          self.str_input,
+                          quote_position,
+                          UnterminatedByteStringLiteral,
+                        )
+                          .into()
+                      } else {
+                        (self.str_input, self.position, e).into()
+                      }
+                    })
                     .map(|_| {
                       self.position.range = (token_offset, self.position.index + 1);
 
@@ -596,12 +646,15 @@ impl<'a> Lexer<'a> {
                       let _ = self.read_char()?;
                       if let Some(&c) = self.peek_char() {
                         if c.1 == '\'' {
-                          let _ = self.read_char()?;
-                          let (idx, _) = self.read_char()?;
+                          let _ = self.read_char()?; // advance past 'b64'
+                                                     // Capture position of the opening quote
+                          let mut quote_position = self.position;
+                          quote_position.range = (self.position.index, self.position.index + 1); // Range for just the quote
+                          let (idx, _) = self.read_char()?; // advance past opening quote
 
                           // Ensure that the byte string has been properly
                           // encoded
-                          let bs = self.read_prefixed_byte_string(idx)?;
+                          let bs = self.read_prefixed_byte_string(idx, quote_position)?;
                           let mut buf =
                             vec![0; data_encoding::BASE64.decode_len(bs.len()).unwrap()];
                           return data_encoding::BASE64URL
@@ -669,20 +722,80 @@ impl<'a> Lexer<'a> {
     Ok(&self.str_input[idx..=end_idx])
   }
 
+  fn read_unicode_escape(&mut self) -> Result<()> {
+    if let Some(&(_, ch)) = self.peek_char() {
+      if ch == '{' {
+        // \u{hex} format - new in RFC 9682
+        let _ = self.read_char()?; // consume '{'
+
+        // Read hex digits (1 to 6 digits allowed for Unicode scalar values)
+        let mut hex_count = 0;
+        while let Some(&(_, ch)) = self.peek_char() {
+          if ch == '}' {
+            let _ = self.read_char()?; // consume '}'
+            if hex_count == 0 {
+              return Err((self.str_input, self.position, InvalidEscapeCharacter).into());
+            }
+            return Ok(());
+          } else if ch.is_ascii_hexdigit() {
+            let _ = self.read_char()?;
+            hex_count += 1;
+            if hex_count > 6 {
+              return Err((self.str_input, self.position, InvalidEscapeCharacter).into());
+            }
+          } else {
+            return Err((self.str_input, self.position, InvalidEscapeCharacter).into());
+          }
+        }
+
+        // Missing closing '}'
+        Err((self.str_input, self.position, InvalidEscapeCharacter).into())
+      } else if ch.is_ascii_hexdigit() {
+        // \uXXXX format - must be exactly 4 hex digits
+        for _ in 0..4 {
+          if let Some(&(_, ch)) = self.peek_char() {
+            if ch.is_ascii_hexdigit() {
+              let _ = self.read_char()?;
+            } else {
+              return Err((self.str_input, self.position, InvalidEscapeCharacter).into());
+            }
+          } else {
+            return Err((self.str_input, self.position, InvalidEscapeCharacter).into());
+          }
+        }
+        Ok(())
+      } else {
+        Err((self.str_input, self.position, InvalidEscapeCharacter).into())
+      }
+    } else {
+      Err((self.str_input, self.position, InvalidEscapeCharacter).into())
+    }
+  }
+
   fn read_text_value(&mut self, idx: usize) -> Result<&'a str> {
     while let Some(&(_, ch)) = self.peek_char() {
       match ch {
-        // SCHAR
-        '\x20'..='\x21' | '\x23'..='\x5b' | '\x5d'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
+        // SCHAR - Updated per RFC 9682 Section 2.1.2: excludes C1 control chars and surrogates
+        '\x20'..='\x21' | '\x23'..='\x5b' | '\x5d'..='\x7e' => {
           let _ = self.read_char()?;
         }
-        // SESC
+        // NONASCII - Updated per RFC 9682 Section 2.1.2: excludes surrogates and C1 controls
+        '\u{00A0}'..='\u{D7FF}' | '\u{E000}'..='\u{10FFFD}' => {
+          let _ = self.read_char()?;
+        }
+        // SESC - Updated per RFC 9682 Section 2.1.1: more restrictive escape handling
         '\\' => {
           let _ = self.read_char();
           if let Some(&(_, ch)) = self.peek_char() {
             match ch {
-              '\x20'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
+              // Standard JSON escapes: \" \/ \\ \b \f \n \r \t
+              '"' | '/' | '\\' | 'b' | 'f' | 'n' | 'r' | 't' => {
                 let _ = self.read_char()?;
+              }
+              // Unicode escapes: \uXXXX or \u{hex}
+              'u' => {
+                let _ = self.read_char()?;
+                self.read_unicode_escape()?;
               }
               _ => return Err((self.str_input, self.position, InvalidEscapeCharacter).into()),
             }
@@ -711,16 +824,30 @@ impl<'a> Lexer<'a> {
   fn read_byte_string(&mut self, idx: usize) -> Result<&'a str> {
     while let Some(&(_, ch)) = self.peek_char() {
       match ch {
-        // BCHAR
-        '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
+        // BCHAR - Updated per RFC 9682 Section 2.1.2: excludes C1 control chars and surrogates
+        '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\x7e' => {
           let _ = self.read_char();
         }
-        // SESC
+        // NONASCII - Updated per RFC 9682 Section 2.1.2: excludes surrogates and C1 controls
+        '\u{00A0}'..='\u{D7FF}' | '\u{E000}'..='\u{10FFFD}' => {
+          let _ = self.read_char();
+        }
+        // SESC - Updated per RFC 9682 Section 2.1.1: more restrictive escape handling
         '\\' => {
           let _ = self.read_char();
           if let Some(&(_, ch)) = self.peek_char() {
             match ch {
-              '\x20'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
+              // Standard JSON escapes: \" \/ \\ \b \f \n \r \t
+              '"' | '/' | '\\' | 'b' | 'f' | 'n' | 'r' | 't' => {
+                let _ = self.read_char()?;
+              }
+              // Unicode escapes: \uXXXX or \u{hex}
+              'u' => {
+                let _ = self.read_char()?;
+                self.read_unicode_escape()?;
+              }
+              // Single quote needs to be escaped in byte strings
+              '\'' => {
                 let _ = self.read_char()?;
               }
               _ => return Err((self.str_input, self.position, InvalidEscapeCharacter).into()),
@@ -749,21 +876,43 @@ impl<'a> Lexer<'a> {
     Err((self.str_input, self.position, EmptyByteStringLiteral).into())
   }
 
-  fn read_prefixed_byte_string(&mut self, idx: usize) -> Result<Cow<'a, [u8]>> {
+  fn read_prefixed_byte_string(
+    &mut self,
+    idx: usize,
+    quote_position: Position,
+  ) -> Result<Cow<'a, [u8]>> {
     let mut has_whitespace = false;
+    let mut has_content = false;
 
     while let Some(&(_, ch)) = self.peek_char() {
       match ch {
-        // BCHAR
-        '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
+        // BCHAR - Updated per RFC 9682 Section 2.1.2: excludes C1 control chars and surrogates
+        '\x20'..='\x26' | '\x28'..='\x5b' | '\x5d'..='\x7e' => {
+          has_content = true;
           let _ = self.read_char();
         }
-        // SESC
+        // NONASCII - Updated per RFC 9682 Section 2.1.2: excludes surrogates and C1 controls
+        '\u{00A0}'..='\u{D7FF}' | '\u{E000}'..='\u{10FFFD}' => {
+          has_content = true;
+          let _ = self.read_char();
+        }
+        // SESC - Updated per RFC 9682 Section 2.1.1: more restrictive escape handling
         '\\' => {
+          has_content = true;
           let _ = self.read_char();
           if let Some(&(_, ch)) = self.peek_char() {
             match ch {
-              '\x20'..='\x7e' | '\u{0080}'..='\u{10FFFD}' => {
+              // Standard JSON escapes: \" \/ \\ \b \f \n \r \t
+              '"' | '/' | '\\' | 'b' | 'f' | 'n' | 'r' | 't' => {
+                let _ = self.read_char()?;
+              }
+              // Unicode escapes: \uXXXX or \u{hex}
+              'u' => {
+                let _ = self.read_char()?;
+                self.read_unicode_escape()?;
+              }
+              // Single quote needs to be escaped in byte strings
+              '\'' => {
                 let _ = self.read_char()?;
               }
               _ => return Err((self.str_input, self.position, InvalidEscapeCharacter).into()),
@@ -772,6 +921,11 @@ impl<'a> Lexer<'a> {
         }
         // Closing '
         '\x27' => {
+          // Check if this is an empty byte string literal
+          if !has_content {
+            return Err((self.str_input, quote_position, EmptyByteStringLiteral).into());
+          }
+
           // Whitespace is ignored for prefixed byte strings and requires allocation
           if has_whitespace {
             return Ok(
@@ -783,12 +937,10 @@ impl<'a> Lexer<'a> {
             );
           }
 
-          return Ok(self.str_input[idx..self.read_char()?.0].as_bytes().into());
+          return Ok((&self.str_input.as_bytes()[idx..self.read_char()?.0]).into());
         }
         // CRLF
         _ => {
-          // TODO: if user forgets closing "'", but another "'" is found later
-          // in the string, the error emitted here can be confusing
           if ch.is_ascii_whitespace() {
             has_whitespace = true;
             let _ = self.read_char()?;
@@ -796,7 +948,7 @@ impl<'a> Lexer<'a> {
             return Err(
               (
                 self.str_input,
-                self.position,
+                quote_position, // Report error at opening quote position
                 InvalidByteStringLiteralCharacter,
               )
                 .into(),
@@ -806,7 +958,16 @@ impl<'a> Lexer<'a> {
       }
     }
 
-    Err((self.str_input, self.position, EmptyByteStringLiteral).into())
+    // If we reach here, we've hit EOF without finding a closing quote
+    // Report the error at the position of the opening quote
+    Err(
+      (
+        self.str_input,
+        quote_position,
+        UnterminatedByteStringLiteral,
+      )
+        .into(),
+    )
   }
 
   fn read_comment(&mut self, idx: usize) -> Result<&'a str> {
@@ -814,7 +975,22 @@ impl<'a> Lexer<'a> {
 
     while let Some(&(_, ch)) = self.peek_char() {
       if ch != '\x0a' && ch != '\x0d' {
-        comment_char = self.read_char()?;
+        // PCHAR - Updated per RFC 9682 Section 2.1.2: excludes C1 control chars and surrogates
+        match ch {
+          '\x20'..='\x7E' | '\u{00A0}'..='\u{D7FF}' | '\u{E000}'..='\u{10FFFD}' => {
+            comment_char = self.read_char()?;
+          }
+          _ => {
+            return Err(
+              (
+                self.str_input,
+                self.position,
+                InvalidTextStringLiteralCharacter,
+              )
+                .into(),
+            );
+          }
+        }
       } else {
         return Ok(&self.str_input[idx + 1..self.read_char()?.0]);
       }
@@ -909,13 +1085,13 @@ impl<'a> Lexer<'a> {
 
             if is_signed {
               return Ok(Token::VALUE(Value::FLOAT(
-                lexical::parse::<f64>(self.str_input[signed_idx..=end_idx].as_bytes())
+                lexical::parse::<f64>(&self.str_input.as_bytes()[signed_idx..=end_idx])
                   .map_err(|e| Error::from((self.str_input, self.position, e)))?,
               )));
             }
 
             return Ok(Token::VALUE(Value::FLOAT(
-              lexical::parse::<f64>(self.str_input[idx..=end_idx].as_bytes())
+              lexical::parse::<f64>(&self.str_input.as_bytes()[idx..=end_idx])
                 .map_err(|e| Error::from((self.str_input, self.position, e)))?,
             )));
           }
@@ -935,7 +1111,7 @@ impl<'a> Lexer<'a> {
     if is_signed {
       if is_exponent {
         return Ok(Token::VALUE(Value::INT(
-          lexical::parse::<f64>(self.str_input[signed_idx..=end_idx].as_bytes())
+          lexical::parse::<f64>(&self.str_input.as_bytes()[signed_idx..=end_idx])
             .map_err(|e| Error::from((self.str_input, self.position, e)))? as isize,
         )));
       } else {
@@ -949,7 +1125,7 @@ impl<'a> Lexer<'a> {
 
     if is_exponent {
       return Ok(Token::VALUE(Value::UINT(
-        lexical::parse::<f64>(self.str_input[idx..=end_idx].as_bytes())
+        lexical::parse::<f64>(&self.str_input.as_bytes()[idx..=end_idx])
           .map_err(|e| Error::from((self.str_input, self.position, e)))? as usize,
       )));
     }
@@ -1138,7 +1314,7 @@ mod tests {
       (NEWLINE, ""),
       (IDENT("mytag", None), "mytag"),
       (ASSIGN, "="),
-      (TAG(Some(6), Some(1234)), "#6.1234"),
+      (TAG(Some(6), Some(TagConstraint::Literal(1234))), "#6.1234"),
       (LPAREN, "("),
       (TSTR, "tstr"),
       (RPAREN, ")"),

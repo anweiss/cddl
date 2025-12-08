@@ -3,7 +3,7 @@
   "description": "VSCode client for the Concise Data Definition Language (CDDL) language server implementation",
   "author": "Andrew Weiss <andrew.weiss@outlook.com>",
   "license": "MIT",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "publisher": "vscode",
   "repository": {
     "type": "git",
@@ -13,11 +13,14 @@
     "vscode": "^1.43.0"
   },
   "dependencies": {
-    "vscode-languageclient": "^8.1.0"
+    "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@types/vscode": "^1.97.0",
-    "@types/node": "^20",
-    "@vscode/test-electron": "^2.4.1"
+    "@types/node": "^24",
+    "@types/mocha": "^10.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "glob": "^11.0.3",
+    "mocha": "^11.1.0"
   }
 }

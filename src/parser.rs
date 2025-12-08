@@ -221,18 +221,30 @@ impl<'a> Parser<'a> {
         msg,
       } = error
       {
+        // Use the short message for the label
+        let label_message = msg.to_string();
+
         labels.push(
           #[cfg(feature = "ast-span")]
-          Label::primary(file_id, position.range.0..position.range.1).with_message(msg.to_string()),
+          Label::primary(file_id, position.range.0..position.range.1).with_message(label_message),
           #[cfg(not(feature = "ast-span"))]
-          Label::primary(file_id, 0..0).with_message(msg.to_string()),
+          Label::primary(file_id, 0..0).with_message(label_message),
         );
       }
     }
 
-    let diagnostic = Diagnostic::error()
+    let mut diagnostic = Diagnostic::error()
       .with_message("parser errors")
       .with_labels(labels);
+
+    // Add extended messages as notes if available (enhanced error reporting)
+    for error in self.errors.iter() {
+      if let Error::PARSER { msg, .. } = error {
+        if let Some(ref extended) = msg.extended {
+          diagnostic = diagnostic.with_notes(vec![extended.clone()]);
+        }
+      }
+    }
 
     let config = term::Config::default();
 
@@ -288,18 +300,30 @@ impl<'a> Parser<'a> {
         msg,
       } = error
       {
+        // Use the short message for the label
+        let label_message = msg.to_string();
+
         labels.push(
           #[cfg(feature = "ast-span")]
-          Label::primary(file_id, position.range.0..position.range.1).with_message(msg.to_string()),
+          Label::primary(file_id, position.range.0..position.range.1).with_message(label_message),
           #[cfg(not(feature = "ast-span"))]
-          Label::primary(file_id, 0..0).with_message(msg.to_string()),
+          Label::primary(file_id, 0..0).with_message(label_message),
         );
       }
     }
 
-    let diagnostic = Diagnostic::error()
+    let mut diagnostic = Diagnostic::error()
       .with_message("parser errors")
       .with_labels(labels);
+
+    // Add extended messages as notes if available (enhanced error reporting)
+    for error in self.errors.iter() {
+      if let Error::PARSER { msg, .. } = error {
+        if let Some(ref extended) = msg.extended {
+          diagnostic = diagnostic.with_notes(vec![extended.clone()]);
+        }
+      }
+    }
 
     let config = term::Config::default();
 
@@ -348,7 +372,6 @@ impl<'a> Parser<'a> {
     let mut comments: Option<Comments> = None;
 
     while let Token::COMMENT(_comment) = self.cur_token {
-      #[cfg(not(feature = "lsp"))]
       comments.get_or_insert(Comments::default()).0.push(_comment);
 
       self.next_token()?;
@@ -376,9 +399,6 @@ impl<'a> Parser<'a> {
   #[cfg(not(feature = "ast-comments"))]
   fn advance_newline(&mut self) -> Result<()> {
     while let Token::NEWLINE = self.cur_token {
-      #[cfg(feature = "lsp")]
-      comments.get_or_insert(Comments::default()).0.push("\n");
-
       self.next_token()?;
     }
 
@@ -515,15 +535,9 @@ impl<'a> Parser<'a> {
       return Err(Error::INCREMENTAL);
     }
 
-    if c.rules.is_empty() {
-      self.errors.push(Error::PARSER {
-        #[cfg(feature = "ast-span")]
-        position: self.parser_position,
-        msg: NoRulesDefined.into(),
-      });
-
-      return Err(Error::INCREMENTAL);
-    }
+    // RFC 9682 Section 3.1: Empty data models are now allowed
+    // The requirement for at least one rule is now a semantic constraint
+    // to be fulfilled after processing of all directives.
 
     Ok(c)
   }
@@ -1481,7 +1495,7 @@ impl<'a> Parser<'a> {
           if ident.socket.is_none() {
             let mut is_generic_param = false;
             if let Some(idents) = &self.current_rule_generic_param_idents {
-              is_generic_param = idents.iter().any(|&id| id == ident.ident);
+              is_generic_param = idents.contains(&ident.ident);
             }
 
             #[cfg(feature = "ast-span")]
@@ -1514,7 +1528,7 @@ impl<'a> Parser<'a> {
         if ident.socket.is_none() {
           let mut is_generic_param = false;
           if let Some(idents) = &self.current_rule_generic_param_idents {
-            is_generic_param = idents.iter().any(|&id| id == ident.ident);
+            is_generic_param = idents.contains(&ident.ident);
           }
 
           #[cfg(feature = "ast-span")]
@@ -1858,7 +1872,11 @@ impl<'a> Parser<'a> {
         #[cfg(feature = "ast-span")]
         let begin_type2_line = self.lexer_position.line;
 
-        match (*mt, *constraint) {
+        // Extract values to avoid borrow checker issues
+        let mt_val = *mt;
+        let constraint_val = *constraint;
+
+        match (mt_val, constraint_val) {
           // Tagged data item containing the given type as the tagged value
           (Some(6), tag) => {
             self.next_token()?;
@@ -2019,6 +2037,21 @@ impl<'a> Parser<'a> {
         self.lexer_position.range.0
       };
 
+    // Store the position of the opening delimiter for better error reporting
+    // When current token is a delimiter, peek_lexer_position contains the delimiter's position
+    let opening_delimiter_position =
+      if let Token::LBRACE | Token::LPAREN | Token::LBRACKET | Token::GCHOICE = &self.cur_token {
+        // Use peek_lexer_position because it contains the position of the current token before advancement
+        Position {
+          line: self.peek_lexer_position.line,
+          column: self.peek_lexer_position.column,
+          range: self.peek_lexer_position.range,
+          index: self.peek_lexer_position.index,
+        }
+      } else {
+        self.lexer_position
+      };
+
     let closing_delimiter = token::closing_delimiter(&self.cur_token);
 
     let mut group = Group {
@@ -2042,7 +2075,7 @@ impl<'a> Parser<'a> {
       if cd != &self.cur_token {
         self.errors.push(Error::PARSER {
           #[cfg(feature = "ast-span")]
-          position: self.lexer_position,
+          position: opening_delimiter_position, // Report error at opening delimiter position
           msg: MissingClosingDelimiter.into(),
         });
 
@@ -2063,6 +2096,9 @@ impl<'a> Parser<'a> {
       span: (self.lexer_position.range.0, 0, self.lexer_position.line),
     };
 
+    // Track whether we're in an array context to pass to parse_grpent
+    let mut in_array_context = false;
+
     if let Token::GCHOICE = &self.cur_token {
       self.next_token()?;
 
@@ -2077,7 +2113,24 @@ impl<'a> Parser<'a> {
       {
         grpchoice.span.0 = self.lexer_position.range.0;
       }
-    } else if let Token::LBRACE | Token::LBRACKET = &self.cur_token {
+    } else if let Token::LBRACKET = &self.cur_token {
+      // This is an array context
+      in_array_context = true;
+      self.next_token()?;
+
+      #[cfg(feature = "ast-span")]
+      {
+        grpchoice.span.0 = self.lexer_position.range.0;
+      }
+
+      #[cfg(feature = "ast-comments")]
+      {
+        grpchoice.comments_before_grpchoice = self.collect_comments()?;
+      }
+      #[cfg(not(feature = "ast-comments"))]
+      self.advance_newline()?;
+    } else if let Token::LBRACE = &self.cur_token {
+      // This is a map/object context, not an array
       self.next_token()?;
 
       #[cfg(feature = "ast-span")]
@@ -2101,7 +2154,13 @@ impl<'a> Parser<'a> {
       && !self.cur_token_is(Token::RBRACKET)
       && !self.cur_token_is(Token::EOF)
     {
-      let ge = self.parse_grpent(false)?;
+      let ge = if in_array_context {
+        // In array context, use from_rule=false and prevent TypeGroupname conversion
+        self.parse_grpent_array_context(false)?
+      } else {
+        // In other contexts (parentheses, braces), allow TypeGroupname conversion
+        self.parse_grpent(false)?
+      };
 
       if let Token::GCHOICE = &self.cur_token {
         grpchoice.group_entries.push((
@@ -2184,6 +2243,18 @@ impl<'a> Parser<'a> {
 
   #[allow(missing_docs)]
   pub fn parse_grpent(&mut self, from_rule: bool) -> Result<GroupEntry<'a>> {
+    self.parse_grpent_internal(from_rule, false)
+  }
+
+  fn parse_grpent_array_context(&mut self, from_rule: bool) -> Result<GroupEntry<'a>> {
+    self.parse_grpent_internal(from_rule, true)
+  }
+
+  fn parse_grpent_internal(
+    &mut self,
+    from_rule: bool,
+    in_array_context: bool,
+  ) -> Result<GroupEntry<'a>> {
     #[cfg(feature = "ast-span")]
     let begin_grpent_range = self.lexer_position.range.0;
     #[cfg(feature = "ast-span")]
@@ -2443,6 +2514,7 @@ impl<'a> Parser<'a> {
 
         #[cfg(feature = "ast-span")]
         if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
+          // Check if it's a known groupname OR if it could be a forward reference to a group
           if self.groupnames.contains(name.ident) || matches!(name.socket, Some(SocketPlug::GROUP))
           {
             if generic_args.is_some() && self.peek_token_is(&Token::LANGLEBRACKET) {
@@ -2496,6 +2568,47 @@ impl<'a> Parser<'a> {
                 .filter(|ident| ident != &name.ident)
                 .collect();
             }
+            return Ok(GroupEntry::TypeGroupname {
+              ge: TypeGroupnameEntry {
+                occur,
+                name,
+                generic_args,
+              },
+              #[cfg(feature = "ast-comments")]
+              leading_comments: None,
+              #[cfg(feature = "ast-comments")]
+              trailing_comments,
+            });
+          }
+        }
+
+        // If we have a simple identifier that could be a group reference (even if not yet defined),
+        // create a TypeGroupname entry instead of a ValueMemberKey with no member_key.
+        //
+        // ISSUE #268 FIX: Only prevent TypeGroupname conversion when we're explicitly in an
+        // array context. This maintains backwards compatibility for arrays while allowing
+        // group references in parentheses.
+        #[cfg(feature = "ast-span")]
+        if !from_rule && !in_array_context && member_key.is_none() {
+          if let Some((name, generic_args, _)) = entry_type.groupname_entry() {
+            return Ok(GroupEntry::TypeGroupname {
+              ge: TypeGroupnameEntry {
+                occur,
+                name,
+                generic_args,
+              },
+              #[cfg(feature = "ast-comments")]
+              leading_comments: None,
+              #[cfg(feature = "ast-comments")]
+              trailing_comments,
+              span,
+            });
+          }
+        }
+
+        #[cfg(not(feature = "ast-span"))]
+        if !from_rule && !in_array_context && member_key.is_none() {
+          if let Some((name, generic_args)) = entry_type.groupname_entry() {
             return Ok(GroupEntry::TypeGroupname {
               ge: TypeGroupnameEntry {
                 occur,
@@ -3486,7 +3599,7 @@ impl<'a> Parser<'a> {
 /// let _ = cddl_from_str(input, true);
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(feature = "std")]
-pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDDL, String> {
+pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDDL<'_>, String> {
   match Parser::new(input, Box::new(lexer::lexer_from_str(input).iter())).map_err(|e| e.to_string())
   {
     Ok(mut p) => match p.parse_cddl() {
@@ -3532,7 +3645,7 @@ impl CDDL<'_> {
   /// Parses CDDL from a byte slice
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "std")]
-  pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL, String> {
+  pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL<'_>, String> {
     let str_input = std::str::from_utf8(input).map_err(|e| e.to_string())?;
 
     match Parser::new(str_input, Box::new(lexer::Lexer::from_slice(input).iter()))
@@ -3556,7 +3669,7 @@ impl CDDL<'_> {
   /// Parses CDDL from a byte slice
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(not(feature = "std"))]
-  pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL, String> {
+  pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL<'_>, String> {
     let str_input = std::str::from_utf8(input).map_err(|e| e.to_string())?;
 
     match Parser::new(str_input, Box::new(lexer::Lexer::from_slice(input).iter()))
@@ -3597,7 +3710,7 @@ impl CDDL<'_> {
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(not(feature = "std"))]
-pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL, String> {
+pub fn cddl_from_str(input: &str) -> std::result::Result<CDDL<'_>, String> {
   match Parser::new(input, Box::new(lexer::lexer_from_str(input).iter())).map_err(|e| e.to_string())
   {
     Ok(mut p) => match p.parse_cddl() {
@@ -3647,23 +3760,45 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
       Ok(c) => serde_wasm_bindgen::to_value(&c).map_err(|e| JsValue::from(e.to_string())),
       Err(Error::INCREMENTAL) => {
         if !p.errors.is_empty() {
+          // Prioritize lexer and syntax errors over missing rule definition errors
+          let mut syntax_errors = Vec::new();
+          let mut missing_rule_errors = Vec::new();
+
+          for error in &p.errors {
+            if let Error::PARSER { position, msg } = error {
+              if msg.short.starts_with("missing definition for rule") {
+                missing_rule_errors.push(ParserError {
+                  position: *position,
+                  msg: msg.clone(),
+                });
+              } else {
+                syntax_errors.push(ParserError {
+                  position: *position,
+                  msg: msg.clone(),
+                });
+              }
+            } else if let Error::LEXER(lexer_error) = error {
+              // Convert lexer errors to the format expected by the frontend
+              syntax_errors.push(ParserError {
+                position: lexer_error.position,
+                msg: ErrorMsg {
+                  short: error.to_string(),
+                  extended: None,
+                },
+              });
+            }
+          }
+
+          // If we have syntax errors, prioritize them over missing rule errors
+          let errors_to_return = if !syntax_errors.is_empty() {
+            syntax_errors
+          } else {
+            missing_rule_errors
+          };
+
           return Err(
-            serde_wasm_bindgen::to_value(
-              &p.errors
-                .iter()
-                .filter_map(|e| {
-                  if let Error::PARSER { position, msg } = e {
-                    Some(ParserError {
-                      position: *position,
-                      msg: msg.clone(),
-                    })
-                  } else {
-                    None
-                  }
-                })
-                .collect::<Vec<ParserError>>(),
-            )
-            .map_err(|e| JsValue::from(e.to_string()))?,
+            serde_wasm_bindgen::to_value(&errors_to_return)
+              .map_err(|e| JsValue::from(e.to_string()))?,
           );
         }
 

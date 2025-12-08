@@ -922,17 +922,28 @@ pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
     if let Some(entry_counts) = entry_counts {
       let len = values.len();
       if !validate_entry_count(entry_counts, len) {
-        for ec in entry_counts.iter() {
-          if let Some(occur) = &ec.entry_occurrence {
-            errors.push(format!(
-              "expected array with length per occurrence {}",
-              occur,
-            ));
-          } else {
-            errors.push(format!(
-              "expected array with length {}, got {}",
-              ec.count, len
-            ));
+        // For multiple entry counts (multiple group choices), only report one error
+        // instead of errors for each mismatched count
+        if entry_counts.len() > 1 {
+          let counts: Vec<String> = entry_counts.iter().map(|ec| ec.count.to_string()).collect();
+          errors.push(format!(
+            "expected array with length matching one of [{}], got {}",
+            counts.join(", "),
+            len
+          ));
+        } else {
+          for ec in entry_counts.iter() {
+            if let Some(occur) = &ec.entry_occurrence {
+              errors.push(format!(
+                "expected array with length per occurrence {}",
+                occur,
+              ));
+            } else {
+              errors.push(format!(
+                "expected array with length {}, got {}",
+                ec.count, len
+              ));
+            }
           }
         }
       }
@@ -961,6 +972,7 @@ pub fn entry_counts_from_group<'a, 'b: 'a>(
   for gc in group.group_choices.iter() {
     let mut count = 0;
     let mut entry_occurrence = None;
+    let mut skip_final_push = false;
 
     for (idx, ge) in gc.group_entries.iter().enumerate() {
       match &ge.0 {
@@ -980,7 +992,28 @@ pub fn entry_counts_from_group<'a, 'b: 'a>(
             }
           }
 
-          entry_counts = entry_counts_from_group(cddl, group);
+          // For inline groups with multiple choices, we need to add the current count
+          // to each of the nested entry counts, not replace the entire list
+          let nested_entry_counts = entry_counts_from_group(cddl, group);
+          if group.group_choices.len() > 1 {
+            // Add current accumulated count to each nested choice count
+            for nested_ec in nested_entry_counts {
+              entry_counts.push(EntryCount {
+                count: count + nested_ec.count,
+                entry_occurrence: nested_ec.entry_occurrence.or(entry_occurrence),
+              });
+            }
+            // Don't add the current group choice count at the end since we've handled it here
+            skip_final_push = true;
+            break;
+          } else {
+            // Single choice case: add the nested count to current count
+            count += if let Some(ec) = nested_entry_counts.first() {
+              ec.count
+            } else {
+              0
+            };
+          }
         }
         GroupEntry::TypeGroupname { ge, .. } => {
           if idx == 1 {
@@ -1014,10 +1047,12 @@ pub fn entry_counts_from_group<'a, 'b: 'a>(
       }
     }
 
-    entry_counts.push(EntryCount {
-      count,
-      entry_occurrence,
-    });
+    if !skip_final_push {
+      entry_counts.push(EntryCount {
+        count,
+        entry_occurrence,
+      });
+    }
   }
 
   entry_counts

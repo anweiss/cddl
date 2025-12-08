@@ -1,11 +1,14 @@
 {
   "name": "cddl",
-  "version": "0.9.5",
+  "version": "0.10.1",
   "description": "Parser for the Concise data definition language (CDDL)",
   "main": "index.js",
   "scripts": {
+    "wasm-build": "cd .. && wasm-pack build --target web --out-dir pkg",
+    "prebuild": "npm run wasm-build",
     "build": "webpack --config webpack.config.prod.js",
-    "start": "webpack-dev-server"
+    "prestart": "npm run wasm-build",
+    "start": "webpack serve --mode development --open"
   },
   "repository": {
     "type": "git",
@@ -25,7 +28,9 @@
   "homepage": "https://anweiss.github.io/cddl",
   "dependencies": {
     "cddl": "file:../pkg",
-    "monaco-editor-webpack-plugin": "^7.0.1"
+    "monaco-editor-webpack-plugin": "^7.0.1",
+    "process": "^0.11.10",
+    "text-encoding": "^0.7.0"
   },
   "devDependencies": {
     "copy-webpack-plugin": "^6.0.3",
@@ -33,9 +38,11 @@
     "hello-wasm-pack": "^0.1.0",
     "minimist": "^1.2.5",
     "monaco-editor": "^0.33.0",
+    "path-browserify": "^1.0.1",
     "style-loader": "^3.2.1",
-    "webpack": "^5.76.0",
-    "webpack-cli": "^4.7.0",
-    "webpack-dev-server": "^4.2.0"
+    "util": "^0.12.5",
+    "webpack": "^5.101.3",
+    "webpack-cli": "^6.0.1",
+    "webpack-dev-server": "^5.2.1"
   }
 }

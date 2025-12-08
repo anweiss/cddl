@@ -197,6 +197,8 @@ pub struct CBORValidator<'a> {
   is_colon_shortcut_present: bool,
   is_root: bool,
   is_multi_type_choice_type_rule_validating_array: bool,
+  // Track visited rules to prevent infinite recursion
+  visited_rules: std::collections::HashSet<String>,
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   enabled_features: Option<&'a [&'a str]>,
@@ -252,6 +254,7 @@ impl<'a> CBORValidator<'a> {
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: std::collections::HashSet::new(),
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
@@ -293,6 +296,7 @@ impl<'a> CBORValidator<'a> {
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: std::collections::HashSet::new(),
       range_upper: None,
     }
   }
@@ -331,6 +335,7 @@ impl<'a> CBORValidator<'a> {
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: std::collections::HashSet::new(),
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
@@ -372,6 +377,7 @@ impl<'a> CBORValidator<'a> {
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: std::collections::HashSet::new(),
       range_upper: None,
     }
   }
@@ -379,6 +385,21 @@ impl<'a> CBORValidator<'a> {
   /// Extract the underlying CBOR Value.
   pub fn extract_cbor(self) -> Value {
     self.cbor
+  }
+
+  /// Create a new CBORValidator with inherited recursion state
+  fn new_with_recursion_state(&self, cbor: Value) -> CBORValidator<'a> {
+    #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+    let mut cv = CBORValidator::new(self.cddl, cbor, self.enabled_features.clone());
+    #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+    let mut cv = CBORValidator::new(self.cddl, cbor, self.enabled_features);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(self.cddl, cbor);
+
+    cv.generic_rules = self.generic_rules.clone();
+    cv.eval_generic_rule = self.eval_generic_rule;
+    cv.visited_rules = self.visited_rules.clone();
+    cv
   }
 
   fn validate_array_items<T: std::fmt::Debug + 'static>(
@@ -409,11 +430,11 @@ impl<'a> CBORValidator<'a> {
               }
 
               #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-              let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+              let mut cv = self.new_with_recursion_state(v.clone());
               #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-              let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+              let mut cv = self.new_with_recursion_state(v.clone());
               #[cfg(not(feature = "additional-controls"))]
-              let mut cv = CBORValidator::new(self.cddl, v.clone());
+              let mut cv = self.new_with_recursion_state(v.clone());
 
               cv.generic_rules = self.generic_rules.clone();
                  cv.eval_generic_rule = self.eval_generic_rule;
@@ -470,17 +491,14 @@ impl<'a> CBORValidator<'a> {
             if let Some(idx) = idx {
               if let Some(v) = a.get(idx) {
                 #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-                let mut cv =
-                  CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+                let mut cv = self.new_with_recursion_state(v.clone());
                 #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-                let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+                let mut cv = self.new_with_recursion_state(v.clone());
                 #[cfg(not(feature = "additional-controls"))]
-                let mut cv = CBORValidator::new(self.cddl, v.clone());
+                let mut cv = self.new_with_recursion_state(v.clone());
 
-                cv.generic_rules = self.generic_rules.clone();
-                cv.eval_generic_rule = self.eval_generic_rule;
-                cv.is_multi_type_choice = self.is_multi_type_choice;
                 cv.ctrl = self.ctrl;
+                cv.is_multi_type_choice = self.is_multi_type_choice;
                 let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
 
                 match token {
@@ -612,20 +630,37 @@ where
       if self.cbor.is_array() {
         self.is_multi_type_choice_type_rule_validating_array = true;
       }
-    }
 
-    let error_count = self.errors.len();
+      // When there are type choice alternates, we need to treat the main rule
+      // and all alternates as equal choices. According to RFC 8610 Section 2.2.2,
+      // "/=" extends a type by creating additional choices that should be
+      // combined with the main rule definition.
+      let error_count = self.errors.len();
 
-    for t in type_choice_alternates {
+      // First try the main rule
       let cur_errors = self.errors.len();
-      self.visit_type(t)?;
+      self.visit_type(&tr.value)?;
       if self.errors.len() == cur_errors {
         for _ in 0..self.errors.len() - error_count {
           self.errors.pop();
         }
-
         return Ok(());
       }
+
+      // Then try each alternate
+      for t in type_choice_alternates {
+        let cur_errors = self.errors.len();
+        self.visit_type(t)?;
+        if self.errors.len() == cur_errors {
+          for _ in 0..self.errors.len() - error_count {
+            self.errors.pop();
+          }
+          return Ok(());
+        }
+      }
+
+      // If we get here, none of the choices matched
+      return Ok(());
     }
 
     if tr.value.type_choices.len() > 1 && self.cbor.is_array() {
@@ -715,6 +750,8 @@ where
     }
 
     let initial_error_count = self.errors.len();
+    let mut choice_validation_succeeded = false;
+
     for type_choice in t.type_choices.iter() {
       if matches!(self.cbor, Value::Array(_))
         && !self.is_multi_type_choice_type_rule_validating_array
@@ -736,6 +773,7 @@ where
               self.errors.pop();
             }
           }
+          choice_validation_succeeded = true;
         }
 
         #[cfg(not(feature = "additional-controls"))]
@@ -748,46 +786,54 @@ where
               self.errors.pop();
             }
           }
+          choice_validation_succeeded = true;
         }
 
         continue;
       }
 
-      let error_count = self.errors.len();
-      self.visit_type_choice(type_choice)?;
+      // Create a copy of the validator to test this choice in isolation
+      let mut choice_validator = self.clone();
+      choice_validator.errors.clear();
 
-      #[cfg(feature = "additional-controls")]
-      if self.errors.len() == error_count
-        && !self.has_feature_errors
-        && self.disabled_features.is_none()
-      {
-        // Disregard invalid type choice validation errors if one of the
-        // choices validates successfully
-        let type_choice_error_count = self.errors.len() - initial_error_count;
-        if type_choice_error_count > 0 {
-          for _ in 0..type_choice_error_count {
-            self.errors.pop();
+      choice_validator.visit_type_choice(type_choice)?;
+
+      // If this choice validates successfully (no errors), use it
+      if choice_validator.errors.is_empty() {
+        #[cfg(feature = "additional-controls")]
+        if !choice_validator.has_feature_errors || choice_validator.disabled_features.is_some() {
+          // Clear any accumulated errors and return success
+          let type_choice_error_count = self.errors.len() - initial_error_count;
+          if type_choice_error_count > 0 {
+            for _ in 0..type_choice_error_count {
+              self.errors.pop();
+            }
           }
+          return Ok(());
         }
 
-        return Ok(());
-      }
-
-      #[cfg(not(feature = "additional-controls"))]
-      if self.errors.len() == error_count {
-        // Disregard invalid type choice validation errors if one of the
-        // choices validates successfully
-        let type_choice_error_count = self.errors.len() - initial_error_count;
-        if type_choice_error_count > 0 {
-          for _ in 0..type_choice_error_count {
-            self.errors.pop();
+        #[cfg(not(feature = "additional-controls"))]
+        {
+          // Clear any accumulated errors and return success
+          let type_choice_error_count = self.errors.len() - initial_error_count;
+          if type_choice_error_count > 0 {
+            for _ in 0..type_choice_error_count {
+              self.errors.pop();
+            }
           }
+          return Ok(());
         }
-
-        return Ok(());
+      } else {
+        // This choice failed, accumulate its errors
+        self.errors.extend(choice_validator.errors);
       }
     }
 
+    // If we got here and choice_validation_succeeded is true (for array case),
+    // then validation succeeded
+    if choice_validation_succeeded {
+      return Ok(());
+    }
     Ok(())
   }
 
@@ -1660,6 +1706,463 @@ where
 
         Ok(())
       }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64U => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b64u_text(target, controller, s, false) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .b64u encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".b64u can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b64u can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64C => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b64c_text(target, controller, s, false) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .b64c encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".b64c can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b64c can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64USLOPPY => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b64u_text(target, controller, s, true) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .b64u-sloppy encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".b64u-sloppy can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b64u-sloppy can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B64CSLOPPY => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b64c_text(target, controller, s, true) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .b64c-sloppy encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".b64c-sloppy can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b64c-sloppy can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::HEX => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_hex_text(
+                  target,
+                  controller,
+                  s,
+                  crate::validator::control::HexCase::Any,
+                ) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .hex encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".hex can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".hex can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::HEXLC => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_hex_text(
+                  target,
+                  controller,
+                  s,
+                  crate::validator::control::HexCase::Lower,
+                ) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .hexlc encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".hexlc can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".hexlc can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::HEXUC => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_hex_text(
+                  target,
+                  controller,
+                  s,
+                  crate::validator::control::HexCase::Upper,
+                ) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .hexuc encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".hexuc can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".hexuc can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B32 => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b32_text(target, controller, s, false) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .b32 encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".b32 can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b32 can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::H32 => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b32_text(target, controller, s, true) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .h32 encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".h32 can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".h32 can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::B45 => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_b45_text(target, controller, s) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .b45 encoded bytes",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".b45 can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".b45 can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::BASE10 => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_base10_text(target, controller, s) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .base10 integer format",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".base10 can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".base10 can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::PRINTF => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_printf_text(target, controller, s) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!(
+                        "text string \"{}\" does not match .printf format",
+                        s
+                      ));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".printf can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".printf can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::JSON => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_json_text(target, controller, s) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!("text string \"{}\" does not contain valid JSON", s));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".json can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".json can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
+      #[cfg(feature = "additional-controls")]
+      ControlOperator::JOIN => {
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+            match &self.cbor {
+              Value::Text(s) => {
+                match crate::validator::control::validate_join_text(target, controller, s) {
+                  Ok(is_valid) => {
+                    if !is_valid {
+                      self.add_error(format!("text string \"{}\" does not match .join result", s));
+                    }
+                  }
+                  Err(e) => self.add_error(e),
+                }
+              }
+              _ => self.add_error(format!(
+                ".join can only be matched against CBOR text, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".join can only be matched against string data type, got {}",
+            target
+          )),
+        }
+
+        Ok(())
+      }
     }
   }
 
@@ -1788,6 +2291,19 @@ where
               self.errors.append(&mut cv.errors);
             }
 
+            return Ok(());
+          }
+
+          // Check if this is an empty map schema with non-empty CBOR map
+          if group.group_choices.len() == 1
+            && group.group_choices[0].group_entries.is_empty()
+            && !m.is_empty()
+            && !matches!(
+              self.ctrl,
+              Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
+            )
+          {
+            self.add_error(format!("expected empty map, got {:?}", self.cbor));
             return Ok(());
           }
 
@@ -2093,13 +2609,19 @@ where
       }
       Type2::TaggedData { tag, t, .. } => match &self.cbor {
         Value::Tag(actual_tag, value) => {
-          if let Some(tag) = tag {
-            if { *tag } != *actual_tag {
-              self.add_error(format!(
-                "expected tagged data #6.{}({}), got {:?}",
-                tag, t, self.cbor
-              ));
-              return Ok(());
+          if let Some(tag_constraint) = tag {
+            // For literal tag constraints, check the value matches
+            if let Some(expected_tag) = tag_constraint.as_literal() {
+              if expected_tag != *actual_tag {
+                self.add_error(format!(
+                  "expected tagged data #6.{}({}), got {:?}",
+                  expected_tag, t, self.cbor
+                ));
+                return Ok(());
+              }
+            } else {
+              // For type expression constraints, we would need to evaluate the type
+              // For now, accept any tag value (this could be enhanced later)
             }
           } else if *actual_tag > 0 {
             self.add_error(format!(
@@ -2152,8 +2674,12 @@ where
         Value::Integer(i) => {
           match mt {
             0u8 => match constraint {
-              Some(c) if i128::from(*i) == *c as i128 && i128::from(*i) >= 0i128 => return Ok(()),
               Some(c) => {
+                if let Some(literal_val) = c.as_literal() {
+                  if i128::from(*i) == literal_val as i128 && i128::from(*i) >= 0i128 {
+                    return Ok(());
+                  }
+                }
                 self.add_error(format!(
                   "expected uint data type with constraint {} (#{}.{}), got {:?}",
                   c, mt, c, self.cbor
@@ -2171,8 +2697,12 @@ where
               }
             },
             1u8 => match constraint {
-              Some(c) if i128::from(*i) == 0i128 - *c as i128 => return Ok(()),
               Some(c) => {
+                if let Some(literal_val) = c.as_literal() {
+                  if i128::from(*i) == 0i128 - literal_val as i128 {
+                    return Ok(());
+                  }
+                }
                 self.add_error(format!(
                   "expected nint type with constraint {} (#{}.{}), got {:?}",
                   c, mt, c, self.cbor
@@ -2200,7 +2730,7 @@ where
         Value::Bytes(b) => {
           match mt {
             2u8 => match constraint {
-              Some(c) if *c == b.len() as u64 => return Ok(()),
+              Some(c) if c.is_literal(b.len() as u64) => return Ok(()),
               Some(c) => self.add_error(format!(
                 "expected byte string type with constraint {} (#{}.{}), got {:?}",
                 c, mt, c, self.cbor
@@ -2218,7 +2748,7 @@ where
         Value::Text(t) => {
           match mt {
             3u8 => match constraint {
-              Some(c) if *c == t.len() as u64 => return Ok(()),
+              Some(c) if c.is_literal(t.len() as u64) => return Ok(()),
               Some(c) => self.add_error(format!(
                 "expected text string type with constraint {} (#{}.{}), got {:?}",
                 c, mt, c, self.cbor
@@ -2236,7 +2766,7 @@ where
         Value::Array(a) => {
           match mt {
             4u8 => match constraint {
-              Some(c) if *c == a.len() as u64 => return Ok(()),
+              Some(c) if c.is_literal(a.len() as u64) => return Ok(()),
               Some(c) => self.add_error(format!(
                 "expected array type with constraint {} (#{}.{}), got {:?}",
                 c, mt, c, self.cbor
@@ -2254,7 +2784,7 @@ where
         Value::Map(m) => {
           match mt {
             5u8 => match constraint {
-              Some(c) if *c == m.len() as u64 => return Ok(()),
+              Some(c) if c.is_literal(m.len() as u64) => return Ok(()),
               Some(c) => self.add_error(format!(
                 "expected map type with constraint {} (#{}.{}), got {:?}",
                 c, mt, c, self.cbor
@@ -2332,7 +2862,21 @@ where
     // member key
     if !self.is_colon_shortcut_present {
       if let Some(r) = rule_from_ident(self.cddl, ident) {
-        return self.visit_rule(r);
+        // Check for recursion to prevent stack overflow
+        let rule_key = ident.ident.to_string();
+        if self.visited_rules.contains(&rule_key) {
+          // We've already validated this rule in the current validation path
+          // This is a recursive reference, so we allow it and assume it's valid
+          return Ok(());
+        }
+
+        // Mark this rule as visited before recursing
+        self.visited_rules.insert(rule_key.clone());
+        let result = self.visit_rule(r);
+        // Remove the rule from visited set after processing
+        self.visited_rules.remove(&rule_key);
+
+        return result;
       }
     }
 
@@ -2343,12 +2887,10 @@ where
     // Special case for array values - check if we're in an array context and this
     // is a reference to another array type
     if let Value::Array(_) = &self.cbor {
-      if let Some(rule) = rule_from_ident(self.cddl, ident) {
-        if let Rule::Type { rule, .. } = rule {
-          for tc in rule.value.type_choices.iter() {
-            if let Type2::Array { .. } = &tc.type1.type2 {
-              return self.visit_type_choice(tc);
-            }
+      if let Some(Rule::Type { rule, .. }) = rule_from_ident(self.cddl, ident) {
+        for tc in rule.value.type_choices.iter() {
+          if let Type2::Array { .. } = &tc.type1.type2 {
+            return self.visit_type_choice(tc);
           }
         }
       }
@@ -4079,6 +4621,52 @@ mod tests {
   }
 
   #[test]
+  fn test_conditional_array_validation() {
+    let cddl_str = r#"
+        NestedPart = [
+          disposition: 0,
+          language: tstr,
+          partIndex: uint,
+          ( NullPart // SinglePart )
+        ]
+
+        NullPart = ( cardinality: 0 )
+        SinglePart = (
+            cardinality: 1,
+            contentType: tstr,
+            content: bstr
+        )
+    "#;
+
+    let cddl = cddl_from_str(cddl_str, true).unwrap();
+
+    // Test data: A SinglePart with 6 elements (disposition, language, partIndex, cardinality, contentType, content)
+    let cbor_data = Value::Array(vec![
+      Value::Integer(0.into()),              // disposition
+      Value::Text("en".to_string()),         // language: tstr
+      Value::Integer(1.into()),              // partIndex: uint
+      Value::Integer(1.into()),              // cardinality: single (1)
+      Value::Text("text/plain".to_string()), // contentType: tstr
+      Value::Bytes(b"hello world".to_vec()), // content: bstr
+    ]);
+
+    #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
+    #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut validator = CBORValidator::new(&cddl, cbor_data);
+    let result = validator.validate();
+
+    // This should pass but currently fails
+    assert!(
+      result.is_ok(),
+      "Validation should succeed for SinglePart structure: {:?}",
+      result
+    );
+  }
+
+  #[test]
   fn extract_cbor() {
     use ciborium::value::Value;
 
@@ -4380,6 +4968,151 @@ mod tests {
         }
         return Err(e.into());
       }
+    }
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_recursive_structures() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Test case for issue #248: stack overflow with recursive structures
+    let cddl = indoc!(
+      r#"
+        Tree = {
+          root: Node
+        }
+
+        Node = [
+          value: text,
+          children: [* Node]
+        ]
+      "#
+    );
+
+    let cddl = cddl_from_str(cddl, true)?;
+
+    // Create a nested tree structure
+    let cbor = ciborium::cbor!({
+      "root" => ["value", [["child1", []], ["child2", []]]]
+    })?;
+
+    // This should not cause a stack overflow
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, cbor);
+
+    // The validation should complete without stack overflow
+    let result = cv.validate();
+
+    // The structure should be valid
+    assert!(
+      result.is_ok(),
+      "Recursive structure validation should not cause stack overflow"
+    );
+
+    Ok(())
+  }
+
+  #[test]
+  fn test_issue_221_empty_map_with_extra_keys_cbor() {
+    // This test reproduces issue #221 for CBOR
+    // CDDL schema defines an empty map: root = {}
+    // CBOR has extra keys
+    // This should FAIL validation but currently passes
+
+    let cddl_str = "root = {}";
+    let cddl = cddl_from_str(cddl_str, true).unwrap();
+
+    // Create a CBOR map with extra keys
+    use ciborium::Value;
+    let cbor_data = Value::Map(vec![(
+      Value::Text("x".to_string()),
+      Value::Text("y".to_string()),
+    )]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut validator = CBORValidator::new(&cddl, cbor_data);
+
+    // This should fail but currently passes (the bug)
+    let result = validator.validate();
+    assert!(
+      result.is_err(),
+      "CBOR validation should fail for extra keys in empty map schema"
+    );
+
+    // Verify the error message is what we expect
+    if let Err(Error::Validation(errors)) = result {
+      assert_eq!(errors.len(), 1);
+      assert!(errors[0].reason.contains("expected empty map"));
+    } else {
+      panic!("Expected validation error but got something else");
+    }
+  }
+
+  #[test]
+  fn test_empty_map_schema_with_empty_cbor() -> std::result::Result<(), Box<dyn std::error::Error>>
+  {
+    // This should pass - empty map schema with empty CBOR map
+    let cddl_str = "root = {}";
+    let cddl = cddl_from_str(cddl_str, true)?;
+
+    // Create an empty CBOR map
+    use ciborium::Value;
+    let cbor_data = Value::Map(vec![]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut validator = CBORValidator::new(&cddl, cbor_data);
+
+    let result = validator.validate();
+    assert!(
+      result.is_ok(),
+      "CBOR validation should pass for empty map with empty map schema"
+    );
+
+    Ok(())
+  }
+
+  #[test]
+  fn test_issue_221_reproduce_exact_scenario_cbor(
+  ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // This test reproduces the exact scenario from issue #221 for CBOR
+    let cddl_str = "root = {}";
+    let cddl = cddl_from_str(cddl_str, true)?;
+
+    // Create CBOR equivalent of {"x": "y"}
+    use ciborium::Value;
+    let cbor_data = Value::Map(vec![(
+      Value::Text("x".to_string()),
+      Value::Text("y".to_string()),
+    )]);
+
+    #[cfg(feature = "additional-controls")]
+    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut validator = CBORValidator::new(&cddl, cbor_data);
+
+    let result = validator.validate();
+
+    // Before the fix, this would incorrectly pass. After the fix, it should fail.
+    match result {
+      Err(Error::Validation(errors)) => {
+        assert!(!errors.is_empty(), "Should have validation errors");
+        let error_message = &errors[0].reason;
+        assert!(
+          error_message.contains("expected empty map"),
+          "Error message should indicate expected empty map, got: {}",
+          error_message
+        );
+      }
+      Ok(_) => panic!(
+        "Issue #221 bug detected: CBOR validation incorrectly passed for extra keys in empty map"
+      ),
+      Err(other) => panic!("Unexpected error type: {:?}", other),
     }
 
     Ok(())

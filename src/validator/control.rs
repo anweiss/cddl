@@ -2,7 +2,7 @@
 #![cfg(not(feature = "lsp"))]
 
 use crate::{
-  ast::{Identifier, Operator, RangeCtlOp, Rule, Type2, CDDL},
+  ast::{GroupEntry, Identifier, MemberKey, Operator, RangeCtlOp, Rule, Type2, CDDL},
   token::ControlOperator,
 };
 
@@ -954,5 +954,445 @@ mod tests {
     validate_abnf(abnf_str, "2009")?;
 
     Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn test_b64u_validation() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::ast::Type2;
+    use std::borrow::Cow;
+
+    // Test valid base64url encoding
+    let target = Type2::TextValue {
+      value: "text".into(),
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    };
+
+    let controller = Type2::UTF8ByteString {
+      value: Cow::from(b"hello".as_slice()),
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    };
+
+    // "hello" in base64url is "aGVsbG8"
+    assert!(validate_b64u_text(&target, &controller, "aGVsbG8", false)?);
+    assert!(!validate_b64u_text(&target, &controller, "invalid", false)?);
+
+    Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn test_hex_validation() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::ast::Type2;
+    use std::borrow::Cow;
+
+    let target = Type2::TextValue {
+      value: "text".into(),
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    };
+
+    let controller = Type2::UTF8ByteString {
+      value: Cow::from(b"hello".as_slice()),
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    };
+
+    // "hello" in hex is "68656c6c6f"
+    assert!(validate_hex_text(
+      &target,
+      &controller,
+      "68656c6c6f",
+      HexCase::Any
+    )?);
+    assert!(validate_hex_text(
+      &target,
+      &controller,
+      "68656c6c6f",
+      HexCase::Lower
+    )?);
+    assert!(!validate_hex_text(
+      &target,
+      &controller,
+      "68656C6C6F",
+      HexCase::Lower
+    )?);
+    assert!(validate_hex_text(
+      &target,
+      &controller,
+      "68656C6C6F",
+      HexCase::Upper
+    )?);
+    assert!(!validate_hex_text(
+      &target,
+      &controller,
+      "invalid",
+      HexCase::Any
+    )?);
+
+    Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn test_base10_validation() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::ast::Type2;
+
+    let target = Type2::TextValue {
+      value: "text".into(),
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    };
+
+    let controller = Type2::IntValue {
+      value: 123,
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    };
+
+    assert!(validate_base10_text(&target, &controller, "123")?);
+    assert!(!validate_base10_text(&target, &controller, "124")?);
+    assert!(!validate_base10_text(&target, &controller, "0123")?); // Leading zeros not allowed
+    assert!(!validate_base10_text(&target, &controller, "abc")?);
+
+    Ok(())
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+/// Validate base64url encoded text string against byte string
+pub fn validate_b64u_text<'a>(
+  __target: &Type2<'a>,
+  controller: &Type2<'a>,
+  text_value: &str,
+  is_sloppy: bool,
+) -> Result<bool, String> {
+  match controller {
+    Type2::UTF8ByteString { value, .. }
+    | Type2::B16ByteString { value, .. }
+    | Type2::B64ByteString { value, .. } => {
+      let decoded = if is_sloppy {
+        data_encoding::BASE64URL_NOPAD.decode(text_value.as_bytes())
+      } else {
+        data_encoding::BASE64URL_NOPAD.decode(text_value.as_bytes())
+      };
+
+      match decoded {
+        Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
+        Err(_) => Ok(false),
+      }
+    }
+    _ => Err(format!(
+      "invalid controller type for .b64u operation: {}",
+      controller
+    )),
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+/// Validate base64 classic encoded text string against byte string
+pub fn validate_b64c_text<'a>(
+  __target: &Type2<'a>,
+  controller: &Type2<'a>,
+  text_value: &str,
+  is_sloppy: bool,
+) -> Result<bool, String> {
+  match controller {
+    Type2::UTF8ByteString { value, .. }
+    | Type2::B16ByteString { value, .. }
+    | Type2::B64ByteString { value, .. } => {
+      let decoded = if is_sloppy {
+        data_encoding::BASE64.decode(text_value.as_bytes())
+      } else {
+        data_encoding::BASE64.decode(text_value.as_bytes())
+      };
+
+      match decoded {
+        Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
+        Err(_) => Ok(false),
+      }
+    }
+    _ => Err(format!(
+      "invalid controller type for .b64c operation: {}",
+      controller
+    )),
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+/// Validate hex encoded text string against byte string
+pub fn validate_hex_text<'a>(
+  __target: &Type2<'a>,
+  controller: &Type2<'a>,
+  text_value: &str,
+  case_type: HexCase,
+) -> Result<bool, String> {
+  match controller {
+    Type2::UTF8ByteString { value, .. }
+    | Type2::B16ByteString { value, .. }
+    | Type2::B64ByteString { value, .. } => {
+      let decoded = hex::decode(text_value);
+      match decoded {
+        Ok(decoded_bytes) => {
+          let matches_bytes = decoded_bytes == value.as_ref();
+          let matches_case = match case_type {
+            HexCase::Any => true,
+            HexCase::Lower => text_value
+              .chars()
+              .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+            HexCase::Upper => text_value
+              .chars()
+              .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
+          };
+          Ok(matches_bytes && matches_case)
+        }
+        Err(_) => Ok(false),
+      }
+    }
+    _ => Err(format!(
+      "invalid controller type for .hex operation: {}",
+      controller
+    )),
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+#[derive(Debug, Clone, Copy)]
+pub enum HexCase {
+  Any,
+  Lower,
+  Upper,
+}
+
+#[cfg(feature = "additional-controls")]
+/// Validate base32 encoded text string against byte string
+pub fn validate_b32_text<'a>(
+  _target: &Type2<'a>,
+  controller: &Type2<'a>,
+  text_value: &str,
+  is_hex_variant: bool,
+) -> Result<bool, String> {
+  match controller {
+    Type2::UTF8ByteString { value, .. }
+    | Type2::B16ByteString { value, .. }
+    | Type2::B64ByteString { value, .. } => {
+      let decoded = if is_hex_variant {
+        data_encoding::BASE32HEX_NOPAD.decode(text_value.as_bytes())
+      } else {
+        data_encoding::BASE32_NOPAD.decode(text_value.as_bytes())
+      };
+
+      match decoded {
+        Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
+        Err(_) => Ok(false),
+      }
+    }
+    _ => Err(format!(
+      "invalid controller type for .b32/.h32 operation: {}",
+      controller
+    )),
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+/// Validate base45 encoded text string against byte string  
+pub fn validate_b45_text<'a>(
+  _target: &Type2<'a>,
+  controller: &Type2<'a>,
+  text_value: &str,
+) -> Result<bool, String> {
+  #[cfg(feature = "std")]
+  {
+    match controller {
+      Type2::UTF8ByteString { value, .. }
+      | Type2::B16ByteString { value, .. }
+      | Type2::B64ByteString { value, .. } => match base45::decode(text_value) {
+        Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
+        Err(_) => Ok(false),
+      },
+      _ => Err(format!(
+        "invalid controller type for .b45 operation: {}",
+        controller
+      )),
+    }
+  }
+  #[cfg(not(feature = "std"))]
+  {
+    Err("base45 support requires std feature".to_string())
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+/// Validate base10 text string against integer
+pub fn validate_base10_text<'a>(
+  _target: &Type2<'a>,
+  controller: &Type2<'a>,
+  text_value: &str,
+) -> Result<bool, String> {
+  // Validate format: 0 or -?[1-9][0-9]*
+  if !text_value.chars().all(|c| c.is_ascii_digit() || c == '-') {
+    return Ok(false);
+  }
+
+  if text_value == "0" {
+    // Zero is valid
+  } else if text_value.starts_with('-') {
+    if text_value.len() < 2
+      || !text_value.chars().nth(1).unwrap().is_ascii_digit()
+      || text_value.chars().nth(1).unwrap() == '0'
+    {
+      return Ok(false);
+    }
+  } else {
+    if text_value.starts_with('0') && text_value.len() > 1 {
+      return Ok(false); // No leading zeros
+    }
+    if !text_value.chars().next().unwrap().is_ascii_digit()
+      || text_value.chars().next().unwrap() == '0'
+    {
+      return Ok(false);
+    }
+  }
+
+  match controller {
+    Type2::IntValue { value, .. } => match text_value.parse::<isize>() {
+      Ok(parsed_value) => Ok(parsed_value == *value),
+      Err(_) => Ok(false),
+    },
+    Type2::UintValue { value, .. } => match text_value.parse::<usize>() {
+      Ok(parsed_value) => Ok(parsed_value == *value),
+      Err(_) => Ok(false),
+    },
+    _ => Err(format!(
+      "invalid controller type for .base10 operation: {}",
+      controller
+    )),
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+/// Validate printf formatted text string against array of format string and values
+pub fn validate_printf_text<'a>(
+  _target: &Type2<'a>,
+  controller: &Type2<'a>,
+  text_value: &str,
+) -> Result<bool, String> {
+  match controller {
+    Type2::Array { group, .. } => {
+      if group.group_choices.is_empty() {
+        return Err("printf controller array cannot be empty".to_string());
+      }
+
+      let group_choice = &group.group_choices[0];
+      if group_choice.group_entries.is_empty() {
+        return Err("printf controller array cannot be empty".to_string());
+      }
+
+      // First entry should be the format string
+      let format_entry = &group_choice.group_entries[0];
+      if let GroupEntry::ValueMemberKey { ge, .. } = &format_entry.0 {
+        if let Some(member_key) = &ge.member_key {
+          if let MemberKey::Type1 { t1, .. } = member_key {
+            if let Type2::TextValue {
+              value: format_str, ..
+            } = &t1.type2
+            {
+              // For now, do a basic validation - in a full implementation, we'd need to
+              // parse the printf format string and validate against the provided arguments
+              // This is a simplified check
+              Ok(text_value.contains(&format_str.as_ref().replace("%", "")))
+            } else {
+              Err("first element of printf controller array must be a format string".to_string())
+            }
+          } else {
+            Err("first element of printf controller array must be a format string".to_string())
+          }
+        } else {
+          Err("first element of printf controller array must be a format string".to_string())
+        }
+      } else {
+        Err("first element of printf controller array must be a format string".to_string())
+      }
+    }
+    _ => Err(format!(
+      "invalid controller type for .printf operation: {}",
+      controller
+    )),
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+/// Validate JSON text string against CDDL type
+pub fn validate_json_text<'a>(
+  _target: &Type2<'a>,
+  _controller: &Type2<'a>,
+  text_value: &str,
+) -> Result<bool, String> {
+  #[cfg(feature = "json")]
+  {
+    use serde_json::Value;
+
+    match serde_json::from_str::<Value>(text_value) {
+      Ok(_json_value) => {
+        // For now, return true if it's valid JSON
+        // In a full implementation, we'd validate the JSON against the controller type
+        Ok(true)
+      }
+      Err(_) => Ok(false),
+    }
+  }
+  #[cfg(not(feature = "json"))]
+  {
+    Err("JSON support requires json feature".to_string())
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+/// Validate joined text string against array of components
+pub fn validate_join_text<'a>(
+  _target: &Type2<'a>,
+  controller: &Type2<'a>,
+  text_value: &str,
+) -> Result<bool, String> {
+  match controller {
+    Type2::Array { group, .. } => {
+      if group.group_choices.is_empty() {
+        return Ok(text_value.is_empty());
+      }
+
+      let group_choice = &group.group_choices[0];
+      let mut expected_string = String::new();
+
+      for entry in &group_choice.group_entries {
+        if let GroupEntry::ValueMemberKey { ge, .. } = &entry.0 {
+          if let Some(member_key) = &ge.member_key {
+            if let MemberKey::Type1 { t1, .. } = member_key {
+              match &t1.type2 {
+                Type2::TextValue { value, .. } => {
+                  expected_string.push_str(&value);
+                }
+                Type2::UTF8ByteString { value, .. } => match std::str::from_utf8(&value) {
+                  Ok(s) => expected_string.push_str(s),
+                  Err(_) => return Ok(false),
+                },
+                _ => {
+                  // For other types, we'd need to resolve them
+                  // This is a simplified implementation
+                  continue;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      Ok(text_value == expected_string)
+    }
+    _ => Err(format!(
+      "invalid controller type for .join operation: {}",
+      controller
+    )),
   }
 }

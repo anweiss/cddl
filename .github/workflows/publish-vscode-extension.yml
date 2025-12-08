@@ -1,0 +1,66 @@
+name: Publish VSCode Extension
+permissions:
+  contents: read
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish-vscode-extension:
+    name: Publish VSCode Extension
+    runs-on: ubuntu-latest
+    if: contains(github.event.release.tag_name, 'vscode-extension') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup update
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install wasmpack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build WASM for LSP
+        run: |
+          wasm-pack build --out-dir cddl-lsp/server/pkg --release --target nodejs -- --features lsp,ast-comments
+
+      - name: Install dependencies and build extension
+        working-directory: ./cddl-lsp
+        run: |
+          npm install
+          npm run webpack
+
+      - name: Run tests
+        uses: GabrielBB/xvfb-action@v1.6
+        with:
+          working-directory: ./cddl-lsp
+          run: npm test
+
+      - name: Package and publish extension
+        working-directory: ./cddl-lsp
+        env:
+          VSCODE_MARKETPLACE_TOKEN: ${{ secrets.VSCODE_MARKETPLACE_TOKEN }}
+        run: |
+          # Get the extension version from package.json
+          EXTENSION_VERSION=$(jq -r '.version' package.json)
+          echo "Extension version: $EXTENSION_VERSION"
+
+          # Check if this version is already published
+          npm install -g @vscode/vsce
+          if vsce show anweiss.cddl-languageserver --json | jq -e --arg VERSION "$EXTENSION_VERSION" '.versions[] | select(.version == $VERSION)' >/dev/null 2>&1; then
+            echo "Version $EXTENSION_VERSION already exists on the marketplace, skipping publish"
+            exit 0
+          fi
+
+          # Publish the extension
+          vsce publish -p $VSCODE_MARKETPLACE_TOKEN
+          echo "Successfully published VSCode extension version $EXTENSION_VERSION"
