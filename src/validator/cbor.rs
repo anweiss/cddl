@@ -532,6 +532,32 @@ impl<'a> CBORValidator<'a> {
 
     Ok(())
   }
+
+  // Helper function to resolve a Type2 bound to a usize value
+  fn resolve_bound_to_uint(&self, bound: &Type2<'a>) -> std::result::Result<usize, String> {
+    match bound {
+      Type2::UintValue { value, .. } => Ok(*value),
+      Type2::Typename { ident, .. } => {
+        // Look up the identifier in the CDDL rules
+        for rule in self.cddl.rules.iter() {
+          if let Rule::Type { rule, .. } = rule {
+            if rule.name.ident == ident.ident {
+              // Found the rule, now check if it's a simple uint value
+              if rule.value.type_choices.len() == 1 {
+                let type_choice = &rule.value.type_choices[0];
+                if let Type2::UintValue { value, .. } = &type_choice.type1.type2 {
+                  return Ok(*value);
+                }
+              }
+              return Err(format!("Type name '{}' does not resolve to a simple uint value", ident.ident));
+            }
+          }
+        }
+        Err(format!("Type name '{}' not found in CDDL rules", ident.ident))
+      },
+      _ => Err(format!("Expected uint value or type name, got {}", bound)),
+    }
+  }
 }
 
 impl<'a, T: std::fmt::Debug + 'static> Validator<'a, '_, cbor::Error<T>> for CBORValidator<'a>
@@ -901,19 +927,23 @@ where
       return self.validate_array_items(&ArrayItemToken::Range(lower, upper, is_inclusive));
     }
 
-    match (lower, upper) {
-      (Type2::UintValue { value: l, .. }, Type2::UintValue { value: u, .. }) => {
+    // Resolve the bounds to uint values
+    let l_result = self.resolve_bound_to_uint(lower);
+    let u_result = self.resolve_bound_to_uint(upper);
+
+    match (l_result, u_result) {
+      (Ok(l), Ok(u)) => {
         match &self.cbor {
           Value::Bytes(b) => {
             let len = b.len();
             if is_inclusive {
-              if len < *l || len > *u {
+              if len < l || len > u {
                 self.add_error(format!(
                   "expected uint to be in range {} <= value <= {}, got Bytes({:?})",
                   l, u, b
                 ));
               }
-            } else if len < *l || len >= *u {
+            } else if len < l || len >= u {
               self.add_error(format!(
                 "expected uint to be in range {} <= value < {}, got Bytes({:?})",
                 l, u, b
@@ -925,7 +955,7 @@ where
               let len = s.len();
               let s = s.clone();
               if is_inclusive {
-                if s.len() < *l || s.len() > *u {
+                if s.len() < l || s.len() > u {
                   self.add_error(format!(
                     "expected \"{}\" string length to be in the range {} <= value <= {}, got {}",
                     s, l, u, len
@@ -933,7 +963,7 @@ where
                 }
 
                 return Ok(());
-              } else if s.len() < *l || s.len() >= *u {
+              } else if s.len() < l || s.len() >= u {
                 self.add_error(format!(
                   "expected \"{}\" string length to be in the range {} <= value < {}, got {}",
                   s, l, u, len
@@ -948,13 +978,13 @@ where
           },
           Value::Integer(i) => {
             if is_inclusive {
-              if i128::from(*i) < *l as i128 || i128::from(*i) > *u as i128 {
+              if i128::from(*i) < l as i128 || i128::from(*i) > u as i128 {
                 self.add_error(format!(
                   "expected integer to be in range {} <= value <= {}, got {:?}",
                   l, u, i
                 ));
               }
-            } else if i128::from(*i) < *l as i128 || i128::from(*i) >= *u as i128 {
+            } else if i128::from(*i) < l as i128 || i128::from(*i) >= u as i128 {
               self.add_error(format!(
                 "expected integer to be in range {} <= value < {}, got {:?}",
                 l, u, i
@@ -973,10 +1003,23 @@ where
           }
         }
       }
-      _ => {
+       (Ok(_), Err(u_err)) => {
         self.add_error(format!(
-          "invalid cddl range. upper and lower values must be uint types. got {} and {}",
-          lower, upper
+           "invalid cddl range. upper value must be a uint type. got {}. Error: {}",
+          upper, u_err
+        ));
+      }
+      (Err(l_err), Ok(_)) => {
+        self.add_error(format!(
+          "invalid cddl range. lower value must be a uint type. got {}. Error: {}",
+          lower, l_err
+        ));
+      }
+      (Err(l_err), Err(u_err)) => {
+        let err_msg = format!("{} and {}", l_err, u_err);
+        self.add_error(format!(
+          "invalid cddl range. upper and lower values must be uint types. got {} and {}. Error: {}",
+          lower, upper, err_msg
         ));
       }
     }
