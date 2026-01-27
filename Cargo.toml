@@ -118,5 +118,8 @@ path = "src/bin/cli.rs"
 opt-level = "s"
 lto = true
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
 [badges]
 maintenance = { status = "actively-developed" }
