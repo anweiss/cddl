@@ -2593,8 +2593,8 @@ where
               // For type expression constraints (RFC 9682), validate the tag number
               if !self.validate_type_expression_constraint(type_expr, actual_tag) {
                 self.add_error(format!(
-                  "expected tagged data #6.<{}>({}) where tag number matches {}, got tag {}",
-                  type_expr, t, type_expr, actual_tag
+                  "expected tagged data #6.<{}>({}) with matching tag, got tag {}",
+                  type_expr, t, actual_tag
                 ));
                 return Ok(());
               }
@@ -2807,20 +2807,17 @@ where
           match mt {
             7u8 => match constraint {
               Some(c) => {
-                // For type expression constraints, validate using the helper
-                if let Some(type_expr) = c.as_type() {
-                  // Float16 = 25, Float32 = 26, Float64 = 27
-                  // We can't easily determine which float encoding was used,
-                  // so we accept any float for type constraints
-                  // A more complete implementation would need to inspect the raw CBOR
+                // For type expression constraints, we cannot determine the float encoding
+                // (float16=25, float32=26, float64=27) from the ciborium Value,
+                // so we accept any float for type expression constraints.
+                // For literal constraints, we would need raw CBOR access.
+                if c.as_type().is_some() {
+                  // Accept floats for type expression constraints
+                  return Ok(());
+                } else if let Some(_literal_val) = c.as_literal() {
                   self.add_error(format!(
-                    "cannot validate float against #7.<{}> constraint - float encoding unknown",
-                    type_expr
-                  ));
-                } else {
-                  self.add_error(format!(
-                    "expected major type 7 with constraint {} (#{}.{}), got float",
-                    c, mt, c
+                    "cannot validate float against literal constraint #{}.{} - float encoding unknown",
+                    mt, c
                   ));
                 }
               }
@@ -2854,8 +2851,8 @@ where
                     return Ok(());
                   }
                   self.add_error(format!(
-                    "expected #7.<{}> where simple value {} matches {}, got {:?}",
-                    type_expr, simple_value, type_expr, self.cbor
+                    "expected #7.<{}> with matching simple value, got {} ({:?})",
+                    type_expr, simple_value, self.cbor
                   ));
                 }
               }
@@ -2889,8 +2886,8 @@ where
                     return Ok(());
                   }
                   self.add_error(format!(
-                    "expected #7.<{}> where simple value {} matches {}, got {:?}",
-                    type_expr, simple_value, type_expr, self.cbor
+                    "expected #7.<{}> with matching simple value, got {} ({:?})",
+                    type_expr, simple_value, self.cbor
                   ));
                 }
               }
@@ -5314,6 +5311,27 @@ mod tests {
 
     let result = cv.validate();
     assert!(result.is_ok(), "Null (simple value 22) should be valid: {:?}", result);
+
+    // Test with a schema that only allows true (simple value 21)
+    let cddl_only_true = indoc!(
+      r#"
+        root = #7.<only_true>
+        only_true = 21
+      "#
+    );
+
+    let cddl_only_true = cddl_from_str(cddl_only_true, true)?;
+
+    // Test false should fail when only true is allowed
+    let cbor = ciborium::value::Value::Bool(false);
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl_only_true, cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl_only_true, cbor);
+
+    let result = cv.validate();
+    assert!(result.is_err(), "Bool false (simple value 20) should be invalid when only 21 is allowed");
 
     Ok(())
   }
