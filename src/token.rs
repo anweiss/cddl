@@ -33,6 +33,14 @@ impl<'a> TagConstraint<'a> {
   pub fn is_literal(&self, value: u64) -> bool {
     matches!(self, TagConstraint::Literal(v) if *v == value)
   }
+
+  /// Extract the type expression string if this is a type constraint
+  pub fn as_type(&self) -> Option<&'a str> {
+    match self {
+      TagConstraint::Type(type_expr) => Some(type_expr),
+      TagConstraint::Literal(_) => None,
+    }
+  }
 }
 
 impl fmt::Display for TagConstraint<'_> {

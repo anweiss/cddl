@@ -532,6 +532,49 @@ impl<'a> CBORValidator<'a> {
 
     Ok(())
   }
+
+  /// Validate a value against a type expression constraint (RFC 9682 non-literal tag/simple value numbers)
+  ///
+  /// This is used for validating tag numbers in `#6.<type>` and simple values in `#7.<type>`.
+  /// The type expression can be:
+  /// - A simple identifier (e.g., `my_tag_nums`) that references a rule
+  /// - A range expression (e.g., `60000..60002`)
+  /// - A type choice (e.g., `60000..60002 / 60010`)
+  fn validate_type_expression_constraint(&mut self, type_expr: &str, actual_value: u64) -> bool {
+    // Create a CBOR integer from the actual value (u64 is supported by ciborium)
+    let cbor_value = Value::Integer(actual_value.into());
+
+    // Create an identifier to look up the type expression
+    let ident = Identifier {
+      ident: type_expr,
+      socket: None,
+      #[cfg(feature = "ast-span")]
+      span: (0, 0, 0),
+    };
+
+    // Look up the rule by identifier
+    if let Some(rule) = rule_from_ident(self.cddl, &ident) {
+      // Create a sub-validator to validate the value against the rule
+      #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+      let mut cv =
+        CBORValidator::new(self.cddl, cbor_value.clone(), self.enabled_features.clone());
+      #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+      let mut cv = CBORValidator::new(self.cddl, cbor_value.clone(), self.enabled_features);
+      #[cfg(not(feature = "additional-controls"))]
+      let mut cv = CBORValidator::new(self.cddl, cbor_value.clone());
+
+      cv.generic_rules = self.generic_rules.clone();
+      cv.eval_generic_rule = self.eval_generic_rule;
+      cv.is_multi_type_choice = true; // Type expressions often use choices
+
+      // Visit the rule and check for errors
+      if cv.visit_rule(rule).is_ok() && cv.errors.is_empty() {
+        return true;
+      }
+    }
+
+    false
+  }
 }
 
 impl<'a, T: std::fmt::Debug + 'static> Validator<'a, '_, cbor::Error<T>> for CBORValidator<'a>
@@ -2525,26 +2568,41 @@ where
 
         Ok(())
       }
-      Type2::TaggedData { tag, t, .. } => match &self.cbor {
-        Value::Tag(actual_tag, value) => {
+      Type2::TaggedData { tag, t, .. } => {
+        // Extract values first to avoid borrow conflicts
+        let (actual_tag, inner_value) = match &self.cbor {
+          Value::Tag(tag, value) => (*tag, Some(value.as_ref().clone())),
+          Value::Array(_) => {
+            return self.validate_array_items(&ArrayItemToken::TaggedData(t2));
+          }
+          _ => (0, None),
+        };
+
+        if let Some(inner_value) = inner_value {
           if let Some(tag_constraint) = tag {
             // For literal tag constraints, check the value matches
             if let Some(expected_tag) = tag_constraint.as_literal() {
-              if expected_tag != *actual_tag {
+              if expected_tag != actual_tag {
                 self.add_error(format!(
-                  "expected tagged data #6.{}({}), got {:?}",
-                  expected_tag, t, self.cbor
+                  "expected tagged data #6.{}({}), got tag {}",
+                  expected_tag, t, actual_tag
                 ));
                 return Ok(());
               }
-            } else {
-              // For type expression constraints, we would need to evaluate the type
-              // For now, accept any tag value (this could be enhanced later)
+            } else if let Some(type_expr) = tag_constraint.as_type() {
+              // For type expression constraints (RFC 9682), validate the tag number
+              if !self.validate_type_expression_constraint(type_expr, actual_tag) {
+                self.add_error(format!(
+                  "expected tagged data #6.<{}>({}) where tag number matches {}, got tag {}",
+                  type_expr, t, type_expr, actual_tag
+                ));
+                return Ok(());
+              }
             }
-          } else if *actual_tag > 0 {
+          } else if actual_tag > 0 {
             self.add_error(format!(
-              "expected tagged data #6({}), got {:?}",
-              t, self.cbor
+              "expected tagged data #6({}), got tag {}",
+              t, actual_tag
             ));
             return Ok(());
           }
@@ -2552,13 +2610,13 @@ where
           #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
           let mut cv = CBORValidator::new(
             self.cddl,
-            value.as_ref().clone(),
+            inner_value,
             self.enabled_features.clone(),
           );
           #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-          let mut cv = CBORValidator::new(self.cddl, value.as_ref().clone(), self.enabled_features);
+          let mut cv = CBORValidator::new(self.cddl, inner_value, self.enabled_features);
           #[cfg(not(feature = "additional-controls"))]
-          let mut cv = CBORValidator::new(self.cddl, value.as_ref().clone());
+          let mut cv = CBORValidator::new(self.cddl, inner_value);
 
           cv.generic_rules = self.generic_rules.clone();
           cv.eval_generic_rule = self.eval_generic_rule;
@@ -2570,9 +2628,8 @@ where
 
           self.errors.append(&mut cv.errors);
           Ok(())
-        }
-        Value::Array(_) => self.validate_array_items(&ArrayItemToken::TaggedData(t2)),
-        _ => {
+        } else {
+          // Not a Tag value
           if let Some(tag) = tag {
             self.add_error(format!(
               "expected tagged data #6.{}({}), got {:?}",
@@ -2587,14 +2644,27 @@ where
 
           Ok(())
         }
-      },
+      }
       Type2::DataMajorType { mt, constraint, .. } => match &self.cbor {
         Value::Integer(i) => {
           match mt {
             0u8 => match constraint {
               Some(c) => {
+                let val = i128::from(*i);
+                if val < 0 {
+                  self.add_error(format!(
+                    "expected uint data type (#{}), got negative value {:?}",
+                    mt, self.cbor
+                  ));
+                  return Ok(());
+                }
                 if let Some(literal_val) = c.as_literal() {
-                  if i128::from(*i) == literal_val as i128 && i128::from(*i) >= 0i128 {
+                  if val == literal_val as i128 {
+                    return Ok(());
+                  }
+                } else if let Some(type_expr) = c.as_type() {
+                  // For type expression constraints, validate the uint value
+                  if self.validate_type_expression_constraint(type_expr, val as u64) {
                     return Ok(());
                   }
                 }
@@ -2616,8 +2686,24 @@ where
             },
             1u8 => match constraint {
               Some(c) => {
+                let val = i128::from(*i);
+                if val >= 0 {
+                  self.add_error(format!(
+                    "expected nint data type (#{}), got non-negative value {:?}",
+                    mt, self.cbor
+                  ));
+                  return Ok(());
+                }
+                // For nint, the constraint is -1-n where n is the encoded value
+                // So actual value = -1 - constraint, or constraint = -1 - actual_value
+                let encoded_val = (-1 - val) as u64;
                 if let Some(literal_val) = c.as_literal() {
-                  if i128::from(*i) == 0i128 - literal_val as i128 {
+                  if encoded_val == literal_val {
+                    return Ok(());
+                  }
+                } else if let Some(type_expr) = c.as_type() {
+                  // For type expression constraints, validate the encoded nint value
+                  if self.validate_type_expression_constraint(type_expr, encoded_val) {
                     return Ok(());
                   }
                 }
@@ -2720,7 +2806,94 @@ where
         Value::Float(_f) => {
           match mt {
             7u8 => match constraint {
-              Some(_c) => unimplemented!(),
+              Some(c) => {
+                // For type expression constraints, validate using the helper
+                if let Some(type_expr) = c.as_type() {
+                  // Float16 = 25, Float32 = 26, Float64 = 27
+                  // We can't easily determine which float encoding was used,
+                  // so we accept any float for type constraints
+                  // A more complete implementation would need to inspect the raw CBOR
+                  self.add_error(format!(
+                    "cannot validate float against #7.<{}> constraint - float encoding unknown",
+                    type_expr
+                  ));
+                } else {
+                  self.add_error(format!(
+                    "expected major type 7 with constraint {} (#{}.{}), got float",
+                    c, mt, c
+                  ));
+                }
+              }
+              _ => return Ok(()),
+            },
+            _ => self.add_error(format!(
+              "expected major type {} with constraint {:?}, got {:?}",
+              mt, constraint, self.cbor
+            )),
+          }
+
+          Ok(())
+        }
+        Value::Bool(b) => {
+          match mt {
+            7u8 => match constraint {
+              Some(c) => {
+                // false = simple value 20, true = simple value 21
+                let simple_value = if *b { 21u64 } else { 20u64 };
+                if let Some(literal_val) = c.as_literal() {
+                  if simple_value == literal_val {
+                    return Ok(());
+                  }
+                  self.add_error(format!(
+                    "expected major type 7 with constraint {} (#{}.{}), got {:?}",
+                    c, mt, c, self.cbor
+                  ));
+                } else if let Some(type_expr) = c.as_type() {
+                  // For type expression constraints, validate the simple value
+                  if self.validate_type_expression_constraint(type_expr, simple_value) {
+                    return Ok(());
+                  }
+                  self.add_error(format!(
+                    "expected #7.<{}> where simple value {} matches {}, got {:?}",
+                    type_expr, simple_value, type_expr, self.cbor
+                  ));
+                }
+              }
+              _ => return Ok(()),
+            },
+            _ => self.add_error(format!(
+              "expected major type {} with constraint {:?}, got {:?}",
+              mt, constraint, self.cbor
+            )),
+          }
+
+          Ok(())
+        }
+        Value::Null => {
+          match mt {
+            7u8 => match constraint {
+              Some(c) => {
+                // null = simple value 22
+                let simple_value = 22u64;
+                if let Some(literal_val) = c.as_literal() {
+                  if simple_value == literal_val {
+                    return Ok(());
+                  }
+                  self.add_error(format!(
+                    "expected major type 7 with constraint {} (#{}.{}), got {:?}",
+                    c, mt, c, self.cbor
+                  ));
+                } else if let Some(type_expr) = c.as_type() {
+                  // For type expression constraints, validate the simple value
+                  if self.validate_type_expression_constraint(type_expr, simple_value) {
+                    return Ok(());
+                  }
+                  self.add_error(format!(
+                    "expected #7.<{}> where simple value {} matches {}, got {:?}",
+                    type_expr, simple_value, type_expr, self.cbor
+                  ));
+                }
+              }
               _ => return Ok(()),
             },
             _ => self.add_error(format!(
@@ -4984,6 +5157,163 @@ mod tests {
       ),
       Err(other) => panic!("Unexpected error type: {:?}", other),
     }
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_rfc9682_nonliteral_tag_numbers() -> std::result::Result<(), Box<dyn std::error::Error>>
+  {
+    // Test RFC 9682 Section 3.2 - Non-literal tag and simple value numbers
+    // Example from the RFC:
+    // rats_tags = #6.<rats_tag_nums>([ * bstr ])
+    // rats_tag_nums = 60000..60002 / 60010 / 60020..60021
+
+    let cddl = indoc!(
+      r#"
+        root = #6.<my_tags>(tstr)
+        my_tags = 32 / 33 / 34
+      "#
+    );
+
+    let cddl = cddl_from_str(cddl, true)?;
+
+    // Test with valid tag 32 (URI)
+    let cbor = ciborium::value::Value::Tag(32, Box::new(ciborium::value::Value::Text("https://example.com".to_string())));
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, cbor);
+
+    let result = cv.validate();
+    assert!(result.is_ok(), "Tag 32 should be valid: {:?}", result);
+
+    // Test with valid tag 33
+    let cbor = ciborium::value::Value::Tag(33, Box::new(ciborium::value::Value::Text("base64url".to_string())));
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, cbor);
+
+    let result = cv.validate();
+    assert!(result.is_ok(), "Tag 33 should be valid: {:?}", result);
+
+    // Test with invalid tag 35 (not in my_tags)
+    let cbor = ciborium::value::Value::Tag(35, Box::new(ciborium::value::Value::Text("regexp".to_string())));
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, cbor);
+
+    let result = cv.validate();
+    assert!(result.is_err(), "Tag 35 should be invalid");
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_rfc9682_nonliteral_tag_numbers_with_range(
+  ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Test RFC 9682 with range expressions
+    // rats_tag_nums = 60000..60002 / 60010 / 60020..60021
+
+    let cddl = indoc!(
+      r#"
+        root = #6.<tag_range>(bstr)
+        tag_range = 60000..60002 / 60010 / 60020..60021
+      "#
+    );
+
+    let cddl = cddl_from_str(cddl, true)?;
+
+    // Test with valid tag 60000 (in first range)
+    let cbor = ciborium::value::Value::Tag(60000, Box::new(ciborium::value::Value::Bytes(vec![0x01, 0x02])));
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, cbor);
+
+    let result = cv.validate();
+    assert!(result.is_ok(), "Tag 60000 should be valid: {:?}", result);
+
+    // Test with valid tag 60010 (exact match)
+    let cbor = ciborium::value::Value::Tag(60010, Box::new(ciborium::value::Value::Bytes(vec![0x03, 0x04])));
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, cbor);
+
+    let result = cv.validate();
+    assert!(result.is_ok(), "Tag 60010 should be valid: {:?}", result);
+
+    // Test with invalid tag 60003 (between ranges)
+    let cbor = ciborium::value::Value::Tag(60003, Box::new(ciborium::value::Value::Bytes(vec![0x05, 0x06])));
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, cbor);
+
+    let result = cv.validate();
+    assert!(result.is_err(), "Tag 60003 should be invalid");
+
+    Ok(())
+  }
+
+  #[test]
+  fn validate_rfc9682_nonliteral_simple_values() -> std::result::Result<(), Box<dyn std::error::Error>>
+  {
+    // Test RFC 9682 Section 3.2 for simple values (#7.<type>)
+    // Example:
+    // redacted_keys = #7.<TBD4>
+    // TBD4 = 59 ; suggested value, to be assigned by IANA
+
+    let cddl = indoc!(
+      r#"
+        root = #7.<my_simple_vals>
+        my_simple_vals = 20 / 21 / 22
+      "#
+    );
+
+    let cddl = cddl_from_str(cddl, true)?;
+
+    // Test with valid simple value 20 (false)
+    let cbor = ciborium::value::Value::Bool(false);
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, cbor);
+
+    let result = cv.validate();
+    assert!(result.is_ok(), "Bool false (simple value 20) should be valid: {:?}", result);
+
+    // Test with valid simple value 21 (true)
+    let cbor = ciborium::value::Value::Bool(true);
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, cbor);
+
+    let result = cv.validate();
+    assert!(result.is_ok(), "Bool true (simple value 21) should be valid: {:?}", result);
+
+    // Test with valid simple value 22 (null)
+    let cbor = ciborium::value::Value::Null;
+
+    #[cfg(feature = "additional-controls")]
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(&cddl, cbor);
+
+    let result = cv.validate();
+    assert!(result.is_ok(), "Null (simple value 22) should be valid: {:?}", result);
 
     Ok(())
   }
