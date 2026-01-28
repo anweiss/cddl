@@ -6,6 +6,7 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+#[cfg(test)]
 use pest::Parser;
 use pest_derive::Parser;
 

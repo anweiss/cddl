@@ -91,13 +91,29 @@ struct Validate {
 struct Generate {
   #[clap(short = 'd', long = "cddl", help = "CDDL document")]
   cddl: String,
-  #[clap(short = 'o', long = "output", help = "Output file (stdout if not specified)")]
+  #[clap(
+    short = 'o',
+    long = "output",
+    help = "Output file (stdout if not specified)"
+  )]
   output: Option<String>,
-  #[clap(short = 'n', long = "count", help = "Number of samples to generate", default_value = "1")]
+  #[clap(
+    short = 'n',
+    long = "count",
+    help = "Number of samples to generate",
+    default_value = "1"
+  )]
   count: usize,
-  #[clap(short = 's', long = "seed", help = "Random seed for reproducible output")]
+  #[clap(
+    short = 's',
+    long = "seed",
+    help = "Random seed for reproducible output"
+  )]
   seed: Option<u64>,
-  #[clap(long = "minimal", help = "Generate minimal data (no optional fields, smaller arrays)")]
+  #[clap(
+    long = "minimal",
+    help = "Generate minimal data (no optional fields, smaller arrays)"
+  )]
   minimal: bool,
 }
 
@@ -306,13 +322,13 @@ fn main() -> Result<(), Box<dyn Error>> {
       }
 
       let cddl_str = fs::read_to_string(&gen.cddl)?;
-      
+
       let config = if gen.minimal {
         cddl::generator::GeneratorConfig::minimal()
       } else {
         cddl::generator::GeneratorConfig::default()
       };
-      
+
       let config = if let Some(seed) = gen.seed {
         cddl::generator::GeneratorConfig {
           seed: Some(seed),
@@ -341,7 +357,7 @@ fn main() -> Result<(), Box<dyn Error>> {
           Ok(samples) => {
             let json_array = serde_json::Value::Array(samples);
             let output_str = serde_json::to_string_pretty(&json_array)?;
-            
+
             if let Some(output) = &gen.output {
               fs::write(output, &output_str)?;
               info!("Generated {} samples written to {:?}", gen.count, output);
