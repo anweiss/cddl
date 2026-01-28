@@ -47,6 +47,7 @@ enum Commands {
     file: String,
   },
   Validate(Validate),
+  Generate(Generate),
 }
 
 #[derive(Args)]
@@ -83,6 +84,21 @@ struct Validate {
     help = "JSON or CBOR input from stdin. Assumes UTF-8 encoding is JSON, otherwise parses as CBOR"
   )]
   stdin: bool,
+}
+
+#[derive(Args)]
+#[clap(about = "Generate sample JSON data from a CDDL definition")]
+struct Generate {
+  #[clap(short = 'd', long = "cddl", help = "CDDL document")]
+  cddl: String,
+  #[clap(short = 'o', long = "output", help = "Output file (stdout if not specified)")]
+  output: Option<String>,
+  #[clap(short = 'n', long = "count", help = "Number of samples to generate", default_value = "1")]
+  count: usize,
+  #[clap(short = 's', long = "seed", help = "Random seed for reproducible output")]
+  seed: Option<u64>,
+  #[clap(long = "minimal", help = "Generate minimal data (no optional fields, smaller arrays)")]
+  minimal: bool,
 }
 
 macro_rules! error {
@@ -278,6 +294,63 @@ fn main() -> Result<(), Box<dyn Error>> {
                 e.to_string().trim_end()
               );
             }
+          }
+        }
+      }
+    }
+    Commands::Generate(gen) => {
+      let p = Path::new(&gen.cddl);
+      if !p.exists() {
+        error!(cli.ci, "CDDL document {:?} does not exist", p);
+        return Ok(());
+      }
+
+      let cddl_str = fs::read_to_string(&gen.cddl)?;
+      
+      let config = if gen.minimal {
+        cddl::generator::GeneratorConfig::minimal()
+      } else {
+        cddl::generator::GeneratorConfig::default()
+      };
+      
+      let config = if let Some(seed) = gen.seed {
+        cddl::generator::GeneratorConfig {
+          seed: Some(seed),
+          ..config
+        }
+      } else {
+        config
+      };
+
+      if gen.count == 1 {
+        match cddl::generate_json_string_from_cddl(&cddl_str, &config) {
+          Ok(json) => {
+            if let Some(output) = &gen.output {
+              fs::write(output, &json)?;
+              info!("Generated JSON written to {:?}", output);
+            } else {
+              println!("{}", json);
+            }
+          }
+          Err(e) => {
+            error!(cli.ci, "Generation failed: {}", e);
+          }
+        }
+      } else {
+        match cddl::generate_json_samples(&cddl_str, gen.count, &config) {
+          Ok(samples) => {
+            let json_array = serde_json::Value::Array(samples);
+            let output_str = serde_json::to_string_pretty(&json_array)?;
+            
+            if let Some(output) = &gen.output {
+              fs::write(output, &output_str)?;
+              info!("Generated {} samples written to {:?}", gen.count, output);
+            } else {
+              println!("{}", output_str);
+            }
+          }
+          Err(e) => {
+            error!(cli.ci, "Generation failed: {}", e);
           }
         }
       }
