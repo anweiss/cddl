@@ -38,7 +38,7 @@ impl Rng {
   }
 
   fn next_bool(&mut self) -> bool {
-    self.next() % 2 == 0
+    self.next().is_multiple_of(2)
   }
 
   fn next_f64(&mut self) -> f64 {
@@ -262,9 +262,9 @@ impl<'a> Generator<'a> {
       Type2::Any { .. } => self.generate_any(),
 
       // Byte strings - generate base64 for JSON
-      Type2::UTF8ByteString { .. }
-      | Type2::B16ByteString { .. }
-      | Type2::B64ByteString { .. } => Ok(json!(self.generate_base64())),
+      Type2::UTF8ByteString { .. } | Type2::B16ByteString { .. } | Type2::B64ByteString { .. } => {
+        Ok(json!(self.generate_base64()))
+      }
     }
   }
 
@@ -436,16 +436,14 @@ impl<'a> Generator<'a> {
       }
       GroupEntry::TypeGroupname { ge, .. } => {
         // Reference to another group - merge its entries
-        if let Some(stored) = self.rules.get(ge.name.ident) {
-          if let StoredRule::GroupRule(rule) = stored {
-            let entry_clone = rule.entry.clone();
-            if let GroupEntry::InlineGroup { group, .. } = &entry_clone {
-              for gc in &group.group_choices {
-                self.generate_group_choice_into_map(map, gc)?;
-              }
-            } else {
-              self.generate_group_entry_into_map(map, &entry_clone)?;
+        if let Some(StoredRule::GroupRule(rule)) = self.rules.get(ge.name.ident) {
+          let entry_clone = rule.entry.clone();
+          if let GroupEntry::InlineGroup { group, .. } = &entry_clone {
+            for gc in &group.group_choices {
+              self.generate_group_choice_into_map(map, gc)?;
             }
+          } else {
+            self.generate_group_entry_into_map(map, &entry_clone)?;
           }
         }
       }
@@ -530,8 +528,8 @@ impl<'a> Generator<'a> {
         Occur::OneOrMore { .. } => (1, self.config.max_array_items),
         Occur::Optional { .. } => (0, 1),
         Occur::Exact { lower, upper, .. } => {
-          let min = lower.unwrap_or(0) as usize;
-          let max = upper.map(|u| u as usize).unwrap_or(min);
+          let min = lower.unwrap_or(0);
+          let max = upper.map(|u| u).unwrap_or(min);
           (min, max)
         }
       },
@@ -564,8 +562,25 @@ impl<'a> Generator<'a> {
     if self.config.realistic_data {
       // Generate more realistic looking strings
       let words = [
-        "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit", "alpha",
-        "beta", "gamma", "delta", "epsilon", "data", "test", "example", "sample", "value", "item",
+        "lorem",
+        "ipsum",
+        "dolor",
+        "sit",
+        "amet",
+        "consectetur",
+        "adipiscing",
+        "elit",
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "epsilon",
+        "data",
+        "test",
+        "example",
+        "sample",
+        "value",
+        "item",
         "entry",
       ];
       let mut result = String::new();

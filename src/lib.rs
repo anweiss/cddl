@@ -565,6 +565,7 @@ pub mod visitor;
 
 /// Data generators for creating sample JSON/CBOR from CDDL schemas
 #[cfg(feature = "json")]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod generator;
 
 mod parser_tests;
@@ -591,6 +592,7 @@ pub use self::validator::validate_json_from_str;
 
 #[doc(inline)]
 #[cfg(feature = "json")]
+#[cfg(not(target_arch = "wasm32"))]
 pub use self::generator::{
   generate_json_from_cddl, generate_json_samples, generate_json_string_from_cddl, GeneratorConfig,
   GeneratorError,

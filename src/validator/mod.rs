@@ -27,10 +27,6 @@ use json::JSONValidator;
 use serde::de::Deserialize;
 
 #[cfg(target_arch = "wasm32")]
-use crate::{error::ErrorMsg, lexer::Position};
-#[cfg(target_arch = "wasm32")]
-use serde::Serialize;
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 #[cfg(not(target_arch = "wasm32"))]
