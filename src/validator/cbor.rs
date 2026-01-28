@@ -3909,15 +3909,8 @@ where
           }
           Some(ControlOperator::REGEXP) | Some(ControlOperator::PCRE) => {
             let re = regex::Regex::new(
-              &format_regex(
-                // Text strings must be JSON escaped per
-                // https://datatracker.ietf.org/doc/html/rfc8610#section-3.1
-                serde_json::from_str::<serde_json::Value>(&format!("\"{}\"", t))
-                  .map_err(Error::JSONParsing)?
-                  .as_str()
-                  .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
-              )
-              .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
+              &format_regex(t)
+                .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
             )
             .map_err(|e| Error::from_validator(self, e.to_string()))?;
 
@@ -4141,10 +4134,19 @@ where
         {
           self.advance_to_next_entry = true;
           None
+        } else if let Some(Occur::Exact {
+          lower: None,
+          upper: None,
+          ..
+        }) = &self.occurrence.take()
+        {
+          // Handle Exact { lower: None, upper: None } as zero-or-more (for backward compatibility)
+          self.advance_to_next_entry = true;
+          None
         } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.ctrl {
           None
         } else {
-          Some(format!("object missing key: \"{}\"", value))
+          Some(format!("object missing key: {}", value))
         }
 
         #[cfg(not(feature = "ast-span"))]
@@ -4165,7 +4167,7 @@ where
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
           None
         } else {
-          Some(format!("object missing key: \"{}\"", value))
+          Some(format!("object missing key: {}", value))
         }
       }
       _ => Some(format!("expected {}, got {:?}", value, self.cbor)),
@@ -4229,8 +4231,7 @@ mod tests {
 
     let cbor = ciborium::value::Value::Bytes(vec![0x90, 0x6d]);
 
-    let mut lexer = lexer_from_str(cddl);
-    let cddl = cddl_from_str(&mut lexer, cddl, true)?;
+    let cddl = crate::cddl_from_str(cddl, true)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor);
     cv.validate()?;

@@ -543,7 +543,7 @@ impl<'a> JSONValidator<'a> {
         } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.ctrl {
           return Ok(());
         } else {
-          self.add_error(format!("object missing key: \"{}\"", t))
+          self.add_error(format!("object missing key: {}", t))
         }
 
         // Retrieve the value from key unless optional/zero or more, in which
@@ -566,7 +566,7 @@ impl<'a> JSONValidator<'a> {
         } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
           return Ok(());
         } else {
-          self.add_error(format!("object missing key: \"{}\"", t))
+          self.add_error(format!("object missing key: {}", t))
         }
       } else {
         self.add_error(format!(
@@ -660,6 +660,42 @@ impl<'a> JSONValidator<'a> {
       ));
     }
     Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  /// Substitute generic parameters in a Type2 expression.
+  ///
+  /// When validating generic rules, generic parameters need to be replaced with
+  /// their actual argument values before control operations are evaluated.
+  ///
+  /// For example, given:
+  /// ```cddl
+  /// interval<BASE> = ( "test" => BASE .plus a )
+  /// rect = { interval<X> }
+  /// ```
+  /// When validating rect with X=0, this function substitutes BASE with X (which resolves to 0).
+  ///
+  /// # Arguments
+  /// * `t2` - The Type2 expression to check for generic parameters
+  ///
+  /// # Returns
+  /// * `Some(Type2)` - The substituted Type2 if the expression is a generic parameter
+  /// * `None` - If the expression is not a generic parameter or no substitution is available
+  fn substitute_generic_param(&self, t2: &Type2<'a>) -> Option<Type2<'a>> {
+    if let Type2::Typename { ident, .. } = t2 {
+      // Check if this typename matches a generic parameter in any of our generic rules
+      for gr in self.generic_rules.iter() {
+        for (idx, param) in gr.params.iter().enumerate() {
+          if ident.ident == *param {
+            // Found a match! Return the corresponding argument
+            if let Some(arg) = gr.args.get(idx) {
+              return Some(arg.type2.clone());
+            }
+          }
+        }
+      }
+    }
+    None
   }
 }
 
@@ -1469,7 +1505,15 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       ControlOperator::PLUS => {
         self.ctrl = Some(ctrl);
 
-        match plus_operation(self.cddl, target, controller) {
+        // Substitute generic parameters in target and controller before calling plus_operation
+        let substituted_target = self
+          .substitute_generic_param(target)
+          .unwrap_or_else(|| target.clone());
+        let substituted_controller = self
+          .substitute_generic_param(controller)
+          .unwrap_or_else(|| controller.clone());
+
+        match plus_operation(self.cddl, &substituted_target, &substituted_controller) {
           Ok(values) => {
             let error_count = self.errors.len();
             for v in values.iter() {
@@ -2060,10 +2104,11 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
                 gr.args.push((*arg.arg).clone());
               }
             } else if let Some(params) = generic_params_from_rule(rule) {
+              let args_vec: Vec<Type1> = ga.args.iter().cloned().map(|arg| *arg.arg).collect();
               self.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
-                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                args: args_vec,
               });
             }
 
@@ -2772,10 +2817,11 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             gr.args.push((*arg.arg).clone());
           }
         } else if let Some(params) = generic_params_from_rule(rule) {
+          let args_vec: Vec<Type1> = ga.args.iter().cloned().map(|arg| *arg.arg).collect();
           self.generic_rules.push(GenericRule {
             name: entry.name.ident,
             params,
-            args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+            args: args_vec,
           });
         }
 
@@ -3028,15 +3074,8 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
           }
           Some(ControlOperator::REGEXP) | Some(ControlOperator::PCRE) => {
             let re = regex::Regex::new(
-              &format_regex(
-                // Text strings must be JSON escaped per
-                // https://datatracker.ietf.org/doc/html/rfc8610#section-3.1
-                serde_json::from_str::<Value>(&format!("\"{}\"", t))
-                  .map_err(Error::JSONParsing)?
-                  .as_str()
-                  .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
-              )
-              .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
+              &format_regex(t)
+                .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
             )
             .map_err(|e| Error::from_validator(self, e.to_string()))?;
 

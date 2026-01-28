@@ -174,9 +174,9 @@ group_choice_op = { "//" }
 // - Cut entries: ^label or ^ => type (prevents backtracking)
 group_entry = { occur? ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr
               | occur? ~ S ~ member_key ~ S ~ "=>" ~ S ~ type_expr
+              | occur? ~ S ~ type_expr
               | occur? ~ S ~ groupname ~ generic_args?
               | occur? ~ S ~ "(" ~ S ~ group ~ S ~ ")"
-              | occur? ~ S ~ type_expr
               | "^" ~ S ~ "=>" ~ S ~ type_expr
               | "^" ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr }
 
@@ -193,17 +193,17 @@ member_key = { bareword | typename ~ generic_args? | value }
 // + - one or more
 // n* - exactly n times
 // n*m - between n and m times
-occur = { occur_exact
-        | occur_range
-        | occur_zero_or_more
+occur = { occur_zero_or_more
         | occur_one_or_more
-        | occur_optional }
+        | occur_optional
+        | occur_exact
+        | occur_range }
 
-occur_exact = { uint_value ~ "*" ~ !DIGIT }
+occur_exact = { uint_value ~ "*" }
 occur_range = { uint_value ~ "*" ~ uint_value | uint_value? ~ "*" ~ uint_value? }
-occur_zero_or_more = { "*" ~ !DIGIT }
-occur_one_or_more = { "+" ~ !DIGIT }
-occur_optional = { "?" ~ !DIGIT }
+occur_zero_or_more = { "*" }
+occur_one_or_more = { "+" }
+occur_optional = { "?" }
 
 // =============================================================================
 // IDENTIFIERS

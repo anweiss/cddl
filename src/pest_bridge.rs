@@ -38,7 +38,7 @@ use crate::{
   lexer::Position,
   parser::Error,
   pest_parser::{CddlParser, Rule},
-  token::{lookup_control_from_str, ControlOperator, SocketPlug, Value},
+  token::{lookup_control_from_str, ControlOperator, SocketPlug, TagConstraint, Value},
 };
 
 use pest::{
@@ -739,29 +739,30 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
 
+  // Declare these at function scope so they can be set in the first loop
+  // and used later
+  let mut typename_ident = None;
+  let mut generic_args = None;
+
   // Clone the pair to allow multiple iterations
   let pair_clone = pair.clone();
 
   for inner in pair_clone.into_inner() {
     match inner.as_rule() {
       Rule::value => {
+        #[cfg(feature = "ast-span")]
         return convert_value_to_type2(inner, input, span);
+        #[cfg(not(feature = "ast-span"))]
+        return convert_value_to_type2(inner, input);
       }
       Rule::typename => {
-        let ident = convert_identifier(inner.clone(), input, false)?;
-        let generic_args = None;
-
-        // Check if there are generic args (they would be siblings in the parent)
-        // We need to re-examine the parent's children
-        return Ok(ast::Type2::Typename {
-          ident,
-          generic_args,
-          #[cfg(feature = "ast-span")]
-          span,
-        });
+        // Don't return immediately - we need to check for generic_args
+        // which may come as a sibling rule
+        typename_ident = Some(convert_identifier(inner.clone(), input, false)?);
       }
       Rule::generic_args => {
-        // This will be handled together with typename
+        // Store for later - will be combined with typename
+        generic_args = Some(convert_generic_args(inner, input)?);
       }
       Rule::type_expr => {
         // Parenthesized type
@@ -813,16 +814,27 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
   }
 
   // Handle typename with generic_args by checking all children
-  let mut typename_ident = None;
-  let mut generic_args = None;
+  // (may have already been partially set in first loop)
+  if typename_ident.is_some() {
+    // Already found typename in first loop, return it
+    return Ok(ast::Type2::Typename {
+      ident: typename_ident.unwrap(),
+      generic_args,
+      #[cfg(feature = "ast-span")]
+      span,
+    });
+  }
 
+  // Typename not found in first loop, scan again (shouldn't normally happen)
   for inner in pair.clone().into_inner() {
     match inner.as_rule() {
       Rule::typename => {
         typename_ident = Some(convert_identifier(inner, input, false)?);
       }
       Rule::generic_args => {
-        generic_args = Some(convert_generic_args(inner, input)?);
+        if generic_args.is_none() {
+          generic_args = Some(convert_generic_args(inner, input)?);
+        }
       }
       _ => {}
     }
@@ -1207,8 +1219,120 @@ fn convert_tag_expr<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Typ
     });
   }
 
-  // Parse tag expressions - this is complex, so we'll do a basic implementation
-  // A full implementation would parse the internal structure
+  // Parse the tag expression structure
+  let mut major_type = None;
+  let mut tag_constraint = None;
+  let mut tagged_type = None;
+
+  for inner in pair.into_inner() {
+    match inner.as_rule() {
+      Rule::DIGIT => {
+        // Major type (e.g., the '6' in '#6.42(tstr)')
+        major_type = Some(inner.as_str().parse::<u8>().map_err(|_| Error::PARSER {
+          #[cfg(feature = "ast-span")]
+          position: pest_span_to_position(&inner.as_span(), input),
+          msg: ErrorMsg {
+            short: "Invalid major type".to_string(),
+            extended: None,
+          },
+        })?);
+      }
+      Rule::tag_value => {
+        // Tag value - can be uint_value or type expression
+        for tag_inner in inner.into_inner() {
+          match tag_inner.as_rule() {
+            Rule::uint_value => {
+              let tag_num = tag_inner
+                .as_str()
+                .parse::<u64>()
+                .map_err(|_| Error::PARSER {
+                  #[cfg(feature = "ast-span")]
+                  position: pest_span_to_position(&tag_inner.as_span(), input),
+                  msg: ErrorMsg {
+                    short: "Invalid tag number".to_string(),
+                    extended: None,
+                  },
+                })?;
+              tag_constraint = Some(TagConstraint::Literal(tag_num));
+            }
+            Rule::type_expr => {
+              // Type expression in angle brackets: <typename>
+              tag_constraint = Some(TagConstraint::Type(tag_inner.as_str()));
+            }
+            _ => {}
+          }
+        }
+      }
+      Rule::type_expr => {
+        // The type inside the parentheses
+        tagged_type = Some(convert_type_expr(inner, input)?);
+      }
+      _ => {}
+    }
+  }
+
+  // Check if this is a major type expression (e.g., #1.5) or a tag expression (e.g., #6.42(tstr))
+  if let Some(mt) = major_type {
+    if mt == 6 {
+      // This is a CBOR tag expression (#6.x(type))
+      if let Some(t) = tagged_type {
+        return Ok(ast::Type2::TaggedData {
+          tag: tag_constraint,
+          t,
+          #[cfg(feature = "ast-span")]
+          span,
+          #[cfg(feature = "ast-comments")]
+          comments_before_type: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_type: None,
+        });
+      } else if tag_constraint.is_some() {
+        // Tag without type specified - this is less common but valid
+        // Create a default type (any)
+        return Ok(ast::Type2::TaggedData {
+          tag: tag_constraint,
+          t: ast::Type {
+            type_choices: vec![ast::TypeChoice {
+              type1: ast::Type1 {
+                type2: ast::Type2::Any {
+                  #[cfg(feature = "ast-span")]
+                  span: ast::Span::default(),
+                },
+                operator: None,
+                #[cfg(feature = "ast-span")]
+                span: ast::Span::default(),
+                #[cfg(feature = "ast-comments")]
+                comments_after_type: None,
+              },
+              #[cfg(feature = "ast-comments")]
+              comments_before_type: None,
+              #[cfg(feature = "ast-comments")]
+              comments_after_type: None,
+            }],
+            #[cfg(feature = "ast-span")]
+            span: ast::Span::default(),
+          },
+          #[cfg(feature = "ast-span")]
+          span,
+          #[cfg(feature = "ast-comments")]
+          comments_before_type: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_type: None,
+        });
+      }
+    } else {
+      // This is a major type expression (e.g., #1.5)
+      // Create a DataMajorType
+      return Ok(ast::Type2::DataMajorType {
+        mt,
+        constraint: tag_constraint,
+        #[cfg(feature = "ast-span")]
+        span,
+      });
+    }
+  }
+
+  // If we couldn't parse it properly, return Any
   Ok(ast::Type2::Any {
     #[cfg(feature = "ast-span")]
     span,
@@ -1367,6 +1491,90 @@ fn convert_group_entry<'a>(
       #[cfg(feature = "ast-comments")]
       trailing_comments: None,
     });
+  }
+
+  // Check if entry_type is a simple bare typename and convert to group reference
+  // This handles cases like ( NullPart // SinglePart ) where the identifiers should be group refs
+  if let Some(ref et) = entry_type {
+    if member_key.is_none() && et.type_choices.len() == 1 {
+      let tc = &et.type_choices[0];
+      // Only convert if there's no operator and it's a simple typename
+      if tc.type1.operator.is_none() {
+        if let ast::Type2::Typename {
+          ident,
+          generic_args: ga,
+          ..
+        } = &tc.type1.type2
+        {
+          // Don't convert if the identifier is a common CDDL prelude type or looks like a generic parameter
+          let name = ident.ident;
+          let is_prelude_type = matches!(
+            name,
+            "any"
+              | "uint"
+              | "nint"
+              | "int"
+              | "bstr"
+              | "bytes"
+              | "tstr"
+              | "text"
+              | "tdate"
+              | "time"
+              | "number"
+              | "biguint"
+              | "bignint"
+              | "bigint"
+              | "integer"
+              | "unsigned"
+              | "decfrac"
+              | "bigfloat"
+              | "eb64url"
+              | "eb64legacy"
+              | "eb16"
+              | "encoded-cbor"
+              | "uri"
+              | "b64url"
+              | "b64legacy"
+              | "regexp"
+              | "mime-message"
+              | "cbor-any"
+              | "float16"
+              | "float32"
+              | "float64"
+              | "float16-32"
+              | "float32-64"
+              | "float"
+              | "false"
+              | "true"
+              | "bool"
+              | "nil"
+              | "null"
+              | "undefined"
+          );
+
+          // Check if it looks like a generic parameter (single word, all caps, length <= 8)
+          let is_likely_generic =
+            name.chars().all(|c| c.is_uppercase() || c == '_') && name.len() <= 8;
+
+          if !is_prelude_type && !is_likely_generic {
+            // This is likely a group reference, not a type
+            return Ok(ast::GroupEntry::TypeGroupname {
+              ge: ast::TypeGroupnameEntry {
+                occur,
+                name: ident.clone(),
+                generic_args: ga.clone(),
+              },
+              #[cfg(feature = "ast-span")]
+              span,
+              #[cfg(feature = "ast-comments")]
+              leading_comments: None,
+              #[cfg(feature = "ast-comments")]
+              trailing_comments: None,
+            });
+          }
+        }
+      }
+    }
   }
 
   // Default to ValueMemberKey

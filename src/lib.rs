@@ -567,7 +567,6 @@ mod parser_tests;
 
 #[doc(inline)]
 pub use self::{
-  lexer::lexer_from_str,
   parser::{cddl_from_str, Error},
   token::Token,
 };
