@@ -216,6 +216,7 @@ function performEnhancedValidation(
   }
 
   // Collect all defined rules
+  let firstRuleName: string | null = null;
   for (let rule of cddl.rules) {
     if (rule.Group) {
       let ruleName = rule.Group.rule.name.ident;
@@ -227,6 +228,10 @@ function performEnhancedValidation(
         range,
         nameRange,
       });
+      // According to RFC 8610, the first rule is the root/entry point
+      if (firstRuleName === null) {
+        firstRuleName = ruleName;
+      }
     }
     if (rule.Type) {
       let ruleName = rule.Type.rule.name.ident;
@@ -238,7 +243,16 @@ function performEnhancedValidation(
         range,
         nameRange,
       });
+      // According to RFC 8610, the first rule is the root/entry point
+      if (firstRuleName === null) {
+        firstRuleName = ruleName;
+      }
     }
+  }
+
+  // Mark the first rule as used (it's the root according to RFC 8610)
+  if (firstRuleName !== null) {
+    usedRules.add(firstRuleName);
   }
 
   // Find rule references in the text
@@ -318,7 +332,6 @@ function performEnhancedValidation(
         // Skip warning for certain patterns that are typically used as external references
         // - Integer constant definitions (rule = number)
         // - String constant definitions (rule = "string")
-        // - Root/entry point rules (common naming patterns)
         let ruleLineText = lines[ruleInfo.line] || "";
 
         // Check if this is an integer constant definition
@@ -327,14 +340,7 @@ function performEnhancedValidation(
         // Check if this is a string constant definition
         let isStringConstant = /=\s*"[^"]*"\s*$/.test(ruleLineText.trim());
 
-        // Check if this is likely a root rule (entry point)
-        let isLikelyRootRule =
-          ruleName.includes("tag") ||
-          ruleName.includes("entry") ||
-          ruleName.includes("root") ||
-          ruleName.includes("main");
-
-        if (!isIntegerConstant && !isStringConstant && !isLikelyRootRule) {
+        if (!isIntegerConstant && !isStringConstant) {
           diagnostics.push({
             severity: DiagnosticSeverity.Warning,
             range: ruleInfo.nameRange, // Use nameRange instead of range for unused rule warnings

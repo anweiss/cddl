@@ -1,0 +1,23 @@
+; Test file to verify first rule is detected as root (RFC 8610)
+; The first rule should be treated as root regardless of its name
+
+; This is the first rule - should NOT be marked as unused (it's the root)
+my-custom-protocol = {
+  header => protocol-header,
+  payload => protocol-payload
+}
+
+; These are referenced from the root - should NOT be marked as unused
+protocol-header = {
+  version: uint,
+  flags: uint
+}
+
+protocol-payload = {
+  data: bstr
+}
+
+; This rule is not referenced - SHOULD be marked as unused
+unused-helper = {
+  something: text
+}
