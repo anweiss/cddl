@@ -33,7 +33,7 @@
     "text-encoding": "^0.7.0"
   },
   "devDependencies": {
-    "copy-webpack-plugin": "^6.0.3",
+    "copy-webpack-plugin": "^13.0.1",
     "css-loader": "^6.2.0",
     "hello-wasm-pack": "^0.1.0",
     "minimist": "^1.2.5",
