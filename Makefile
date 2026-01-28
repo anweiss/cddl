@@ -1,4 +1,4 @@
-.PHONY: help fmt fmt-check clippy test build clean
+.PHONY: help fmt fmt-check clippy test build clean pre-commit
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
