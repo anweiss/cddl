@@ -391,3 +391,21 @@ cddl = { version = "0.10.1", default-features = false }
 Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling and diagnostics.
 
 Both JSON and CBOR validation are dependent on their respective heap allocated `Value` types, but since these types aren't supported in a `no_std` context, they subsequently aren't supported by this crate in `no_std` .
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
+- Setting up your development environment
+- Code formatting requirements (using `cargo fmt`)
+- Running tests and linters
+- Submitting pull requests
+
+For quick development tasks, you can use the provided Makefile:
+
+```sh
+make help      # Show available make targets
+make fmt       # Format all code
+make fmt-check # Check code formatting
+make clippy    # Run linter
+make test      # Run tests
+```
