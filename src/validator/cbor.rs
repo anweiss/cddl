@@ -556,8 +556,7 @@ impl<'a> CBORValidator<'a> {
     if let Some(rule) = rule_from_ident(self.cddl, &ident) {
       // Create a sub-validator to validate the value against the rule
       #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-      let mut cv =
-        CBORValidator::new(self.cddl, cbor_value.clone(), self.enabled_features.clone());
+      let mut cv = CBORValidator::new(self.cddl, cbor_value.clone(), self.enabled_features.clone());
       #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
       let mut cv = CBORValidator::new(self.cddl, cbor_value.clone(), self.enabled_features);
       #[cfg(not(feature = "additional-controls"))]
@@ -2608,11 +2607,7 @@ where
           }
 
           #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-          let mut cv = CBORValidator::new(
-            self.cddl,
-            inner_value,
-            self.enabled_features.clone(),
-          );
+          let mut cv = CBORValidator::new(self.cddl, inner_value, self.enabled_features.clone());
           #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
           let mut cv = CBORValidator::new(self.cddl, inner_value, self.enabled_features);
           #[cfg(not(feature = "additional-controls"))]
@@ -5176,7 +5171,12 @@ mod tests {
     let cddl = cddl_from_str(cddl, true)?;
 
     // Test with valid tag 32 (URI)
-    let cbor = ciborium::value::Value::Tag(32, Box::new(ciborium::value::Value::Text("https://example.com".to_string())));
+    let cbor = ciborium::value::Value::Tag(
+      32,
+      Box::new(ciborium::value::Value::Text(
+        "https://example.com".to_string(),
+      )),
+    );
 
     #[cfg(feature = "additional-controls")]
     let mut cv = CBORValidator::new(&cddl, cbor, None);
@@ -5187,7 +5187,10 @@ mod tests {
     assert!(result.is_ok(), "Tag 32 should be valid: {:?}", result);
 
     // Test with valid tag 33
-    let cbor = ciborium::value::Value::Tag(33, Box::new(ciborium::value::Value::Text("base64url".to_string())));
+    let cbor = ciborium::value::Value::Tag(
+      33,
+      Box::new(ciborium::value::Value::Text("base64url".to_string())),
+    );
 
     #[cfg(feature = "additional-controls")]
     let mut cv = CBORValidator::new(&cddl, cbor, None);
@@ -5198,7 +5201,10 @@ mod tests {
     assert!(result.is_ok(), "Tag 33 should be valid: {:?}", result);
 
     // Test with invalid tag 35 (not in my_tags)
-    let cbor = ciborium::value::Value::Tag(35, Box::new(ciborium::value::Value::Text("regexp".to_string())));
+    let cbor = ciborium::value::Value::Tag(
+      35,
+      Box::new(ciborium::value::Value::Text("regexp".to_string())),
+    );
 
     #[cfg(feature = "additional-controls")]
     let mut cv = CBORValidator::new(&cddl, cbor, None);
@@ -5227,7 +5233,10 @@ mod tests {
     let cddl = cddl_from_str(cddl, true)?;
 
     // Test with valid tag 60000 (in first range)
-    let cbor = ciborium::value::Value::Tag(60000, Box::new(ciborium::value::Value::Bytes(vec![0x01, 0x02])));
+    let cbor = ciborium::value::Value::Tag(
+      60000,
+      Box::new(ciborium::value::Value::Bytes(vec![0x01, 0x02])),
+    );
 
     #[cfg(feature = "additional-controls")]
     let mut cv = CBORValidator::new(&cddl, cbor, None);
@@ -5238,7 +5247,10 @@ mod tests {
     assert!(result.is_ok(), "Tag 60000 should be valid: {:?}", result);
 
     // Test with valid tag 60010 (exact match)
-    let cbor = ciborium::value::Value::Tag(60010, Box::new(ciborium::value::Value::Bytes(vec![0x03, 0x04])));
+    let cbor = ciborium::value::Value::Tag(
+      60010,
+      Box::new(ciborium::value::Value::Bytes(vec![0x03, 0x04])),
+    );
 
     #[cfg(feature = "additional-controls")]
     let mut cv = CBORValidator::new(&cddl, cbor, None);
@@ -5249,7 +5261,10 @@ mod tests {
     assert!(result.is_ok(), "Tag 60010 should be valid: {:?}", result);
 
     // Test with invalid tag 60003 (between ranges)
-    let cbor = ciborium::value::Value::Tag(60003, Box::new(ciborium::value::Value::Bytes(vec![0x05, 0x06])));
+    let cbor = ciborium::value::Value::Tag(
+      60003,
+      Box::new(ciborium::value::Value::Bytes(vec![0x05, 0x06])),
+    );
 
     #[cfg(feature = "additional-controls")]
     let mut cv = CBORValidator::new(&cddl, cbor, None);
@@ -5263,8 +5278,8 @@ mod tests {
   }
 
   #[test]
-  fn validate_rfc9682_nonliteral_simple_values() -> std::result::Result<(), Box<dyn std::error::Error>>
-  {
+  fn validate_rfc9682_nonliteral_simple_values(
+  ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Test RFC 9682 Section 3.2 for simple values (#7.<type>)
     // Example:
     // redacted_keys = #7.<TBD4>
@@ -5288,7 +5303,11 @@ mod tests {
     let mut cv = CBORValidator::new(&cddl, cbor);
 
     let result = cv.validate();
-    assert!(result.is_ok(), "Bool false (simple value 20) should be valid: {:?}", result);
+    assert!(
+      result.is_ok(),
+      "Bool false (simple value 20) should be valid: {:?}",
+      result
+    );
 
     // Test with valid simple value 21 (true)
     let cbor = ciborium::value::Value::Bool(true);
@@ -5299,7 +5318,11 @@ mod tests {
     let mut cv = CBORValidator::new(&cddl, cbor);
 
     let result = cv.validate();
-    assert!(result.is_ok(), "Bool true (simple value 21) should be valid: {:?}", result);
+    assert!(
+      result.is_ok(),
+      "Bool true (simple value 21) should be valid: {:?}",
+      result
+    );
 
     // Test with valid simple value 22 (null)
     let cbor = ciborium::value::Value::Null;
@@ -5310,7 +5333,11 @@ mod tests {
     let mut cv = CBORValidator::new(&cddl, cbor);
 
     let result = cv.validate();
-    assert!(result.is_ok(), "Null (simple value 22) should be valid: {:?}", result);
+    assert!(
+      result.is_ok(),
+      "Null (simple value 22) should be valid: {:?}",
+      result
+    );
 
     // Test with a schema that only allows true (simple value 21)
     let cddl_only_true = indoc!(
@@ -5331,7 +5358,10 @@ mod tests {
     let mut cv = CBORValidator::new(&cddl_only_true, cbor);
 
     let result = cv.validate();
-    assert!(result.is_err(), "Bool false (simple value 20) should be invalid when only 21 is allowed");
+    assert!(
+      result.is_err(),
+      "Bool false (simple value 20) should be invalid when only 21 is allowed"
+    );
 
     Ok(())
   }
