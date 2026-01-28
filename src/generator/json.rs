@@ -37,8 +37,9 @@ impl Rng {
     min + (self.next() as usize % (max - min + 1))
   }
 
+  #[allow(clippy::manual_is_multiple_of)] // is_multiple_of not available in MSRV 1.81.0
   fn next_bool(&mut self) -> bool {
-    self.next().is_multiple_of(2)
+    self.next() % 2 == 0
   }
 
   fn next_f64(&mut self) -> f64 {
