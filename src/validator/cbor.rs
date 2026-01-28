@@ -549,12 +549,18 @@ impl<'a> CBORValidator<'a> {
                   return Ok(*value);
                 }
               }
-              return Err(format!("Type name '{}' does not resolve to a simple uint value", ident.ident));
+              return Err(format!(
+                "Type name '{}' does not resolve to a simple uint value",
+                ident.ident
+              ));
             }
           }
         }
-        Err(format!("Type name '{}' not found in CDDL rules", ident.ident))
-      },
+        Err(format!(
+          "Type name '{}' not found in CDDL rules",
+          ident.ident
+        ))
+      }
       _ => Err(format!("Expected uint value or type name, got {}", bound)),
     }
   }
@@ -1003,9 +1009,9 @@ where
           }
         }
       }
-       (Ok(_), Err(u_err)) => {
+      (Ok(_), Err(u_err)) => {
         self.add_error(format!(
-           "invalid cddl range. upper value must be a uint type. got {}. Error: {}",
+          "invalid cddl range. upper value must be a uint type. got {}. Error: {}",
           upper, u_err
         ));
       }
