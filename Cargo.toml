@@ -56,7 +56,7 @@ log = "0.4.28"
 simplelog = "0.12.1"
 
 [dev-dependencies]
-indoc = "2.0.1"
+indoc = "2.0.7"
 pretty_assertions = "1.2.0"
 wasm-bindgen-test = "0.3.34"
 hex = "0.4.3"                # Add hex crate for tests
