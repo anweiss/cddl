@@ -46,16 +46,8 @@ use pest::{
   Parser as PestParser, Span as PestSpan,
 };
 
-#[cfg(feature = "std")]
 use std::borrow::Cow;
-
-#[cfg(not(feature = "std"))]
-use alloc::{
-  borrow::Cow,
-  boxed::Box,
-  string::{String, ToString},
-  vec::Vec,
-};
+use std::collections::HashMap;
 
 /// Convert a Pest error to the existing parser error format with enhanced messages
 pub fn convert_pest_error(error: pest::error::Error<Rule>, input: &str) -> Error {
@@ -314,6 +306,29 @@ fn convert_cddl<'a>(mut pairs: Pairs<'a, Rule>, input: &'a str) -> Result<ast::C
       }
       Rule::EOI => break,
       _ => {}
+    }
+  }
+
+  // Check for duplicate rule names (non-alternate rules)
+  let mut seen_names: HashMap<String, usize> = HashMap::new();
+  for (idx, rule) in rules.iter().enumerate() {
+    let name = rule.name();
+    let is_alternate = match rule {
+      ast::Rule::Type { rule, .. } => rule.is_type_choice_alternate,
+      ast::Rule::Group { rule, .. } => rule.is_group_choice_alternate,
+    };
+    if !is_alternate {
+      if let Some(_prev_idx) = seen_names.get(&name) {
+        return Err(Error::PARSER {
+          #[cfg(feature = "ast-span")]
+          position: Position::default(),
+          msg: ErrorMsg {
+            short: format!("rule \"{}\" is already defined", name),
+            extended: None,
+          },
+        });
+      }
+      seen_names.insert(name, idx);
     }
   }
 
@@ -739,33 +754,85 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
   #[cfg(feature = "ast-span")]
   let span = pest_span_to_ast_span(&pair.as_span(), input);
 
-  // Declare these at function scope so they can be set in the first loop
-  // and used later
-  let mut typename_ident = None;
-  let mut generic_args = None;
+  // Use the raw text prefix to determine which type2 alternative matched,
+  // since PEG literals (~, &, (, {, [, #) are not captured as child pairs.
+  let text = pair.as_str().trim_start();
 
-  // Clone the pair to allow multiple iterations
-  let pair_clone = pair.clone();
-
-  for inner in pair_clone.into_inner() {
-    match inner.as_rule() {
-      Rule::value => {
+  if text.starts_with('~') {
+    // Unwrap: "~" ~ typename ~ generic_args?
+    let mut ident = None;
+    let mut generic_args = None;
+    for inner in pair.into_inner() {
+      match inner.as_rule() {
+        Rule::typename => ident = Some(convert_identifier(inner, input, false)?),
+        Rule::generic_args => generic_args = Some(convert_generic_args(inner, input)?),
+        _ => {}
+      }
+    }
+    let ident = ident.ok_or_else(|| Error::PARSER {
+      #[cfg(feature = "ast-span")]
+      position: Position::default(),
+      msg: ErrorMsg {
+        short: "Missing identifier in unwrap expression".to_string(),
+        extended: None,
+      },
+    })?;
+    Ok(ast::Type2::Unwrap {
+      ident,
+      generic_args,
+      #[cfg(feature = "ast-span")]
+      span,
+      #[cfg(feature = "ast-comments")]
+      comments: None,
+    })
+  } else if text.starts_with('&') {
+    // Choice from group or inline group
+    let mut group_child = None;
+    let mut groupname_ident = None;
+    let mut generic_args = None;
+    for inner in pair.into_inner() {
+      match inner.as_rule() {
+        Rule::group => group_child = Some(convert_group(inner, input)?),
+        Rule::groupname => groupname_ident = Some(convert_identifier(inner, input, true)?),
+        Rule::generic_args => generic_args = Some(convert_generic_args(inner, input)?),
+        _ => {}
+      }
+    }
+    if let Some(group) = group_child {
+      Ok(ast::Type2::ChoiceFromInlineGroup {
+        group,
         #[cfg(feature = "ast-span")]
-        return convert_value_to_type2(inner, input, span);
-        #[cfg(not(feature = "ast-span"))]
-        return convert_value_to_type2(inner, input);
-      }
-      Rule::typename => {
-        // Don't return immediately - we need to check for generic_args
-        // which may come as a sibling rule
-        typename_ident = Some(convert_identifier(inner.clone(), input, false)?);
-      }
-      Rule::generic_args => {
-        // Store for later - will be combined with typename
-        generic_args = Some(convert_generic_args(inner, input)?);
-      }
-      Rule::type_expr => {
-        // Parenthesized type
+        span,
+        #[cfg(feature = "ast-comments")]
+        comments: None,
+        #[cfg(feature = "ast-comments")]
+        comments_before_group: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_group: None,
+      })
+    } else if let Some(ident) = groupname_ident {
+      Ok(ast::Type2::ChoiceFromGroup {
+        ident,
+        generic_args,
+        #[cfg(feature = "ast-span")]
+        span,
+        #[cfg(feature = "ast-comments")]
+        comments: None,
+      })
+    } else {
+      Err(Error::PARSER {
+        #[cfg(feature = "ast-span")]
+        position: Position::default(),
+        msg: ErrorMsg {
+          short: "Invalid choice-from-group expression".to_string(),
+          extended: None,
+        },
+      })
+    }
+  } else if text.starts_with('(') {
+    // Parenthesized type: "(" ~ type_expr ~ ")"
+    for inner in pair.into_inner() {
+      if inner.as_rule() == Rule::type_expr {
         return Ok(ast::Type2::ParenthesizedType {
           pt: convert_type_expr(inner, input)?,
           #[cfg(feature = "ast-span")]
@@ -776,84 +843,102 @@ fn convert_type2<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type2<
           comments_after_type: None,
         });
       }
-      Rule::group => {
-        // Check the original text to determine if this is a map { } or array [ ]
-        // We need to look at the full type2 pair's text to see the delimiters
-        let full_text = pair.as_str().trim();
-        let is_array = full_text.starts_with('[');
-
-        let group = convert_group(inner, input)?;
-
-        if is_array {
-          return Ok(ast::Type2::Array {
-            group,
-            #[cfg(feature = "ast-span")]
-            span,
-            #[cfg(feature = "ast-comments")]
-            comments_before_group: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_group: None,
-          });
-        } else {
-          return Ok(ast::Type2::Map {
-            group,
-            #[cfg(feature = "ast-span")]
-            span,
-            #[cfg(feature = "ast-comments")]
-            comments_before_group: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_group: None,
-          });
-        }
+    }
+    Ok(ast::Type2::Any {
+      #[cfg(feature = "ast-span")]
+      span,
+    })
+  } else if text.starts_with('{') {
+    // Map: "{" ~ group ~ "}"
+    for inner in pair.into_inner() {
+      if inner.as_rule() == Rule::group {
+        return Ok(ast::Type2::Map {
+          group: convert_group(inner, input)?,
+          #[cfg(feature = "ast-span")]
+          span,
+          #[cfg(feature = "ast-comments")]
+          comments_before_group: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_group: None,
+        });
       }
-      Rule::tag_expr => {
+    }
+    Ok(ast::Type2::Any {
+      #[cfg(feature = "ast-span")]
+      span,
+    })
+  } else if text.starts_with('[') {
+    // Array: "[" ~ group ~ "]"
+    for inner in pair.into_inner() {
+      if inner.as_rule() == Rule::group {
+        return Ok(ast::Type2::Array {
+          group: convert_group(inner, input)?,
+          #[cfg(feature = "ast-span")]
+          span,
+          #[cfg(feature = "ast-comments")]
+          comments_before_group: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_group: None,
+        });
+      }
+    }
+    Ok(ast::Type2::Any {
+      #[cfg(feature = "ast-span")]
+      span,
+    })
+  } else if text.starts_with('#') {
+    // Tag expression
+    for inner in pair.into_inner() {
+      if inner.as_rule() == Rule::tag_expr {
         return convert_tag_expr(inner, input);
       }
-      _ => {}
     }
-  }
-
-  // Handle typename with generic_args by checking all children
-  // (may have already been partially set in first loop)
-  if typename_ident.is_some() {
-    // Already found typename in first loop, return it
-    return Ok(ast::Type2::Typename {
-      ident: typename_ident.unwrap(),
-      generic_args,
+    Ok(ast::Type2::Any {
       #[cfg(feature = "ast-span")]
       span,
-    });
-  }
+    })
+  } else {
+    // Remaining alternatives: value | typename ~ generic_args?
+    let mut value_pair = None;
+    let mut typename_ident = None;
+    let mut generic_args = None;
 
-  // Typename not found in first loop, scan again (shouldn't normally happen)
-  for inner in pair.clone().into_inner() {
-    match inner.as_rule() {
-      Rule::typename => {
-        typename_ident = Some(convert_identifier(inner, input, false)?);
-      }
-      Rule::generic_args => {
-        if generic_args.is_none() {
+    for inner in pair.into_inner() {
+      match inner.as_rule() {
+        Rule::value => {
+          value_pair = Some(inner);
+        }
+        Rule::typename => {
+          typename_ident = Some(convert_identifier(inner, input, false)?);
+        }
+        Rule::generic_args => {
           generic_args = Some(convert_generic_args(inner, input)?);
         }
+        _ => {}
       }
-      _ => {}
+    }
+
+    if let Some(vp) = value_pair {
+      convert_value_to_type2(
+        vp,
+        input,
+        #[cfg(feature = "ast-span")]
+        span,
+      )
+    } else if let Some(ident) = typename_ident {
+      Ok(ast::Type2::Typename {
+        ident,
+        generic_args,
+        #[cfg(feature = "ast-span")]
+        span,
+      })
+    } else {
+      Ok(ast::Type2::Any {
+        #[cfg(feature = "ast-span")]
+        span,
+      })
     }
   }
-
-  if let Some(ident) = typename_ident {
-    return Ok(ast::Type2::Typename {
-      ident,
-      generic_args,
-      #[cfg(feature = "ast-span")]
-      span,
-    });
-  }
-
-  // Default to Any if we can't determine the type
-  Ok(ast::Type2::Any {
-    #[cfg(feature = "ast-span")]
-    span,
-  })
 }
 
 /// Convert value to Type2
@@ -870,12 +955,10 @@ fn convert_value_to_type2<'a>(
       }
       Rule::text_value => {
         let text = inner.as_str();
-        // Remove quotes
+        // Remove quotes, preserve escape sequences as-is
         let text_content = &text[1..text.len() - 1];
-        // Handle escape sequences
-        let unescaped = unescape_text(text_content);
         return Ok(ast::Type2::TextValue {
-          value: Cow::Owned(unescaped),
+          value: Cow::Borrowed(text_content),
           span,
         });
       }
@@ -907,12 +990,10 @@ fn convert_value_to_type2<'a>(
       }
       Rule::text_value => {
         let text = inner.as_str();
-        // Remove quotes
+        // Remove quotes, preserve escape sequences as-is
         let text_content = &text[1..text.len() - 1];
-        // Handle escape sequences
-        let unescaped = unescape_text(text_content);
         return Ok(ast::Type2::TextValue {
-          value: Cow::Owned(unescaped),
+          value: Cow::Borrowed(text_content),
         });
       }
       Rule::bytes_value => {
@@ -928,46 +1009,6 @@ fn convert_value_to_type2<'a>(
       extended: None,
     },
   })
-}
-
-/// Unescape text value
-fn unescape_text(text: &str) -> String {
-  let mut result = String::new();
-  let mut chars = text.chars();
-
-  while let Some(ch) = chars.next() {
-    if ch == '\\' {
-      if let Some(next_ch) = chars.next() {
-        match next_ch {
-          'n' => result.push('\n'),
-          'r' => result.push('\r'),
-          't' => result.push('\t'),
-          '\\' => result.push('\\'),
-          '"' => result.push('"'),
-          '/' => result.push('/'),
-          'b' => result.push('\u{0008}'),
-          'f' => result.push('\u{000C}'),
-          'u' => {
-            // Unicode escape sequence
-            let hex: String = chars.by_ref().take(4).collect();
-            if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
-              if let Some(unicode_char) = char::from_u32(code_point) {
-                result.push(unicode_char);
-              }
-            }
-          }
-          _ => {
-            result.push('\\');
-            result.push(next_ch);
-          }
-        }
-      }
-    } else {
-      result.push(ch);
-    }
-  }
-
-  result
 }
 
 /// Convert number to Type2
@@ -1206,11 +1247,15 @@ fn convert_tag_expr<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Typ
   let span = pest_span_to_ast_span(&pair.as_span(), input);
 
   // Tag expressions can be:
-  // #6.32(tstr) - tagged data with literal tag
-  // #6.<typename> - tagged data with type constraint
+  // #6.32(tstr) - tagged data with literal tag number
+  // #6.<typename>(tstr) - tagged data with type constraint
+  // #6(type) - tag 6 with type but no constraint
+  // #N - data major type N
+  // #N.V - data major type N with constraint V
   // # - any
+  // #(type) - tagged with no specific tag
 
-  let full_str = pair.as_str();
+  let full_str = pair.as_str().trim();
 
   if full_str == "#" {
     return Ok(ast::Type2::Any {
@@ -1219,65 +1264,74 @@ fn convert_tag_expr<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Typ
     });
   }
 
-  // Parse the tag expression structure
-  let mut major_type = None;
-  let mut tag_constraint = None;
-  let mut tagged_type = None;
+  // Extract major type digit from the string (first char after #)
+  let after_hash = &full_str[1..];
+  let major_type: Option<u8> = after_hash
+    .chars()
+    .next()
+    .and_then(|c| c.to_digit(10))
+    .map(|d| d as u8);
+
+  let mut tag_constraint: Option<TagConstraint<'a>> = None;
+  let mut type_expr = None;
 
   for inner in pair.into_inner() {
     match inner.as_rule() {
-      Rule::DIGIT => {
-        // Major type (e.g., the '6' in '#6.42(tstr)')
-        major_type = Some(inner.as_str().parse::<u8>().map_err(|_| Error::PARSER {
-          #[cfg(feature = "ast-span")]
-          position: pest_span_to_position(&inner.as_span(), input),
-          msg: ErrorMsg {
-            short: "Invalid major type".to_string(),
-            extended: None,
-          },
-        })?);
-      }
       Rule::tag_value => {
-        // Tag value - can be uint_value or type expression
-        for tag_inner in inner.into_inner() {
-          match tag_inner.as_rule() {
+        // tag_value = { uint_value | "<" ~ type_expr ~ ">" }
+        for tv in inner.into_inner() {
+          match tv.as_rule() {
             Rule::uint_value => {
-              let tag_num = tag_inner
-                .as_str()
-                .parse::<u64>()
-                .map_err(|_| Error::PARSER {
-                  #[cfg(feature = "ast-span")]
-                  position: pest_span_to_position(&tag_inner.as_span(), input),
-                  msg: ErrorMsg {
-                    short: "Invalid tag number".to_string(),
-                    extended: None,
-                  },
-                })?;
-              tag_constraint = Some(TagConstraint::Literal(tag_num));
+              let val = tv.as_str().parse::<u64>().unwrap_or(0);
+              tag_constraint = Some(TagConstraint::Literal(val));
             }
             Rule::type_expr => {
-              // Type expression in angle brackets: <typename>
-              tag_constraint = Some(TagConstraint::Type(tag_inner.as_str()));
+              tag_constraint = Some(TagConstraint::Type(tv.as_str()));
             }
             _ => {}
           }
         }
       }
       Rule::type_expr => {
-        // The type inside the parentheses
-        tagged_type = Some(convert_type_expr(inner, input)?);
+        type_expr = Some(convert_type_expr(inner, input)?);
       }
       _ => {}
     }
   }
 
-  // Check if this is a major type expression (e.g., #1.5) or a tag expression (e.g., #6.42(tstr))
-  if let Some(mt) = major_type {
-    if mt == 6 {
-      // This is a CBOR tag expression (#6.x(type))
-      if let Some(t) = tagged_type {
-        return Ok(ast::Type2::TaggedData {
-          tag: tag_constraint,
+  match major_type {
+    Some(6) => {
+      // CBOR tag (#6.N(type) or #6(type))
+      let t = type_expr.unwrap_or_else(|| ast::Type {
+        type_choices: vec![],
+        #[cfg(feature = "ast-span")]
+        span: ast::Span::default(),
+      });
+      Ok(ast::Type2::TaggedData {
+        tag: tag_constraint,
+        t,
+        #[cfg(feature = "ast-span")]
+        span,
+        #[cfg(feature = "ast-comments")]
+        comments_before_type: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_type: None,
+      })
+    }
+    Some(mt) => {
+      // Data major type (#N or #N.V)
+      Ok(ast::Type2::DataMajorType {
+        mt,
+        constraint: tag_constraint,
+        #[cfg(feature = "ast-span")]
+        span,
+      })
+    }
+    None => {
+      // Just "#" with optional (type)
+      if let Some(t) = type_expr {
+        Ok(ast::Type2::TaggedData {
+          tag: None,
           t,
           #[cfg(feature = "ast-span")]
           span,
@@ -1285,58 +1339,15 @@ fn convert_tag_expr<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Typ
           comments_before_type: None,
           #[cfg(feature = "ast-comments")]
           comments_after_type: None,
-        });
-      } else if tag_constraint.is_some() {
-        // Tag without type specified - this is less common but valid
-        // Create a default type (any)
-        return Ok(ast::Type2::TaggedData {
-          tag: tag_constraint,
-          t: ast::Type {
-            type_choices: vec![ast::TypeChoice {
-              type1: ast::Type1 {
-                type2: ast::Type2::Any {
-                  #[cfg(feature = "ast-span")]
-                  span: ast::Span::default(),
-                },
-                operator: None,
-                #[cfg(feature = "ast-span")]
-                span: ast::Span::default(),
-                #[cfg(feature = "ast-comments")]
-                comments_after_type: None,
-              },
-              #[cfg(feature = "ast-comments")]
-              comments_before_type: None,
-              #[cfg(feature = "ast-comments")]
-              comments_after_type: None,
-            }],
-            #[cfg(feature = "ast-span")]
-            span: ast::Span::default(),
-          },
+        })
+      } else {
+        Ok(ast::Type2::Any {
           #[cfg(feature = "ast-span")]
           span,
-          #[cfg(feature = "ast-comments")]
-          comments_before_type: None,
-          #[cfg(feature = "ast-comments")]
-          comments_after_type: None,
-        });
+        })
       }
-    } else {
-      // This is a major type expression (e.g., #1.5)
-      // Create a DataMajorType
-      return Ok(ast::Type2::DataMajorType {
-        mt,
-        constraint: tag_constraint,
-        #[cfg(feature = "ast-span")]
-        span,
-      });
     }
   }
-
-  // If we couldn't parse it properly, return Any
-  Ok(ast::Type2::Any {
-    #[cfg(feature = "ast-span")]
-    span,
-  })
 }
 
 /// Convert group
@@ -1410,16 +1421,18 @@ fn convert_group_entry<'a>(
   let mut is_cut = false;
   let mut is_arrow_map = false;
 
-  // Peek at the inner pairs to determine the structure
-  let inner_pairs: Vec<_> = pair.clone().into_inner().collect();
-
-  // Check if this has a member key with colon or arrow
-  // We need to check the full matched text since : and => are literals in the grammar
+  // Check the full matched text to determine the entry type
   let full_text = pair.as_str();
-  let has_member_key = inner_pairs.iter().any(|p| p.as_rule() == Rule::member_key);
-  let has_colon = has_member_key && full_text.contains(':') && !full_text.contains("=>");
-  let has_arrow = has_member_key && full_text.contains("=>");
-  let has_cut = full_text.starts_with('^');
+  let has_member_key = pair
+    .clone()
+    .into_inner()
+    .any(|p| p.as_rule() == Rule::member_key);
+  let has_cut = pair.clone().into_inner().any(|p| p.as_rule() == Rule::cut);
+  // Determine colon vs arrow by checking for "=>" in the text
+  // We need to be careful: "=>" could appear inside a text value
+  // Use the grammar structure: arrow alternative has cut? child and comes first
+  let has_arrow = has_member_key && (has_cut || full_text.contains("=>"));
+  let has_colon = has_member_key && !has_arrow && full_text.contains(':');
 
   if has_cut {
     is_cut = true;
@@ -1433,6 +1446,9 @@ fn convert_group_entry<'a>(
     match inner.as_rule() {
       Rule::occur => {
         occur = Some(convert_occurrence(inner, input)?);
+      }
+      Rule::cut => {
+        is_cut = true;
       }
       Rule::member_key => {
         if has_colon || has_arrow {
@@ -1493,76 +1509,24 @@ fn convert_group_entry<'a>(
     });
   }
 
-  // Check if entry_type is a simple bare typename and convert to group reference
-  // This handles cases like ( NullPart // SinglePart ) where the identifiers should be group refs
-  if let Some(ref et) = entry_type {
-    if member_key.is_none() && et.type_choices.len() == 1 {
-      let tc = &et.type_choices[0];
-      // Only convert if there's no operator and it's a simple typename
-      if tc.type1.operator.is_none() {
-        if let ast::Type2::Typename {
-          ident,
-          generic_args: ga,
-          ..
-        } = &tc.type1.type2
-        {
-          // Don't convert if the identifier is a common CDDL prelude type or looks like a generic parameter
-          let name = ident.ident;
-          let is_prelude_type = matches!(
-            name,
-            "any"
-              | "uint"
-              | "nint"
-              | "int"
-              | "bstr"
-              | "bytes"
-              | "tstr"
-              | "text"
-              | "tdate"
-              | "time"
-              | "number"
-              | "biguint"
-              | "bignint"
-              | "bigint"
-              | "integer"
-              | "unsigned"
-              | "decfrac"
-              | "bigfloat"
-              | "eb64url"
-              | "eb64legacy"
-              | "eb16"
-              | "encoded-cbor"
-              | "uri"
-              | "b64url"
-              | "b64legacy"
-              | "regexp"
-              | "mime-message"
-              | "cbor-any"
-              | "float16"
-              | "float32"
-              | "float64"
-              | "float16-32"
-              | "float32-64"
-              | "float"
-              | "false"
-              | "true"
-              | "bool"
-              | "nil"
-              | "null"
-              | "undefined"
-          );
-
-          // Check if it looks like a generic parameter (single word, all caps, length <= 8)
-          let is_likely_generic =
-            name.chars().all(|c| c.is_uppercase() || c == '_') && name.len() <= 8;
-
-          if !is_prelude_type && !is_likely_generic {
-            // This is likely a group reference, not a type
+  // If entry_type is just a single typename with no type choices and no operator,
+  // convert it to TypeGroupname for compatibility with downstream code
+  if member_key.is_none() {
+    if let Some(ref et) = entry_type {
+      if et.type_choices.len() == 1 {
+        let tc = &et.type_choices[0];
+        if tc.type1.operator.is_none() {
+          if let ast::Type2::Typename {
+            ref ident,
+            ref generic_args,
+            ..
+          } = tc.type1.type2
+          {
             return Ok(ast::GroupEntry::TypeGroupname {
               ge: ast::TypeGroupnameEntry {
                 occur,
                 name: ident.clone(),
-                generic_args: ga.clone(),
+                generic_args: generic_args.clone(),
               },
               #[cfg(feature = "ast-span")]
               span,
@@ -1796,7 +1760,31 @@ fn convert_member_key_simple<'a>(
           span,
         )?;
 
-        // Extract Value from Type2
+        if is_arrow_map {
+          // For arrow maps, wrap the value as a Type1 member key
+          let type1 = ast::Type1 {
+            type2: value_type2,
+            operator: None,
+            #[cfg(feature = "ast-span")]
+            span,
+            #[cfg(feature = "ast-comments")]
+            comments_after_type: None,
+          };
+          return Ok(ast::MemberKey::Type1 {
+            t1: Box::new(type1),
+            is_cut,
+            #[cfg(feature = "ast-span")]
+            span,
+            #[cfg(feature = "ast-comments")]
+            comments_before_cut: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_cut: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_arrowmap: None,
+          });
+        }
+
+        // Extract Value from Type2 for colon member keys
         let value = match value_type2 {
           ast::Type2::IntValue { value, .. } => Value::INT(value),
           ast::Type2::UintValue { value, .. } => Value::UINT(value),
@@ -1922,7 +1910,27 @@ fn convert_member_key_simple<'a>(
       Rule::value => {
         let value_type2 = convert_value_to_type2(inner.clone(), input)?;
 
-        // Extract Value from Type2
+        if is_arrow_map {
+          // For arrow maps, wrap the value as a Type1 member key
+          let type1 = ast::Type1 {
+            type2: value_type2,
+            operator: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_type: None,
+          };
+          return Ok(ast::MemberKey::Type1 {
+            t1: Box::new(type1),
+            is_cut,
+            #[cfg(feature = "ast-comments")]
+            comments_before_cut: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_cut: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_arrowmap: None,
+          });
+        }
+
+        // Extract Value from Type2 for colon member keys
         let value = match value_type2 {
           ast::Type2::IntValue { value, .. } => Value::INT(value),
           ast::Type2::UintValue { value, .. } => Value::UINT(value),
@@ -2123,18 +2131,15 @@ person = {
 }
 "#;
 
-    // Parse with existing parser
-    #[cfg(all(not(target_arch = "wasm32"), feature = "std"))]
+    // Parse with existing parser (now delegates to Pest)
     let existing_result = cddl_from_str(input, true);
-    #[cfg(any(target_arch = "wasm32", not(feature = "std")))]
-    let existing_result = cddl_from_str(input);
     assert!(
       existing_result.is_ok(),
       "Existing parser failed: {:?}",
       existing_result.err()
     );
 
-    // Parse with Pest parser
+    // Parse with Pest parser directly
     let pest_result = cddl_from_pest_str(input);
     assert!(
       pest_result.is_ok(),
@@ -2143,12 +2148,9 @@ person = {
     );
 
     // Both should produce 1 rule
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-      let existing_cddl = existing_result.unwrap();
-      let pest_cddl = pest_result.unwrap();
-      assert_eq!(existing_cddl.rules.len(), pest_cddl.rules.len());
-    }
+    let existing_cddl = existing_result.unwrap();
+    let pest_cddl = pest_result.unwrap();
+    assert_eq!(existing_cddl.rules.len(), pest_cddl.rules.len());
   }
 
   #[test]

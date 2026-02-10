@@ -19,16 +19,13 @@
 //! (Proposed Standard) at
 //! [https://tools.ietf.org/html/rfc8610](https://tools.ietf.org/html/rfc8610).
 //!
-//! This crate includes a handwritten parser and lexer for CDDL, and its
-//! development has been heavily inspired by the techniques outlined in Thorsten
-//! Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/).
-//! The AST has been built to closely match the rules defined by the ABNF
+//! This crate uses the [Pest](https://pest.rs/) parser generator for parsing
+//! CDDL. The AST has been built to closely match the rules defined by the ABNF
 //! grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of
 //! the spec. All CDDL must use UTF-8 for its encoding per the spec.
 //!
-//! This crate supports validation of both CBOR and JSON data structures. An
-//! extremely basic REPL is included as well. This crate's minimum supported
-//! Rust version (MSRV) is 1.81.0.
+//! This crate supports validation of both CBOR and JSON data structures. This
+//! crate's minimum supported Rust version (MSRV) is 1.81.0.
 //!
 //! Also bundled into this repository is a basic language server implementation
 //! and extension for Visual Studio Code for editing CDDL. The implementation is
@@ -40,18 +37,13 @@
 //! - [x] Verify conformance of CDDL documents against RFC 8610
 //! - [x] Validate CBOR data structures
 //! - [x] Validate JSON documents
-//! - [x] Basic REPL
 //! - [ ] Generate dummy JSON from conformant CDDL
 //! - [x] As close to zero-copy as possible
 //! - [x] Compile WebAssembly target for browser and Node.js
-//! - [x] `no_std` support (lexing and parsing only)
 //! - [x] Language server implementation and Visual Studio Code Extension
 //!
 //! ## Non-goals
 //!
-//! - Performance (if this crate gains enough traction, it may be prudent to
-//!   conduct more formal profiling and/or explore using a parser-combinator
-//!   framework like [nom](https://github.com/Geal/nom))
 //! - Support CBOR diagnostic notation
 //! - I-JSON compatibility
 //!
@@ -181,14 +173,10 @@
 //! cddl = "0.10.1"
 //! ```
 //!
-//! Both JSON and CBOR validation require `std`.
-//!
 //! ### Feature flags
 //!
 //! A few convenience features have been included to make the AST more concise
-//! and for enabling additional functionality. You can build with
-//! `default-features = false` for a `no_std` build and selectively enable any
-//! of the features below.
+//! and for enabling additional functionality.
 //!
 //! **`--feature ast-span`**
 //!
@@ -492,25 +480,6 @@
 //! assert!(validate_cbor_from_slice(cddl, cbor, Some(&["cbor"])).is_ok())
 //! ```
 //!
-//! ## `no_std` support
-//!
-//! Only the lexer and parser can be used in a `no_std` context provided that a
-//! heap allocator is available. This can be enabled by opting out of the
-//! default features in your `Cargo.toml` file as follows:
-//!
-//! ```toml
-//! [dependencies]
-//! cddl = { version = "0.10.1", default-features = false }
-//! ```
-//!
-//! Zero-copy parsing is implemented to the extent that is possible. Allocation
-//! is required for error handling and diagnostics.
-//!
-//! Both JSON and CBOR validation are dependent on their respective heap
-//! allocated `Value` types, but since these types aren't supported in a
-//! `no_std` context, they subsequently aren't supported by this crate in
-//! `no_std`.
-//!
 //! ## Projects using this crate
 //!
 //! Below are some known projects that leverage this crate:
@@ -520,23 +489,12 @@
 //!
 
 #![allow(dead_code)]
-#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 
-#[macro_use]
-#[cfg(not(feature = "std"))]
-extern crate alloc;
-
-#[cfg(not(feature = "std"))]
-extern crate core as std;
-
-#[cfg(feature = "std")]
 extern crate serde_json;
 
-#[cfg(feature = "std")]
 extern crate uriparse;
 
-#[cfg(feature = "std")]
 extern crate base64_url;
 
 /// Abstract syntax tree representing a CDDL definition
@@ -544,17 +502,15 @@ pub mod ast;
 /// Static error messages
 #[allow(missing_docs)]
 pub mod error;
-/// Lexer for CDDL
+/// Lexer types (position information)
 pub mod lexer;
 /// Parser for CDDL
 pub mod parser;
 /// Bridge layer between Pest parser and existing AST
-#[cfg(feature = "std")]
 pub mod pest_bridge;
-/// Pest-based parser for CDDL (alternative implementation)
-#[cfg(feature = "std")]
+/// Pest-based parser for CDDL
 pub mod pest_parser;
-/// CDDL tokens for lexing
+/// CDDL tokens
 pub mod token;
 /// Validators for JSON and CBOR data structures
 #[cfg(feature = "std")]

@@ -131,7 +131,7 @@ my_map = map<text, int>"#;
   fn test_cut_operator() {
     let input = r#"data = {
   type: int,
-  ^ => any
+  tstr ^ => any
 }"#;
     let result = CDDLParser::parse(Rule::cddl, input);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());

@@ -167,18 +167,19 @@ group_choice_op = { "//" }
 // Group entries define the contents of maps and arrays
 // Supported forms:
 // - Member with key: key: type (for maps with bareword keys)
-// - Member with arrow: key => type (for computed keys)
+// - Member with arrow: key [^] => type (for computed keys, optional cut)
 // - Occurrence with type: ? type, * type, + type, n*m type
 // - Named group reference: groupname
 // - Nested group: ( group )
-// - Cut entries: ^label or ^ => type (prevents backtracking)
-group_entry = { occur? ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr
-              | occur? ~ S ~ member_key ~ S ~ "=>" ~ S ~ type_expr
-              | occur? ~ S ~ type_expr
-              | occur? ~ S ~ groupname ~ generic_args?
+// - Cut entries: key ^ => type (prevents backtracking)
+group_entry = { occur? ~ S ~ member_key ~ S ~ cut? ~ S ~ "=>" ~ S ~ type_expr
+              | occur? ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr
               | occur? ~ S ~ "(" ~ S ~ group ~ S ~ ")"
-              | "^" ~ S ~ "=>" ~ S ~ type_expr
-              | "^" ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr }
+              | occur? ~ S ~ type_expr
+              | occur? ~ S ~ groupname ~ generic_args? }
+
+// Cut marker (^) prevents backtracking past this point in validation
+cut = { "^" }
 
 // Member keys can be barewords, type names, or literal values
 member_key = { bareword | typename ~ generic_args? | value }
@@ -193,17 +194,20 @@ member_key = { bareword | typename ~ generic_args? | value }
 // + - one or more
 // n* - exactly n times
 // n*m - between n and m times
-occur = { occur_zero_or_more
+// Note: Sub-rules are atomic to prevent implicit whitespace skipping
+// before the negative lookahead (!DIGIT), and ordered so that
+// zero_or_more/one_or_more/optional match before the catch-all range.
+occur = { occur_exact
+        | occur_zero_or_more
         | occur_one_or_more
         | occur_optional
-        | occur_exact
         | occur_range }
 
-occur_exact = { uint_value ~ "*" }
-occur_range = { uint_value ~ "*" ~ uint_value | uint_value? ~ "*" ~ uint_value? }
-occur_zero_or_more = { "*" }
-occur_one_or_more = { "+" }
-occur_optional = { "?" }
+occur_exact = @{ uint_value ~ "*" ~ !DIGIT }
+occur_range = @{ uint_value ~ "*" ~ uint_value | uint_value? ~ "*" ~ uint_value? }
+occur_zero_or_more = @{ "*" ~ !DIGIT }
+occur_one_or_more = @{ "+" }
+occur_optional = @{ "?" }
 
 // =============================================================================
 // IDENTIFIERS

@@ -3,9 +3,9 @@
 //! This module provides an alternative parser implementation using the Pest parsing library.
 //! It parses CDDL grammar as defined in RFC 8610 using the grammar file `cddl.pest`.
 
-#[cfg(not(feature = "std"))]
-extern crate alloc;
+#![allow(missing_docs)]
 
+#[allow(unused_imports)]
 use pest::Parser;
 use pest_derive::Parser;
 
@@ -146,7 +146,7 @@ my-map = map<text, int>
 
   #[test]
   fn test_pest_parser_coexistence_with_existing_parser() {
-    // Demonstrate that both the existing handwritten parser and Pest parser
+    // Demonstrate that both the public API and Pest parser directly
     // can parse the same CDDL input
     let input = r#"
 person = {
@@ -155,18 +155,15 @@ person = {
 }
 "#;
 
-    // Test existing parser
-    #[cfg(all(not(target_arch = "wasm32"), feature = "std"))]
+    // Test public API (now backed by Pest)
     let existing_result = cddl_from_str(input, true);
-    #[cfg(any(target_arch = "wasm32", not(feature = "std")))]
-    let existing_result = cddl_from_str(input);
     assert!(
       existing_result.is_ok(),
-      "Existing parser failed: {:?}",
+      "Parser failed: {:?}",
       existing_result.err()
     );
 
-    // Test Pest parser
+    // Test Pest parser directly
     let pest_result = CddlParser::parse(Rule::cddl, input);
     assert!(
       pest_result.is_ok(),

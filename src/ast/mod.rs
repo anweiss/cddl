@@ -9,23 +9,13 @@ use crate::token::{
 };
 
 use std::{
+  borrow::Cow,
   fmt::{self, Write},
   marker::PhantomData,
 };
 
-#[cfg(feature = "std")]
-use std::borrow::Cow;
-
 #[cfg(target_arch = "wasm32")]
 use serde::{self, Serialize};
-
-#[cfg(not(feature = "std"))]
-use alloc::{
-  borrow::Cow,
-  boxed::Box,
-  string::{String, ToString},
-  vec::Vec,
-};
 
 /// Starting index, ending index and line number
 #[cfg(feature = "ast-span")]

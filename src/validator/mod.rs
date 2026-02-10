@@ -27,7 +27,7 @@ use json::JSONValidator;
 use serde::de::Deserialize;
 
 #[cfg(target_arch = "wasm32")]
-use crate::{error::ErrorMsg, lexer::Position};
+use crate::{error::ErrorMsg, lexer::Position, parser, pest_bridge};
 #[cfg(target_arch = "wasm32")]
 use serde::Serialize;
 #[cfg(target_arch = "wasm32")]
@@ -113,7 +113,23 @@ pub fn validate_json_from_str(
   json: &str,
   enabled_features: Option<Box<[JsValue]>>,
 ) -> std::result::Result<JsValue, JsValue> {
-  let c = crate::pest_bridge::cddl_from_pest_str(cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = pest_bridge::cddl_from_pest_str(cddl).map_err(|e| {
+    if let parser::Error::PARSER {
+      #[cfg(feature = "ast-span")]
+      position,
+      msg,
+    } = &e
+    {
+      let errors = vec![ParserError {
+        #[cfg(feature = "ast-span")]
+        position: *position,
+        msg: msg.clone(),
+      }];
+      serde_wasm_bindgen::to_value(&errors).unwrap_or_else(|e| JsValue::from(e.to_string()))
+    } else {
+      JsValue::from(e.to_string())
+    }
+  })?;
 
   let json =
     serde_json::from_str::<serde_json::Value>(json).map_err(|e| JsValue::from(e.to_string()))?;
@@ -130,7 +146,23 @@ pub fn validate_json_from_str(
 #[wasm_bindgen]
 /// Validate JSON string from a given CDDL document string
 pub fn validate_json_from_str(cddl: &str, json: &str) -> std::result::Result<JsValue, JsValue> {
-  let c = crate::pest_bridge::cddl_from_pest_str(cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = pest_bridge::cddl_from_pest_str(cddl).map_err(|e| {
+    if let parser::Error::PARSER {
+      #[cfg(feature = "ast-span")]
+      position,
+      msg,
+    } = &e
+    {
+      let errors = vec![ParserError {
+        #[cfg(feature = "ast-span")]
+        position: *position,
+        msg: msg.clone(),
+      }];
+      serde_wasm_bindgen::to_value(&errors).unwrap_or_else(|e| JsValue::from(e.to_string()))
+    } else {
+      JsValue::from(e.to_string())
+    }
+  })?;
 
   let json =
     serde_json::from_str::<serde_json::Value>(json).map_err(|e| JsValue::from(e.to_string()))?;
@@ -182,7 +214,23 @@ pub fn validate_cbor_from_slice(
   cbor_slice: &[u8],
   enabled_features: Option<Box<[JsValue]>>,
 ) -> std::result::Result<JsValue, JsValue> {
-  let c = crate::pest_bridge::cddl_from_pest_str(cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = pest_bridge::cddl_from_pest_str(cddl).map_err(|e| {
+    if let parser::Error::PARSER {
+      #[cfg(feature = "ast-span")]
+      position,
+      msg,
+    } = &e
+    {
+      let errors = vec![ParserError {
+        #[cfg(feature = "ast-span")]
+        position: *position,
+        msg: msg.clone(),
+      }];
+      serde_wasm_bindgen::to_value(&errors).unwrap_or_else(|e| JsValue::from(e.to_string()))
+    } else {
+      JsValue::from(e.to_string())
+    }
+  })?;
 
   let cbor: ciborium::value::Value =
     ciborium::de::from_reader(cbor_slice).map_err(|e| JsValue::from(e.to_string()))?;
@@ -202,7 +250,23 @@ pub fn validate_cbor_from_slice(
   cddl: &str,
   cbor_slice: &[u8],
 ) -> std::result::Result<JsValue, JsValue> {
-  let c = crate::pest_bridge::cddl_from_pest_str(cddl).map_err(|e| JsValue::from(e.to_string()))?;
+  let c = pest_bridge::cddl_from_pest_str(cddl).map_err(|e| {
+    if let parser::Error::PARSER {
+      #[cfg(feature = "ast-span")]
+      position,
+      msg,
+    } = &e
+    {
+      let errors = vec![ParserError {
+        #[cfg(feature = "ast-span")]
+        position: *position,
+        msg: msg.clone(),
+      }];
+      serde_wasm_bindgen::to_value(&errors).unwrap_or_else(|e| JsValue::from(e.to_string()))
+    } else {
+      JsValue::from(e.to_string())
+    }
+  })?;
 
   let cbor: ciborium::value::Value =
     ciborium::de::from_reader(cbor_slice).map_err(|e| JsValue::from(e.to_string()))?;

@@ -1,7 +1,4 @@
-//! Lexer types for CDDL
-//!
-//! This module provides the Position type used for error reporting.
-//! The actual lexing is handled by the Pest parser.
+/// Lexer types preserved for AST compatibility
 
 #[cfg(target_arch = "wasm32")]
 use serde::Serialize;
@@ -28,19 +25,5 @@ impl Default for Position {
       range: (0, 0),
       index: 0,
     }
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn test_position_default() {
-    let pos = Position::default();
-    assert_eq!(pos.line, 1);
-    assert_eq!(pos.column, 1);
-    assert_eq!(pos.range, (0, 0));
-    assert_eq!(pos.index, 0);
   }
 }

@@ -1,13 +1,7 @@
-use std::{convert::TryFrom, fmt};
-
-#[cfg(feature = "std")]
-use std::borrow::Cow;
+use std::{borrow::Cow, convert::TryFrom, fmt};
 
 #[cfg(target_arch = "wasm32")]
 use serde::{Deserialize, Serialize};
-
-#[cfg(not(feature = "std"))]
-use alloc::{borrow::Cow, string::String};
 
 /// Tag constraint for CBOR tags (RFC 9682 Section 3.2)
 #[derive(PartialEq, Debug, Clone, Copy)]

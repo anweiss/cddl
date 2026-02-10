@@ -3,9 +3,6 @@ use std::fmt;
 #[cfg(target_arch = "wasm32")]
 use serde::Serialize;
 
-#[cfg(not(feature = "std"))]
-use alloc::string::String;
-
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct ErrorMsg {
