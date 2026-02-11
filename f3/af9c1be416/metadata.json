@@ -1,0 +1,41 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "f3af9c1be416",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "Cargo.toml",
+    "cddl.pest",
+    "src/ast/mod.rs",
+    "src/error.rs",
+    "src/lexer.rs",
+    "src/lib.rs",
+    "src/parser.rs",
+    "src/parser_tests.rs",
+    "src/pest_bridge.rs",
+    "src/pest_parser.rs",
+    "src/token.rs",
+    "src/validator/control.rs",
+    "src/validator/mod.rs",
+    "tests/cddl.rs",
+    "tests/grammar.rs",
+    "tests/parser.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/f3/af9c1be416/0/metadata.json",
+      "transcript": "/f3/af9c1be416/0/full.jsonl",
+      "context": "/f3/af9c1be416/0/context.md",
+      "content_hash": "/f3/af9c1be416/0/content_hash.txt",
+      "prompt": "/f3/af9c1be416/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 38,
+    "cache_creation_tokens": 490808,
+    "cache_read_tokens": 3375242,
+    "output_tokens": 36106,
+    "api_call_count": 34
+  }
+}

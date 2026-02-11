@@ -1,0 +1,47 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "f3af9c1be416",
+  "session_id": "a1ac494b-68ad-46a3-a108-614ece008190",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-11T15:54:16.927205Z",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "Cargo.toml",
+    "cddl.pest",
+    "src/ast/mod.rs",
+    "src/error.rs",
+    "src/lexer.rs",
+    "src/lib.rs",
+    "src/parser.rs",
+    "src/parser_tests.rs",
+    "src/pest_bridge.rs",
+    "src/pest_parser.rs",
+    "src/token.rs",
+    "src/validator/control.rs",
+    "src/validator/mod.rs",
+    "tests/cddl.rs",
+    "tests/grammar.rs",
+    "tests/parser.rs"
+  ],
+  "agent": "Claude Code",
+  "transcript_identifier_at_start": "43b04172-cd6f-42fe-a29e-0c918172b369",
+  "checkpoint_transcript_start": 528,
+  "transcript_lines_at_start": 528,
+  "token_usage": {
+    "input_tokens": 38,
+    "cache_creation_tokens": 490808,
+    "cache_read_tokens": 3375242,
+    "output_tokens": 36106,
+    "api_call_count": 34
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-11T15:54:16.465044Z",
+    "agent_lines": 16,
+    "human_added": 6174,
+    "human_modified": 86,
+    "human_removed": 0,
+    "total_committed": 6276,
+    "agent_percentage": 0.25493945188017847
+  }
+}
