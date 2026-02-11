@@ -29,3 +29,5 @@ categories:
       - 'documentation'
 exclude-labels:
   - 'skip-changelog'
+include-paths:
+  - 'cddl-lsp'

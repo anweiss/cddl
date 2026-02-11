@@ -32,3 +32,9 @@ categories:
 exclude-labels:
   - 'skip-changelog'
   - 'vscode-extension'
+include-paths:
+  - 'src'
+  - 'tests'
+  - 'Cargo.toml'
+  - 'Cargo.lock'
+  - 'cddl.pest'
