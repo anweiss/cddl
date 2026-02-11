@@ -1,4 +1,4 @@
-/// Lexer types preserved for AST compatibility
+//! Lexer types preserved for AST compatibility
 
 #[cfg(target_arch = "wasm32")]
 use serde::Serialize;

@@ -33,6 +33,14 @@ use serde::Serialize;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+#[cfg(target_arch = "wasm32")]
+#[derive(Serialize)]
+struct ParserError {
+  #[cfg(feature = "ast-span")]
+  position: Position,
+  msg: ErrorMsg,
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 use crate::cddl_from_str;
 

@@ -1241,9 +1241,7 @@ pub fn validate_base10_text<'a>(
     if text_value.starts_with('0') && text_value.len() > 1 {
       return Ok(false); // No leading zeros
     }
-    if !text_value.chars().next().unwrap().is_ascii_digit()
-      || text_value.starts_with('0')
-    {
+    if !text_value.chars().next().unwrap().is_ascii_digit() || text_value.starts_with('0') {
       return Ok(false);
     }
   }

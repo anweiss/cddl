@@ -26,12 +26,29 @@ Before pushing, run these commands locally to catch issues early:
 # Format check
 cargo fmt --all -- --check
 
-# Clippy linting
+# Clippy linting (native)
 cargo clippy --all
+
+# Clippy linting (wasm)
+cargo clippy --lib --target wasm32-unknown-unknown
+
+# Compilation check (wasm)
+cargo check --lib --target wasm32-unknown-unknown
 
 # Run tests
 cargo test --all -- --nocapture
 ```
+
+## Cross-Target and Feature Flag Awareness
+
+This crate compiles for both native and `wasm32-unknown-unknown` targets, with conditional code gated behind `#[cfg(target_arch = "wasm32")]` and `#[cfg(not(target_arch = "wasm32"))]`. It also uses Cargo feature flags (e.g., `json`, `cbor`, `additional-controls`, `ast-span`) to conditionally compile functionality.
+
+When modifying code:
+
+1. **Check all `cfg` variants** — if you edit code inside a `#[cfg(not(target_arch = "wasm32"))]` block, look for a corresponding `#[cfg(target_arch = "wasm32")]` block that may need the same or analogous change, and vice versa.
+2. **Check feature-gated code** — if you add, rename, or remove a type, function, or import, search for all `#[cfg(feature = "...")]` blocks that may reference it and update them too.
+3. **Verify both targets compile** — always run `cargo check --lib --target wasm32-unknown-unknown` in addition to the native `cargo clippy --all` to catch wasm-only compilation errors that won't surface in native builds.
+4. **Shared types must be in scope for all targets** — if a struct (e.g., `ParserError`) is used in both native and wasm code, ensure it is defined or imported in every module/target that references it.
 
 ## Rust Toolchain
 
