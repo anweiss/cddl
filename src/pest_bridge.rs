@@ -1172,6 +1172,19 @@ fn convert_number_to_type2<'a>(
   })
 }
 
+/// Decode uppercase hex (base16) bytes without requiring alloc feature
+fn hex_decode_upper(input: &[u8]) -> Result<Vec<u8>, ()> {
+  let decode_len = data_encoding::HEXUPPER
+    .decode_len(input.len())
+    .map_err(|_| ())?;
+  let mut output = vec![0u8; decode_len];
+  let len = data_encoding::HEXUPPER
+    .decode_mut(input, &mut output)
+    .map_err(|_| ())?;
+  output.truncate(len);
+  Ok(output)
+}
+
 /// Convert bytes value to Type2
 #[cfg(feature = "ast-span")]
 fn convert_bytes_value_to_type2<'a>(
@@ -1196,15 +1209,13 @@ fn convert_bytes_value_to_type2<'a>(
         // Remove h' and '
         let content = &bytes_str[2..bytes_str.len() - 1];
         let cleaned: String = content.chars().filter(|c| !c.is_whitespace()).collect();
-        let decoded = data_encoding::HEXUPPER
-          .decode(cleaned.as_bytes())
-          .map_err(|_| Error::PARSER {
-            position: pest_span_to_position(&inner.as_span(), input),
-            msg: ErrorMsg {
-              short: "Invalid base16 encoding".to_string(),
-              extended: None,
-            },
-          })?;
+        let decoded = hex_decode_upper(cleaned.as_bytes()).map_err(|_| Error::PARSER {
+          position: pest_span_to_position(&inner.as_span(), input),
+          msg: ErrorMsg {
+            short: "Invalid base16 encoding".to_string(),
+            extended: None,
+          },
+        })?;
         return Ok(ast::Type2::B16ByteString {
           value: Cow::Owned(decoded),
           span,
@@ -1253,14 +1264,12 @@ fn convert_bytes_value_to_type2<'a>(
         // Remove h' and '
         let content = &bytes_str[2..bytes_str.len() - 1];
         let cleaned: String = content.chars().filter(|c| !c.is_whitespace()).collect();
-        let decoded = data_encoding::HEXUPPER
-          .decode(cleaned.as_bytes())
-          .map_err(|_| Error::PARSER {
-            msg: ErrorMsg {
-              short: "Invalid base16 encoding".to_string(),
-              extended: None,
-            },
-          })?;
+        let decoded = hex_decode_upper(cleaned.as_bytes()).map_err(|_| Error::PARSER {
+          msg: ErrorMsg {
+            short: "Invalid base16 encoding".to_string(),
+            extended: None,
+          },
+        })?;
         return Ok(ast::Type2::B16ByteString {
           value: Cow::Owned(decoded),
         });

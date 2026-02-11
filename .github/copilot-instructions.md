@@ -35,6 +35,12 @@ cargo clippy --lib --target wasm32-unknown-unknown
 # Compilation check (wasm)
 cargo check --lib --target wasm32-unknown-unknown
 
+# Compilation check (default features)
+cargo +stable check --all --bins --examples --tests
+
+# Compilation check (no default features)
+cargo +stable check --all --bins --examples --tests --no-default-features
+
 # Run tests
 cargo test --all -- --nocapture
 ```

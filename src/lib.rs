@@ -491,10 +491,13 @@
 #![allow(dead_code)]
 #![warn(missing_docs)]
 
+#[cfg(feature = "std")]
 extern crate serde_json;
 
+#[cfg(feature = "std")]
 extern crate uriparse;
 
+#[cfg(feature = "std")]
 extern crate base64_url;
 
 /// Abstract syntax tree representing a CDDL definition
