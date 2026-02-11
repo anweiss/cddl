@@ -161,6 +161,35 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
   }
 }
 
+/// Formats CDDL from input string
+#[cfg(feature = "lsp")]
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn format_cddl_from_str(input: &str) -> result::Result<String, JsValue> {
+  #[derive(Serialize)]
+  struct ParserError {
+    position: Position,
+    msg: ErrorMsg,
+  }
+
+  match pest_bridge::cddl_from_pest_str(input) {
+    Ok(c) => Ok(c.to_string()),
+    Err(Error::PARSER {
+      #[cfg(feature = "ast-span")]
+      position,
+      msg,
+    }) => {
+      let errors = vec![ParserError {
+        #[cfg(feature = "ast-span")]
+        position,
+        msg,
+      }];
+      Err(serde_wasm_bindgen::to_value(&errors).map_err(|e| JsValue::from(e.to_string()))?)
+    }
+    Err(e) => Err(JsValue::from(e.to_string())),
+  }
+}
+
 /// Identify root type name from CDDL input string
 #[cfg(feature = "std")]
 #[cfg(not(target_arch = "wasm32"))]
