@@ -437,12 +437,12 @@ impl<'a> CBORValidator<'a> {
               let mut cv = self.new_with_recursion_state(v.clone());
 
               cv.generic_rules = self.generic_rules.clone();
-              cv.eval_generic_rule = self.eval_generic_rule;
-              cv.ctrl = self.ctrl;
-              cv.is_multi_type_choice = self.is_multi_type_choice;
-              let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
+                 cv.eval_generic_rule = self.eval_generic_rule;
+                 cv.ctrl = self.ctrl;
+                 cv.is_multi_type_choice = self.is_multi_type_choice;
+                 let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
 
-              match token {
+                 match token {
                 ArrayItemToken::Value(value) => cv.visit_value(value)?,
                 ArrayItemToken::Range(lower, upper, is_inclusive) => {
                   cv.visit_range(lower, upper, *is_inclusive)?
@@ -461,16 +461,19 @@ impl<'a> CBORValidator<'a> {
                 if let Some(indices) = &mut self.valid_array_items {
                   indices.push(idx);
                 } else {
-                  self.valid_array_items = Some(vec![idx]);
-                }
-                continue;
-              }
-
-              if let Some(errors) = &mut self.array_errors {
-                if let Some(error) = errors.get_mut(&idx) {
-                  error.append(&mut cv.errors);
-                } else {
-                  errors.insert(idx, cv.errors);
+                    // Element index out of bounds, add error only if occurrence requires it
+                    match self.occurrence {
+                        #[cfg(feature = "ast-span")]
+                        Some(Occur::OneOrMore { .. }) | Some(Occur::Exact { .. }) => {
+                            self.add_error(format!("expected array element at index {}, but array only has {} elements", idx, a.len()));
+                        }
+                        #[cfg(not(feature = "ast-span"))]
+                        Some(Occur::OneOrMore {}) | Some(Occur::Exact { .. }) => {
+                            self.add_error(format!("expected array element at index {}, but array only has {} elements", idx, a.len()));
+                        }
+                        _ => {} // Do nothing if occurrence is Optional, ZeroOrMore, or None
+                    }
+                    return Ok(());
                 }
               } else {
                 let mut errors = HashMap::new();
@@ -600,6 +603,34 @@ where
       is_group_to_choice_enum: self.is_group_to_choice_enum,
       type_group_name_entry: self.type_group_name_entry.map(|e| e.to_string()),
     });
+  }
+}
+
+impl<'a> CBORValidator<'a> {
+  // Helper function to resolve a Type2 bound to a usize value
+  fn resolve_bound_to_uint(&self, bound: &Type2<'a>) -> std::result::Result<usize, String> {
+    match bound {
+      Type2::UintValue { value, .. } => Ok(*value),
+      Type2::Typename { ident, .. } => {
+        // Look up the identifier in the CDDL rules
+        for rule in self.cddl.rules.iter() {
+          if let Rule::Type { rule, .. } = rule {
+            if rule.name.ident == ident.ident {
+              // Found the rule, now check if it's a simple uint value
+              if rule.value.type_choices.len() == 1 {
+                let type_choice = &rule.value.type_choices[0];
+                if let Type2::UintValue { value, .. } = &type_choice.type1.type2 {
+                  return Ok(*value);
+                }
+              }
+              return Err(format!("Type name '{}' does not resolve to a simple uint value", ident.ident));
+            }
+          }
+        }
+        Err(format!("Type name '{}' not found in CDDL rules", ident.ident))
+      },
+      _ => Err(format!("Expected uint value or type name, got {}", bound)),
+    }
   }
 }
 
@@ -1089,6 +1120,40 @@ where
             }
           }
         }
+      }
+      
+      // Validate that the CBOR value matches the target type before applying control operators
+      if is_ident_string_data_type(self.cddl, target_ident) && !matches!(self.cbor, Value::Text(_)) {
+        self.add_error(format!("expected type tstr, got {:?}", self.cbor));
+        return Ok(());
+      } else if is_ident_byte_string_data_type(self.cddl, target_ident) && !matches!(self.cbor, Value::Bytes(_)) {
+        self.add_error(format!("expected type bstr, got {:?}", self.cbor));
+        return Ok(());
+      } else if is_ident_uint_data_type(self.cddl, target_ident) {
+        // For uint, we need to check that it's an integer and it's non-negative
+        if !matches!(self.cbor, Value::Integer(_)) {
+          self.add_error(format!("expected type uint, got {:?}", self.cbor));
+          return Ok(());
+        } else if let Value::Integer(i) = &self.cbor {
+          if i128::from(*i) < 0 {
+            self.add_error(format!("expected type uint, got {:?}", self.cbor));
+            return Ok(());
+          }
+        }
+        self.add_error(format!("expected type uint, got {:?}", self.cbor));
+        return Ok(());
+      } else if is_ident_integer_data_type(self.cddl, target_ident) && !matches!(self.cbor, Value::Integer(_)) {
+        self.add_error(format!("expected type int, got {:?}", self.cbor));
+        return Ok(());
+      } else if is_ident_float_data_type(self.cddl, target_ident) && !matches!(self.cbor, Value::Float(_)) {
+        self.add_error(format!("expected type float, got {:?}", self.cbor));
+        return Ok(());
+      } else if is_ident_bool_data_type(self.cddl, target_ident) && !matches!(self.cbor, Value::Bool(_)) {
+        self.add_error(format!("expected type bool, got {:?}", self.cbor));
+        return Ok(());
+      } else if is_ident_null_data_type(self.cddl, target_ident) && !matches!(self.cbor, Value::Null) {
+        self.add_error(format!("expected type null, got {:?}", self.cbor));
+        return Ok(());
       }
     }
 
@@ -3691,7 +3756,55 @@ where
 
       Ok(())
     } else if !self.advance_to_next_entry {
-      self.visit_type(&entry.entry_type)
+        // This path handles array elements (when object_value is None)
+        if let Value::Array(a) = &self.cbor {
+            // Use the index set by visit_group_choice
+            if let Some(idx) = self.group_entry_idx {
+                if let Some(element_value) = a.get(idx) {
+                    // Create a new validator instance for the specific array element
+                    #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+                    let mut cv = CBORValidator::new(self.cddl, element_value.clone(), self.enabled_features.clone());
+                    #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+                    let mut cv = CBORValidator::new(self.cddl, element_value.clone(), self.enabled_features);
+                    #[cfg(not(feature = "additional-controls"))]
+                    let mut cv = CBORValidator::new(self.cddl, element_value.clone());
+
+                    // Copy necessary state from parent validator 'self' to child 'cv'
+                    cv.generic_rules = self.generic_rules.clone();
+                    cv.eval_generic_rule = self.eval_generic_rule;
+                    // Let cv.visit_type determine is_multi_type_choice based on entry.entry_type
+                    cv.is_multi_group_choice = self.is_multi_group_choice; // Inherit group choice status if needed
+                    let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx); // Set correct location for the element
+                    cv.type_group_name_entry = self.type_group_name_entry; // Inherit for error reporting context
+
+                    // Validate the element's type against the element's value
+                    cv.visit_type(&entry.entry_type)?;
+
+                    // Append any errors from the element validation back to the parent validator
+                    self.errors.append(&mut cv.errors);
+
+                    // Reset occurrence if it was handled for this entry
+                    if entry.occur.is_some() {
+                        self.occurrence = None;
+                    }
+
+                    return Ok(()); // Finished processing this element
+                } else {
+                    // Element index out of bounds, add error only if occurrence requires it
+                    #[cfg(feature = "ast-span")]
+                    if !matches!(self.occurrence, Some(Occur::Optional { .. }) | Some(Occur::ZeroOrMore { .. }) | None) {
+                        self.add_error(format!("expected array element at index {}, but array only has {} elements", idx, a.len()));
+                    }
+                    #[cfg(not(feature = "ast-span"))]
+                    if !matches!(self.occurrence, Some(Occur::Optional {}) | Some(Occur::ZeroOrMore {}) | None) {
+                        self.add_error(format!("expected array element at index {}, but array only has {} elements", idx, a.len()));
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        // Fallback to original behavior if not an array or index is missing (shouldn't happen in valid CDDL/CBOR)
+        self.visit_type(&entry.entry_type)
     } else {
       Ok(())
     }
