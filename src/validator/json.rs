@@ -584,21 +584,13 @@ impl<'a> JSONValidator<'a> {
     &mut self,
     bytes: &[u8],
     is_classic: bool,
-    is_sloppy: bool,
+    _is_sloppy: bool,
   ) -> visitor::Result<Error> {
     if let Value::String(s) = &self.json {
       let decoded_result = if is_classic {
-        if is_sloppy {
-          data_encoding::BASE64.decode(s.as_bytes())
-        } else {
-          data_encoding::BASE64.decode(s.as_bytes())
-        }
+        data_encoding::BASE64.decode(s.as_bytes())
       } else {
-        if is_sloppy {
-          data_encoding::BASE64URL_NOPAD.decode(s.as_bytes())
-        } else {
-          data_encoding::BASE64URL_NOPAD.decode(s.as_bytes())
-        }
+        data_encoding::BASE64URL_NOPAD.decode(s.as_bytes())
       };
 
       match decoded_result {

@@ -194,7 +194,10 @@ message<a, b> = a / b
       if let Type2::Unwrap { ident, .. } = &rule.value.type_choices[0].type1.type2 {
         assert_eq!(ident.ident, "group1");
       } else {
-        panic!("Expected unwrap, got {:?}", rule.value.type_choices[0].type1.type2);
+        panic!(
+          "Expected unwrap, got {:?}",
+          rule.value.type_choices[0].type1.type2
+        );
       }
     }
   }
@@ -357,14 +360,9 @@ message<a, b> = a / b
     assert_eq!(cddl.rules.len(), 4);
 
     // Check occurrences
-    for (idx, expected) in [
-      "Exact(1,3)",
-      "ZeroOrMore",
-      "OneOrMore",
-      "Optional",
-    ]
-    .iter()
-    .enumerate()
+    for (idx, expected) in ["Exact(1,3)", "ZeroOrMore", "OneOrMore", "Optional"]
+      .iter()
+      .enumerate()
     {
       if let Rule::Type { rule, .. } = &cddl.rules[idx] {
         if let Type2::Array { group, .. } = &rule.value.type_choices[0].type1.type2 {
@@ -383,7 +381,10 @@ message<a, b> = a / b
             (&"ZeroOrMore", Occur::ZeroOrMore { .. }) => {}
             (&"OneOrMore", Occur::OneOrMore { .. }) => {}
             (&"Optional", Occur::Optional { .. }) => {}
-            _ => panic!("Occurrence mismatch for rule {}: expected {}", idx, expected),
+            _ => panic!(
+              "Occurrence mismatch for rule {}: expected {}",
+              idx, expected
+            ),
           }
         }
       }
@@ -541,18 +542,17 @@ reputon = {
 
     let inputs: Vec<(&str, ControlOperator)> = vec![
       ("myrule = uint .size 4\n", ControlOperator::SIZE),
-      (r#"myrule = tstr .regexp "[^@]+@[^@]+""#, ControlOperator::REGEXP),
+      (
+        r#"myrule = tstr .regexp "[^@]+@[^@]+""#,
+        ControlOperator::REGEXP,
+      ),
       ("myrule = tstr .eq \"hello\"\n", ControlOperator::EQ),
     ];
 
     for (input, expected_ctrl) in &inputs {
       let cddl = parse_ok(input);
       if let Rule::Type { rule, .. } = &cddl.rules[0] {
-        let op = rule.value.type_choices[0]
-          .type1
-          .operator
-          .as_ref()
-          .unwrap();
+        let op = rule.value.type_choices[0].type1.operator.as_ref().unwrap();
         if let RangeCtlOp::CtlOp { ctrl, .. } = &op.operator {
           assert_eq!(ctrl, expected_ctrl);
         } else {

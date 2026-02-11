@@ -1067,17 +1067,13 @@ pub fn validate_b64u_text<'a>(
   __target: &Type2<'a>,
   controller: &Type2<'a>,
   text_value: &str,
-  is_sloppy: bool,
+  _is_sloppy: bool,
 ) -> Result<bool, String> {
   match controller {
     Type2::UTF8ByteString { value, .. }
     | Type2::B16ByteString { value, .. }
     | Type2::B64ByteString { value, .. } => {
-      let decoded = if is_sloppy {
-        data_encoding::BASE64URL_NOPAD.decode(text_value.as_bytes())
-      } else {
-        data_encoding::BASE64URL_NOPAD.decode(text_value.as_bytes())
-      };
+      let decoded = data_encoding::BASE64URL_NOPAD.decode(text_value.as_bytes());
 
       match decoded {
         Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
@@ -1097,17 +1093,13 @@ pub fn validate_b64c_text<'a>(
   __target: &Type2<'a>,
   controller: &Type2<'a>,
   text_value: &str,
-  is_sloppy: bool,
+  _is_sloppy: bool,
 ) -> Result<bool, String> {
   match controller {
     Type2::UTF8ByteString { value, .. }
     | Type2::B16ByteString { value, .. }
     | Type2::B64ByteString { value, .. } => {
-      let decoded = if is_sloppy {
-        data_encoding::BASE64.decode(text_value.as_bytes())
-      } else {
-        data_encoding::BASE64.decode(text_value.as_bytes())
-      };
+      let decoded = data_encoding::BASE64.decode(text_value.as_bytes());
 
       match decoded {
         Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
@@ -1250,7 +1242,7 @@ pub fn validate_base10_text<'a>(
       return Ok(false); // No leading zeros
     }
     if !text_value.chars().next().unwrap().is_ascii_digit()
-      || text_value.chars().next().unwrap() == '0'
+      || text_value.starts_with('0')
     {
       return Ok(false);
     }
@@ -1293,19 +1285,15 @@ pub fn validate_printf_text<'a>(
       // First entry should be the format string
       let format_entry = &group_choice.group_entries[0];
       if let GroupEntry::ValueMemberKey { ge, .. } = &format_entry.0 {
-        if let Some(member_key) = &ge.member_key {
-          if let MemberKey::Type1 { t1, .. } = member_key {
-            if let Type2::TextValue {
-              value: format_str, ..
-            } = &t1.type2
-            {
-              // For now, do a basic validation - in a full implementation, we'd need to
-              // parse the printf format string and validate against the provided arguments
-              // This is a simplified check
-              Ok(text_value.contains(&format_str.as_ref().replace("%", "")))
-            } else {
-              Err("first element of printf controller array must be a format string".to_string())
-            }
+        if let Some(MemberKey::Type1 { t1, .. }) = &ge.member_key {
+          if let Type2::TextValue {
+            value: format_str, ..
+          } = &t1.type2
+          {
+            // For now, do a basic validation - in a full implementation, we'd need to
+            // parse the printf format string and validate against the provided arguments
+            // This is a simplified check
+            Ok(text_value.contains(&format_str.as_ref().replace("%", "")))
           } else {
             Err("first element of printf controller array must be a format string".to_string())
           }
@@ -1367,21 +1355,19 @@ pub fn validate_join_text<'a>(
 
       for entry in &group_choice.group_entries {
         if let GroupEntry::ValueMemberKey { ge, .. } = &entry.0 {
-          if let Some(member_key) = &ge.member_key {
-            if let MemberKey::Type1 { t1, .. } = member_key {
-              match &t1.type2 {
-                Type2::TextValue { value, .. } => {
-                  expected_string.push_str(&value);
-                }
-                Type2::UTF8ByteString { value, .. } => match std::str::from_utf8(&value) {
-                  Ok(s) => expected_string.push_str(s),
-                  Err(_) => return Ok(false),
-                },
-                _ => {
-                  // For other types, we'd need to resolve them
-                  // This is a simplified implementation
-                  continue;
-                }
+          if let Some(MemberKey::Type1 { t1, .. }) = &ge.member_key {
+            match &t1.type2 {
+              Type2::TextValue { value, .. } => {
+                expected_string.push_str(value);
+              }
+              Type2::UTF8ByteString { value, .. } => match std::str::from_utf8(value) {
+                Ok(s) => expected_string.push_str(s),
+                Err(_) => return Ok(false),
+              },
+              _ => {
+                // For other types, we'd need to resolve them
+                // This is a simplified implementation
+                continue;
               }
             }
           }

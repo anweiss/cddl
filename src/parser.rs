@@ -107,23 +107,6 @@ fn report_pest_error(error: &Error, input: &str) {
   }
 }
 
-/// Identify root type name from CDDL input string
-#[cfg(not(target_arch = "wasm32"))]
-pub fn root_type_name_from_cddl_str(input: &str) -> std::result::Result<String, String> {
-  let cddl = cddl_from_str(input, false)?;
-
-  for r in cddl.rules.iter() {
-    // First type rule is root
-    if let Rule::Type { rule, .. } = r {
-      if rule.generic_params.is_none() {
-        return Ok(rule.name.to_string());
-      }
-    }
-  }
-
-  Err("cddl spec contains no root type".to_string())
-}
-
 impl CDDL<'_> {
   /// Parses CDDL from a byte slice
   #[cfg(not(target_arch = "wasm32"))]
@@ -193,22 +176,7 @@ pub fn root_type_name_from_cddl_str(input: &str) -> std::result::Result<String, 
     }
   }
 
-  match pest_bridge::cddl_from_pest_str(input) {
-    Ok(c) => Ok(c.to_string()),
-    Err(Error::PARSER {
-      #[cfg(feature = "ast-span")]
-      position,
-      msg,
-    }) => {
-      let errors = vec![ParserError {
-        #[cfg(feature = "ast-span")]
-        position,
-        msg,
-      }];
-      Err(serde_wasm_bindgen::to_value(&errors).map_err(|e| JsValue::from(e.to_string()))?)
-    }
-    Err(e) => Err(JsValue::from(e.to_string())),
-  }
+  Err("cddl spec contains no root type".to_string())
 }
 
 #[cfg(test)]
@@ -224,12 +192,14 @@ mod tests {
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
   }
 
+  #[test]
+  fn test_multiple_rules_with_reference_to_parenthesized_type() {
+    let input = "basic = int\nouter = (basic)\n";
     let result = cddl_from_str(input, false);
     assert!(result.is_ok(), "Parser errors: {:?}", result.err());
 
     let cddl = result.unwrap();
     assert_eq!(cddl.rules.len(), 2);
-  }
 
     let rule_names: Vec<_> = cddl.rules.iter().map(|r| r.name()).collect();
     assert!(rule_names.contains(&"basic".to_string()));

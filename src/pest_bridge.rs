@@ -95,12 +95,12 @@ fn create_enhanced_error_message(
       // Map internal rule names to user-friendly descriptions
       let friendly_positives: Vec<String> = positives
         .iter()
-        .filter_map(|r| get_friendly_rule_name(r))
+        .filter_map(get_friendly_rule_name)
         .collect();
 
       let friendly_negatives: Vec<String> = negatives
         .iter()
-        .filter_map(|r| get_friendly_rule_name(r))
+        .filter_map(get_friendly_rule_name)
         .collect();
 
       let short = if !friendly_positives.is_empty() {
@@ -118,7 +118,7 @@ fn create_enhanced_error_message(
       // Create extended message with context
       let extended = if !friendly_positives.is_empty() || !friendly_negatives.is_empty() {
         Some(create_error_context(
-          &error,
+          error,
           &friendly_positives,
           &friendly_negatives,
         ))
@@ -231,7 +231,7 @@ fn create_error_context(
 
   if !negatives.is_empty() {
     if !context.is_empty() {
-      context.push_str(" ");
+      context.push(' ');
     }
     context.push_str("Did not expect ");
     context.push_str(&negatives.join(" or "));
@@ -262,7 +262,7 @@ fn pest_span_to_position(span: &PestSpan, input: &str) -> Position {
   let mut line = 1;
   let mut column = 1;
 
-  for (_idx, ch) in input[..start].chars().enumerate() {
+  for ch in input[..start].chars() {
     if ch == '\n' {
       line += 1;
       column = 1;
@@ -955,10 +955,12 @@ fn convert_value_to_type2<'a>(
       }
       Rule::text_value => {
         let text = inner.as_str();
-        // Remove quotes, preserve escape sequences as-is
+        // Remove quotes
         let text_content = &text[1..text.len() - 1];
+        // Handle escape sequences
+        let unescaped = unescape_text(text_content);
         return Ok(ast::Type2::TextValue {
-          value: Cow::Borrowed(text_content),
+          value: Cow::Owned(unescaped),
           span,
         });
       }
@@ -990,10 +992,12 @@ fn convert_value_to_type2<'a>(
       }
       Rule::text_value => {
         let text = inner.as_str();
-        // Remove quotes, preserve escape sequences as-is
+        // Remove quotes
         let text_content = &text[1..text.len() - 1];
+        // Handle escape sequences
+        let unescaped = unescape_text(text_content);
         return Ok(ast::Type2::TextValue {
-          value: Cow::Borrowed(text_content),
+          value: Cow::Owned(unescaped),
         });
       }
       Rule::bytes_value => {
@@ -1009,6 +1013,46 @@ fn convert_value_to_type2<'a>(
       extended: None,
     },
   })
+}
+
+/// Unescape text value
+fn unescape_text(text: &str) -> String {
+  let mut result = String::new();
+  let mut chars = text.chars();
+
+  while let Some(ch) = chars.next() {
+    if ch == '\\' {
+      if let Some(next_ch) = chars.next() {
+        match next_ch {
+          'n' => result.push('\n'),
+          'r' => result.push('\r'),
+          't' => result.push('\t'),
+          '\\' => result.push('\\'),
+          '"' => result.push('"'),
+          '/' => result.push('/'),
+          'b' => result.push('\u{0008}'),
+          'f' => result.push('\u{000C}'),
+          'u' => {
+            // Unicode escape sequence
+            let hex: String = chars.by_ref().take(4).collect();
+            if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
+              if let Some(unicode_char) = char::from_u32(code_point) {
+                result.push(unicode_char);
+              }
+            }
+          }
+          _ => {
+            result.push('\\');
+            result.push(next_ch);
+          }
+        }
+      }
+    } else {
+      result.push(ch);
+    }
+  }
+
+  result
 }
 
 /// Convert number to Type2
