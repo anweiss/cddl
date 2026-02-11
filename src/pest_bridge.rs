@@ -1015,7 +1015,7 @@ fn convert_value_to_type2<'a>(
   })
 }
 
-/// Unescape text value
+/// Unescape text value (supports RFC 9682 \u{hex} escapes and surrogate pairs)
 fn unescape_text(text: &str) -> String {
   let mut result = String::new();
   let mut chars = text.chars();
@@ -1029,15 +1029,48 @@ fn unescape_text(text: &str) -> String {
           't' => result.push('\t'),
           '\\' => result.push('\\'),
           '"' => result.push('"'),
+          '\'' => result.push('\''),
           '/' => result.push('/'),
           'b' => result.push('\u{0008}'),
           'f' => result.push('\u{000C}'),
           'u' => {
-            // Unicode escape sequence
-            let hex: String = chars.by_ref().take(4).collect();
-            if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
-              if let Some(unicode_char) = char::from_u32(code_point) {
-                result.push(unicode_char);
+            // Check for RFC 9682 \u{hex} form
+            let mut peekable = chars.clone();
+            if peekable.next() == Some('{') {
+              // Consume the '{'
+              chars.next();
+              let hex: String = chars.by_ref().take_while(|c| *c != '}').collect();
+              if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
+                if let Some(unicode_char) = char::from_u32(code_point) {
+                  result.push(unicode_char);
+                }
+              }
+            } else {
+              // Standard \uXXXX form
+              let hex: String = chars.by_ref().take(4).collect();
+              if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
+                // Check for surrogate pair: \uHHHH\uLLLL
+                if (0xD800..=0xDBFF).contains(&code_point) {
+                  // High surrogate - look for \uLLLL
+                  let mut peekable2 = chars.clone();
+                  if peekable2.next() == Some('\\') && peekable2.next() == Some('u') {
+                    // Consume \u
+                    chars.next();
+                    chars.next();
+                    let low_hex: String = chars.by_ref().take(4).collect();
+                    if let Ok(low_surrogate) = u32::from_str_radix(&low_hex, 16) {
+                      if (0xDC00..=0xDFFF).contains(&low_surrogate) {
+                        let combined =
+                          0x10000 + ((code_point - 0xD800) << 10) + (low_surrogate - 0xDC00);
+                        if let Some(unicode_char) = char::from_u32(combined) {
+                          result.push(unicode_char);
+                        }
+                      }
+                    }
+                  }
+                } else if let Some(unicode_char) = char::from_u32(code_point) {
+                  result.push(unicode_char);
+                }
               }
             }
           }
@@ -2378,5 +2411,109 @@ mod wasm_compat_tests {
 
     // This should not panic if serialization works
     let _serialized = serde_json::to_string(&test_error).expect("Should serialize");
+  }
+
+  // =========================================================================
+  // RFC 9682 tests
+  // =========================================================================
+
+  #[test]
+  fn test_rfc9682_empty_cddl() {
+    // RFC 9682 Section 3.1: Empty CDDL is valid
+    let input = "";
+    let result = cddl_from_pest_str(input);
+    assert!(result.is_ok(), "Empty CDDL should parse successfully");
+    let cddl = result.unwrap();
+    assert!(cddl.rules.is_empty(), "Empty CDDL should have no rules");
+  }
+
+  #[test]
+  fn test_rfc9682_comment_only_cddl() {
+    let input = "; just a comment\n";
+    let result = cddl_from_pest_str(input);
+    assert!(
+      result.is_ok(),
+      "Comment-only CDDL should parse successfully"
+    );
+  }
+
+  #[test]
+  fn test_rfc9682_unicode_brace_escape_parsing() {
+    // RFC 9682 Section 2.1.1: \u{hex} escape sequences
+    let input = r#"a = "D\u{6f}mino""#;
+    let result = cddl_from_pest_str(input);
+    assert!(
+      result.is_ok(),
+      "\\u{{hex}} escape should parse: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_rfc9682_surrogate_pair_parsing() {
+    // RFC 9682 / RFC 8610: \uHHHH\uLLLL surrogate pair for U+1F073
+    let input = r#"b = "test \uD83C\uDC73""#;
+    let result = cddl_from_pest_str(input);
+    assert!(
+      result.is_ok(),
+      "Surrogate pair escape should parse: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_unescape_rfc9682_brace_form() {
+    // Test that \u{6f} produces 'o'
+    let unescaped = unescape_text(r#"D\u{6f}mino"#);
+    assert_eq!(unescaped, "Domino");
+  }
+
+  #[test]
+  fn test_unescape_rfc9682_brace_form_large_codepoint() {
+    // Test that \u{1F073} produces 🁳
+    let unescaped = unescape_text(r#"\u{1F073}"#);
+    assert_eq!(unescaped, "\u{1F073}");
+  }
+
+  #[test]
+  fn test_unescape_rfc9682_brace_form_with_leading_zeros() {
+    // Test that \u{006f} produces 'o'
+    let unescaped = unescape_text(r#"\u{006f}"#);
+    assert_eq!(unescaped, "o");
+  }
+
+  #[test]
+  fn test_unescape_surrogate_pair() {
+    // Test that \uD83C\uDC73 produces 🁳 (U+1F073)
+    let unescaped = unescape_text(r#"\uD83C\uDC73"#);
+    assert_eq!(unescaped, "\u{1F073}");
+  }
+
+  #[test]
+  fn test_unescape_standard_4digit() {
+    // Test that \u2318 produces ⌘
+    let unescaped = unescape_text(r#"\u2318"#);
+    assert_eq!(unescaped, "⌘");
+  }
+
+  #[test]
+  fn test_rfc9682_tag_type_expression() {
+    // RFC 9682 Section 3.2: #6.<type>(content)
+    let input = r#"ct-tag<content> = #6.<ct-tag-number>(content)
+ct-tag-number = 1668546817..1668612095"#;
+    let result = cddl_from_pest_str(input);
+    assert!(
+      result.is_ok(),
+      "Non-literal tag number should parse: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_rfc9682_simple_value_type_expression() {
+    // RFC 9682 Section 3.2: #7.<head-number>
+    let input = "my-simple = #7.<0..23>";
+    let result = cddl_from_pest_str(input);
+    assert!(result.is_ok(), "#7.<type> should parse: {:?}", result.err());
   }
 }

@@ -216,4 +216,105 @@ color_choice = &color_group"#;
       result.err()
     );
   }
+
+  // =========================================================================
+  // RFC 9682 tests
+  // =========================================================================
+
+  #[test]
+  fn test_rfc9682_empty_data_model() {
+    // RFC 9682 Section 3.1: CDDL files can have zero rules
+    let input = "";
+    let result = CDDLParser::parse(Rule::cddl, input);
+    assert!(
+      result.is_ok(),
+      "Empty CDDL should be valid per RFC 9682: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_rfc9682_empty_data_model_with_comments() {
+    // RFC 9682 Section 3.1: CDDL files with only comments and no rules
+    let input = "; This is a module with only comments\n; No rules here\n";
+    let result = CDDLParser::parse(Rule::cddl, input);
+    assert!(
+      result.is_ok(),
+      "Comment-only CDDL should be valid per RFC 9682: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_rfc9682_unicode_brace_escape() {
+    // RFC 9682 Section 2.1.1: \u{hex} escape form
+    let input = r#"a = "D\u{6f}mino's \u{1F073} + \u{2318}""#;
+    let result = CDDLParser::parse(Rule::cddl, input);
+    assert!(
+      result.is_ok(),
+      "\\u{{hex}} escape should be valid per RFC 9682: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_rfc9682_unicode_brace_escape_leading_zeros() {
+    // RFC 9682: \u{0...hex} with leading zeros is valid
+    let input = r#"a = "test \u{006f}""#;
+    let result = CDDLParser::parse(Rule::cddl, input);
+    assert!(
+      result.is_ok(),
+      "\\u{{hex}} with leading zeros should be valid: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_rfc9682_traditional_unicode_escape() {
+    // Existing \uXXXX escapes still work
+    let input = r#"b = "Domino's \uD83C\uDC73 + \u2318""#;
+    let result = CDDLParser::parse(Rule::cddl, input);
+    assert!(
+      result.is_ok(),
+      "Traditional \\uXXXX escape should still work: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_rfc9682_nonliteral_tag_number() {
+    // RFC 9682 Section 3.2: Non-literal tag numbers
+    let input = r#"ct-tag<content> = #6.<ct-tag-number>(content)
+ct-tag-number = 1668546817..1668612095"#;
+    let result = CDDLParser::parse(Rule::cddl, input);
+    assert!(
+      result.is_ok(),
+      "Non-literal tag number should be valid per RFC 9682: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_rfc9682_simple_value_type_expression() {
+    // RFC 9682 Section 3.2: #7.<head-number> with type expression
+    let input = "my-simple = #7.<0..23>";
+    let result = CDDLParser::parse(Rule::cddl, input);
+    assert!(
+      result.is_ok(),
+      "#7.<type> should be valid per RFC 9682: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_rfc9682_simple_value_literal() {
+    // RFC 9682 Section 3.2: #7.25 is float16
+    let input = "my-float16 = #7.25";
+    let result = CDDLParser::parse(Rule::cddl, input);
+    assert!(
+      result.is_ok(),
+      "#7.25 should be valid per RFC 9682: {:?}",
+      result.err()
+    );
+  }
 }
