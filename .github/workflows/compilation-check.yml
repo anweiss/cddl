@@ -11,25 +11,22 @@ jobs:
         os: [ubuntu-latest, macOS-latest, windows-latest]
     name: Compilation check
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout source
         uses: actions/checkout@v2
 
       - name: Install Rust
-        env:
-          RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         run: |
           rustup update
-          rustup install $RUST_TOOLCHAIN
+          rustup install ${{ matrix.rust_toolchain }}
 
       - name: Check compilation with default features
-        env:
-          RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         run: |
-          cargo +$RUST_TOOLCHAIN check --all --bins --examples --tests
+          cargo +${{ matrix.rust_toolchain }} check --all --bins --examples --tests
 
       - name: Check compilation with no features
-        env:
-          RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         run: |
-          cargo +$RUST_TOOLCHAIN check --all --bins --examples --tests --no-default-features
+          cargo +${{ matrix.rust_toolchain }} check --all --bins --examples --tests --no-default-features
