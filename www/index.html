@@ -41,6 +41,31 @@
       --transition: 150ms cubic-bezier(0.4, 0, 0.2, 1);
     }
 
+    body.light {
+      --bg: #f8f9fc;
+      --bg-elevated: #ffffff;
+      --bg-surface: #f0f1f5;
+      --bg-hover: #e8e9ef;
+      --border: #d4d6de;
+      --border-focus: #4f46e5;
+      --text: #1e293b;
+      --text-secondary: #475569;
+      --text-muted: #94a3b8;
+      --accent: #4f46e5;
+      --accent-hover: #6366f1;
+      --accent-subtle: rgba(79, 70, 229, 0.08);
+      --success: #16a34a;
+      --success-subtle: rgba(22, 163, 74, 0.08);
+      --success-border: rgba(22, 163, 74, 0.2);
+      --error: #e11d48;
+      --error-subtle: rgba(225, 29, 72, 0.06);
+      --error-border: rgba(225, 29, 72, 0.15);
+      --warning: #d97706;
+      --warning-subtle: rgba(217, 119, 6, 0.08);
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+      --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.1);
+    }
+
     * {
       margin: 0;
       padding: 0;
@@ -347,6 +372,38 @@
       height: 18px;
       background: var(--border);
     }
+
+    /* ── Theme toggle ── */
+    .theme-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: color var(--transition), background var(--transition), border-color var(--transition);
+      padding: 0;
+    }
+
+    .theme-btn:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+      border-color: var(--accent);
+    }
+
+    .theme-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .theme-btn .icon-sun { display: none; }
+    .theme-btn .icon-moon { display: block; }
+    body.light .theme-btn .icon-sun { display: block; }
+    body.light .theme-btn .icon-moon { display: none; }
 
     /* ── Workspace ── */
     .workspace {
@@ -687,6 +744,22 @@
         </svg>
         GitHub
       </a>
+      <button class="theme-btn" id="themeToggle" title="Toggle light/dark mode">
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"/>
+          <line x1="12" y1="1" x2="12" y2="3"/>
+          <line x1="12" y1="21" x2="12" y2="23"/>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+          <line x1="1" y1="12" x2="3" y2="12"/>
+          <line x1="21" y1="12" x2="23" y2="12"/>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+      </button>
     </div>
   </div>
 

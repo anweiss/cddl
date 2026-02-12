@@ -88,6 +88,40 @@ monaco.editor.defineTheme('cddl-dark', {
   },
 });
 
+// Light theme for the playground
+monaco.editor.defineTheme('cddl-light', {
+  base: 'vs',
+  inherit: true,
+  rules: [
+    { token: 'comment', foreground: '6a737d', fontStyle: 'italic' },
+    { token: 'keyword', foreground: 'd63384', fontStyle: 'bold' },
+    { token: 'keyword.operator', foreground: 'cf222e' },
+    { token: 'operator', foreground: '24292f' },
+    { token: 'number', foreground: '0550ae' },
+    { token: 'string', foreground: '0a3069' },
+    { token: 'string.invalid', foreground: 'cf222e' },
+    { token: 'string.escape.invalid', foreground: 'cf222e' },
+    { token: 'identifier', foreground: '0550ae' },
+    { token: 'bracket.square', foreground: 'e3b341' },
+    { token: 'bracket.curly', foreground: '8250df' },
+    { token: 'bracket.parenthesis', foreground: '0969da' },
+    { token: 'bracket.angle', foreground: '1a7f37' },
+    { token: 'delimiter', foreground: '57606a' },
+  ],
+  colors: {
+    'editor.background': '#f8f9fc',
+    'editor.foreground': '#1e293b',
+    'editor.lineHighlightBackground': '#f0f1f5',
+    'editor.selectionBackground': '#c8d1e0',
+    'editorCursor.foreground': '#4f46e5',
+    'editorLineNumber.foreground': '#94a3b8',
+    'editorLineNumber.activeForeground': '#4f46e5',
+    'editor.inactiveSelectionBackground': '#e8e9ef',
+    'editorIndentGuide.background1': '#e8e9ef',
+    'editorIndentGuide.activeBackground1': '#d4d6de',
+  },
+});
+
 // Autocomplete for common CDDL types
 monaco.languages.registerCompletionItemProvider('cddl', {
   provideCompletionItems: () => {
@@ -146,6 +180,9 @@ const REFS_CACHE_KEY = 'cddl-playground-check-refs';
 
 let formatOnSave = false;
 const FORMAT_CACHE_KEY = 'cddl-playground-format-on-save';
+
+let isDark = true;
+const THEME_CACHE_KEY = 'cddl-playground-theme';
 
 // ─── Examples Library ─────────────────────────────────────────────────────────
 
@@ -1132,6 +1169,22 @@ function boot() {
     }
   });
 
+  // Theme toggle
+  try {
+    const saved = localStorage.getItem(THEME_CACHE_KEY);
+    if (saved === 'light') isDark = false;
+  } catch (_) {}
+  if (!isDark) document.body.classList.add('light');
+
+  document.getElementById('themeToggle').addEventListener('click', () => {
+    isDark = !isDark;
+    document.body.classList.toggle('light', !isDark);
+    if (editor) {
+      monaco.editor.setTheme(isDark ? 'cddl-dark' : 'cddl-light');
+    }
+    try { localStorage.setItem(THEME_CACHE_KEY, isDark ? 'dark' : 'light'); } catch (_) {}
+  });
+
   const container = document.getElementById('cddlEditor');
   if (!container) return;
 
@@ -1139,7 +1192,7 @@ function boot() {
   editor = monaco.editor.create(container, {
     value: loadContent(),
     language: 'cddl',
-    theme: 'cddl-dark',
+    theme: isDark ? 'cddl-dark' : 'cddl-light',
     fontSize: 14,
     lineHeight: 22,
     fontFamily: "'JetBrains Mono', 'Monaco', 'Menlo', 'Consolas', monospace",
