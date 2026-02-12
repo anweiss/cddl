@@ -130,112 +130,258 @@ async function initWasm() {
   }
 }
 
-// ─── Validation ────────────────────────────────────────────────────────────────
+// ─── Error normalisation ──────────────────────────────────────────────────────
+//
+// `cddl_from_str` either:
+//   • returns successfully (valid CDDL)
+//   • throws an **Array** of structured `ParserError` objects:
+//       { position: { line, column, range: [start, end], index }, msg: { short, extended } }
+//   • throws a plain **string** (for non-parser errors like regex issues)
+//
+// We normalise every error into:
+//   { line, column, range, message, category }
 
-function validateCDDLText(cddlText) {
+/**
+ * Extract a structured error from a WASM ParserError object.
+ */
+function normaliseStructuredError(err) {
+  const line = err.position?.line ?? 1;
+  const column = err.position?.column ?? 1;
+  const range =
+    Array.isArray(err.position?.range) && err.position.range.length === 2
+      ? err.position.range
+      : null;
+
+  // Prefer the short message; fall back to extended, then toString
+  let message = err.msg?.short || err.msg?.extended || '';
+  if (!message && typeof err.toString === 'function') {
+    message = err.toString();
+  }
+
+  return formatError({ line, column, range, message });
+}
+
+/**
+ * Best-effort extraction from a plain error string (non-parser errors).
+ */
+function normaliseStringError(str) {
+  let line = 1;
+  let column = 1;
+  let message = str.replace(/^Error:\s*/i, '');
+
+  // "┌─ input:LINE:COL"
+  const loc = str.match(/┌─\s*input:(\d+):(\d+)/);
+  if (loc) {
+    line = +loc[1];
+    column = +loc[2];
+
+    // Try to pull the message from the last non-decoration line
+    const lines = str.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const t = lines[i]?.trim();
+      if (
+        t &&
+        !/[─│╭╰┌┐└┘^]/.test(t) &&
+        !/^\d+\s*│/.test(t) &&
+        !/^(Lexer error|Parser error)/i.test(t)
+      ) {
+        message = t;
+        break;
+      }
+    }
+  } else {
+    // Fallback: "line N" / "column N"
+    const lm = str.match(/line\s+(\d+)/i);
+    if (lm) line = +lm[1];
+    const cm = str.match(/column\s+(\d+)/i);
+    if (cm) column = +cm[1];
+  }
+
+  return formatError({ line, column, range: null, message });
+}
+
+/**
+ * Clean up message text and assign an error category.
+ */
+function formatError({ line, column, range, message }) {
+  // Strip prefixes
+  message = message.replace(/^(Lexer error|Parser error|Error)[.:]\s*/i, '').trim();
+
+  // Capitalise
+  if (message && /^[a-z]/.test(message)) {
+    message = message[0].toUpperCase() + message.slice(1);
+  }
+
+  // Sentence-ending punctuation
+  if (message && !/[.!?]$/.test(message)) {
+    message += '.';
+  }
+
+  // Categorise
+  const lc = message.toLowerCase();
+  let category = 'Syntax';
+  if (/\btoken\b|character|symbol|escape|unterminated|byte string|text string|hexfloat|exponent/.test(lc))
+    category = 'Lexer';
+  else if (/expected|unexpected|missing|invalid.*syntax|must be/.test(lc))
+    category = 'Parser';
+  else if (/not defined|undefined|unknown/.test(lc))
+    category = 'Reference';
+  else if (/duplicate|already defined/.test(lc))
+    category = 'Duplicate';
+
+  return { line, column, range, message, category };
+}
+
+// ─── Validation  ──────────────────────────────────────────────────────────────
+//
+// Full-document parse: calls `cddl_from_str` on the complete input.
+// If that succeeds, the document is valid.
+// Otherwise we collect the errors.
+//
+// Partial compilation: when the full parse fails we additionally attempt to
+// parse each top-level rule individually, so we can report errors across the
+// entire file rather than only stopping at the first failure.
+
+function validateFull(cddlText) {
   try {
     if (!wasmModule?.cddl_from_str) throw new Error('WASM not ready');
     wasmModule.cddl_from_str(cddlText);
     return { isValid: true, errors: [] };
   } catch (error) {
-    const errors = [];
+    return { isValid: false, errors: extractErrors(error) };
+  }
+}
 
-    if (error && typeof error === 'object') {
-      if (Array.isArray(error)) {
-        error.forEach((e) => errors.push(normaliseError(e)));
-      } else if (error.position || error.msg) {
-        errors.push(normaliseError(error));
-      } else {
-        errors.push(normaliseErrorString(error.toString()));
-      }
+/**
+ * Turn a thrown value into an array of normalised errors.
+ */
+function extractErrors(error) {
+  if (Array.isArray(error)) {
+    return error.map(normaliseStructuredError);
+  }
+  if (error && typeof error === 'object' && (error.position || error.msg)) {
+    return [normaliseStructuredError(error)];
+  }
+  return [normaliseStringError(String(error))];
+}
+
+/**
+ * Split the CDDL source into top-level rule blocks.
+ *
+ * A "block" starts at a line that looks like a rule assignment
+ * (`identifier = ...` / `identifier /= ...` / `identifier //= ...`)
+ * and continues until the next such line.  Comment-only lines and blank lines
+ * between rules are attached to the *following* rule.
+ *
+ * Returns an array of `{ text, startLine }` objects (1-based line numbers).
+ */
+function splitRules(source) {
+  const lines = source.split('\n');
+  const blocks = [];
+  let current = null;
+
+  // Match lines that begin a rule: `ident = ...`, `ident /= ...`, `ident //= ...`
+  const ruleStart = /^[a-zA-Z_$][\w\-$]*\s*(?:\/\/=|\/=|=)/;
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].replace(/;.*$/, '').trim(); // strip comments
+    if (ruleStart.test(trimmed)) {
+      // Save previous block
+      if (current) blocks.push(current);
+      current = { lines: [lines[i]], startLine: i + 1 };
     } else {
-      errors.push(normaliseErrorString(String(error)));
-    }
-
-    return { isValid: false, errors };
-  }
-}
-
-function normaliseError(err) {
-  const line = err.position?.line || 1;
-  const column = err.position?.column || 1;
-  const range = err.position?.range || null;
-  const raw = err.toString();
-
-  let message = err.msg?.short || err.msg?.extended || raw;
-
-  // Strip diagnostic decoration if present
-  if (raw && (raw.includes('┌─') || raw.includes('╰^'))) {
-    const extracted = extractDiagnosticMessage(raw);
-    if (extracted) message = extracted;
-  }
-
-  return classify({ line, column, range, message, raw });
-}
-
-function normaliseErrorString(str) {
-  let line = 1,
-    column = 1;
-  let message = str.replace(/^Error:\s*/, '');
-
-  const loc = str.match(/┌─ input:(\d+):(\d+)/);
-  if (loc) {
-    line = +loc[1];
-    column = +loc[2];
-    const extracted = extractDiagnosticMessage(str);
-    if (extracted) message = extracted;
-  } else {
-    const lm = str.match(/line (\d+)/i);
-    if (lm) line = +lm[1];
-    const cm = str.match(/column (\d+)/i);
-    if (cm) column = +cm[1];
-  }
-
-  return classify({ line, column, range: null, message, raw: str });
-}
-
-function extractDiagnosticMessage(diag) {
-  const arrow = diag.match(/╰\^\s*(.+)$/m);
-  if (arrow) return arrow[1].replace(/[│├└┌┐┘╭╰╯╮─┬┴┼^|]/g, '').trim();
-
-  const lines = diag.split('\n');
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const t = lines[i]?.trim();
-    if (
-      t &&
-      !/[─│╭╰┌┐└┘^]/.test(t) &&
-      !/^\d+\s*│/.test(t) &&
-      !/^(Lexer error|Parser error)/i.test(t)
-    ) {
-      return t.replace(/[│├└┌┐┘╭╰╯╮─┬┴┼^|]/g, '').trim();
+      if (current) {
+        current.lines.push(lines[i]);
+      } else {
+        // Leading comments / blank lines before first rule – start a block
+        current = { lines: [lines[i]], startLine: i + 1 };
+      }
     }
   }
-  return null;
+  if (current) blocks.push(current);
+
+  return blocks.map((b) => ({
+    text: b.lines.join('\n'),
+    startLine: b.startLine,
+  }));
 }
 
-function classify(err) {
-  let { message } = err;
+/**
+ * Validates the full document, then does partial per-rule compilation
+ * to surface errors beyond the first failure.
+ */
+function validateCDDLText(cddlText) {
+  // 1. Full-document parse
+  const full = validateFull(cddlText);
+  if (full.isValid) return full;
 
-  // Clean up
-  message = message
-    .replace(/^(Lexer error|Parser error|Error):\s*/i, '')
-    .trim();
-  if (message && message[0] === message[0].toLowerCase()) {
-    message = message[0].toUpperCase() + message.slice(1);
+  // 2. Partial compilation – parse each rule block independently
+  const blocks = splitRules(cddlText);
+  const allErrors = [];
+  const seen = new Set(); // dedup key: "line:col:message"
+
+  // Add errors from the full parse first
+  for (const err of full.errors) {
+    const key = `${err.line}:${err.column}:${err.message}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      allErrors.push(err);
+    }
   }
-  if (message && !/[.!?]$/.test(message)) message += '.';
 
-  let category = 'Syntax Error';
-  const src = (err.raw || message).toLowerCase();
-  if (/lexer|token|character|symbol/.test(src)) category = 'Lexer Error';
-  else if (/parser|syntax|expected|unexpected/.test(src))
-    category = 'Parser Error';
-  else if (/undefined|not defined|unknown/.test(src))
-    category = 'Reference Error';
-  else if (/duplicate|already defined/.test(src))
-    category = 'Definition Error';
+  // Try each block individually
+  for (const block of blocks) {
+    const trimmed = block.text.trim();
+    if (!trimmed || /^;/.test(trimmed)) continue; // skip pure-comment blocks
 
-  return { ...err, message, category };
+    try {
+      wasmModule.cddl_from_str(block.text);
+    } catch (blockError) {
+      const blockErrors = extractErrors(blockError);
+
+      for (const err of blockErrors) {
+        // Adjust line numbers to be document-relative
+        const adjusted = {
+          ...err,
+          line: err.line + block.startLine - 1,
+        };
+
+        // Adjust range offsets if present
+        if (err.range) {
+          // Compute byte offset of the block start in the original source
+          const blockByteOffset = byteOffset(cddlText, block.startLine - 1);
+          adjusted.range = [
+            err.range[0] + blockByteOffset,
+            err.range[1] + blockByteOffset,
+          ];
+        }
+
+        const key = `${adjusted.line}:${adjusted.column}:${adjusted.message}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          allErrors.push(adjusted);
+        }
+      }
+    }
+  }
+
+  // Sort errors by position
+  allErrors.sort((a, b) => a.line - b.line || a.column - b.column);
+
+  return { isValid: false, errors: allErrors };
+}
+
+/**
+ * Compute the byte offset (UTF-8) of a given 0-based line index
+ * within the source string.
+ */
+function byteOffset(source, lineIndex) {
+  let offset = 0;
+  const lines = source.split('\n');
+  for (let i = 0; i < lineIndex && i < lines.length; i++) {
+    offset += new TextEncoder().encode(lines[i] + '\n').length;
+  }
+  return offset;
 }
 
 // ─── UI State ──────────────────────────────────────────────────────────────────
@@ -370,44 +516,94 @@ function runValidation() {
 
   // Show checking state briefly
   statusPill.className = 'status-pill checking';
-  statusText.textContent = 'Checking...';
+  statusText.textContent = 'Checking\u2026';
 
   const result = validateCDDLText(input);
   updateProblems(result.errors);
 
   // Update Monaco markers
   const model = editor.getModel();
-  const fullText = model.getValue();
 
   if (result.isValid) {
     monaco.editor.setModelMarkers(model, 'cddl', []);
   } else {
-    const markers = result.errors.map((err) => {
-      if (err.range && err.range.length === 2) {
-        const s = model.getPositionAt(err.range[0]);
-        const e = model.getPositionAt(err.range[1]);
-        return {
-          startLineNumber: s.lineNumber,
-          startColumn: s.column,
-          endLineNumber: e.lineNumber,
-          endColumn: e.column,
-          message: err.message,
-          severity: monaco.MarkerSeverity.Error,
-          code: err.category,
-        };
-      }
-      return {
-        startLineNumber: err.line,
-        startColumn: err.column,
-        endLineNumber: err.line,
-        endColumn: Math.min(err.column + 3, 200),
-        message: err.message,
-        severity: monaco.MarkerSeverity.Error,
-        code: err.category,
-      };
-    });
+    const markers = result.errors.map((err) => toMarker(model, err));
     monaco.editor.setModelMarkers(model, 'cddl', markers);
   }
+}
+
+/**
+ * Convert a normalised error into a Monaco IMarkerData.
+ *
+ * Strategy:
+ *  1. If the error has a byte `range`, use it for precise highlighting.
+ *  2. Otherwise, use the line/column and try to highlight the token at that
+ *     position (scan forward to end of word / operator).
+ *  3. Final fallback: highlight from column to end-of-line.
+ */
+function toMarker(model, err) {
+  // ── Range-based (best) ──
+  if (err.range && err.range.length === 2 && err.range[1] > err.range[0]) {
+    const s = model.getPositionAt(err.range[0]);
+    const e = model.getPositionAt(err.range[1]);
+    return {
+      startLineNumber: s.lineNumber,
+      startColumn: s.column,
+      endLineNumber: e.lineNumber,
+      endColumn: e.column,
+      message: err.message,
+      severity: monaco.MarkerSeverity.Error,
+      source: 'cddl',
+    };
+  }
+
+  // ── Token-based (good) ──
+  const lineNumber = Math.max(1, Math.min(err.line, model.getLineCount()));
+  const lineContent = model.getLineContent(lineNumber);
+  const col = Math.max(1, Math.min(err.column, lineContent.length + 1));
+
+  // Try to highlight from col to the end of the current "token"
+  let endCol = col;
+  const rest = lineContent.substring(col - 1);
+
+  if (rest.length > 0) {
+    // Match identifier, number, string-quote, or operator cluster
+    const tokenMatch = rest.match(/^(?:[a-zA-Z_][\w\-]*|\d[\d.eE+\-]*|"[^"]*"?|'[^']*'?|[^\s,;{}()\[\]]+)/);
+    if (tokenMatch) {
+      endCol = col + tokenMatch[0].length;
+    } else {
+      // Single character (bracket, delimiter, etc.)
+      endCol = col + 1;
+    }
+  }
+
+  // Ensure we highlight at least something
+  if (endCol <= col) {
+    endCol = Math.min(col + 1, lineContent.length + 1);
+  }
+
+  // If the error points past the end of the line, highlight the whole line
+  if (col > lineContent.length) {
+    return {
+      startLineNumber: lineNumber,
+      startColumn: 1,
+      endLineNumber: lineNumber,
+      endColumn: lineContent.length + 1,
+      message: err.message,
+      severity: monaco.MarkerSeverity.Error,
+      source: 'cddl',
+    };
+  }
+
+  return {
+    startLineNumber: lineNumber,
+    startColumn: col,
+    endLineNumber: lineNumber,
+    endColumn: endCol,
+    message: err.message,
+    severity: monaco.MarkerSeverity.Error,
+    source: 'cddl',
+  };
 }
 
 // ─── Initialisation ────────────────────────────────────────────────────────────
