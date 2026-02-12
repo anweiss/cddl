@@ -423,17 +423,38 @@ function toMarker(model, err) {
     endCol = Math.min(col + 1, lineContent.length + 1);
   }
 
-  // If the error points past the end of the line or the line is empty/whitespace,
-  // move the marker to the previous non-empty line (e.g. "test" with no "=" —
-  // the parser reports the error on the following line where it expected "=").
-  if (col > lineContent.length || lineContent.trim().length === 0) {
+  // If the error points past the end of the line, to an empty/whitespace line,
+  // or to a closing delimiter (the real problem is the token before it), walk
+  // back to the previous meaningful token — possibly on an earlier line.
+  const charAtCol = lineContent[col - 1] || '';
+  const isClosingDelim = /^[\]\)}]$/.test(charAtCol);
+  if (col > lineContent.length || lineContent.trim().length === 0 || isClosingDelim) {
+    // Look for the last token to the left of the error position on this line
+    const prefix = isClosingDelim ? lineContent.substring(0, col - 1) : lineContent;
+    const trimmedPrefix = prefix.trimEnd();
+    if (trimmedPrefix.length > 0) {
+      const lastTokenMatch = trimmedPrefix.match(/[a-zA-Z_][\w\-]*$|"[^"]*"$|'[^']*'$|\S+$/);
+      if (lastTokenMatch) {
+        const start = trimmedPrefix.length - lastTokenMatch[0].length + 1;
+        return {
+          startLineNumber: lineNumber,
+          startColumn: start,
+          endLineNumber: lineNumber,
+          endColumn: trimmedPrefix.length + 1,
+          message: err.message,
+          severity,
+          source: 'cddl',
+        };
+      }
+    }
+    // Nothing useful on this line — walk back to the previous non-empty line
     let targetLine = lineNumber;
     let targetContent = lineContent;
-    while (targetLine > 1 && targetContent.trim().length === 0) {
+    while (targetLine > 1) {
       targetLine--;
       targetContent = model.getLineContent(targetLine);
+      if (targetContent.trim().length > 0) break;
     }
-    // Highlight the last token on that line
     const trimmed = targetContent.trimEnd();
     const lastTokenMatch = trimmed.match(/[a-zA-Z_][\w\-]*$|"[^"]*"$|'[^']*'$|\S+$/);
     if (lastTokenMatch) {
