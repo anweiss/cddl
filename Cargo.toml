@@ -9,6 +9,7 @@ version = "0.10.2"
 authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
 readme = "README.md"
 edition = "2018"
+rust-version = "1.88.0"
 exclude = [
     "cddl-lsp/**/*",
     "www/**/*",
