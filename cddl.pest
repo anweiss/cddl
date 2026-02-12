@@ -20,9 +20,9 @@
 // ENTRY POINT AND WHITESPACE
 // =============================================================================
 
-// Main entry point: A CDDL specification consists of one or more rules
-// separated by whitespace and comments
-cddl = { SOI ~ S ~ (rule ~ S)+ ~ EOI }
+// Main entry point: A CDDL specification consists of zero or more rules
+// separated by whitespace and comments (RFC 9682 Section 3.1)
+cddl = { SOI ~ S ~ (rule ~ S)* ~ EOI }
 
 // Whitespace and comments (silent rules that don't appear in parse tree)
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
@@ -259,12 +259,14 @@ hexfloat = @{ "-"? ~ "0x" ~ ASCII_HEX_DIGIT+ ~ ("." ~ ASCII_HEX_DIGIT+)? ~ ("p" 
 // =============================================================================
 
 // Text string values with escape sequences
-// Supports standard JSON escape sequences: \", \\, \/, \b, \f, \n, \r, \t, \uXXXX
+// Supports JSON escape sequences and RFC 9682 \u{hex} escapes:
+//   \", \\, \/, \b, \f, \n, \r, \t, \uXXXX, \uHHHH\uLLLL, \u{hex}
 text_value = ${ "\"" ~ text_inner ~ "\"" }
 text_inner = @{ text_char* }
 text_char = { escape_sequence | (!("\"" | "\\") ~ ANY) }
 escape_sequence = @{ "\\" ~ (
     "\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" 
+  | ("u" ~ "{" ~ ASCII_HEX_DIGIT+ ~ "}")
   | ("u" ~ ASCII_HEX_DIGIT{4})
 ) }
 

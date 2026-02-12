@@ -522,6 +522,7 @@ pub mod validator;
 /// CDDL AST visitor
 pub mod visitor;
 
+#[cfg(not(target_arch = "wasm32"))]
 mod parser_tests;
 
 #[doc(inline)]
