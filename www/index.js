@@ -428,25 +428,24 @@ function toMarker(model, err) {
   // back to the previous meaningful token — possibly on an earlier line.
   const charAtCol = lineContent[col - 1] || '';
   const isClosingDelim = /^[\]\)}]$/.test(charAtCol);
-  if (col > lineContent.length || lineContent.trim().length === 0 || isClosingDelim) {
-    // Look for the last token to the left of the error position on this line
-    const prefix = isClosingDelim ? lineContent.substring(0, col - 1) : lineContent;
+  if (isClosingDelim) {
+    // The error is at a closing delimiter — highlight the gap just before it
+    // where the missing token is expected (e.g. the space after `*` in `[* ]`).
+    const prefix = lineContent.substring(0, col - 1);
     const trimmedPrefix = prefix.trimEnd();
-    if (trimmedPrefix.length > 0) {
-      const lastTokenMatch = trimmedPrefix.match(/[a-zA-Z_][\w\-]*$|"[^"]*"$|'[^']*'$|\S+$/);
-      if (lastTokenMatch) {
-        const start = trimmedPrefix.length - lastTokenMatch[0].length + 1;
-        return {
-          startLineNumber: lineNumber,
-          startColumn: start,
-          endLineNumber: lineNumber,
-          endColumn: trimmedPrefix.length + 1,
-          message: err.message,
-          severity,
-          source: 'cddl',
-        };
-      }
-    }
+    // Place a 1-char marker right after the last non-space character
+    const insertCol = trimmedPrefix.length + 1;
+    return {
+      startLineNumber: lineNumber,
+      startColumn: insertCol,
+      endLineNumber: lineNumber,
+      endColumn: insertCol + 1,
+      message: err.message,
+      severity,
+      source: 'cddl',
+    };
+  }
+  if (col > lineContent.length || lineContent.trim().length === 0) {
     // Nothing useful on this line — walk back to the previous non-empty line
     let targetLine = lineNumber;
     let targetContent = lineContent;
