@@ -43,7 +43,6 @@ This crate is used in several notable projects:
 | Project | Description |
 | ------- | ----------- |
 | [google/cddlconv](https://github.com/google/cddlconv) | A command-line utility for converting CDDL to TypeScript and Zod schemas |
-| [dcSpark/cddl-codegen](https://github.com/dcSpark/cddl-codegen) | Generates Rust, WASM and JSON serialization code from CDDL specifications, used in the Cardano blockchain ecosystem |
 | [input-output-hk/catalyst-core](https://github.com/input-output-hk/catalyst-core) | Core Catalyst governance engine for Cardano, uses this crate for CBOR validation of CIP-36 voter registration data |
 
 ## Why Rust?
