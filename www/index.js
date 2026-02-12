@@ -133,11 +133,16 @@ async function initWasm() {
 // ─── Validation ───────────────────────────────────────────────────────────────
 //
 // All parsing and partial compilation is handled by the Rust WASM library.
-// `validate_cddl_from_str` returns an array of structured errors (empty = valid).
-// Each error: { position: { line, column, range: [start, end], index },
-//               msg: { short, extended } }
+// `validate_cddl_from_str(input, check_refs)` returns an array of structured
+// diagnostics (empty = valid).  Each entry has:
+//   { position: { line, column, range, index },
+//     msg: { short, extended },
+//     severity: "error" | "warning" }
 //
-// We normalise each into: { line, column, range, message, category }
+// We normalise each into: { line, column, range, message, category, severity }
+
+let checkRefs = false;
+const REFS_CACHE_KEY = 'cddl-playground-check-refs';
 
 /**
  * Normalise a WASM error object into the shape the UI expects.
@@ -177,7 +182,7 @@ function normaliseError(err) {
   else if (/duplicate|already defined/.test(lc))
     category = 'Duplicate';
 
-  return { line, column, range, message, category };
+  return { line, column, range, message, category, severity: err.severity || 'error' };
 }
 
 /**
@@ -190,12 +195,13 @@ function validateCDDLText(cddlText) {
   }
 
   try {
-    const rawErrors = wasmModule.validate_cddl_from_str(cddlText);
+    const rawErrors = wasmModule.validate_cddl_from_str(cddlText, checkRefs);
     if (!Array.isArray(rawErrors) || rawErrors.length === 0) {
       return { isValid: true, errors: [] };
     }
     const errors = rawErrors.map(normaliseError);
-    return { isValid: false, errors };
+    const hasErrors = errors.some((e) => e.severity === 'error');
+    return { isValid: !hasErrors, errors };
   } catch (err) {
     // Unexpected failure — surface it as a single error
     return {
@@ -244,6 +250,8 @@ let cursorPosition;
 
 function updateProblems(errors) {
   const count = errors.length;
+  const errorCount = errors.filter((e) => e.severity === 'error').length;
+  const warningCount = errors.filter((e) => e.severity === 'warning').length;
 
   // Badge
   problemsBadge.textContent = count;
@@ -251,12 +259,18 @@ function updateProblems(errors) {
 
   // Status pill
   statusPill.className = 'status-pill';
-  if (count === 0) {
+  if (errorCount > 0) {
+    statusPill.classList.add('invalid');
+    const parts = [];
+    parts.push(`${errorCount} error${errorCount > 1 ? 's' : ''}`);
+    if (warningCount > 0) parts.push(`${warningCount} warning${warningCount > 1 ? 's' : ''}`);
+    statusText.textContent = parts.join(', ');
+  } else if (warningCount > 0) {
+    statusPill.classList.add('valid');
+    statusText.textContent = `Valid \u2022 ${warningCount} warning${warningCount > 1 ? 's' : ''}`;
+  } else {
     statusPill.classList.add('valid');
     statusText.textContent = 'Valid';
-  } else {
-    statusPill.classList.add('invalid');
-    statusText.textContent = `${count} error${count > 1 ? 's' : ''}`;
   }
 
   // Body
@@ -271,14 +285,21 @@ function updateProblems(errors) {
   problemsPanel.classList.remove('collapsed');
 
   errors.forEach((err) => {
+    const isWarning = err.severity === 'warning';
     const row = document.createElement('div');
-    row.className = 'problem-row';
+    row.className = `problem-row${isWarning ? ' warning' : ''}`;
     row.onclick = () => jumpTo(err.line, err.column);
 
+    const icon = isWarning
+      ? `<svg class="problem-icon" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8.22 1.754a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm-1.763-.707c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-.25-5.25a.75.75 0 0 0-1.5 0v2.5a.75.75 0 0 0 1.5 0Z"/>
+        </svg>`
+      : `<svg class="problem-icon" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1ZM7.25 4.5a.75.75 0 0 1 1.5 0v3.25a.75.75 0 0 1-1.5 0V4.5ZM8 10.5A.75.75 0 1 1 8 12a.75.75 0 0 1 0-1.5Z"/>
+        </svg>`;
+
     row.innerHTML = `
-      <svg class="problem-icon" viewBox="0 0 16 16" fill="currentColor">
-        <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1ZM7.25 4.5a.75.75 0 0 1 1.5 0v3.25a.75.75 0 0 1-1.5 0V4.5ZM8 10.5A.75.75 0 1 1 8 12a.75.75 0 0 1 0-1.5Z"/>
-      </svg>
+      ${icon}
       <span class="problem-message">${escapeHtml(err.message)}</span>
       <span class="problem-category">${escapeHtml(err.category)}</span>
       <span class="problem-location">[Ln ${err.line}, Col ${err.column}]</span>
@@ -344,13 +365,8 @@ function runValidation() {
 
   // Update Monaco markers
   const model = editor.getModel();
-
-  if (result.isValid) {
-    monaco.editor.setModelMarkers(model, 'cddl', []);
-  } else {
-    const markers = result.errors.map((err) => toMarker(model, err));
-    monaco.editor.setModelMarkers(model, 'cddl', markers);
-  }
+  const markers = result.errors.map((err) => toMarker(model, err));
+  monaco.editor.setModelMarkers(model, 'cddl', markers);
 }
 
 /**
@@ -363,6 +379,10 @@ function runValidation() {
  *  3. Final fallback: highlight from column to end-of-line.
  */
 function toMarker(model, err) {
+  const severity = err.severity === 'warning'
+    ? monaco.MarkerSeverity.Warning
+    : monaco.MarkerSeverity.Error;
+
   // ── Range-based (best) ──
   if (err.range && err.range.length === 2 && err.range[1] > err.range[0]) {
     const s = model.getPositionAt(err.range[0]);
@@ -373,7 +393,7 @@ function toMarker(model, err) {
       endLineNumber: e.lineNumber,
       endColumn: e.column,
       message: err.message,
-      severity: monaco.MarkerSeverity.Error,
+      severity,
       source: 'cddl',
     };
   }
@@ -411,7 +431,7 @@ function toMarker(model, err) {
       endLineNumber: lineNumber,
       endColumn: lineContent.length + 1,
       message: err.message,
-      severity: monaco.MarkerSeverity.Error,
+      severity,
       source: 'cddl',
     };
   }
@@ -422,7 +442,7 @@ function toMarker(model, err) {
     endLineNumber: lineNumber,
     endColumn: endCol,
     message: err.message,
-    severity: monaco.MarkerSeverity.Error,
+    severity,
     source: 'cddl',
   };
 }
@@ -438,6 +458,20 @@ function boot() {
   problemsBody = document.getElementById('problemsBody');
   problemsEmpty = document.getElementById('problemsEmpty');
   cursorPosition = document.getElementById('cursorPosition');
+
+  // Ref-check toggle
+  const refCheckTrack = document.getElementById('refCheckTrack');
+  try {
+    checkRefs = localStorage.getItem(REFS_CACHE_KEY) === 'true';
+  } catch (_) {}
+  if (checkRefs) refCheckTrack.classList.add('active');
+
+  document.getElementById('refCheckToggle').addEventListener('click', () => {
+    checkRefs = !checkRefs;
+    refCheckTrack.classList.toggle('active', checkRefs);
+    try { localStorage.setItem(REFS_CACHE_KEY, checkRefs); } catch (_) {}
+    if (editor) runValidation();
+  });
 
   const container = document.getElementById('cddlEditor');
   if (!container) return;

@@ -295,6 +295,8 @@ pub struct CollectedError {
   pub position: Position,
   /// Error message
   pub msg: ErrorMsg,
+  /// Severity: "error" or "warning"
+  pub severity: String,
 }
 
 /// Validate CDDL input and return **all** errors found via partial compilation.
@@ -307,11 +309,23 @@ pub struct CollectedError {
 ///      independently so that errors beyond the first failure are surfaced.
 ///   3. All errors are deduplicated, and sorted by position.
 #[cfg(target_arch = "wasm32")]
-pub fn validate_cddl(input: &str) -> Vec<CollectedError> {
+pub fn validate_cddl(input: &str, check_refs: bool) -> Vec<CollectedError> {
   // 1. Full-document parse
-  match cddl_from_pest_str(input) {
-    Ok(_) => Vec::new(),
-    Err(e) => {
+  match CddlParser::parse(Rule::cddl, input) {
+    Ok(pairs) => {
+      // Syntax is valid — optionally check for undefined references
+      if check_refs {
+        check_undefined_references(pairs, input)
+      } else {
+        Vec::new()
+      }
+    }
+    Err(_) => {
+      // Full parse failed — get structured error via our converter
+      let e = match cddl_from_pest_str(input) {
+        Ok(_) => return Vec::new(), // shouldn't happen, but be safe
+        Err(e) => e,
+      };
       let mut errors = Vec::new();
       let mut seen = std::collections::HashSet::new();
 
@@ -332,7 +346,34 @@ pub fn validate_cddl(input: &str) -> Vec<CollectedError> {
         }
       }
 
-      // 3. Sort by position
+      // 3. Optionally check for undefined references in successfully-parsed blocks
+      if check_refs {
+        for block in &blocks {
+          let trimmed = block.text.trim();
+          if trimmed.is_empty() || trimmed.starts_with(';') {
+            continue;
+          }
+          if let Ok(block_pairs) = CddlParser::parse(Rule::cddl, &block.text) {
+            let ref_errors = check_undefined_references(block_pairs, &block.text);
+            for mut re in ref_errors {
+              // Adjust positions to document-relative
+              re.position.line += block.start_line - 1;
+              re.position.range.0 += block.byte_offset;
+              re.position.range.1 += block.byte_offset;
+              re.position.index += block.byte_offset;
+              let key = format!(
+                "{}:{}:{}",
+                re.position.line, re.position.column, re.msg.short
+              );
+              if seen.insert(key) {
+                errors.push(re);
+              }
+            }
+          }
+        }
+      }
+
+      // 4. Sort by position
       errors.sort_by(|a, b| {
         a.position
           .line
@@ -493,6 +534,7 @@ fn push_error(
       errors.push(CollectedError {
         position: *position,
         msg: msg.clone(),
+        severity: "error".to_string(),
       });
     }
   } else {
@@ -506,6 +548,7 @@ fn push_error(
           short: msg_text,
           extended: None,
         },
+        severity: "error".to_string(),
       });
     }
   }
@@ -542,10 +585,273 @@ fn push_error_with_offset(
       errors.push(CollectedError {
         position: adjusted,
         msg: msg.clone(),
+        severity: "error".to_string(),
       });
     }
   } else {
     push_error(error, errors, seen);
+  }
+}
+
+/// Walk a successful pest parse tree to find undefined references.
+///
+/// Collects all rule definitions (LHS of type/group rules) and all referenced
+/// typenames/groupnames in type expressions and group entries.  Any reference
+/// that is neither a defined rule, a standard prelude name, nor a generic
+/// parameter is reported as a warning.
+#[cfg(target_arch = "wasm32")]
+fn check_undefined_references(pairs: Pairs<'_, Rule>, input: &str) -> Vec<CollectedError> {
+  use std::collections::{HashMap, HashSet};
+
+  /// Standard prelude names from RFC 8610 §D
+  const STANDARD_PRELUDE: &[&str] = &[
+    "any",
+    "uint",
+    "nint",
+    "int",
+    "bstr",
+    "bytes",
+    "tstr",
+    "text",
+    "tdate",
+    "time",
+    "number",
+    "biguint",
+    "bignint",
+    "bigint",
+    "integer",
+    "unsigned",
+    "decfrac",
+    "bigfloat",
+    "eb64url",
+    "eb64legacy",
+    "eb16",
+    "encoded-cbor",
+    "uri",
+    "b64url",
+    "b64legacy",
+    "regexp",
+    "mime-message",
+    "cbor-any",
+    "float16",
+    "float32",
+    "float64",
+    "float16-32",
+    "float32-64",
+    "float",
+    "false",
+    "true",
+    "bool",
+    "nil",
+    "null",
+    "undefined",
+  ];
+
+  let prelude: HashSet<&str> = STANDARD_PRELUDE.iter().copied().collect();
+
+  // Phase 1: collect all defined rule names and per-rule generic parameters
+  let mut defined: HashSet<String> = HashSet::new();
+  // Map from rule pair span to its generic param names
+  let mut rule_generic_params: HashMap<usize, HashSet<String>> = HashMap::new();
+
+  fn collect_definitions(
+    pair: &pest::iterators::Pair<'_, Rule>,
+    defined: &mut HashSet<String>,
+    rule_generic_params: &mut HashMap<usize, HashSet<String>>,
+  ) {
+    if pair.as_rule() == Rule::rule {
+      let mut generic_params_for_rule: HashSet<String> = HashSet::new();
+      for inner in pair.clone().into_inner() {
+        match inner.as_rule() {
+          Rule::typename | Rule::groupname => {
+            // Extract the id from typename/groupname
+            for id_pair in inner.into_inner() {
+              if id_pair.as_rule() == Rule::id {
+                defined.insert(id_pair.as_str().to_string());
+              }
+            }
+          }
+          Rule::generic_params => {
+            for gp in inner.into_inner() {
+              if gp.as_rule() == Rule::generic_param {
+                for id_pair in gp.into_inner() {
+                  if id_pair.as_rule() == Rule::id {
+                    generic_params_for_rule.insert(id_pair.as_str().to_string());
+                  }
+                }
+              }
+            }
+          }
+          _ => {}
+        }
+      }
+      if !generic_params_for_rule.is_empty() {
+        rule_generic_params.insert(pair.as_span().start(), generic_params_for_rule);
+      }
+    }
+    for inner in pair.clone().into_inner() {
+      collect_definitions(&inner, defined, rule_generic_params);
+    }
+  }
+
+  let pairs_clone = pairs.clone();
+  for pair in pairs_clone {
+    collect_definitions(&pair, &mut defined, &mut rule_generic_params);
+  }
+
+  // Phase 2: find all referenced names and report undefined ones
+  struct RefCollector<'a> {
+    prelude: &'a HashSet<&'a str>,
+    defined: &'a HashSet<String>,
+    errors: Vec<CollectedError>,
+    seen: HashSet<String>,
+    input: &'a str,
+    /// Stack of generic parameter sets for the current rule context
+    current_rule_generics: Option<&'a HashSet<String>>,
+  }
+
+  impl<'a> RefCollector<'a> {
+    fn walk(
+      &mut self,
+      pair: pest::iterators::Pair<'_, Rule>,
+      rule_generic_params: &'a HashMap<usize, HashSet<String>>,
+    ) {
+      // Track the current rule's generics
+      if pair.as_rule() == Rule::rule {
+        let generics = rule_generic_params.get(&pair.as_span().start());
+        let prev = self.current_rule_generics;
+        self.current_rule_generics = generics;
+        for inner in pair.into_inner() {
+          self.walk(inner, rule_generic_params);
+        }
+        self.current_rule_generics = prev;
+        return;
+      }
+
+      // Check typename/groupname references in type2 and group_entry
+      // In `rule`, the first typename/groupname is the definition (LHS).
+      // In `type2` and `group_entry`, typename/groupname are references (RHS).
+      match pair.as_rule() {
+        Rule::type2 => {
+          // type2 can contain: typename ~ generic_args?, or &groupname, or ~typename
+          // We need to check the typename/groupname that appear as direct children
+          for inner in pair.clone().into_inner() {
+            match inner.as_rule() {
+              Rule::typename | Rule::groupname => {
+                self.check_reference(&inner);
+              }
+              _ => {}
+            }
+            self.walk(inner, rule_generic_params);
+          }
+          return;
+        }
+        Rule::group_entry => {
+          // group_entry can contain: groupname ~ generic_args?
+          for inner in pair.clone().into_inner() {
+            if inner.as_rule() == Rule::groupname {
+              self.check_reference(&inner);
+            }
+            self.walk(inner, rule_generic_params);
+          }
+          return;
+        }
+        _ => {}
+      }
+
+      for inner in pair.into_inner() {
+        self.walk(inner, rule_generic_params);
+      }
+    }
+
+    fn check_reference(&mut self, pair: &pest::iterators::Pair<'_, Rule>) {
+      // Extract the id from typename/groupname
+      for id_pair in pair.clone().into_inner() {
+        if id_pair.as_rule() == Rule::id {
+          let name = id_pair.as_str();
+
+          // Skip if it's defined, in prelude, or a generic param
+          if self.defined.contains(name)
+            || self.prelude.contains(name)
+            || self
+              .current_rule_generics
+              .is_some_and(|gp| gp.contains(name))
+          {
+            return;
+          }
+
+          // Also skip socket/plug references ($name, $$name)
+          if name.starts_with('$') {
+            return;
+          }
+
+          let span = id_pair.as_span();
+          let pos = position_from_span(span.start(), self.input);
+          let end_pos = span.end();
+
+          let msg_short = format!("Undefined reference: '{}'", name);
+          let key = format!("{}:{}:{}", pos.line, pos.column, msg_short);
+
+          if self.seen.insert(key) {
+            self.errors.push(CollectedError {
+              position: Position {
+                line: pos.line,
+                column: pos.column,
+                range: (span.start(), end_pos),
+                index: span.start(),
+              },
+              msg: ErrorMsg {
+                short: msg_short,
+                extended: Some(format!(
+                  "The name '{}' is not defined by any rule in this document and is not a standard prelude type.",
+                  name
+                )),
+              },
+              severity: "warning".to_string(),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  let mut collector = RefCollector {
+    prelude: &prelude,
+    defined: &defined,
+    errors: Vec::new(),
+    seen: HashSet::new(),
+    input,
+    current_rule_generics: None,
+  };
+
+  for pair in pairs {
+    collector.walk(pair, &rule_generic_params);
+  }
+
+  collector.errors
+}
+
+/// Compute a Position (line, column) from a byte offset in the source.
+#[cfg(target_arch = "wasm32")]
+fn position_from_span(byte_offset: usize, input: &str) -> Position {
+  let mut line = 1usize;
+  let mut col = 1usize;
+  for (i, ch) in input.char_indices() {
+    if i >= byte_offset {
+      break;
+    }
+    if ch == '\n' {
+      line += 1;
+      col = 1;
+    } else {
+      col += 1;
+    }
+  }
+  Position {
+    line,
+    column: col,
+    range: (byte_offset, byte_offset),
+    index: byte_offset,
   }
 }
 
