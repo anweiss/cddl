@@ -1340,9 +1340,13 @@ function boot() {
     cursorPosition.textContent = `Ln ${e.position.lineNumber}, Col ${e.position.column}`;
   });
 
-  // Intercept Ctrl/Cmd+S — prevent browser save, format if enabled
-  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-    if (formatOnSave) applyFormat();
+  // Intercept Ctrl/Cmd+S globally — always prevent browser save,
+  // and format when the option is enabled.
+  window.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      if (formatOnSave) applyFormat();
+    }
   });
 
   // Real-time validation
