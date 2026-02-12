@@ -24,6 +24,7 @@ pub struct CddlParser;
 #[cfg(test)]
 mod tests {
   use super::*;
+  #[cfg(not(target_arch = "wasm32"))]
   use crate::cddl_from_str;
 
   #[test]
@@ -144,6 +145,7 @@ my-map = map<text, int>
     assert!(result.is_ok(), "Failed to parse tag: {:?}", result.err());
   }
 
+  #[cfg(not(target_arch = "wasm32"))]
   #[test]
   fn test_pest_parser_coexistence_with_existing_parser() {
     // Demonstrate that both the public API and Pest parser directly

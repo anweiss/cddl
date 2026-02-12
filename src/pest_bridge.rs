@@ -2139,6 +2139,7 @@ fn _convert_member_key<'a>(
 #[cfg(test)]
 mod tests {
   use super::*;
+  #[cfg(not(target_arch = "wasm32"))]
   use crate::cddl_from_str;
 
   #[test]
@@ -2174,6 +2175,7 @@ my-map = map<text, int>
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
   }
 
+  #[cfg(not(target_arch = "wasm32"))]
   #[test]
   fn test_pest_vs_existing_parser() {
     // Test that Pest parser produces compatible AST
