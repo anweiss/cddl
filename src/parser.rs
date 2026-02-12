@@ -161,6 +161,40 @@ pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
   }
 }
 
+/// Validate CDDL input with partial compilation support.
+///
+/// Unlike `cddl_from_str` which stops at the first error, this function
+/// performs partial compilation: when the full document parse fails, it splits
+/// the source into individual top-level rule blocks and parses each one
+/// independently, collecting **all** errors across the entire document.
+///
+/// When `check_refs` is `true`, the function also checks for undefined
+/// references — names used in type expressions or group entries that are not
+/// defined by any rule in the document and are not standard prelude types.
+/// These are reported as warnings rather than errors.
+///
+/// Returns a `JsValue` (serialised JSON array) containing all diagnostics found.
+/// Each entry has `{ position, msg, severity }` where severity is `"error"` or `"warning"`.
+/// An empty array means the input is valid CDDL with no warnings.
+///
+/// # Example
+///
+/// ```typescript
+/// import * as wasm from 'cddl';
+///
+/// const errors = wasm.validate_cddl_from_str(text, true);
+/// // errors is an Array<{ position, msg, severity }>
+/// if (errors.length === 0) {
+///   console.log('Valid CDDL');
+/// }
+/// ```
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn validate_cddl_from_str(input: &str, check_refs: bool) -> result::Result<JsValue, JsValue> {
+  let errors = pest_bridge::validate_cddl(input, check_refs);
+  serde_wasm_bindgen::to_value(&errors).map_err(|e| JsValue::from(e.to_string()))
+}
+
 /// Formats CDDL from input string
 #[cfg(feature = "lsp")]
 #[cfg(target_arch = "wasm32")]

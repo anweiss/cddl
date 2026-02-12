@@ -286,6 +286,575 @@ pub fn cddl_from_pest_str<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
   convert_cddl(pairs, input)
 }
 
+/// A collected parser error with position and message, used for partial
+/// compilation results.
+#[cfg(target_arch = "wasm32")]
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct CollectedError {
+  /// Error position in the source
+  pub position: Position,
+  /// Error message
+  pub msg: ErrorMsg,
+  /// Severity: "error" or "warning"
+  pub severity: String,
+}
+
+/// Validate CDDL input and return **all** errors found via partial compilation.
+///
+/// Strategy:
+///   1. Attempt a full-document parse.  If it succeeds the input is valid and
+///      an empty error list is returned.
+///   2. When the full parse fails, collect its error(s) and additionally split
+///      the source into individual top-level rule blocks.  Each block is parsed
+///      independently so that errors beyond the first failure are surfaced.
+///   3. All errors are deduplicated, and sorted by position.
+#[cfg(target_arch = "wasm32")]
+pub fn validate_cddl(input: &str, check_refs: bool) -> Vec<CollectedError> {
+  // 1. Full-document parse
+  match CddlParser::parse(Rule::cddl, input) {
+    Ok(pairs) => {
+      // Syntax is valid — optionally check for undefined references
+      if check_refs {
+        check_undefined_references(pairs, input)
+      } else {
+        Vec::new()
+      }
+    }
+    Err(_) => {
+      // Full parse failed — get structured error via our converter
+      let e = match cddl_from_pest_str(input) {
+        Ok(_) => return Vec::new(), // shouldn't happen, but be safe
+        Err(e) => e,
+      };
+      let mut errors = Vec::new();
+      let mut seen = std::collections::HashSet::new();
+
+      // Collect the full-parse error
+      push_error(&e, &mut errors, &mut seen);
+
+      // 2. Partial compilation – split into rule blocks and parse each
+      let blocks = split_rule_blocks(input);
+
+      for block in &blocks {
+        let trimmed = block.text.trim();
+        if trimmed.is_empty() || trimmed.starts_with(';') {
+          continue;
+        }
+
+        if let Err(block_err) = cddl_from_pest_str(&block.text) {
+          push_error_with_offset(&block_err, block, input, &mut errors, &mut seen);
+        }
+      }
+
+      // 3. Optionally check for undefined references in successfully-parsed blocks
+      if check_refs {
+        for block in &blocks {
+          let trimmed = block.text.trim();
+          if trimmed.is_empty() || trimmed.starts_with(';') {
+            continue;
+          }
+          if let Ok(block_pairs) = CddlParser::parse(Rule::cddl, &block.text) {
+            let ref_errors = check_undefined_references(block_pairs, &block.text);
+            for mut re in ref_errors {
+              // Adjust positions to document-relative
+              re.position.line += block.start_line - 1;
+              re.position.range.0 += block.byte_offset;
+              re.position.range.1 += block.byte_offset;
+              re.position.index += block.byte_offset;
+              let key = format!(
+                "{}:{}:{}",
+                re.position.line, re.position.column, re.msg.short
+              );
+              if seen.insert(key) {
+                errors.push(re);
+              }
+            }
+          }
+        }
+      }
+
+      // 4. Sort by position
+      errors.sort_by(|a, b| {
+        a.position
+          .line
+          .cmp(&b.position.line)
+          .then(a.position.column.cmp(&b.position.column))
+      });
+
+      errors
+    }
+  }
+}
+
+/// A block of source text corresponding to a single top-level rule.
+#[cfg(target_arch = "wasm32")]
+struct RuleBlock {
+  text: String,
+  /// 1-based line number of the first line of this block in the original source
+  start_line: usize,
+  /// Byte offset of this block's first character in the original source
+  byte_offset: usize,
+}
+
+/// Split CDDL source into top-level rule blocks.
+///
+/// A block starts at a line whose non-comment content matches the beginning of
+/// a rule definition (`identifier` followed by `=`, `/=` or `//=`).  Everything
+/// up to the next such line belongs to the current block.
+#[cfg(target_arch = "wasm32")]
+fn split_rule_blocks(input: &str) -> Vec<RuleBlock> {
+  let mut blocks: Vec<RuleBlock> = Vec::new();
+  let mut current_lines: Vec<&str> = Vec::new();
+  let mut current_start_line: usize = 1;
+  let mut current_byte_offset: usize = 0;
+
+  // Regex-free: a line starts a rule if its non-comment prefix matches
+  // `<identifier>  <ws>*  ( = | /= | //= )`
+  fn is_rule_start(line: &str) -> bool {
+    let stripped = line.trim_start();
+    // Identifier: starts with [a-zA-Z_$@], followed by [a-zA-Z0-9_\-$@]*
+    let mut chars = stripped.chars().peekable();
+    match chars.peek() {
+      Some(&c) if c.is_ascii_alphabetic() || c == '_' || c == '$' || c == '@' => {
+        chars.next();
+      }
+      _ => return false,
+    }
+    while let Some(&c) = chars.peek() {
+      if c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '$' || c == '@' || c == '.' {
+        chars.next();
+      } else {
+        break;
+      }
+    }
+    // Skip whitespace
+    while let Some(&c) = chars.peek() {
+      if c == ' ' || c == '\t' {
+        chars.next();
+      } else {
+        break;
+      }
+    }
+    // Optional generic params <...>
+    if chars.peek() == Some(&'<') {
+      let mut depth = 0i32;
+      while let Some(&c) = chars.peek() {
+        chars.next();
+        if c == '<' {
+          depth += 1;
+        } else if c == '>' {
+          depth -= 1;
+          if depth == 0 {
+            break;
+          }
+        }
+      }
+      // Skip whitespace after '>'
+      while let Some(&c) = chars.peek() {
+        if c == ' ' || c == '\t' {
+          chars.next();
+        } else {
+          break;
+        }
+      }
+    }
+    // Must see `=`, `/=` or `//=`
+    match chars.peek() {
+      Some(&'=') => true,
+      Some(&'/') => {
+        chars.next();
+        match chars.peek() {
+          Some(&'=') => true, // `/=`
+          Some(&'/') => {
+            chars.next();
+            chars.peek() == Some(&'=') // `//=`
+          }
+          _ => false,
+        }
+      }
+      _ => false,
+    }
+  }
+
+  let lines: Vec<&str> = input.split('\n').collect();
+  let mut byte_pos: usize = 0;
+
+  for (i, line) in lines.iter().enumerate() {
+    let stripped = line.replace(';', "\x00"); // cheap comment strip
+    let without_comment: &str = stripped.split('\x00').next().unwrap_or("");
+    let _ = without_comment; // not used directly, we use is_rule_start on full line
+
+    if is_rule_start(line) && !current_lines.is_empty() {
+      // Flush previous block
+      blocks.push(RuleBlock {
+        text: current_lines.join("\n"),
+        start_line: current_start_line,
+        byte_offset: current_byte_offset,
+      });
+      current_lines = vec![line];
+      current_start_line = i + 1;
+      current_byte_offset = byte_pos;
+    } else {
+      if current_lines.is_empty() {
+        current_start_line = i + 1;
+        current_byte_offset = byte_pos;
+      }
+      current_lines.push(line);
+    }
+
+    byte_pos += line.len() + 1; // +1 for the '\n'
+  }
+
+  if !current_lines.is_empty() {
+    blocks.push(RuleBlock {
+      text: current_lines.join("\n"),
+      start_line: current_start_line,
+      byte_offset: current_byte_offset,
+    });
+  }
+
+  blocks
+}
+
+/// Push an error into the collection, deduplicating by (line, column, short message).
+#[cfg(target_arch = "wasm32")]
+fn push_error(
+  error: &Error,
+  errors: &mut Vec<CollectedError>,
+  seen: &mut std::collections::HashSet<String>,
+) {
+  if let Error::PARSER {
+    #[cfg(feature = "ast-span")]
+    position,
+    msg,
+  } = error
+  {
+    let key = format!("{}:{}:{}", position.line, position.column, msg.short);
+    if seen.insert(key) {
+      errors.push(CollectedError {
+        position: *position,
+        msg: msg.clone(),
+        severity: "error".to_string(),
+      });
+    }
+  } else {
+    // Non-parser error (e.g. regex) — use default position
+    let msg_text = error.to_string();
+    let key = format!("0:0:{}", msg_text);
+    if seen.insert(key) {
+      errors.push(CollectedError {
+        position: Position::default(),
+        msg: ErrorMsg {
+          short: msg_text,
+          extended: None,
+        },
+        severity: "error".to_string(),
+      });
+    }
+  }
+}
+
+/// Push an error from a partial-compilation block, adjusting positions to be
+/// relative to the original full document.
+#[cfg(target_arch = "wasm32")]
+fn push_error_with_offset(
+  error: &Error,
+  block: &RuleBlock,
+  _input: &str,
+  errors: &mut Vec<CollectedError>,
+  seen: &mut std::collections::HashSet<String>,
+) {
+  if let Error::PARSER {
+    #[cfg(feature = "ast-span")]
+    position,
+    msg,
+  } = error
+  {
+    let adjusted = Position {
+      line: position.line + block.start_line - 1,
+      column: position.column,
+      range: (
+        position.range.0 + block.byte_offset,
+        position.range.1 + block.byte_offset,
+      ),
+      index: position.index + block.byte_offset,
+    };
+
+    let key = format!("{}:{}:{}", adjusted.line, adjusted.column, msg.short);
+    if seen.insert(key) {
+      errors.push(CollectedError {
+        position: adjusted,
+        msg: msg.clone(),
+        severity: "error".to_string(),
+      });
+    }
+  } else {
+    push_error(error, errors, seen);
+  }
+}
+
+/// Walk a successful pest parse tree to find undefined references.
+///
+/// Collects all rule definitions (LHS of type/group rules) and all referenced
+/// typenames/groupnames in type expressions and group entries.  Any reference
+/// that is neither a defined rule, a standard prelude name, nor a generic
+/// parameter is reported as a warning.
+#[cfg(target_arch = "wasm32")]
+fn check_undefined_references(pairs: Pairs<'_, Rule>, input: &str) -> Vec<CollectedError> {
+  use std::collections::{HashMap, HashSet};
+
+  /// Standard prelude names from RFC 8610 §D
+  const STANDARD_PRELUDE: &[&str] = &[
+    "any",
+    "uint",
+    "nint",
+    "int",
+    "bstr",
+    "bytes",
+    "tstr",
+    "text",
+    "tdate",
+    "time",
+    "number",
+    "biguint",
+    "bignint",
+    "bigint",
+    "integer",
+    "unsigned",
+    "decfrac",
+    "bigfloat",
+    "eb64url",
+    "eb64legacy",
+    "eb16",
+    "encoded-cbor",
+    "uri",
+    "b64url",
+    "b64legacy",
+    "regexp",
+    "mime-message",
+    "cbor-any",
+    "float16",
+    "float32",
+    "float64",
+    "float16-32",
+    "float32-64",
+    "float",
+    "false",
+    "true",
+    "bool",
+    "nil",
+    "null",
+    "undefined",
+  ];
+
+  let prelude: HashSet<&str> = STANDARD_PRELUDE.iter().copied().collect();
+
+  // Phase 1: collect all defined rule names and per-rule generic parameters
+  let mut defined: HashSet<String> = HashSet::new();
+  // Map from rule pair span to its generic param names
+  let mut rule_generic_params: HashMap<usize, HashSet<String>> = HashMap::new();
+
+  fn collect_definitions(
+    pair: &pest::iterators::Pair<'_, Rule>,
+    defined: &mut HashSet<String>,
+    rule_generic_params: &mut HashMap<usize, HashSet<String>>,
+  ) {
+    if pair.as_rule() == Rule::rule {
+      let mut generic_params_for_rule: HashSet<String> = HashSet::new();
+      for inner in pair.clone().into_inner() {
+        match inner.as_rule() {
+          Rule::typename | Rule::groupname => {
+            // Extract the id from typename/groupname
+            for id_pair in inner.into_inner() {
+              if id_pair.as_rule() == Rule::id {
+                defined.insert(id_pair.as_str().to_string());
+              }
+            }
+          }
+          Rule::generic_params => {
+            for gp in inner.into_inner() {
+              if gp.as_rule() == Rule::generic_param {
+                for id_pair in gp.into_inner() {
+                  if id_pair.as_rule() == Rule::id {
+                    generic_params_for_rule.insert(id_pair.as_str().to_string());
+                  }
+                }
+              }
+            }
+          }
+          _ => {}
+        }
+      }
+      if !generic_params_for_rule.is_empty() {
+        rule_generic_params.insert(pair.as_span().start(), generic_params_for_rule);
+      }
+    }
+    for inner in pair.clone().into_inner() {
+      collect_definitions(&inner, defined, rule_generic_params);
+    }
+  }
+
+  let pairs_clone = pairs.clone();
+  for pair in pairs_clone {
+    collect_definitions(&pair, &mut defined, &mut rule_generic_params);
+  }
+
+  // Phase 2: find all referenced names and report undefined ones
+  struct RefCollector<'a> {
+    prelude: &'a HashSet<&'a str>,
+    defined: &'a HashSet<String>,
+    errors: Vec<CollectedError>,
+    seen: HashSet<String>,
+    input: &'a str,
+    /// Stack of generic parameter sets for the current rule context
+    current_rule_generics: Option<&'a HashSet<String>>,
+  }
+
+  impl<'a> RefCollector<'a> {
+    fn walk(
+      &mut self,
+      pair: pest::iterators::Pair<'_, Rule>,
+      rule_generic_params: &'a HashMap<usize, HashSet<String>>,
+    ) {
+      // Track the current rule's generics
+      if pair.as_rule() == Rule::rule {
+        let generics = rule_generic_params.get(&pair.as_span().start());
+        let prev = self.current_rule_generics;
+        self.current_rule_generics = generics;
+        for inner in pair.into_inner() {
+          self.walk(inner, rule_generic_params);
+        }
+        self.current_rule_generics = prev;
+        return;
+      }
+
+      // Check typename/groupname references in type2 and group_entry
+      // In `rule`, the first typename/groupname is the definition (LHS).
+      // In `type2` and `group_entry`, typename/groupname are references (RHS).
+      match pair.as_rule() {
+        Rule::type2 => {
+          // type2 can contain: typename ~ generic_args?, or &groupname, or ~typename
+          // We need to check the typename/groupname that appear as direct children
+          for inner in pair.clone().into_inner() {
+            match inner.as_rule() {
+              Rule::typename | Rule::groupname => {
+                self.check_reference(&inner);
+              }
+              _ => {}
+            }
+            self.walk(inner, rule_generic_params);
+          }
+          return;
+        }
+        Rule::group_entry => {
+          // group_entry can contain: groupname ~ generic_args?
+          for inner in pair.clone().into_inner() {
+            if inner.as_rule() == Rule::groupname {
+              self.check_reference(&inner);
+            }
+            self.walk(inner, rule_generic_params);
+          }
+          return;
+        }
+        _ => {}
+      }
+
+      for inner in pair.into_inner() {
+        self.walk(inner, rule_generic_params);
+      }
+    }
+
+    fn check_reference(&mut self, pair: &pest::iterators::Pair<'_, Rule>) {
+      // Extract the id from typename/groupname
+      for id_pair in pair.clone().into_inner() {
+        if id_pair.as_rule() == Rule::id {
+          let name = id_pair.as_str();
+
+          // Skip if it's defined, in prelude, or a generic param
+          if self.defined.contains(name)
+            || self.prelude.contains(name)
+            || self
+              .current_rule_generics
+              .is_some_and(|gp| gp.contains(name))
+          {
+            return;
+          }
+
+          // Also skip socket/plug references ($name, $$name)
+          if name.starts_with('$') {
+            return;
+          }
+
+          let span = id_pair.as_span();
+          let pos = position_from_span(span.start(), self.input);
+          let end_pos = span.end();
+
+          let msg_short = format!("Undefined reference: '{}'", name);
+          let key = format!("{}:{}:{}", pos.line, pos.column, msg_short);
+
+          if self.seen.insert(key) {
+            self.errors.push(CollectedError {
+              position: Position {
+                line: pos.line,
+                column: pos.column,
+                range: (span.start(), end_pos),
+                index: span.start(),
+              },
+              msg: ErrorMsg {
+                short: msg_short,
+                extended: Some(format!(
+                  "The name '{}' is not defined by any rule in this document and is not a standard prelude type.",
+                  name
+                )),
+              },
+              severity: "warning".to_string(),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  let mut collector = RefCollector {
+    prelude: &prelude,
+    defined: &defined,
+    errors: Vec::new(),
+    seen: HashSet::new(),
+    input,
+    current_rule_generics: None,
+  };
+
+  for pair in pairs {
+    collector.walk(pair, &rule_generic_params);
+  }
+
+  collector.errors
+}
+
+/// Compute a Position (line, column) from a byte offset in the source.
+#[cfg(target_arch = "wasm32")]
+fn position_from_span(byte_offset: usize, input: &str) -> Position {
+  let mut line = 1usize;
+  let mut col = 1usize;
+  for (i, ch) in input.char_indices() {
+    if i >= byte_offset {
+      break;
+    }
+    if ch == '\n' {
+      line += 1;
+      col = 1;
+    } else {
+      col += 1;
+    }
+  }
+  Position {
+    line,
+    column: col,
+    range: (byte_offset, byte_offset),
+    index: byte_offset,
+  }
+}
+
 /// Convert Pest Pairs to CDDL AST
 fn convert_cddl<'a>(mut pairs: Pairs<'a, Rule>, input: &'a str) -> Result<ast::CDDL<'a>, Error> {
   let pair = pairs.next().ok_or_else(|| Error::PARSER {

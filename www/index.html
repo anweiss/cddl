@@ -5,29 +5,65 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta content="text/html;charset=utf-8" http-equiv="Content-Type" />
-  <title>CDDL Validator</title>
+  <title>CDDL Playground</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.263.1/lucide.min.css" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
   <style>
     :root {
-      --primary-color: #2563eb;
-      --success-color: #16a34a;
-      --error-color: #dc2626;
-      --warning-color: #d97706;
-      --background: #ffffff;
-      --surface: #f8fafc;
-      --surface-hover: #f1f5f9;
-      --border: #e2e8f0;
-      --text-primary: #1e293b;
-      --text-secondary: #64748b;
-      --text-muted: #94a3b8;
-      --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-      --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-      --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+      --bg: #0f1117;
+      --bg-elevated: #161822;
+      --bg-surface: #1c1e2d;
+      --bg-hover: #252839;
+      --border: #2a2d3e;
+      --border-focus: #4f46e5;
+      --text: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --accent-subtle: rgba(99, 102, 241, 0.1);
+      --success: #22c55e;
+      --success-subtle: rgba(34, 197, 94, 0.1);
+      --success-border: rgba(34, 197, 94, 0.25);
+      --error: #f43f5e;
+      --error-subtle: rgba(244, 63, 94, 0.08);
+      --error-border: rgba(244, 63, 94, 0.2);
+      --warning: #f59e0b;
+      --warning-subtle: rgba(245, 158, 11, 0.1);
       --radius: 8px;
+      --radius-sm: 5px;
       --radius-lg: 12px;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+      --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.4);
+      --transition: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body.light {
+      --bg: #f8f9fc;
+      --bg-elevated: #ffffff;
+      --bg-surface: #f0f1f5;
+      --bg-hover: #e8e9ef;
+      --border: #d4d6de;
+      --border-focus: #4f46e5;
+      --text: #1e293b;
+      --text-secondary: #475569;
+      --text-muted: #94a3b8;
+      --accent: #4f46e5;
+      --accent-hover: #6366f1;
+      --accent-subtle: rgba(79, 70, 229, 0.08);
+      --success: #16a34a;
+      --success-subtle: rgba(22, 163, 74, 0.08);
+      --success-border: rgba(22, 163, 74, 0.2);
+      --error: #e11d48;
+      --error-subtle: rgba(225, 29, 72, 0.06);
+      --error-border: rgba(225, 29, 72, 0.15);
+      --warning: #d97706;
+      --warning-subtle: rgba(217, 119, 6, 0.08);
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+      --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.1);
     }
 
     * {
@@ -38,564 +74,756 @@
 
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: var(--background);
-      color: var(--text-primary);
-      line-height: 1.6;
-      min-height: 100vh;
-    }
-
-    .container {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 2rem 1rem;
-    }
-
-    .header {
-      text-align: center;
-      margin-bottom: 3rem;
-    }
-
-    .header h1 {
-      font-size: 2.5rem;
-      font-weight: 600;
-      color: var(--text-primary);
-      margin-bottom: 0.5rem;
-      letter-spacing: -0.025em;
-    }
-
-    .header p {
-      font-size: 1.125rem;
-      color: var(--text-secondary);
-      max-width: 600px;
-      margin: 0 auto;
-    }
-
-    .header a {
-      color: var(--primary-color);
-      text-decoration: none;
-      font-weight: 500;
-    }
-
-    .header a:hover {
-      text-decoration: underline;
-    }
-
-    .main-content {
-      display: grid;
-      grid-template-columns: 1fr 380px;
-      gap: 2rem;
-      margin-bottom: 3rem;
-      height: calc(100vh - 320px); /* More space at top for tooltips */
-      min-height: 600px;
-    }
-
-    .editor-section {
-      background: var(--background);
-      border-radius: var(--radius-lg);
-      border: 1px solid var(--border);
-      overflow: hidden;
-      box-shadow: var(--shadow-sm);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      height: 100vh;
       display: flex;
       flex-direction: column;
-      height: 100%; /* Take full height of the grid cell */
-      margin-top: 20px; /* Add some margin for hover tooltips */
+      overflow: hidden;
     }
 
-    .editor-header {
-      padding: 1rem 1.5rem;
-      border-bottom: 1px solid var(--border);
-      background: var(--background);
+    /* ── Top bar ── */
+    .topbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      flex-shrink: 0;
-    }
-
-    .editor-title {
-      font-weight: 500;
-      color: var(--text-primary);
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-
-    .status-indicator {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--text-muted);
-      transition: all 0.2s ease;
-    }
-
-    .status-indicator.valid {
-      background: var(--success-color);
-      box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.2);
-    }
-
-    .status-indicator.invalid {
-      background: var(--error-color);
-      box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2);
-    }
-
-    .status-indicator.checking {
-      background: var(--warning-color);
-      animation: pulse 1.5s ease-in-out infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
-    }
-
-    .editor-container {
-      position: relative;
-      flex: 1; /* Take all remaining space in the flex container */
-      background: var(--background);
-      overflow: hidden; /* Ensure Monaco Editor doesn't overflow */
-      min-height: 0; /* Allow flex item to shrink below its content size */
-    }
-
-    .editor-container::after {
-      content: '';
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      height: 1rem;
-      background: linear-gradient(to bottom, rgba(0, 0, 0, 0.02), rgba(0, 0, 0, 0.06));
-      pointer-events: none;
-      z-index: 1;
-    }
-
-    .sidebar {
-      display: flex;
-      flex-direction: column;
-      gap: 1.5rem;
-      height: 100%; /* Take full height of the grid cell */
-      overflow-y: auto; /* Allow sidebar to scroll if content is too tall */
-      margin-top: 20px; /* Match editor section margin for alignment */
-    }
-
-    .panel {
-      background: var(--background);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      box-shadow: var(--shadow-sm);
-    }
-
-    .panel-header {
-      padding: 1rem 1.5rem;
+      padding: 0 1.25rem;
+      height: 48px;
+      background: var(--bg-elevated);
       border-bottom: 1px solid var(--border);
-      background: var(--surface);
+      flex-shrink: 0;
+      z-index: 10;
     }
 
-    .panel-title {
-      font-weight: 500;
-      color: var(--text-primary);
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--text);
+      letter-spacing: -0.01em;
+    }
+
+    .logo-mark {
+      width: 22px;
+      height: 22px;
+      background: linear-gradient(135deg, var(--accent), #a78bfa);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+      font-weight: 700;
+      color: white;
+      letter-spacing: 0;
+    }
+
+    .topbar-center {
       display: flex;
       align-items: center;
       gap: 0.5rem;
     }
 
-    .panel-content {
-      padding: 1.5rem;
-    }
-
-    .validation-status {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 1rem;
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-      background: var(--surface);
-      transition: all 0.2s ease;
-    }
-
-    .validation-status.success {
-      background: rgba(22, 163, 74, 0.05);
-      border-color: rgba(22, 163, 74, 0.2);
-      color: var(--success-color);
-    }
-
-    .validation-status.error {
-      background: rgba(220, 38, 38, 0.05);
-      border-color: rgba(220, 38, 38, 0.2);
-      color: var(--error-color);
-    }
-
-    .validation-status.checking {
-      background: rgba(217, 119, 6, 0.05);
-      border-color: rgba(217, 119, 6, 0.2);
-      color: var(--warning-color);
-    }
-
-    .validation-icon {
-      width: 20px;
-      height: 20px;
-      flex-shrink: 0;
-    }
-
-    .validation-message {
-      font-weight: 500;
-      flex: 1;
-    }
-
-    .error-list {
-      list-style: none;
-      margin-top: 1rem;
-      max-height: 300px;
-      overflow-y: auto;
-    }
-
-    .error-summary {
-      background: rgba(220, 38, 38, 0.1);
-      border: 1px solid rgba(220, 38, 38, 0.2);
-      border-radius: var(--radius);
-      padding: 0.75rem 1rem;
-      margin-bottom: 1rem;
-    }
-
-    .error-count {
-      font-weight: 600;
-      color: var(--error-color);
-      font-size: 0.875rem;
-    }
-
-    .error-item {
-      background: rgba(220, 38, 38, 0.05);
-      border: 1px solid rgba(220, 38, 38, 0.15);
-      border-radius: var(--radius);
-      margin-bottom: 1rem;
-      overflow: hidden;
-      transition: all 0.2s ease;
-      display: flex;
-      flex-direction: column;
-    }
-
-    .error-item:hover {
-      border-color: rgba(220, 38, 38, 0.25);
-      background: rgba(220, 38, 38, 0.08);
-    }
-
-    .error-header {
-      display: flex;
-      align-items: baseline;
-      gap: 0.75rem;
-      padding: 0.6rem 1rem;
-      background: rgba(220, 38, 38, 0.08);
-      border-bottom: 1px solid rgba(220, 38, 38, 0.15);
-      cursor: pointer;
-      user-select: none;
-      margin: 0;
-      min-height: 2.5rem;
-    }
-
-    .error-header:hover {
-      background: rgba(220, 38, 38, 0.12);
-    }
-
-    /* Summary pill inside the error header */
-    .error-header .error-summary {
-      flex: 0 1 auto;
-      margin: 0; /* remove extra bottom gap */
-      padding: 0.3rem 0.6rem; /* even top/bottom padding for pill */
+    .status-pill {
       display: inline-flex;
       align-items: center;
+      gap: 0.4rem;
+      padding: 0.25rem 0.65rem;
       border-radius: 9999px;
-      background: rgba(220, 38, 38, 0.1);
-      border: 1px solid rgba(220, 38, 38, 0.2);
-    }
-
-    .error-brief {
-      font-size: 0.85rem;
-      color: var(--error-color);
+      font-size: 0.75rem;
       font-weight: 500;
-      line-height: 1;
-      margin: 0;
+      transition: background var(--transition), color var(--transition), border-color var(--transition);
+      border: 1px solid var(--border);
+      background: var(--bg-surface);
+      color: var(--text-secondary);
     }
 
-    .error-toggle {
+    .status-pill.valid {
+      background: var(--success-subtle);
+      border-color: var(--success-border);
+      color: var(--success);
+    }
+
+    .status-pill.invalid {
+      background: var(--error-subtle);
+      border-color: var(--error-border);
+      color: var(--error);
+    }
+
+    .status-pill.checking {
+      background: var(--warning-subtle);
+      border-color: rgba(245, 158, 11, 0.25);
+      color: var(--warning);
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+
+    .status-pill.checking .status-dot {
+      animation: blink 1.2s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.3;
+      }
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    /* ── Ref-check toggle ── */
+    .toggle-group {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+      padding: 0.25rem 0.4rem;
+      border-radius: var(--radius-sm);
+      transition: color var(--transition);
+    }
+
+    .toggle-group:hover {
+      color: var(--text-secondary);
+    }
+
+    .toggle-track {
+      position: relative;
+      width: 30px;
+      height: 16px;
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      transition: background var(--transition), border-color var(--transition);
+      flex-shrink: 0;
+    }
+
+    .toggle-track.active {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .toggle-knob {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 10px;
+      height: 10px;
+      background: var(--text-muted);
+      border-radius: 50%;
+      transition: transform var(--transition), background var(--transition);
+    }
+
+    .toggle-track.active .toggle-knob {
+      transform: translateX(14px);
+      background: white;
+    }
+
+    /* ── Warning styling ── */
+    .problem-row.warning .problem-icon {
+      color: var(--warning);
+    }
+
+    .topbar-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      padding: 0.3rem 0.5rem;
+      border-radius: var(--radius-sm);
+      transition: color var(--transition), background var(--transition);
+    }
+
+    .topbar-link:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+    }
+
+    .topbar-link svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* ── Examples dropdown ── */
+    .examples-wrapper {
+      position: relative;
+    }
+
+    .examples-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.8rem;
+      font-family: inherit;
+      color: var(--text-muted);
+      background: none;
+      border: 1px solid var(--border);
+      padding: 0.3rem 0.6rem;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: color var(--transition), background var(--transition), border-color var(--transition);
+    }
+
+    .examples-btn:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+      border-color: var(--accent);
+    }
+
+    .examples-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .examples-btn .chevron {
+      width: 10px;
+      height: 10px;
+      transition: transform var(--transition);
+    }
+
+    .examples-wrapper.open .chevron {
+      transform: rotate(180deg);
+    }
+
+    .examples-dropdown {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      width: 340px;
+      max-height: 420px;
+      overflow-y: auto;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-lg);
+      z-index: 100;
+      padding: 0.35rem;
+    }
+
+    .examples-wrapper.open .examples-dropdown {
+      display: block;
+    }
+
+    .examples-category {
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      padding: 0.5rem 0.6rem 0.25rem;
+    }
+
+    .example-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+      padding: 0.45rem 0.6rem;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background var(--transition);
+    }
+
+    .example-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .example-item-name {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .example-item-desc {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      line-height: 1.3;
+    }
+
+    .separator {
+      width: 1px;
+      height: 18px;
+      background: var(--border);
+    }
+
+    /* ── Theme toggle ── */
+    .theme-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 18px;
-      height: 18px;
-      border-radius: 50%;
-      background: rgba(220, 38, 38, 0.15);
-      color: var(--error-color);
-      font-size: 0.7rem;
-      font-weight: bold;
-      transition: all 0.2s ease;
-      flex-shrink: 0;
-      transform: translateY(-0.1em);
-    }
-
-    .error-location {
-      font-family: 'Monaco', 'Menlo', monospace;
-      font-size: 0.7rem;
-      color: var(--error-color);
-      opacity: 0.8;
-      background: rgba(220, 38, 38, 0.1);
-      padding: 0.2rem 0.4rem;
-      border-radius: 3px;
-      flex-shrink: 0;
-    }
-
-    .error-instance .error-location {
+      width: 30px;
+      height: 30px;
       background: none;
-      padding: 0;
-      font-size: 0.75rem;
-    }
-
-    .error-toggle:hover {
-      background: rgba(220, 38, 38, 0.25);
-    }
-
-    .error-action-btn {
-      background: var(--primary-color);
-      color: white;
-      border: none;
-      padding: 0.3rem 0.7rem;
-      border-radius: 4px;
-      font-size: 0.7rem;
-      font-weight: 500;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-muted);
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: color var(--transition), background var(--transition), border-color var(--transition);
+      padding: 0;
     }
 
-    .error-details {
-      max-height: 0;
-      overflow: hidden;
-      transition: max-height 0.3s ease;
+    .theme-btn:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+      border-color: var(--accent);
     }
 
-    .error-details.expanded {
-      max-height: 300px;
+    .theme-btn svg {
+      width: 16px;
+      height: 16px;
     }
 
-    .error-content {
-      padding: 0 0.75rem;
+    .theme-btn .icon-sun {
+      display: none;
     }
 
-    .error-instance {
+    .theme-btn .icon-moon {
+      display: block;
+    }
+
+    body.light .theme-btn .icon-sun {
+      display: block;
+    }
+
+    body.light .theme-btn .icon-moon {
+      display: none;
+    }
+
+    /* ── Workspace ── */
+    .workspace {
+      flex: 1;
       display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.25rem 0;
-      border-bottom: 1px solid rgba(220, 38, 38, 0.1);
+      flex-direction: column;
+      overflow: hidden;
     }
 
-    .error-instance:last-child {
+    /* ── Editor ── */
+    .editor-area {
+      flex: 1;
+      position: relative;
+      min-height: 0;
+    }
+
+    .editor-container {
+      position: absolute;
+      inset: 0;
+    }
+
+    /* ── Problems Panel ── */
+    .problems-panel {
+      flex-shrink: 0;
+      background: var(--bg-elevated);
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      height: 180px;
+      min-height: 33px;
+      max-height: 70vh;
+      position: relative;
+    }
+
+    .problems-panel.collapsed {
+      height: 33px !important;
+    }
+
+    .resize-handle {
+      position: absolute;
+      top: -3px;
+      left: 0;
+      right: 0;
+      height: 6px;
+      cursor: ns-resize;
+      z-index: 5;
+    }
+
+    .resize-handle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: transparent;
+      transition: background var(--transition);
+    }
+
+    .resize-handle:hover::after,
+    .resize-handle.active::after {
+      background: var(--accent);
+    }
+
+    .problems-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 1rem;
+      height: 33px;
+      min-height: 33px;
+      cursor: pointer;
+      user-select: none;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .problems-header:hover {
+      background: var(--bg-hover);
+    }
+
+    .problems-header-left {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-secondary);
+    }
+
+    .problems-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 9px;
+      font-size: 0.65rem;
+      font-weight: 600;
+      background: var(--error);
+      color: white;
+      line-height: 1;
+    }
+
+    .problems-badge.zero {
+      background: var(--text-muted);
+    }
+
+    .problems-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      color: var(--text-muted);
+      transition: transform var(--transition);
+    }
+
+    .problems-panel.collapsed .problems-toggle {
+      transform: rotate(-90deg);
+    }
+
+    .problems-body {
+      flex: 1;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', 'Monaco', 'Menlo', monospace;
+      font-size: 0.8rem;
+    }
+
+    .problems-panel.collapsed .problems-body {
+      display: none;
+    }
+
+    .problems-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      color: var(--text-muted);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.8rem;
+      gap: 0.5rem;
+    }
+
+    .problems-empty svg {
+      width: 16px;
+      height: 16px;
+      opacity: 0.5;
+    }
+
+    .problem-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.45rem 1rem;
+      border-bottom: 1px solid rgba(42, 45, 62, 0.5);
+      cursor: pointer;
+      transition: background var(--transition);
+    }
+
+    .problem-row:hover {
+      background: var(--bg-hover);
+    }
+
+    .problem-row:last-child {
       border-bottom: none;
     }
 
-    .error-actions {
-      display: flex;
-      justify-content: flex-end;
+    .problem-icon {
+      flex-shrink: 0;
+      width: 16px;
+      height: 16px;
+      margin-top: 1px;
+      color: var(--error);
     }
 
-    .error-action-btn {
-      background: var(--primary-color);
-      color: white;
-      border: none;
-      padding: 0.5rem 1rem;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-
-    .error-action-btn:hover {
-      background: #1d4ed8;
-      transform: translateY(-1px);
-    }
-
-    .error-action-btn:active {
-      transform: translateY(0);
-    }
-
-    .info-section {
-      font-size: 0.875rem;
-      color: var(--text-secondary);
+    .problem-message {
+      flex: 1;
+      color: var(--text);
       line-height: 1.5;
+      word-break: break-word;
     }
 
-    .info-section h3 {
-      font-size: 0.875rem;
-      font-weight: 600;
-      color: var(--text-primary);
-      margin-bottom: 0.5rem;
-    }
-
-    .info-section p {
-      margin-bottom: 0.75rem;
-    }
-
-    .footer {
-      text-align: center;
-      padding: 2rem 0;
-      border-top: 1px solid var(--border);
+    .problem-location {
+      flex-shrink: 0;
       color: var(--text-muted);
-      font-size: 0.875rem;
+      font-size: 0.75rem;
+      white-space: nowrap;
+      margin-top: 1px;
     }
 
-    .footer a {
-      color: var(--primary-color);
-      text-decoration: none;
+    .problem-category {
+      flex-shrink: 0;
+      font-size: 0.65rem;
       font-weight: 500;
+      padding: 0.15rem 0.45rem;
+      border-radius: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      background: var(--error-subtle);
+      color: var(--error);
+      border: 1px solid var(--error-border);
+      margin-top: 1px;
     }
 
-    .footer a:hover {
-      text-decoration: underline;
+    /* ── Status bar ── */
+    .statusbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 0.75rem;
+      height: 24px;
+      background: var(--accent);
+      flex-shrink: 0;
+      font-size: 0.7rem;
+      color: rgba(255, 255, 255, 0.9);
     }
 
-    .github-corner {
-      position: fixed;
-      top: 0;
-      right: 0;
-      width: 80px;
-      height: 80px;
-      z-index: 1000;
+    .statusbar-left,
+    .statusbar-right {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
     }
 
-    .github-corner svg {
-      fill: var(--primary-color);
-      color: var(--background);
-      width: 100%;
-      height: 100%;
+    .statusbar-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      cursor: default;
     }
 
-    .github-corner:hover .octo-arm {
-      animation: octocat-wave 560ms ease-in-out;
+    .statusbar-item svg {
+      width: 12px;
+      height: 12px;
     }
 
-    @keyframes octocat-wave {
-      0%, 100% { transform: rotate(0); }
-      20%, 60% { transform: rotate(-25deg); }
-      40%, 80% { transform: rotate(10deg); }
+    /* ── Scrollbar styling ── */
+    .problems-body::-webkit-scrollbar {
+      width: 8px;
     }
 
-    @media (max-width: 768px) {
-      .main-content {
-        grid-template-columns: 1fr;
-        gap: 1.5rem;
-        height: calc(100vh - 220px); /* Adjusted for mobile */
-        min-height: 500px;
+    .problems-body::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .problems-body::-webkit-scrollbar-thumb {
+      background: var(--bg-hover);
+      border-radius: 4px;
+    }
+
+    .problems-body::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      .topbar {
+        padding: 0 0.75rem;
       }
-      
-      .header h1 {
-        font-size: 2rem;
+
+      .problems-header {
+        padding: 0 0.75rem;
       }
-      
-      .container {
-        padding: 1rem;
+
+      .problem-row {
+        padding: 0.45rem 0.75rem;
       }
-      
-      .sidebar {
-        height: auto; /* Allow sidebar to be flexible on mobile */
-        overflow-y: visible;
-      }
-      
-      .github-corner:hover .octo-arm {
-        animation: none;
-      }
-      
-      .github-corner .octo-arm {
-        animation: octocat-wave 560ms ease-in-out;
+
+      .problem-category {
+        display: none;
       }
     }
   </style>
 </head>
 
 <body>
-  <a href="https://github.com/anweiss/cddl" class="github-corner" aria-label="View source on GitHub">
-    <svg viewBox="0 0 250 250" aria-hidden="true">
-      <path d="M0,0 L115,115 L130,115 L142,142 L250,250 L250,0 Z"></path>
-      <path d="M128.3,109.0 C113.8,99.7 119.0,89.6 119.0,89.6 C122.0,82.7 120.5,78.6 120.5,78.6 C119.2,72.0 123.4,76.3 123.4,76.3 C127.3,80.9 125.5,87.3 125.5,87.3 C122.9,97.6 130.6,101.9 134.4,103.2" fill="currentColor" style="transform-origin: 130px 106px;" class="octo-arm"></path>
-      <path d="M115.0,115.0 C114.9,115.1 118.7,116.5 119.8,115.4 L133.7,101.6 C136.9,99.2 139.9,98.4 142.2,98.6 C133.8,88.0 127.5,74.4 143.8,58.0 C148.5,53.4 154.0,51.2 159.7,51.0 C160.3,49.4 163.2,43.6 171.4,40.1 C171.4,40.1 176.1,42.5 178.8,56.2 C183.1,58.6 187.2,61.8 190.9,65.4 C194.5,69.0 197.7,73.2 200.1,77.6 C213.8,80.2 216.3,84.9 216.3,84.9 C212.7,93.1 206.9,96.0 205.4,96.6 C205.1,102.4 203.0,107.8 198.3,112.5 C181.9,128.9 168.3,122.5 157.7,114.1 C157.9,116.9 156.7,120.9 152.7,124.9 L141.0,136.5 C139.8,137.7 141.6,141.9 141.8,141.8 Z" fill="currentColor" class="octo-body"></path>
-    </svg>
-  </a>
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="logo">
+        <div class="logo-mark">C</div>
+        <span>CDDL Playground</span>
+      </div>
+      <div class="separator"></div>
+      <div class="status-pill" id="statusPill">
+        <span class="status-dot"></span>
+        <span id="statusText">Ready</span>
+      </div>
+    </div>
 
-  <div class="container">
-    <header class="header">
-      <h1>CDDL Validator</h1>
-      <p>Real-time validation for <a href="https://tools.ietf.org/html/rfc8610" target="_blank" rel="noopener">Concise Data Definition Language (RFC 8610)</a></p>
-    </header>
-
-    <main class="main-content">
-      <section class="editor-section">
-        <div class="editor-header">
-          <div class="editor-title">
-            <span class="status-indicator" id="statusIndicator"></span>
-            CDDL Definition
-          </div>
+    <div class="topbar-right">
+      <label class="toggle-group" id="refCheckToggle" title="Check for undefined type/group references">
+        <span>Ref checks</span>
+        <div class="toggle-track" id="refCheckTrack">
+          <div class="toggle-knob"></div>
         </div>
-        <div class="editor-container" id="cddlDataDefinition"></div>
-      </section>
-
-      <aside class="sidebar">
-        <div class="panel">
-          <div class="panel-header">
-            <div class="panel-title">
-              <svg class="validation-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-              Validation
-            </div>
-          </div>
-          <div class="panel-content">
-            <div class="validation-status" id="validationStatus">
-              <svg class="validation-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-              <span class="validation-message">Ready to validate</span>
-            </div>
-            <div id="errorList"></div>
-          </div>
+      </label>
+      <label class="toggle-group" id="formatToggle" title="Format CDDL when pressing Ctrl+S / Cmd+S">
+        <span>Format on save</span>
+        <div class="toggle-track" id="formatTrack">
+          <div class="toggle-knob"></div>
         </div>
+      </label>
+      <div class="separator"></div>
+      <div class="examples-wrapper" id="examplesWrapper">
+        <button class="examples-btn" id="examplesBtn" title="Browse CDDL examples">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+          </svg>
+          Examples
+          <svg class="chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+            <polyline points="3 5 6 8 9 5" />
+          </svg>
+        </button>
+        <div class="examples-dropdown" id="examplesDropdown"></div>
+      </div>
+      <div class="separator"></div>
+      <a href="https://tools.ietf.org/html/rfc8610" target="_blank" rel="noopener" class="topbar-link">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="16" y1="13" x2="8" y2="13" />
+          <line x1="16" y1="17" x2="8" y2="17" />
+          <polyline points="10 9 9 9 8 9" />
+        </svg>
+        RFC 8610
+      </a>
+      <a href="https://github.com/anweiss/cddl" target="_blank" rel="noopener" class="topbar-link">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path
+            d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
+        </svg>
+        GitHub
+      </a>
+      <button class="theme-btn" id="themeToggle" title="Toggle light/dark mode">
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+        </svg>
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5" />
+          <line x1="12" y1="1" x2="12" y2="3" />
+          <line x1="12" y1="21" x2="12" y2="23" />
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+          <line x1="1" y1="12" x2="3" y2="12" />
+          <line x1="21" y1="12" x2="23" y2="12" />
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+        </svg>
+      </button>
+    </div>
+  </div>
 
-        <div class="panel">
-          <div class="panel-header">
-            <div class="panel-title">
-              <svg class="validation-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-              About
-            </div>
-          </div>
-          <div class="panel-content">
-            <div class="info-section">
-              <h3>Real-time Validation</h3>
-              <p>Your CDDL code is validated automatically as you type</p>
-              
-              <h3>Built with</h3>
-              <p>🦀 Rust + WebAssembly for blazing fast performance</p>
-              
-              <h3>Need Help?</h3>
-              <p><a href="https://github.com/anweiss/cddl/issues" target="_blank" rel="noopener">File an issue</a> if you encounter any problems.</p>
-              
-              <h3>Debug</h3>
-              <button onclick="testWasm()" style="background: var(--primary-color); color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; margin-right: 0.5rem;">Test WASM</button>
-              
-              <h3 style="margin-top: 1rem;">Test Error Handling</h3>
-              <button onclick="loadErrorExample('syntax')" style="background: var(--error-color); color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; margin: 0.25rem; font-size: 0.75rem;">Syntax Error</button>
-              <button onclick="loadErrorExample('reference')" style="background: var(--error-color); color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; margin: 0.25rem; font-size: 0.75rem;">Reference Error</button>
-              <button onclick="loadErrorExample('duplicate')" style="background: var(--error-color); color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; margin: 0.25rem; font-size: 0.75rem;">Duplicate Error</button>
-            </div>
-          </div>
+  <!-- Main workspace -->
+  <div class="workspace">
+    <!-- Editor -->
+    <div class="editor-area">
+      <div class="editor-container" id="cddlEditor"></div>
+    </div>
+
+    <!-- Problems Panel (inline debugger) -->
+    <div class="problems-panel" id="problemsPanel">
+      <div class="resize-handle" id="resizeHandle"></div>
+      <div class="problems-header" id="problemsHeader">
+        <div class="problems-header-left">
+          <span>Problems</span>
+          <span class="problems-badge zero" id="problemsBadge">0</span>
         </div>
-      </aside>
-    </main>
+        <div class="problems-toggle" id="problemsToggle">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+            <polyline points="3 5 6 8 9 5" />
+          </svg>
+        </div>
+      </div>
+      <div class="problems-body" id="problemsBody">
+        <div class="problems-empty" id="problemsEmpty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+            <polyline points="22 4 12 14.01 9 11.01" />
+          </svg>
+          No problems detected
+        </div>
+      </div>
+    </div>
+  </div>
 
-    <footer class="footer">
-      <p>
-        Built with ❤️ using <a href="https://github.com/anweiss/cddl" target="_blank" rel="noopener">CDDL Parser</a> • 
-        <a href="https://tools.ietf.org/html/rfc8610" target="_blank" rel="noopener">RFC 8610</a>
-      </p>
-    </footer>
+  <!-- Status bar -->
+  <div class="statusbar">
+    <div class="statusbar-left">
+      <span class="statusbar-item" id="cursorPosition">Ln 1, Col 1</span>
+    </div>
+    <div class="statusbar-right">
+      <span class="statusbar-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        </svg>
+        Rust + WASM
+      </span>
+      <span class="statusbar-item">CDDL</span>
+    </div>
   </div>
 
   <script type="module" src="./app.js"></script>
