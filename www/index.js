@@ -253,8 +253,12 @@ let cursorPosition;
 
 function updateProblems(errors) {
   const count = errors.length;
-  const errorCount = errors.filter((e) => e.severity === 'error').length;
-  const warningCount = errors.filter((e) => e.severity === 'warning').length;
+  let errorCount = 0;
+  let warningCount = 0;
+  for (let i = 0; i < count; i++) {
+    if (errors[i].severity === 'error') errorCount++;
+    else warningCount++;
+  }
 
   // Badge
   problemsBadge.textContent = count;
@@ -276,10 +280,9 @@ function updateProblems(errors) {
     statusText.textContent = 'Valid';
   }
 
-  // Body
-  problemsBody.innerHTML = '';
-
+  // Body — batch DOM writes with a document fragment
   if (count === 0) {
+    problemsBody.innerHTML = '';
     problemsBody.appendChild(createEmptyState());
     return;
   }
@@ -287,10 +290,12 @@ function updateProblems(errors) {
   // Auto-expand when errors appear
   problemsPanel.classList.remove('collapsed');
 
-  errors.forEach((err) => {
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < count; i++) {
+    const err = errors[i];
     const isWarning = err.severity === 'warning';
     const row = document.createElement('div');
-    row.className = `problem-row${isWarning ? ' warning' : ''}`;
+    row.className = isWarning ? 'problem-row warning' : 'problem-row';
     row.onclick = () => jumpTo(err.line, err.column);
 
     const icon = isWarning
@@ -301,15 +306,12 @@ function updateProblems(errors) {
           <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1ZM7.25 4.5a.75.75 0 0 1 1.5 0v3.25a.75.75 0 0 1-1.5 0V4.5ZM8 10.5A.75.75 0 1 1 8 12a.75.75 0 0 1 0-1.5Z"/>
         </svg>`;
 
-    row.innerHTML = `
-      ${icon}
-      <span class="problem-message">${escapeHtml(err.message)}</span>
-      <span class="problem-category">${escapeHtml(err.category)}</span>
-      <span class="problem-location">[Ln ${err.line}, Col ${err.column}]</span>
-    `;
+    row.innerHTML = `${icon}<span class="problem-message">${escapeHtml(err.message)}</span><span class="problem-category">${escapeHtml(err.category)}</span><span class="problem-location">[Ln ${err.line}, Col ${err.column}]</span>`;
 
-    problemsBody.appendChild(row);
-  });
+    frag.appendChild(row);
+  }
+  problemsBody.innerHTML = '';
+  problemsBody.appendChild(frag);
 }
 
 function createEmptyState() {
@@ -325,10 +327,10 @@ function createEmptyState() {
   return el;
 }
 
+const _escapeMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const _escapeRe = /[&<>"']/g;
 function escapeHtml(str) {
-  const el = document.createElement('span');
-  el.textContent = str;
-  return el.innerHTML;
+  return str.replace(_escapeRe, (ch) => _escapeMap[ch]);
 }
 
 function jumpTo(line, column) {
@@ -410,14 +412,25 @@ function applyFormat() {
 
 let validationTimer;
 
+let lastInput = '';
+let saveTimer;
+
 function scheduleValidation() {
   clearTimeout(validationTimer);
-  validationTimer = setTimeout(runValidation, 250);
+  validationTimer = setTimeout(runValidation, 400);
+}
+
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => saveContent(lastInput), 1000);
 }
 
 function runValidation() {
   const input = editor.getValue();
-  saveContent(input);
+  // Skip if content hasn't changed since last validation
+  if (input === lastInput) return;
+  lastInput = input;
+  scheduleSave();
 
   if (!input.trim()) {
     updateProblems([]);
@@ -614,7 +627,7 @@ function boot() {
     fontLigatures: true,
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
-    automaticLayout: true,
+    automaticLayout: false,
     wordWrap: 'on',
     wrappingIndent: 'indent',
     lineNumbers: 'on',
@@ -669,11 +682,15 @@ function boot() {
     const startY = e.clientY;
     const startHeight = problemsPanel.offsetHeight;
 
+    let rafId;
     function onMouseMove(ev) {
-      const delta = startY - ev.clientY;
-      const newHeight = Math.max(33, Math.min(startHeight + delta, window.innerHeight * 0.7));
-      problemsPanel.style.height = newHeight + 'px';
-      editor.layout();
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const delta = startY - ev.clientY;
+        const newHeight = Math.max(33, Math.min(startHeight + delta, window.innerHeight * 0.7));
+        problemsPanel.style.height = newHeight + 'px';
+        editor.layout();
+      });
     }
 
     function onMouseUp() {
@@ -689,8 +706,15 @@ function boot() {
     document.addEventListener('mouseup', onMouseUp);
   });
 
-  // Window resize
-  window.addEventListener('resize', () => editor.layout());
+  // Window resize (throttled)
+  let resizeRaf;
+  window.addEventListener('resize', () => {
+    cancelAnimationFrame(resizeRaf);
+    resizeRaf = requestAnimationFrame(() => editor.layout());
+  });
+
+  // Initial layout
+  editor.layout();
 
   // Init WASM then validate
   initWasm().then((ok) => {
