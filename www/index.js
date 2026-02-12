@@ -810,8 +810,17 @@ function validateCDDLText(cddlText) {
     }
     const errors = rawErrors.map(normaliseError);
     const enriched = enrichWithDelimiterCheck(errors, cddlText);
-    const hasErrors = enriched.some((e) => e.severity === 'error');
-    return { isValid: !hasErrors, errors: enriched };
+    // Deduplicate errors with identical message + location
+    const seen = new Set();
+    const deduped = enriched.filter((e) => {
+      const loc = e._openerLine ? `${e._openerLine}:${e._openerColumn}` : `${e.line}:${e.column}`;
+      const key = `${e.message}|${loc}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    const hasErrors = deduped.some((e) => e.severity === 'error');
+    return { isValid: !hasErrors, errors: deduped };
   } catch (err) {
     // Unexpected failure — surface it as a single error
     return {
