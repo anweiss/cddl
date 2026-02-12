@@ -4,7 +4,7 @@
 
 use cddl::{
   cddl_from_str,
-  validator::{cbor::CBORValidator, validate_cbor_from_slice, Validator},
+  validator::{cbor::CBORValidator, cbor_value, validate_cbor_from_slice, Validator},
 };
 use ciborium::value::Value;
 use indoc::indoc;
@@ -41,6 +41,11 @@ pub mod cbor {
     pub const BYTES_EMPTY:  &[u8] = b"\x40";
     pub const BYTES_1234:   &[u8] = b"\x44\x01\x02\x03\x04"; // hex 01020304
 
+    // Simple values (major type 7)
+    pub const SIMPLE_0:     &[u8] = b"\xe0";        // simple(0) - unassigned
+    pub const SIMPLE_19:    &[u8] = b"\xf3";        // simple(19) - unassigned
+    pub const SIMPLE_32:    &[u8] = b"\xf8\x20";    // simple(32) - unassigned (two-byte encoding)
+    pub const SIMPLE_255:   &[u8] = b"\xf8\xff";    // simple(255) - unassigned (two-byte encoding)
 }
 
 // These data structures exist so that we can serialize some more complex
@@ -351,6 +356,7 @@ fn validate_range_operators() -> Result<(), Box<dyn Error>> {
       Value::Integer(5.into()),
     ),
   ]);
+  let test: cbor_value::Value = test.into();
   let mut cv = CBORValidator::new(&cddl, test, None);
   cv.validate()?;
 
@@ -364,6 +370,7 @@ fn validate_range_operators() -> Result<(), Box<dyn Error>> {
       Value::Integer(9.into()),
     ),
   ]);
+  let test: cbor_value::Value = test.into();
   let mut cv = CBORValidator::new(&cddl, test, None);
   cv.validate()?;
 
@@ -378,6 +385,7 @@ fn validate_range_operators() -> Result<(), Box<dyn Error>> {
       Value::Integer(10.into()),
     ), // Should fail - 10 is exclusive
   ]);
+  let test: cbor_value::Value = test.into();
   let mut cv = CBORValidator::new(&cddl, test, None);
   assert!(
     cv.validate().is_err(),
@@ -394,6 +402,7 @@ fn validate_range_operators() -> Result<(), Box<dyn Error>> {
       Value::Integer(5.into()),
     ),
   ]);
+  let test: cbor_value::Value = test.into();
   let mut cv = CBORValidator::new(&cddl, test, None);
   assert!(
     cv.validate().is_err(),
@@ -401,4 +410,53 @@ fn validate_range_operators() -> Result<(), Box<dyn Error>> {
   );
 
   Ok(())
+}
+
+/// Test for GitHub issue #90: CBOR validation fails for non-standard simple values.
+/// CDDL `#7.N` should match CBOR simple value N for unassigned simple values (0-19, 32-255).
+#[test]
+fn validate_cbor_simple_values() {
+  // Simple value 32 (unassigned, two-byte encoded as 0xf8 0x20)
+  let cddl_input = r#"thing = #7.32"#;
+  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_32, None).unwrap();
+
+  // Wrong simple value should fail
+  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_255, None).unwrap_err();
+
+  // Simple value 0 (one-byte encoded)
+  let cddl_input = r#"thing = #7.0"#;
+  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_0, None).unwrap();
+
+  // Simple value 19 (one-byte encoded)
+  let cddl_input = r#"thing = #7.19"#;
+  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_19, None).unwrap();
+
+  // Simple value 255 (two-byte encoded)
+  let cddl_input = r#"thing = #7.255"#;
+  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_255, None).unwrap();
+
+  // Major type 7 without constraint should match any simple value
+  let cddl_input = r#"thing = #7"#;
+  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_0, None).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_32, None).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_255, None).unwrap();
+
+  // #7 should also match booleans, null, and floats
+  validate_cbor_from_slice(cddl_input, cbor::BOOL_TRUE, None).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::BOOL_FALSE, None).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::NULL, None).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0, None).unwrap();
+
+  // Standard simple values via #7.N
+  let cddl_input = r#"thing = #7.20"#;
+  validate_cbor_from_slice(cddl_input, cbor::BOOL_FALSE, None).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::BOOL_TRUE, None).unwrap_err();
+
+  let cddl_input = r#"thing = #7.21"#;
+  validate_cbor_from_slice(cddl_input, cbor::BOOL_TRUE, None).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::BOOL_FALSE, None).unwrap_err();
+
+  let cddl_input = r#"thing = #7.22"#;
+  validate_cbor_from_slice(cddl_input, cbor::NULL, None).unwrap();
+  validate_cbor_from_slice(cddl_input, cbor::BOOL_TRUE, None).unwrap_err();
 }

@@ -2,6 +2,8 @@
 
 /// CBOR validation implementation
 pub mod cbor;
+/// Custom CBOR value type with simple value support
+pub mod cbor_value;
 /// JSON validation implementation
 pub mod json;
 
@@ -21,10 +23,9 @@ use std::error::Error;
 #[cfg(feature = "cbor")]
 use cbor::CBORValidator;
 #[cfg(feature = "cbor")]
-use ciborium;
+use cbor_value::decode_cbor;
 #[cfg(feature = "json")]
 use json::JSONValidator;
-use serde::de::Deserialize;
 
 #[cfg(target_arch = "wasm32")]
 use crate::{error::ErrorMsg, lexer::Position, parser, pest_bridge};
@@ -85,7 +86,7 @@ impl CDDL<'_> {
     #[cfg(target_arch = "wasm32")]
     enabled_features: Option<Box<[JsValue]>>,
   ) -> Result<(), Box<dyn Error>> {
-    let cbor: ciborium::value::Value = ciborium::de::from_reader(document)?;
+    let cbor = decode_cbor(document).map_err(|e| e.to_string())?;
 
     let mut cv = CBORValidator::new(self, cbor, enabled_features);
     cv.validate().map_err(|e| e.into())
@@ -192,8 +193,7 @@ pub fn validate_cbor_from_slice(
 ) -> cbor::Result<std::io::Error> {
   let cddl = cddl_from_str(cddl, true).map_err(cbor::Error::CDDLParsing)?;
 
-  let cbor: ciborium::value::Value =
-    ciborium::de::from_reader(cbor_slice).map_err(cbor::Error::CBORParsing)?;
+  let cbor = decode_cbor(cbor_slice).map_err(|e| cbor::Error::CDDLParsing(e.to_string()))?;
 
   let mut cv = CBORValidator::new(&cddl, cbor, enabled_features);
   cv.validate()
@@ -205,8 +205,7 @@ pub fn validate_cbor_from_slice(
 /// Validate CBOR slice from a given CDDL document string
 pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result<std::io::Error> {
   let cddl = cddl_from_str(cddl, true).map_err(cbor::Error::CDDLParsing)?;
-  let cbor: ciborium::value::Value =
-    ciborium::de::from_reader(cbor_slice).map_err(cbor::Error::CBORParsing)?;
+  let cbor = decode_cbor(cbor_slice).map_err(|e| cbor::Error::CDDLParsing(e.to_string()))?;
 
   let mut cv = CBORValidator::new(&cddl, cbor);
   cv.validate()
@@ -240,8 +239,7 @@ pub fn validate_cbor_from_slice(
     }
   })?;
 
-  let cbor: ciborium::value::Value =
-    ciborium::de::from_reader(cbor_slice).map_err(|e| JsValue::from(e.to_string()))?;
+  let cbor = decode_cbor(cbor_slice).map_err(|e| JsValue::from(e.to_string()))?;
 
   let mut cv = CBORValidator::new(&c, cbor, enabled_features);
   cv.validate()
@@ -276,8 +274,7 @@ pub fn validate_cbor_from_slice(
     }
   })?;
 
-  let cbor: ciborium::value::Value =
-    ciborium::de::from_reader(cbor_slice).map_err(|e| JsValue::from(e.to_string()))?;
+  let cbor = decode_cbor(cbor_slice).map_err(|e| JsValue::from(e.to_string()))?;
 
   let mut cv = CBORValidator::new(&c, cbor);
   cv.validate()
@@ -808,7 +805,7 @@ pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 /// or not a subsequent validation of the array's elements shouch be homogenous.
 /// The second bool in the returned tuple indicates whether or not an empty
 /// array is allowed during a subsequent validation of the array's elements.
-pub fn validate_array_occurrence<'de, T: Deserialize<'de>>(
+pub fn validate_array_occurrence<T>(
   occurrence: Option<&Occur>,
   entry_counts: Option<&[EntryCount]>,
   values: &[T],
