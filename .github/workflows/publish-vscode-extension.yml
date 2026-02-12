@@ -22,7 +22,7 @@ jobs:
 
       - name: Install wasmpack
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          cargo install wasm-pack
 
       - name: Install Node.js
         uses: actions/setup-node@v4
