@@ -17,8 +17,8 @@ use std::{
   fmt::{self, Write},
 };
 
+use super::cbor_value::{decode_cbor, Value};
 use chrono::{TimeZone, Utc};
-use ciborium::value::Value;
 use serde_json;
 
 #[cfg(feature = "additional-controls")]
@@ -1279,7 +1279,7 @@ where
             match &self.cbor {
               Value::Bytes(b) => {
                 // Handle direct byte string case
-                let inner_value = ciborium::de::from_reader(&b[..]);
+                let inner_value = decode_cbor(b);
                 match inner_value {
                   Ok(value) => {
                     #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
@@ -1309,7 +1309,7 @@ where
                 // Handle array of byte strings case
                 for (idx, item) in arr.iter().enumerate() {
                   if let Value::Bytes(b) = item {
-                    let inner_value = ciborium::de::from_reader(&b[..]);
+                    let inner_value = decode_cbor(b);
                     match inner_value {
                       Ok(value) => {
                         let current_location = self.cbor_location.clone();
@@ -2141,7 +2141,7 @@ where
   fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error<T>> {
     if matches!(self.ctrl, Some(ControlOperator::CBOR)) {
       if let Value::Bytes(b) = &self.cbor {
-        let value = ciborium::de::from_reader(&b[..]);
+        let value = decode_cbor(b);
         match value {
           Ok(value) => {
             let current_location = self.cbor_location.clone();
@@ -2177,7 +2177,7 @@ where
       return Ok(());
     } else if matches!(self.ctrl, Some(ControlOperator::CBORSEQ)) {
       if let Value::Bytes(b) = &self.cbor {
-        let value = ciborium::de::from_reader(&b[..]);
+        let value = decode_cbor(b);
         match value {
           Ok(Value::Array(_)) => {
             let current_location = self.cbor_location.clone();
@@ -2774,12 +2774,90 @@ where
         Value::Float(_f) => {
           match mt {
             7u8 => match constraint {
-              Some(_c) => unimplemented!(),
+              Some(_c) => {
+                // Float values don't match specific simple value constraints like #7.32
+                // They only match the general #7 (no constraint)
+                self.add_error(format!(
+                  "expected simple value with constraint {} (#{}.{}), got {:?}",
+                  _c, mt, _c, self.cbor
+                ));
+                return Ok(());
+              }
               _ => return Ok(()),
             },
             _ => self.add_error(format!(
               "expected major type {} with constraint {:?}, got {:?}",
               mt, constraint, self.cbor
+            )),
+          }
+
+          Ok(())
+        }
+        Value::Bool(b) => {
+          match mt {
+            7u8 => match constraint {
+              Some(c) => {
+                let expected = if *b { 21u64 } else { 20u64 };
+                if c.is_literal(expected) {
+                  return Ok(());
+                }
+                self.add_error(format!(
+                  "expected simple value with constraint {} (#{}.{}), got {:?}",
+                  c, mt, c, self.cbor
+                ));
+                return Ok(());
+              }
+              _ => return Ok(()),
+            },
+            _ => self.add_error(format!(
+              "expected major type {} with constraint {:?}, got {:?}",
+              mt, constraint, self.cbor
+            )),
+          }
+
+          Ok(())
+        }
+        Value::Null => {
+          match mt {
+            7u8 => match constraint {
+              Some(c) => {
+                if c.is_literal(22u64) {
+                  return Ok(());
+                }
+                self.add_error(format!(
+                  "expected simple value with constraint {} (#{}.{}), got {:?}",
+                  c, mt, c, self.cbor
+                ));
+                return Ok(());
+              }
+              _ => return Ok(()),
+            },
+            _ => self.add_error(format!(
+              "expected major type {} with constraint {:?}, got {:?}",
+              mt, constraint, self.cbor
+            )),
+          }
+
+          Ok(())
+        }
+        Value::Simple(s) => {
+          match mt {
+            7u8 => match constraint {
+              Some(c) => {
+                if c.is_literal(*s as u64) {
+                  return Ok(());
+                }
+                self.add_error(format!(
+                  "expected simple value with constraint {} (#{}.{}), got simple({})",
+                  c, mt, c, s
+                ));
+                return Ok(());
+              }
+              _ => return Ok(()),
+            },
+            _ => self.add_error(format!(
+              "expected major type {} with constraint {:?}, got simple({})",
+              mt, constraint, s
             )),
           }
 
@@ -4241,17 +4319,15 @@ where
   }
 }
 
-/// Converts a CDDL value type to ciborium::value::Value
-pub fn token_value_into_cbor_value(value: token::Value) -> ciborium::value::Value {
+/// Converts a CDDL value type to our custom CBOR Value
+pub fn token_value_into_cbor_value(value: token::Value) -> Value {
   match value {
-    token::Value::UINT(i) => ciborium::value::Value::Integer(i.into()),
-    token::Value::INT(i) => ciborium::value::Value::Integer(i.into()),
-    token::Value::FLOAT(f) => ciborium::value::Value::Float(f),
-    token::Value::TEXT(t) => ciborium::value::Value::Text(t.to_string()),
+    token::Value::UINT(i) => Value::Integer(i.into()),
+    token::Value::INT(i) => Value::Integer(i.into()),
+    token::Value::FLOAT(f) => Value::Float(f),
+    token::Value::TEXT(t) => Value::Text(t.to_string()),
     token::Value::BYTE(b) => match b {
-      ByteValue::UTF8(b) | ByteValue::B16(b) | ByteValue::B64(b) => {
-        ciborium::value::Value::Bytes(b.into_owned())
-      }
+      ByteValue::UTF8(b) | ByteValue::B16(b) | ByteValue::B64(b) => Value::Bytes(b.into_owned()),
     },
   }
 }
@@ -4283,7 +4359,7 @@ mod tests {
       "#
     );
 
-    let cbor = ciborium::value::Value::Bytes(vec![0x90, 0x6d]);
+    let cbor = Value::Bytes(vec![0x90, 0x6d]);
 
     let cddl = crate::cddl_from_str(cddl, true)?;
 
@@ -4312,7 +4388,7 @@ mod tests {
 
     let sha256_oid = "2.16.840.1.101.3.4.2.1";
 
-    let cbor = ciborium::value::Value::Bytes(sha256_oid.as_bytes().to_vec());
+    let cbor = Value::Bytes(sha256_oid.as_bytes().to_vec());
 
     let cddl = cddl_from_str(cddl, true)?;
 
@@ -4337,7 +4413,7 @@ mod tests {
       println!("{}", e);
     }
 
-    let cbor = ciborium::value::Value::Integer(2.into());
+    let cbor = Value::Integer(2.into());
 
     let cddl = cddl.unwrap();
 
@@ -4362,7 +4438,7 @@ mod tests {
       println!("{}", e);
     }
 
-    let cbor = ciborium::cbor!([13]).unwrap();
+    let cbor = Value::from(ciborium::cbor!([13]).unwrap());
 
     let cddl = cddl.unwrap();
 
@@ -4394,7 +4470,7 @@ mod tests {
       println!("{}", e);
     }
 
-    let cbor = ciborium::cbor!([11, "test"]).unwrap();
+    let cbor = Value::from(ciborium::cbor!([11, "test"]).unwrap());
 
     let cddl = cddl.unwrap();
 
@@ -4417,10 +4493,7 @@ mod tests {
       println!("{}", e);
     }
 
-    let cbor = ciborium::value::Value::Tag(
-      1,
-      Box::from(ciborium::value::Value::Float(1680965875.01_f64)),
-    );
+    let cbor = Value::Tag(1, Box::from(Value::Float(1680965875.01_f64)));
 
     let cddl = cddl.unwrap();
 
@@ -4459,11 +4532,11 @@ mod tests {
       println!("{}", e);
     }
 
-    let cbor = ciborium::value::Value::Map(vec![(
-      ciborium::value::Value::Integer(61285.into()),
-      ciborium::value::Value::Map(vec![(
-        ciborium::value::Value::Integer(1.into()),
-        ciborium::value::Value::Bytes(b"test".to_vec()),
+    let cbor = Value::Map(vec![(
+      Value::Integer(61285.into()),
+      Value::Map(vec![(
+        Value::Integer(1.into()),
+        Value::Bytes(b"test".to_vec()),
       )]),
     )]);
 
@@ -4478,8 +4551,6 @@ mod tests {
   #[test]
   fn multi_type_choice_type_rule_array_validation(
   ) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use ciborium::value::Value;
-
     let cddl = indoc!(
       r#"
         Ref = nil / refShort / refFull
@@ -4517,8 +4588,6 @@ mod tests {
 
   #[test]
   fn tagged_data_in_array_validation() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use ciborium::value::Value;
-
     let cddl = indoc!(
       r#"
         start = [ * help ]
@@ -4593,8 +4662,6 @@ mod tests {
 
   #[test]
   fn extract_cbor() {
-    use ciborium::value::Value;
-
     let cbor = Value::Float(1.23);
     let cddl = cddl_from_str("start = any", true).unwrap();
     let cv = CBORValidator::new(&cddl, cbor, None);
@@ -4613,9 +4680,9 @@ mod tests {
 
     // Test valid byte string length
     let valid_bytes = vec![0u8; 100];
-    let valid_cbor = ciborium::value::Value::Map(vec![(
-      ciborium::value::Value::Text("field".to_string()),
-      ciborium::value::Value::Bytes(valid_bytes),
+    let valid_cbor = Value::Map(vec![(
+      Value::Text("field".to_string()),
+      Value::Bytes(valid_bytes),
     )]);
 
     #[cfg(feature = "additional-controls")]
@@ -4626,9 +4693,9 @@ mod tests {
 
     // Test byte string that's too short
     let short_bytes = vec![0u8; 10];
-    let short_cbor = ciborium::value::Value::Map(vec![(
-      ciborium::value::Value::Text("field".to_string()),
-      ciborium::value::Value::Bytes(short_bytes),
+    let short_cbor = Value::Map(vec![(
+      Value::Text("field".to_string()),
+      Value::Bytes(short_bytes),
     )]);
 
     #[cfg(feature = "additional-controls")]
@@ -4639,9 +4706,9 @@ mod tests {
 
     // Test byte string that's too long
     let long_bytes = vec![0u8; 1500];
-    let long_cbor = ciborium::value::Value::Map(vec![(
-      ciborium::value::Value::Text("field".to_string()),
-      ciborium::value::Value::Bytes(long_bytes),
+    let long_cbor = Value::Map(vec![(
+      Value::Text("field".to_string()),
+      Value::Bytes(long_bytes),
     )]);
 
     #[cfg(feature = "additional-controls")]
@@ -4665,9 +4732,9 @@ mod tests {
 
     // Test valid byte string length (17 bytes - should pass)
     let valid_bytes = vec![0u8; 17];
-    let valid_cbor = ciborium::value::Value::Map(vec![(
-      ciborium::value::Value::Text("field".to_string()),
-      ciborium::value::Value::Bytes(valid_bytes),
+    let valid_cbor = Value::Map(vec![(
+      Value::Text("field".to_string()),
+      Value::Bytes(valid_bytes),
     )]);
 
     #[cfg(feature = "additional-controls")]
@@ -4678,9 +4745,9 @@ mod tests {
 
     // Test boundary case (16 bytes - should pass)
     let boundary_bytes = vec![0u8; 16];
-    let boundary_cbor = ciborium::value::Value::Map(vec![(
-      ciborium::value::Value::Text("field".to_string()),
-      ciborium::value::Value::Bytes(boundary_bytes),
+    let boundary_cbor = Value::Map(vec![(
+      Value::Text("field".to_string()),
+      Value::Bytes(boundary_bytes),
     )]);
 
     #[cfg(feature = "additional-controls")]
@@ -4714,7 +4781,7 @@ mod tests {
     let inner_cbor = ciborium::cbor!({
         "a" => "test",
         "b" => -42,
-        "c" => Value::Bytes(b"bytes".to_vec())
+        "c" => ciborium::value::Value::Bytes(b"bytes".to_vec())
     })?;
 
     // Serialize inner CBOR to bytes
@@ -4780,7 +4847,7 @@ mod tests {
     let inner_cbor = ciborium::cbor!({
         "a" => "test",
         "b" => -42,
-        "c" => Value::Bytes(b"bytes".to_vec())
+        "c" => ciborium::value::Value::Bytes(b"bytes".to_vec())
     })?;
 
     // Serialize inner CBOR to bytes
@@ -4831,7 +4898,7 @@ mod tests {
       "#
     );
 
-    let cbor = ciborium::cbor!([0, [1, 2]]).unwrap();
+    let cbor = Value::from(ciborium::cbor!([0, [1, 2]]).unwrap());
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor, None);
@@ -4845,7 +4912,7 @@ mod tests {
       "#
     );
 
-    let cbor = ciborium::cbor!([0, [1, 2]]).unwrap();
+    let cbor = Value::from(ciborium::cbor!([0, [1, 2]]).unwrap());
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor, None);
@@ -4858,7 +4925,7 @@ mod tests {
       "#
     );
 
-    let cbor = ciborium::cbor!([1, [2, 3]]).unwrap();
+    let cbor = Value::from(ciborium::cbor!([1, [2, 3]]).unwrap());
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor, None);
@@ -4876,7 +4943,7 @@ mod tests {
         "#
     );
 
-    let cbor = ciborium::cbor!([1, [2, 3]]).unwrap();
+    let cbor = Value::from(ciborium::cbor!([1, [2, 3]]).unwrap());
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor, None);
@@ -4917,9 +4984,9 @@ mod tests {
     let cddl = cddl_from_str(cddl, true)?;
 
     // Create a nested tree structure
-    let cbor = ciborium::cbor!({
+    let cbor = Value::from(ciborium::cbor!({
       "root" => ["value", [["child1", []], ["child2", []]]]
-    })?;
+    })?);
 
     // This should not cause a stack overflow
     #[cfg(feature = "additional-controls")]
@@ -4950,7 +5017,6 @@ mod tests {
     let cddl = cddl_from_str(cddl_str, true).unwrap();
 
     // Create a CBOR map with extra keys
-    use ciborium::Value;
     let cbor_data = Value::Map(vec![(
       Value::Text("x".to_string()),
       Value::Text("y".to_string()),
@@ -4985,7 +5051,6 @@ mod tests {
     let cddl = cddl_from_str(cddl_str, true)?;
 
     // Create an empty CBOR map
-    use ciborium::Value;
     let cbor_data = Value::Map(vec![]);
 
     #[cfg(feature = "additional-controls")]
@@ -5010,7 +5075,6 @@ mod tests {
     let cddl = cddl_from_str(cddl_str, true)?;
 
     // Create CBOR equivalent of {"x": "y"}
-    use ciborium::Value;
     let cbor_data = Value::Map(vec![(
       Value::Text("x".to_string()),
       Value::Text("y".to_string()),
