@@ -147,6 +147,486 @@ const REFS_CACHE_KEY = 'cddl-playground-check-refs';
 let formatOnSave = false;
 const FORMAT_CACHE_KEY = 'cddl-playground-format-on-save';
 
+// ─── Examples Library ─────────────────────────────────────────────────────────
+
+const EXAMPLES = [
+  {
+    category: 'Basics',
+    items: [
+      {
+        name: 'Hello World',
+        desc: 'Minimal schema with a single text rule',
+        source: `; The simplest possible CDDL schema
+greeting = text
+`,
+      },
+      {
+        name: 'Basic Types',
+        desc: 'Common CDDL primitive types',
+        source: `; Basic CDDL types
+name = text
+age = uint
+temperature = float
+active = bool
+identifier = bytes
+`,
+      },
+      {
+        name: 'Person Record',
+        desc: 'Map with required and optional fields',
+        source: `; A person record with optional fields
+person = {
+  name: text,
+  age: uint,
+  ? email: text,
+  ? phone: text,
+}
+`,
+      },
+      {
+        name: 'Arrays & Ranges',
+        desc: 'Array definitions and value constraints',
+        source: `; Arrays and value ranges
+color = &(red: 1, green: 2, blue: 3)
+
+percentage = 0.0..100.0
+
+rgb = [3 uint .size 1]
+
+palette = [+ color]
+
+scores = [* percentage]
+`,
+      },
+      {
+        name: 'Choice Types',
+        desc: 'Type alternatives using //',
+        source: `; Choice types (type unions)
+contact = phone-contact / email-contact / address-contact
+
+phone-contact = {
+  type: "phone",
+  number: text,
+}
+
+email-contact = {
+  type: "email",
+  address: text,
+}
+
+address-contact = {
+  type: "address",
+  street: text,
+  city: text,
+  country: text,
+}
+`,
+      },
+      {
+        name: 'Generics',
+        desc: 'Parameterised type definitions',
+        source: `; Generic (parameterised) types
+paginated<T> = {
+  items: [* T],
+  page: uint,
+  total: uint,
+  ? next: uri,
+}
+
+user = {
+  id: uint,
+  name: text,
+}
+
+user-page = paginated<user>
+`,
+      },
+    ],
+  },
+  {
+    category: 'Intermediate',
+    items: [
+      {
+        name: 'Socket / Plug',
+        desc: 'Extensible types via $/ $$ sockets',
+        source: `; Extensible records using socket/plug (RFC 8610 §3.9)
+PersonalData = {
+  ? displayName: tstr,
+  NameComponents,
+  ? age: uint,
+  * $$personaldata-extensions,
+}
+
+NameComponents = (
+  ? firstName: tstr,
+  ? familyName: tstr,
+)
+
+; Extensions can be added from different sources
+$$personaldata-extensions //= (
+  favorite-salsa: tstr,
+)
+
+$$personaldata-extensions //= (
+  shoesize: uint,
+)
+`,
+      },
+      {
+        name: 'Constrained Strings',
+        desc: 'Size and regex control operators',
+        source: `; String constraints with control operators
+hostname = text .regexp "[a-zA-Z][a-zA-Z0-9\\\\-]*(\\\\.[a-zA-Z][a-zA-Z0-9\\\\-]*)*"
+
+email = text .regexp "[a-zA-Z0-9._%+\\\\-]+@[a-zA-Z0-9.\\\\-]+\\\\.[a-zA-Z]{2,}"
+
+short-text = text .size (1..256)
+
+sha256-hash = bytes .size 32
+
+port = uint .size 2
+
+ip4-addr = bytes .size 4
+
+ip6-addr = bytes .size 16
+`,
+      },
+      {
+        name: 'Tagged CBOR',
+        desc: 'CBOR tags and embedded data',
+        source: `; CBOR tags and embedded CBOR
+date-time = #6.0(tstr)
+
+epoch-time = #6.1(int / float)
+
+bignum = #6.2(bstr)
+
+uri = #6.32(tstr)
+
+embedded-cbor = #6.24(bstr .cbor inner-structure)
+
+inner-structure = {
+  version: uint,
+  payload: bytes,
+}
+`,
+      },
+      {
+        name: 'Occurrence Indicators',
+        desc: 'Optional, one-or-more, and exact counts',
+        source: `; Occurrence indicators
+config = {
+  ; Required field (exactly once)
+  name: text,
+
+  ; Optional field (zero or one)
+  ? description: text,
+
+  ; One or more tags
+  tags: [+ text],
+
+  ; Zero or more metadata entries
+  metadata: {* text => any},
+
+  ; Exactly 3 priority levels
+  priorities: [3 uint],
+
+  ; Between 1 and 5 items
+  items: [1*5 item],
+}
+
+item = {
+  id: uint,
+  value: any,
+}
+`,
+      },
+    ],
+  },
+  {
+    category: 'Real-World',
+    items: [
+      {
+        name: 'JSON Web Token (JWT)',
+        desc: 'Claims set for a JWT/CWT token',
+        source: `; JWT / CWT Claims Set (RFC 7519 / RFC 8392)
+claims-set = {
+  ? iss: text,            ; Issuer
+  ? sub: text,            ; Subject
+  ? aud: text / [+ text], ; Audience
+  ? exp: uint,            ; Expiration Time
+  ? nbf: uint,            ; Not Before
+  ? iat: uint,            ; Issued At
+  ? jti: text,            ; JWT ID
+  * text => any,          ; Additional claims
+}
+`,
+      },
+      {
+        name: 'COSE Key',
+        desc: 'COSE Key structure (RFC 9052)',
+        source: `; COSE Key Structure (RFC 9052 / RFC 9053)
+COSE-Key = {
+  1 => kty,              ; Key Type
+  ? 2 => bytes,          ; Key ID
+  ? 3 => int / text,     ; Algorithm
+  ? 4 => [+ key-ops],    ; Key Operations
+  ? 5 => bytes,          ; Base IV
+  * label => any,
+}
+
+kty = int / text
+
+key-ops = int / text
+
+label = int / text
+
+; EC2 key parameters (for P-256, P-384, P-521)
+COSE-Key-EC2 = COSE-Key .and {
+  -1 => int,             ; Curve
+  -2 => bytes,           ; x-coordinate
+  ? -3 => bytes,         ; y-coordinate
+  ? -4 => bytes,         ; Private key
+}
+`,
+      },
+      {
+        name: 'Reputon',
+        desc: 'Reputation Interchange (RFC 7071)',
+        source: `; Reputation Interchange format (RFC 7071)
+reputation-object = {
+  reputation-context,
+  reputon-list,
+}
+
+reputation-context = ( application: text )
+
+reputon-list = ( reputons: reputon-array )
+
+reputon-array = [* reputon]
+
+reputon = {
+  rater-value,
+  assertion-value,
+  rated-value,
+  rating-value,
+  ? conf-value,
+  ? normal-value,
+  ? sample-value,
+  ? gen-value,
+  ? expire-value,
+  * ext-value,
+}
+
+rater-value = ( rater: text )
+assertion-value = ( assertion: text )
+rated-value = ( rated: text )
+rating-value = ( rating: float16 )
+conf-value = ( confidence: float16 )
+normal-value = ( normal-rating: float16 )
+sample-value = ( sample-size: uint )
+gen-value = ( generated: uint )
+expire-value = ( expires: uint )
+ext-value = ( text => any )
+`,
+      },
+      {
+        name: 'CoSWID Tag',
+        desc: 'Concise Software Identification (RFC 9393)',
+        source: `; Concise Software Identification — CoSWID (RFC 9393)
+concise-swid-tag = {
+  tag-id => text / bstr .size 16,
+  tag-version => integer,
+  ? corpus => bool,
+  ? patch => bool,
+  ? supplemental => bool,
+  software-name => text,
+  ? software-version => text,
+  ? version-scheme => $version-scheme,
+  entity => entity-entry / [2* entity-entry],
+  ? link => link-entry / [2* link-entry],
+  * $$coswid-extension,
+}
+
+$version-scheme /= &(
+  multipartnumeric: 1,
+  multipartnumeric-suffix: 2,
+  alphanumeric: 3,
+  decimal: 4,
+  semver: 16384,
+)
+$version-scheme /= uint / text
+
+entity-entry = {
+  entity-name => text,
+  ? reg-id => uri,
+  role => $role / [2* $role],
+  ? thumbprint => hash-entry,
+  * $$entity-extension,
+}
+
+$role /= &(
+  tag-creator: 1,
+  software-creator: 2,
+  aggregator: 3,
+  distributor: 4,
+  licensor: 5,
+)
+$role /= uint / text
+
+link-entry = {
+  ? artifact => text,
+  href => uri,
+  rel => $rel,
+  ? media-type => text,
+  * $$link-extension,
+}
+
+$rel /= &(
+  ancestor: -1,
+  component: -2,
+  feature: -3,
+  installationmedia: -4,
+  packageinstaller: -5,
+  parent: -6,
+  patches: -7,
+  requires: -8,
+  see-also: -9,
+  supersedes: -10,
+  supplemental: -11,
+)
+$rel /= int / text
+
+hash-entry = [hash-alg-id: int, hash-value: bytes]
+
+tag-id = 0
+tag-version = 12
+software-name = 1
+software-version = 13
+version-scheme = 14
+entity = 2
+link = 4
+corpus = 8
+patch = 9
+supplemental = 11
+entity-name = 31
+reg-id = 32
+role = 33
+thumbprint = 34
+artifact = 37
+href = 38
+rel = 40
+media-type = 41
+uri = text
+`,
+      },
+      {
+        name: 'WebAuthn Attestation',
+        desc: 'Web Authentication attestation object',
+        source: `; WebAuthn Attestation Object (simplified)
+attestation-object = {
+  fmt: text,
+  attStmt: attestation-statement,
+  authData: bytes,
+}
+
+attestation-statement = packed-stmt / tpm-stmt / none-stmt
+
+packed-stmt = {
+  alg: int,
+  sig: bytes,
+  ? x5c: [+ bytes],
+}
+
+tpm-stmt = {
+  alg: int,
+  sig: bytes,
+  ver: "2.0",
+  ? x5c: [+ bytes],
+  certInfo: bytes,
+  pubArea: bytes,
+}
+
+none-stmt = {}
+
+authenticator-data = bytes
+
+credential-public-key = {
+  1 => int,              ; kty
+  3 => int,              ; alg
+  -1 => int,             ; crv (for EC2)
+  -2 => bytes,           ; x
+  -3 => bytes,           ; y
+}
+
+rp-entity = {
+  id: text,
+  name: text,
+  ? icon: text,
+}
+
+user-entity = {
+  id: bytes .size (1..64),
+  name: text,
+  displayName: text,
+  ? icon: text,
+}
+`,
+      },
+      {
+        name: 'EAT Token',
+        desc: 'Entity Attestation Token (EAT)',
+        source: `; Entity Attestation Token (EAT) — simplified
+eat-token = {
+  ; Standard CWT/JWT claims
+  ? 1 => text,             ; iss
+  ? 2 => text,             ; sub
+  ? 4 => uint,             ; exp
+  ? 6 => uint,             ; iat
+
+  ; EAT-specific claims
+  ? 10 => nonce,            ; nonce
+  ? 256 => ueid,            ; UEID
+  ? 258 => oemid,           ; OEM ID
+  ? 259 => security-level,
+  ? 261 => boot-state,
+  ? 265 => [+ swclaim],     ; Software claims
+  * label => any,
+}
+
+nonce = bytes .size (8..64)
+
+ueid = bytes .size (7..33)
+
+oemid = bytes .size 3 / int
+
+security-level = &(
+  unrestricted: 1,
+  restricted: 2,
+  secure-restricted: 3,
+  hardware: 4,
+)
+
+boot-state = &(
+  secure: 1,
+  insecure: 2,
+  locked: 3,
+)
+
+swclaim = {
+  ? 1 => text,       ; measurement type
+  ? 2 => bytes,      ; measurement value
+  ? 4 => text,       ; version
+  ? 5 => uint,       ; signer ID
+}
+
+label = int / text
+`,
+      },
+    ],
+  },
+];
+
 /**
  * Normalise a WASM error object into the shape the UI expects.
  */
@@ -611,6 +1091,45 @@ function boot() {
     formatOnSave = !formatOnSave;
     formatTrack.classList.toggle('active', formatOnSave);
     try { localStorage.setItem(FORMAT_CACHE_KEY, formatOnSave); } catch (_) {}
+  });
+
+  // Examples dropdown
+  const examplesWrapper = document.getElementById('examplesWrapper');
+  const examplesBtn = document.getElementById('examplesBtn');
+  const examplesDropdown = document.getElementById('examplesDropdown');
+
+  const ddFrag = document.createDocumentFragment();
+  for (const cat of EXAMPLES) {
+    const catEl = document.createElement('div');
+    catEl.className = 'examples-category';
+    catEl.textContent = cat.category;
+    ddFrag.appendChild(catEl);
+    for (const ex of cat.items) {
+      const item = document.createElement('div');
+      item.className = 'example-item';
+      item.innerHTML = `<span class="example-item-name">${escapeHtml(ex.name)}</span><span class="example-item-desc">${escapeHtml(ex.desc)}</span>`;
+      item.addEventListener('click', () => {
+        if (editor) {
+          editor.setValue(ex.source);
+          lastInput = '';
+          runValidation();
+        }
+        examplesWrapper.classList.remove('open');
+      });
+      ddFrag.appendChild(item);
+    }
+  }
+  examplesDropdown.appendChild(ddFrag);
+
+  examplesBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    examplesWrapper.classList.toggle('open');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!examplesWrapper.contains(e.target)) {
+      examplesWrapper.classList.remove('open');
+    }
   });
 
   const container = document.getElementById('cddlEditor');

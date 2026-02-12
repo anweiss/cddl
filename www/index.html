@@ -246,6 +246,102 @@
       height: 16px;
     }
 
+    /* ── Examples dropdown ── */
+    .examples-wrapper {
+      position: relative;
+    }
+
+    .examples-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.8rem;
+      font-family: inherit;
+      color: var(--text-muted);
+      background: none;
+      border: 1px solid var(--border);
+      padding: 0.3rem 0.6rem;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: color var(--transition), background var(--transition), border-color var(--transition);
+    }
+
+    .examples-btn:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+      border-color: var(--accent);
+    }
+
+    .examples-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .examples-btn .chevron {
+      width: 10px;
+      height: 10px;
+      transition: transform var(--transition);
+    }
+
+    .examples-wrapper.open .chevron {
+      transform: rotate(180deg);
+    }
+
+    .examples-dropdown {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      width: 340px;
+      max-height: 420px;
+      overflow-y: auto;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-lg);
+      z-index: 100;
+      padding: 0.35rem;
+    }
+
+    .examples-wrapper.open .examples-dropdown {
+      display: block;
+    }
+
+    .examples-category {
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      padding: 0.5rem 0.6rem 0.25rem;
+    }
+
+    .example-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+      padding: 0.45rem 0.6rem;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background var(--transition);
+    }
+
+    .example-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .example-item-name {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .example-item-desc {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      line-height: 1.3;
+    }
+
     .separator {
       width: 1px;
       height: 18px;
@@ -558,6 +654,20 @@
           <div class="toggle-knob"></div>
         </div>
       </label>
+      <div class="separator"></div>
+      <div class="examples-wrapper" id="examplesWrapper">
+        <button class="examples-btn" id="examplesBtn" title="Browse CDDL examples">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+          </svg>
+          Examples
+          <svg class="chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+            <polyline points="3 5 6 8 9 5"/>
+          </svg>
+        </button>
+        <div class="examples-dropdown" id="examplesDropdown"></div>
+      </div>
       <div class="separator"></div>
       <a href="https://tools.ietf.org/html/rfc8610" target="_blank" rel="noopener" class="topbar-link">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
