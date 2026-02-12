@@ -1,4 +1,5 @@
 const CopyWebpackPlugin = require('copy-webpack-plugin');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
 const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin');
 const webpack = require('webpack');
 const path = require('path');
@@ -38,9 +39,13 @@ module.exports = {
     },
   },
   plugins: [
+    new HtmlWebpackPlugin({
+      template: 'index.html',
+      inject: 'body',
+      scriptLoading: 'module',
+    }),
     new CopyWebpackPlugin({ 
       patterns: [
-        'index.html',
         {
           from: '../pkg/cddl_bg.wasm',
           to: 'cddl_bg.wasm'

@@ -1,4 +1,5 @@
 const CopyWebpackPlugin = require('copy-webpack-plugin');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
 const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin');
 const path = require('path');
 
@@ -6,7 +7,9 @@ module.exports = {
   entry: './bootstrap.js',
   output: {
     path: path.resolve(__dirname, 'dist'),
-    filename: 'app.js',
+    filename: '[name].[contenthash:8].js',
+    chunkFilename: '[name].[contenthash:8].js',
+    clean: true,
   },
   mode: 'production',
   resolve: {
@@ -17,9 +20,13 @@ module.exports = {
     }
   },
   plugins: [
+    new HtmlWebpackPlugin({
+      template: 'index.html',
+      inject: 'body',
+      scriptLoading: 'module',
+    }),
     new CopyWebpackPlugin({ 
       patterns: [
-        'index.html',
         {
           from: '../pkg/cddl_bg.wasm',
           to: 'cddl_bg.wasm'
