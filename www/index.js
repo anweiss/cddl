@@ -144,8 +144,8 @@ async function initWasm() {
 let checkRefs = false;
 const REFS_CACHE_KEY = 'cddl-playground-check-refs';
 
-let autoFormat = false;
-const FORMAT_CACHE_KEY = 'cddl-playground-auto-format';
+let formatOnSave = false;
+const FORMAT_CACHE_KEY = 'cddl-playground-format-on-save';
 
 /**
  * Normalise a WASM error object into the shape the UI expects.
@@ -409,7 +409,6 @@ function applyFormat() {
 // ─── Validation loop ───────────────────────────────────────────────────────────
 
 let validationTimer;
-let formatTimer;
 
 function scheduleValidation() {
   clearTimeout(validationTimer);
@@ -588,18 +587,17 @@ function boot() {
     if (editor) runValidation();
   });
 
-  // Auto-format toggle
+  // Format-on-save toggle
   const formatTrack = document.getElementById('formatTrack');
   try {
-    autoFormat = localStorage.getItem(FORMAT_CACHE_KEY) === 'true';
+    formatOnSave = localStorage.getItem(FORMAT_CACHE_KEY) === 'true';
   } catch (_) {}
-  if (autoFormat) formatTrack.classList.add('active');
+  if (formatOnSave) formatTrack.classList.add('active');
 
   document.getElementById('formatToggle').addEventListener('click', () => {
-    autoFormat = !autoFormat;
-    formatTrack.classList.toggle('active', autoFormat);
-    try { localStorage.setItem(FORMAT_CACHE_KEY, autoFormat); } catch (_) {}
-    if (autoFormat && editor) applyFormat();
+    formatOnSave = !formatOnSave;
+    formatTrack.classList.toggle('active', formatOnSave);
+    try { localStorage.setItem(FORMAT_CACHE_KEY, formatOnSave); } catch (_) {}
   });
 
   const container = document.getElementById('cddlEditor');
@@ -640,19 +638,13 @@ function boot() {
     cursorPosition.textContent = `Ln ${e.position.lineNumber}, Col ${e.position.column}`;
   });
 
-  // Intercept Ctrl/Cmd+S — prevent browser save, trigger format instead
+  // Intercept Ctrl/Cmd+S — prevent browser save, format if enabled
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-    applyFormat();
+    if (formatOnSave) applyFormat();
   });
 
-  // Real-time validation (also auto-format on change if enabled)
-  editor.onDidChangeModelContent(() => {
-    scheduleValidation();
-    if (autoFormat) {
-      clearTimeout(formatTimer);
-      formatTimer = setTimeout(applyFormat, 600);
-    }
-  });
+  // Real-time validation
+  editor.onDidChangeModelContent(scheduleValidation);
 
   // Problems panel toggle
   document.getElementById('problemsHeader').addEventListener('click', () => {
