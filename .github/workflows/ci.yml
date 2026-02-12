@@ -44,11 +44,11 @@ jobs:
 
       - name: Check compilation with default features
         run: |
-          cargo +${{ matrix.rust_toolchain }} check --all --bins --examples --tests
+          cargo +${{ matrix.rust_toolchain }} check --locked --all --bins --examples --tests
 
       - name: Check compilation with no features
         run: |
-          cargo +${{ matrix.rust_toolchain }} check --all --bins --examples --tests --no-default-features
+          cargo +${{ matrix.rust_toolchain }} check --locked --all --bins --examples --tests --no-default-features
 
   compilation-check:
     uses: anweiss/cddl/.github/workflows/compilation-check.yml@main
