@@ -665,6 +665,58 @@ label = int / text
 ];
 
 /**
+ * Scan the source text up to a byte offset and find the deepest unmatched
+ * opening delimiter.  Returns { char, line, column } or null.
+ */
+function findUnmatchedOpener(source, upTo) {
+  const stack = []; // { char, pos, line, column }
+  const match = { '{': '}', '[': ']', '(': ')' };
+  const close = new Set(['}', ']', ')']);
+  let line = 1;
+  let col = 1;
+  let inString = false;
+  let strChar = '';
+  let inComment = false;
+
+  const end = upTo != null ? Math.min(upTo, source.length) : source.length;
+
+  for (let i = 0; i < end; i++) {
+    const ch = source[i];
+
+    if (ch === '\n') {
+      inComment = false;
+      line++;
+      col = 1;
+      continue;
+    }
+
+    if (inComment) { col++; continue; }
+
+    if (inString) {
+      if (ch === '\\') { i++; col += 2; continue; }
+      if (ch === strChar) inString = false;
+      col++;
+      continue;
+    }
+
+    if (ch === ';') { inComment = true; col++; continue; }
+    if (ch === '"' || ch === "'") { inString = true; strChar = ch; col++; continue; }
+
+    if (match[ch]) {
+      stack.push({ char: ch, closer: match[ch], line, column: col });
+    } else if (close.has(ch)) {
+      // Pop matching opener
+      if (stack.length > 0 && stack[stack.length - 1].closer === ch) {
+        stack.pop();
+      }
+    }
+    col++;
+  }
+
+  return stack.length > 0 ? stack[stack.length - 1] : null;
+}
+
+/**
  * Normalise a WASM error object into the shape the UI expects.
  */
 function normaliseError(err) {
@@ -702,7 +754,44 @@ function normaliseError(err) {
   else if (/duplicate|already defined/.test(lc))
     category = 'Duplicate';
 
-  return { line, column, range, message, category, severity: err.severity || 'error' };
+  return { line, column, range, message, category, severity: err.severity || 'error', _raw: err };
+}
+
+/**
+ * Detect if an error is really about a missing closing delimiter, and if so,
+ * rewrite the message and redirect the marker to the unmatched opener.
+ */
+function enrichWithDelimiterCheck(errors, source) {
+  return errors.map((err) => {
+    const lc = err.message.toLowerCase();
+    // Pest errors for missing closing delimiters mention these expected tokens
+    const isMissingClose =
+      /expected.*\b(group_choice_op|group\s*entry|grpchoice|grpent|type_choice_op|type\b)/i.test(lc) ||
+      /expected.*\b(eoi|rule)\b/i.test(lc);
+
+    if (!isMissingClose) return err;
+
+    // Convert error position to a byte offset for scanning
+    const lines = source.split('\n');
+    let byteOffset = 0;
+    for (let i = 0; i < err.line - 1 && i < lines.length; i++) {
+      byteOffset += lines[i].length + 1; // +1 for newline
+    }
+    byteOffset += err.column - 1;
+
+    const opener = findUnmatchedOpener(source, byteOffset + 50);
+    if (!opener) return err;
+
+    const closerName = opener.closer === '}' ? 'brace \'}\'' : opener.closer === ']' ? 'bracket \']\'' : 'parenthesis \')\'';
+    return {
+      ...err,
+      message: `Missing closing ${closerName} — opened on Ln ${opener.line}, Col ${opener.column}.`,
+      category: 'Parser',
+      // Redirect marker to the unmatched opening delimiter
+      _openerLine: opener.line,
+      _openerColumn: opener.column,
+    };
+  });
 }
 
 /**
@@ -720,8 +809,9 @@ function validateCDDLText(cddlText) {
       return { isValid: true, errors: [] };
     }
     const errors = rawErrors.map(normaliseError);
-    const hasErrors = errors.some((e) => e.severity === 'error');
-    return { isValid: !hasErrors, errors };
+    const enriched = enrichWithDelimiterCheck(errors, cddlText);
+    const hasErrors = enriched.some((e) => e.severity === 'error');
+    return { isValid: !hasErrors, errors: enriched };
   } catch (err) {
     // Unexpected failure — surface it as a single error
     return {
@@ -813,7 +903,9 @@ function updateProblems(errors) {
     const isWarning = err.severity === 'warning';
     const row = document.createElement('div');
     row.className = isWarning ? 'problem-row warning' : 'problem-row';
-    row.onclick = () => jumpTo(err.line, err.column);
+    const jumpLine = err._openerLine || err.line;
+    const jumpCol = err._openerColumn || err.column;
+    row.onclick = () => jumpTo(jumpLine, jumpCol);
 
     const icon = isWarning
       ? `<svg class="problem-icon" viewBox="0 0 16 16" fill="currentColor">
@@ -823,7 +915,7 @@ function updateProblems(errors) {
           <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1ZM7.25 4.5a.75.75 0 0 1 1.5 0v3.25a.75.75 0 0 1-1.5 0V4.5ZM8 10.5A.75.75 0 1 1 8 12a.75.75 0 0 1 0-1.5Z"/>
         </svg>`;
 
-    row.innerHTML = `${icon}<span class="problem-message">${escapeHtml(err.message)}</span><span class="problem-category">${escapeHtml(err.category)}</span><span class="problem-location">[Ln ${err.line}, Col ${err.column}]</span>`;
+    row.innerHTML = `${icon}<span class="problem-message">${escapeHtml(err.message)}</span><span class="problem-category">${escapeHtml(err.category)}</span><span class="problem-location">[Ln ${jumpLine}, Col ${jumpCol}]</span>`;
 
     frag.appendChild(row);
   }
@@ -983,6 +1075,22 @@ function toMarker(model, err) {
   const severity = err.severity === 'warning'
     ? monaco.MarkerSeverity.Warning
     : monaco.MarkerSeverity.Error;
+
+  // ── Unmatched opener (missing closing delimiter) ──
+  if (err._openerLine) {
+    const oLine = Math.max(1, Math.min(err._openerLine, model.getLineCount()));
+    const oContent = model.getLineContent(oLine);
+    const oCol = Math.max(1, Math.min(err._openerColumn, oContent.length + 1));
+    return {
+      startLineNumber: oLine,
+      startColumn: oCol,
+      endLineNumber: oLine,
+      endColumn: oCol + 1,
+      message: err.message,
+      severity,
+      source: 'cddl',
+    };
+  }
 
   // ── Range-based (best) ──
   if (err.range && err.range.length === 2 && err.range[1] > err.range[0]) {
