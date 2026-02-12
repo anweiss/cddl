@@ -584,9 +584,10 @@ impl<'a> JSONValidator<'a> {
     &mut self,
     bytes: &[u8],
     is_classic: bool,
-    _is_sloppy: bool,
+    is_sloppy: bool,
   ) -> visitor::Result<Error> {
     if let Value::String(s) = &self.json {
+      // Try strict decoding first
       let decoded_result = if is_classic {
         data_encoding::BASE64.decode(s.as_bytes())
       } else {
@@ -610,7 +611,35 @@ impl<'a> JSONValidator<'a> {
           }
         }
         Err(e) => {
-          self.add_error(format!("invalid base64 encoding: {}", e));
+          if is_sloppy {
+            // RFC 9741: Sloppy mode - try to decode without checking trailing bits
+            let cleaned = s.trim_end_matches('=');
+            let sloppy_result = if is_classic {
+              data_encoding::BASE64_NOPAD.decode(cleaned.as_bytes())
+            } else {
+              data_encoding::BASE64URL_NOPAD.decode(cleaned.as_bytes())
+            };
+            match sloppy_result {
+              Ok(decoded_bytes) => {
+                if decoded_bytes != bytes {
+                  let expected_encoding = if is_classic {
+                    data_encoding::BASE64.encode(bytes)
+                  } else {
+                    data_encoding::BASE64URL_NOPAD.encode(bytes)
+                  };
+                  self.add_error(format!(
+                    "string \"{}\" does not match expected base64 encoding \"{}\"",
+                    s, expected_encoding
+                  ));
+                }
+              }
+              Err(_) => {
+                self.add_error(format!("invalid base64 encoding: {}", e));
+              }
+            }
+          } else {
+            self.add_error(format!("invalid base64 encoding: {}", e));
+          }
         }
       }
     } else {
@@ -1964,7 +1993,12 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
           match &self.json {
             Value::String(s) => {
-              match crate::validator::control::validate_join_text(target, controller, s) {
+              match crate::validator::control::validate_join_text(
+                target,
+                controller,
+                s,
+                Some(self.cddl),
+              ) {
                 Ok(is_valid) => {
                   if !is_valid {
                     self.add_error(format!("string \"{}\" does not match .join result", s));

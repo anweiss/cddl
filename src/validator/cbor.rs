@@ -2107,7 +2107,12 @@ where
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
-                match crate::validator::control::validate_join_text(target, controller, s) {
+                match crate::validator::control::validate_join_text(
+                  target,
+                  controller,
+                  s,
+                  Some(self.cddl),
+                ) {
                   Ok(is_valid) => {
                     if !is_valid {
                       self.add_error(format!("text string \"{}\" does not match .join result", s));

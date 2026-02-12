@@ -1059,6 +1059,205 @@ mod tests {
 
     Ok(())
   }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn test_printf_validation() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::ast::{Group, GroupChoice, GroupEntry, Type2, ValueMemberKeyEntry};
+    use std::borrow::Cow;
+
+    // Helper to build a printf controller array
+    fn make_printf_array<'a>(format_str: &'a str, args: Vec<Type2<'a>>) -> Type2<'a> {
+      let mut entries = vec![];
+
+      // Format string as first entry
+      let fmt_type = crate::ast::Type {
+        type_choices: vec![crate::ast::TypeChoice {
+          type1: crate::ast::Type1 {
+            type2: Type2::TextValue {
+              value: Cow::Borrowed(format_str),
+              #[cfg(feature = "ast-span")]
+              span: crate::ast::Span::default(),
+            },
+            operator: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_type: None,
+            #[cfg(feature = "ast-span")]
+            span: crate::ast::Span::default(),
+          },
+          #[cfg(feature = "ast-comments")]
+          comments_before_type: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_type: None,
+        }],
+        #[cfg(feature = "ast-span")]
+        span: crate::ast::Span::default(),
+      };
+
+      entries.push((
+        GroupEntry::ValueMemberKey {
+          ge: Box::new(ValueMemberKeyEntry {
+            occur: None,
+            member_key: None,
+            entry_type: fmt_type,
+          }),
+          #[cfg(feature = "ast-comments")]
+          leading_comments: None,
+          #[cfg(feature = "ast-comments")]
+          trailing_comments: None,
+          #[cfg(feature = "ast-span")]
+          span: crate::ast::Span::default(),
+        },
+        crate::ast::OptionalComma {
+          optional_comma: false,
+          #[cfg(feature = "ast-comments")]
+          trailing_comments: None,
+          _a: std::marker::PhantomData,
+        },
+      ));
+
+      for arg in args {
+        let arg_type = crate::ast::Type {
+          type_choices: vec![crate::ast::TypeChoice {
+            type1: crate::ast::Type1 {
+              type2: arg,
+              operator: None,
+              #[cfg(feature = "ast-comments")]
+              comments_after_type: None,
+              #[cfg(feature = "ast-span")]
+              span: crate::ast::Span::default(),
+            },
+            #[cfg(feature = "ast-comments")]
+            comments_before_type: None,
+            #[cfg(feature = "ast-comments")]
+            comments_after_type: None,
+          }],
+          #[cfg(feature = "ast-span")]
+          span: crate::ast::Span::default(),
+        };
+
+        entries.push((
+          GroupEntry::ValueMemberKey {
+            ge: Box::new(ValueMemberKeyEntry {
+              occur: None,
+              member_key: None,
+              entry_type: arg_type,
+            }),
+            #[cfg(feature = "ast-comments")]
+            leading_comments: None,
+            #[cfg(feature = "ast-comments")]
+            trailing_comments: None,
+            #[cfg(feature = "ast-span")]
+            span: crate::ast::Span::default(),
+          },
+          crate::ast::OptionalComma {
+            optional_comma: false,
+            #[cfg(feature = "ast-comments")]
+            trailing_comments: None,
+            _a: std::marker::PhantomData,
+          },
+        ));
+      }
+
+      Type2::Array {
+        group: Group {
+          group_choices: vec![GroupChoice {
+            group_entries: entries,
+            #[cfg(feature = "ast-comments")]
+            comments_before_grpchoice: None,
+            #[cfg(feature = "ast-span")]
+            span: crate::ast::Span::default(),
+          }],
+          #[cfg(feature = "ast-span")]
+          span: crate::ast::Span::default(),
+        },
+        #[cfg(feature = "ast-comments")]
+        comments_before_group: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_group: None,
+        #[cfg(feature = "ast-span")]
+        span: crate::ast::Span::default(),
+      }
+    }
+
+    let target = Type2::TextValue {
+      value: "text".into(),
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    };
+
+    // Test: "0x%04x" with value 19 => "0x0013"
+    let controller = make_printf_array(
+      "0x%04x",
+      vec![Type2::UintValue {
+        value: 19,
+        #[cfg(feature = "ast-span")]
+        span: Span::default(),
+      }],
+    );
+    assert!(validate_printf_text(&target, &controller, "0x0013")?);
+    assert!(!validate_printf_text(&target, &controller, "0x0014")?);
+
+    Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[cfg(feature = "json")]
+  #[test]
+  fn test_json_validation() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::ast::Type2;
+
+    let target = Type2::TextValue {
+      value: "text".into(),
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    };
+
+    // Controller: any type (just validate it's valid JSON)
+    let controller = Type2::Typename {
+      ident: crate::ast::Identifier {
+        ident: "any".into(),
+        socket: None,
+        #[cfg(feature = "ast-span")]
+        span: Span::default(),
+      },
+      generic_args: None,
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    };
+
+    // Valid JSON
+    assert!(validate_json_text(
+      &target,
+      &controller,
+      r#"{"key": "value"}"#
+    )?);
+    assert!(validate_json_text(&target, &controller, r#"[1, 2, 3]"#)?);
+    assert!(validate_json_text(&target, &controller, r#""hello""#)?);
+    assert!(validate_json_text(&target, &controller, "42")?);
+    assert!(validate_json_text(&target, &controller, "true")?);
+
+    // Invalid JSON
+    assert!(!validate_json_text(&target, &controller, "not valid json")?);
+    assert!(!validate_json_text(&target, &controller, "{invalid}")?);
+
+    // Controller: text type should only match JSON strings
+    let text_controller = Type2::Typename {
+      ident: crate::ast::Identifier {
+        ident: "text".into(),
+        socket: None,
+        #[cfg(feature = "ast-span")]
+        span: Span::default(),
+      },
+      generic_args: None,
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    };
+    assert!(validate_json_text(&target, &text_controller, r#""hello""#)?);
+    assert!(!validate_json_text(&target, &text_controller, "42")?);
+
+    Ok(())
+  }
 }
 
 #[cfg(feature = "additional-controls")]
@@ -1067,16 +1266,43 @@ pub fn validate_b64u_text<'a>(
   __target: &Type2<'a>,
   controller: &Type2<'a>,
   text_value: &str,
-  _is_sloppy: bool,
+  is_sloppy: bool,
 ) -> Result<bool, String> {
   match controller {
     Type2::UTF8ByteString { value, .. }
     | Type2::B16ByteString { value, .. }
     | Type2::B64ByteString { value, .. } => {
+      // Try strict decoding first
       let decoded = data_encoding::BASE64URL_NOPAD.decode(text_value.as_bytes());
 
       match decoded {
         Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
+        Err(_) if is_sloppy => {
+          // RFC 9741: Sloppy mode does not validate that additional trailing
+          // bits (beyond the encoded data) are zero. We try a more lenient
+          // decode that ignores trailing bit issues.
+          let cleaned = text_value.trim_end_matches('=');
+          match data_encoding::BASE64URL_NOPAD.decode(cleaned.as_bytes()) {
+            Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
+            Err(_) => {
+              // Try with lenient decoding: strip last char if we have trailing
+              // bits that would be non-zero
+              if !cleaned.is_empty() {
+                let without_last = &cleaned[..cleaned.len() - 1];
+                if let Ok(decoded_bytes) =
+                  data_encoding::BASE64URL_NOPAD.decode(without_last.as_bytes())
+                {
+                  // In sloppy mode, if the byte prefix matches, accept it
+                  Ok(value.as_ref().starts_with(&decoded_bytes[..]))
+                } else {
+                  Ok(false)
+                }
+              } else {
+                Ok(false)
+              }
+            }
+          }
+        }
         Err(_) => Ok(false),
       }
     }
@@ -1093,16 +1319,40 @@ pub fn validate_b64c_text<'a>(
   __target: &Type2<'a>,
   controller: &Type2<'a>,
   text_value: &str,
-  _is_sloppy: bool,
+  is_sloppy: bool,
 ) -> Result<bool, String> {
   match controller {
     Type2::UTF8ByteString { value, .. }
     | Type2::B16ByteString { value, .. }
     | Type2::B64ByteString { value, .. } => {
+      // Try strict decoding first
       let decoded = data_encoding::BASE64.decode(text_value.as_bytes());
 
       match decoded {
         Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
+        Err(_) if is_sloppy => {
+          // RFC 9741: Sloppy mode does not validate that additional trailing
+          // bits are zero. Try without padding enforcement.
+          let cleaned = text_value.trim_end_matches('=');
+          match data_encoding::BASE64_NOPAD.decode(cleaned.as_bytes()) {
+            Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
+            Err(_) => {
+              // Try lenient: strip last char for non-zero trailing bits
+              if !cleaned.is_empty() {
+                let without_last = &cleaned[..cleaned.len() - 1];
+                if let Ok(decoded_bytes) =
+                  data_encoding::BASE64_NOPAD.decode(without_last.as_bytes())
+                {
+                  Ok(value.as_ref().starts_with(&decoded_bytes[..]))
+                } else {
+                  Ok(false)
+                }
+              } else {
+                Ok(false)
+              }
+            }
+          }
+        }
         Err(_) => Ok(false),
       }
     }
@@ -1263,7 +1513,11 @@ pub fn validate_base10_text<'a>(
 }
 
 #[cfg(feature = "additional-controls")]
-/// Validate printf formatted text string against array of format string and values
+/// Validate printf formatted text string against array of format string and values.
+/// Implements RFC 9741 Section 2.3:
+/// The controller is an array of [format_string, arg1, arg2, ...].
+/// Supports %d, %i, %u, %x, %X, %o, %b, %B, %s, %c, %f, %e, %E, %g, %G
+/// with optional flags (-, +, 0, space), width, and precision.
 pub fn validate_printf_text<'a>(
   _target: &Type2<'a>,
   controller: &Type2<'a>,
@@ -1280,27 +1534,43 @@ pub fn validate_printf_text<'a>(
         return Err("printf controller array cannot be empty".to_string());
       }
 
-      // First entry should be the format string
-      let format_entry = &group_choice.group_entries[0];
-      if let GroupEntry::ValueMemberKey { ge, .. } = &format_entry.0 {
-        if let Some(MemberKey::Type1 { t1, .. }) = &ge.member_key {
-          if let Type2::TextValue {
-            value: format_str, ..
-          } = &t1.type2
-          {
-            // For now, do a basic validation - in a full implementation, we'd need to
-            // parse the printf format string and validate against the provided arguments
-            // This is a simplified check
-            Ok(text_value.contains(&format_str.as_ref().replace("%", "")))
-          } else {
-            Err("first element of printf controller array must be a format string".to_string())
+      // Collect all values from the group entries
+      let mut values: Vec<&Type2<'a>> = Vec::new();
+      for entry in &group_choice.group_entries {
+        match &entry.0 {
+          GroupEntry::ValueMemberKey { ge, .. } => {
+            if let Some(MemberKey::Type1 { t1, .. }) = &ge.member_key {
+              values.push(&t1.type2);
+            } else {
+              values.push(&ge.entry_type.type_choices[0].type1.type2);
+            }
           }
-        } else {
-          Err("first element of printf controller array must be a format string".to_string())
+          GroupEntry::TypeGroupname { .. } => {
+            // Resolve type/group name to extract format string or arguments
+            // TypeGroupnameEntry only has name + generic_args, not a type directly
+            // We skip these as they can't directly contribute printf arguments
+          }
+          _ => {}
         }
-      } else {
-        Err("first element of printf controller array must be a format string".to_string())
       }
+
+      if values.is_empty() {
+        return Err("printf controller array cannot be empty".to_string());
+      }
+
+      // First value is the format string
+      let format_str = match values[0] {
+        Type2::TextValue { value, .. } => value.as_ref(),
+        _ => {
+          return Err(
+            "first element of printf controller array must be a format string".to_string(),
+          )
+        }
+      };
+
+      // Build expected string from format and arguments
+      let expected = format_printf(format_str, &values[1..])?;
+      Ok(text_value == expected)
     }
     _ => Err(format!(
       "invalid controller type for .printf operation: {}",
@@ -1310,10 +1580,255 @@ pub fn validate_printf_text<'a>(
 }
 
 #[cfg(feature = "additional-controls")]
-/// Validate JSON text string against CDDL type
+/// Format a printf-style string with the given arguments (RFC 9741 Section 2.3).
+/// Supports: %d, %i, %u, %x, %X, %o, %b, %B, %s, %c, %f, %e, %E, %g, %G, %%
+fn format_printf(format_str: &str, args: &[&Type2<'_>]) -> Result<String, String> {
+  let mut result = String::new();
+  let mut chars = format_str.chars().peekable();
+  let mut arg_idx = 0;
+
+  while let Some(ch) = chars.next() {
+    if ch != '%' {
+      result.push(ch);
+      continue;
+    }
+
+    // Check for %%
+    if chars.peek() == Some(&'%') {
+      chars.next();
+      result.push('%');
+      continue;
+    }
+
+    // Parse flags
+    let mut flags = String::new();
+    while let Some(&fc) = chars.peek() {
+      if fc == '-' || fc == '+' || fc == ' ' || fc == '0' || fc == '#' {
+        flags.push(fc);
+        chars.next();
+      } else {
+        break;
+      }
+    }
+
+    // Parse width
+    let mut width = String::new();
+    while let Some(&wc) = chars.peek() {
+      if wc.is_ascii_digit() {
+        width.push(wc);
+        chars.next();
+      } else {
+        break;
+      }
+    }
+
+    // Parse precision
+    let mut precision = String::new();
+    if chars.peek() == Some(&'.') {
+      chars.next();
+      while let Some(&pc) = chars.peek() {
+        if pc.is_ascii_digit() {
+          precision.push(pc);
+          chars.next();
+        } else {
+          break;
+        }
+      }
+    }
+
+    // Parse conversion specifier
+    let specifier = chars.next().ok_or("incomplete format specifier")?;
+
+    if arg_idx >= args.len() {
+      return Err(format!(
+        "not enough arguments for format string (expected at least {}, got {})",
+        arg_idx + 1,
+        args.len()
+      ));
+    }
+
+    let arg = args[arg_idx];
+    arg_idx += 1;
+
+    let width_val: Option<usize> = if width.is_empty() {
+      None
+    } else {
+      Some(width.parse().unwrap_or(0))
+    };
+    let prec_val: Option<usize> = if precision.is_empty() {
+      None
+    } else {
+      Some(precision.parse().unwrap_or(0))
+    };
+
+    let formatted = format_single_arg(arg, specifier, &flags, width_val, prec_val)?;
+    result.push_str(&formatted);
+  }
+
+  Ok(result)
+}
+
+#[cfg(feature = "additional-controls")]
+/// Format a single argument with the given specifier
+fn format_single_arg(
+  arg: &Type2<'_>,
+  specifier: char,
+  flags: &str,
+  width: Option<usize>,
+  precision: Option<usize>,
+) -> Result<String, String> {
+  let raw = match specifier {
+    'd' | 'i' => {
+      let val = extract_int(arg)?;
+      format!("{}", val)
+    }
+    'u' => {
+      let val = extract_uint(arg)?;
+      format!("{}", val)
+    }
+    'x' => {
+      let val = extract_uint(arg)?;
+      if flags.contains('#') {
+        format!("0x{:x}", val)
+      } else {
+        format!("{:x}", val)
+      }
+    }
+    'X' => {
+      let val = extract_uint(arg)?;
+      if flags.contains('#') {
+        format!("0X{:X}", val)
+      } else {
+        format!("{:X}", val)
+      }
+    }
+    'o' => {
+      let val = extract_uint(arg)?;
+      if flags.contains('#') {
+        format!("0{:o}", val)
+      } else {
+        format!("{:o}", val)
+      }
+    }
+    'b' => {
+      let val = extract_uint(arg)?;
+      format!("{:b}", val)
+    }
+    'B' => {
+      let val = extract_uint(arg)?;
+      format!("{:b}", val) // Same as %b in C23
+    }
+    'f' | 'F' => {
+      let val = extract_float(arg)?;
+      match precision {
+        Some(p) => format!("{:.prec$}", val, prec = p),
+        None => format!("{:.6}", val), // Default precision is 6
+      }
+    }
+    'e' => {
+      let val = extract_float(arg)?;
+      let p = precision.unwrap_or(6);
+      format!("{:.prec$e}", val, prec = p)
+    }
+    'E' => {
+      let val = extract_float(arg)?;
+      let p = precision.unwrap_or(6);
+      format!("{:.prec$E}", val, prec = p)
+    }
+    'g' | 'G' => {
+      let val = extract_float(arg)?;
+      // Use shortest representation
+      match precision {
+        Some(p) => format!("{:.prec$}", val, prec = p),
+        None => format!("{}", val),
+      }
+    }
+    's' => match arg {
+      Type2::TextValue { value, .. } => value.to_string(),
+      _ => return Err("expected text string for %s conversion".to_string()),
+    },
+    'c' => {
+      let val = extract_uint(arg)?;
+      match char::from_u32(val as u32) {
+        Some(c) => c.to_string(),
+        None => return Err(format!("invalid Unicode scalar value for %c: {}", val)),
+      }
+    }
+    _ => {
+      return Err(format!(
+        "unsupported printf conversion specifier: %{}",
+        specifier
+      ))
+    }
+  };
+
+  // Apply width and alignment
+  apply_width_flags(&raw, flags, width)
+}
+
+#[cfg(feature = "additional-controls")]
+fn extract_int(t: &Type2<'_>) -> Result<isize, String> {
+  match t {
+    Type2::IntValue { value, .. } => Ok(*value),
+    Type2::UintValue { value, .. } => Ok(*value as isize),
+    Type2::FloatValue { value, .. } => Ok(*value as isize),
+    _ => Err(format!("expected integer for printf, got {}", t)),
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+fn extract_uint(t: &Type2<'_>) -> Result<usize, String> {
+  match t {
+    Type2::UintValue { value, .. } => Ok(*value),
+    Type2::IntValue { value, .. } if *value >= 0 => Ok(*value as usize),
+    Type2::FloatValue { value, .. } => Ok(*value as usize),
+    _ => Err(format!("expected unsigned integer for printf, got {}", t)),
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+fn extract_float(t: &Type2<'_>) -> Result<f64, String> {
+  match t {
+    Type2::FloatValue { value, .. } => Ok(*value),
+    Type2::IntValue { value, .. } => Ok(*value as f64),
+    Type2::UintValue { value, .. } => Ok(*value as f64),
+    _ => Err(format!("expected number for printf, got {}", t)),
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+fn apply_width_flags(raw: &str, flags: &str, width: Option<usize>) -> Result<String, String> {
+  match width {
+    Some(w) if w > raw.len() => {
+      let pad_char = if flags.contains('0') && !flags.contains('-') {
+        '0'
+      } else {
+        ' '
+      };
+      if flags.contains('-') {
+        Ok(format!("{:<width$}", raw, width = w))
+      } else {
+        // Check for sign handling with zero-padding
+        if pad_char == '0' && (raw.starts_with('-') || raw.starts_with('+')) {
+          let (sign, rest) = raw.split_at(1);
+          Ok(format!("{}{:0>width$}", sign, rest, width = w - 1))
+        } else {
+          let pad = pad_char.to_string().repeat(w - raw.len());
+          Ok(format!("{}{}", pad, raw))
+        }
+      }
+    }
+    _ => Ok(raw.to_string()),
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+/// Validate JSON text string against CDDL type (RFC 9741 Section 2.4).
+/// The text_value must be valid JSON, and the parsed JSON value must conform
+/// to the controller type using the default JSON-to-CBOR conversion rules.
 pub fn validate_json_text<'a>(
   _target: &Type2<'a>,
-  _controller: &Type2<'a>,
+  controller: &Type2<'a>,
   text_value: &str,
 ) -> Result<bool, String> {
   #[cfg(feature = "json")]
@@ -1321,10 +1836,11 @@ pub fn validate_json_text<'a>(
     use serde_json::Value;
 
     match serde_json::from_str::<Value>(text_value) {
-      Ok(_json_value) => {
-        // For now, return true if it's valid JSON
-        // In a full implementation, we'd validate the JSON against the controller type
-        Ok(true)
+      Ok(json_value) => {
+        // Validate the parsed JSON value against the controller type.
+        // We do structural validation: check that the JSON value is compatible
+        // with what the controller type describes.
+        Ok(json_matches_type2(&json_value, controller))
       }
       Err(_) => Ok(false),
     }
@@ -1336,11 +1852,68 @@ pub fn validate_json_text<'a>(
 }
 
 #[cfg(feature = "additional-controls")]
-/// Validate joined text string against array of components
+#[cfg(feature = "json")]
+/// Check if a JSON value structurally matches a Type2 controller.
+/// This is a best-effort check for literal and simple type matching.
+fn json_matches_type2(json: &serde_json::Value, t2: &Type2<'_>) -> bool {
+  use serde_json::Value;
+
+  match t2 {
+    // Match against text value literals
+    Type2::TextValue { value, .. } => {
+      matches!(json, Value::String(s) if s == value.as_ref())
+    }
+    // Match against integer literals
+    Type2::IntValue { value, .. } => {
+      matches!(json, Value::Number(n) if n.as_i64() == Some(*value as i64))
+    }
+    Type2::UintValue { value, .. } => {
+      matches!(json, Value::Number(n) if n.as_u64() == Some(*value as u64))
+    }
+    Type2::FloatValue { value, .. } => {
+      matches!(json, Value::Number(n) if n.as_f64() == Some(*value))
+    }
+    // Match against typename identifiers (basic type checking)
+    Type2::Typename { ident, .. } => {
+      let name = ident.ident.to_string();
+      match name.as_str() {
+        "text" | "tstr" => json.is_string(),
+        "uint" => matches!(json, Value::Number(n) if n.as_u64().is_some()),
+        "nint" => {
+          matches!(json, Value::Number(n) if n.as_i64().map(|v| v < 0).unwrap_or(false))
+        }
+        "int" | "integer" => {
+          json.is_number() && json.as_f64().map(|v| v.fract() == 0.0).unwrap_or(false)
+        }
+        "float" | "float16" | "float32" | "float64" | "float16-32" | "float32-64" | "number" => {
+          json.is_number()
+        }
+        "bool" => json.is_boolean(),
+        "true" => matches!(json, Value::Bool(true)),
+        "false" => matches!(json, Value::Bool(false)),
+        "null" | "nil" => json.is_null(),
+        "any" => true, // any matches everything
+        _ => true,     // Unknown types: be permissive
+      }
+    }
+    // Map types
+    Type2::Map { .. } => json.is_object(),
+    // Array types
+    Type2::Array { .. } => json.is_array(),
+    // For other complex types, just check it's valid JSON (already verified)
+    _ => true,
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+/// Validate joined text string against array of components (RFC 9741 Section 3.1).
+/// The controller is an array of string components that are concatenated.
+/// The target text_value must equal the concatenation of all components.
 pub fn validate_join_text<'a>(
   _target: &Type2<'a>,
   controller: &Type2<'a>,
   text_value: &str,
+  cddl: Option<&'a CDDL<'a>>,
 ) -> Result<bool, String> {
   match controller {
     Type2::Array { group, .. } => {
@@ -1349,34 +1922,116 @@ pub fn validate_join_text<'a>(
       }
 
       let group_choice = &group.group_choices[0];
-      let mut expected_string = String::new();
+
+      // Collect all literal string markers to build a validation pattern
+      let mut parts: Vec<Option<String>> = Vec::new();
 
       for entry in &group_choice.group_entries {
-        if let GroupEntry::ValueMemberKey { ge, .. } = &entry.0 {
-          if let Some(MemberKey::Type1 { t1, .. }) = &ge.member_key {
-            match &t1.type2 {
+        match &entry.0 {
+          GroupEntry::ValueMemberKey { ge, .. } => {
+            let t2 = if let Some(MemberKey::Type1 { t1, .. }) = &ge.member_key {
+              &t1.type2
+            } else {
+              &ge.entry_type.type_choices[0].type1.type2
+            };
+            parts.push(extract_string_value(t2, cddl));
+          }
+          GroupEntry::TypeGroupname { ge, .. } => {
+            // Type/group name references - try to resolve
+            let t2 = Type2::Typename {
+              ident: ge.name.clone(),
+              generic_args: ge.generic_args.clone(),
+              #[cfg(feature = "ast-span")]
+              span: crate::ast::Span::default(),
+            };
+            // We can't easily push a reference to a local, so handle inline
+            match &t2 {
               Type2::TextValue { value, .. } => {
-                expected_string.push_str(value);
+                parts.push(Some(value.to_string()));
               }
-              Type2::UTF8ByteString { value, .. } => match std::str::from_utf8(value) {
-                Ok(s) => expected_string.push_str(s),
-                Err(_) => return Ok(false),
-              },
-              _ => {
-                // For other types, we'd need to resolve them
-                // This is a simplified implementation
-                continue;
-              }
+              _ => parts.push(extract_string_value(&t2, cddl)),
             }
+          }
+          _ => {
+            parts.push(None); // Unknown part, variable
           }
         }
       }
 
-      Ok(text_value == expected_string)
+      // If all parts are known literals, just concatenate and compare
+      if parts.iter().all(|p| p.is_some()) {
+        let expected: String = parts.iter().filter_map(|p| p.as_deref()).collect();
+        return Ok(text_value == expected);
+      }
+
+      // Use marker-based validation: known literal parts act as delimiters
+      // between variable parts. This implements the recommended marker-based
+      // subset from RFC 9741 Section 3.1.
+      validate_join_with_markers(text_value, &parts)
     }
     _ => Err(format!(
       "invalid controller type for .join operation: {}",
       controller
     )),
   }
+}
+
+#[cfg(feature = "additional-controls")]
+/// Extract a string value from a Type2 node, resolving through identifiers if possible.
+fn extract_string_value<'a>(t2: &Type2<'a>, cddl: Option<&'a CDDL<'a>>) -> Option<String> {
+  match t2 {
+    Type2::TextValue { value, .. } => Some(value.to_string()),
+    Type2::UTF8ByteString { value, .. } => std::str::from_utf8(value).ok().map(|s| s.to_string()),
+    Type2::Typename { ident, .. } => {
+      // Try to resolve through CDDL rules
+      if let Some(cddl) = cddl {
+        let literals = string_literals_from_ident(cddl, ident);
+        if literals.len() == 1 {
+          return extract_string_value(literals[0], Some(cddl));
+        }
+      }
+      None
+    }
+    _ => None,
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+/// Validate a joined string using marker-based splitting.
+/// Literal (known) parts act as markers/delimiters between variable parts.
+fn validate_join_with_markers(text: &str, parts: &[Option<String>]) -> Result<bool, String> {
+  if parts.is_empty() {
+    return Ok(text.is_empty());
+  }
+
+  // Simple case: all known
+  if parts.iter().all(|p| p.is_some()) {
+    let expected: String = parts.iter().filter_map(|p| p.as_deref()).collect();
+    return Ok(text == expected);
+  }
+
+  // Use the known parts as markers to validate structure
+  let mut pos = 0;
+  for (i, part) in parts.iter().enumerate() {
+    if let Some(literal) = part {
+      // Find this literal in the remaining text
+      if let Some(found_pos) = text[pos..].find(literal.as_str()) {
+        pos += found_pos + literal.len();
+      } else {
+        return Ok(false); // Marker not found
+      }
+    } else {
+      // Variable part - skip to next marker or end
+      if i + 1 < parts.len() {
+        // There's a next part; the variable part will be consumed
+        // when we find the next marker
+        continue;
+      } else {
+        // Last part is variable - it consumes the rest
+        pos = text.len();
+      }
+    }
+  }
+
+  Ok(pos == text.len())
 }

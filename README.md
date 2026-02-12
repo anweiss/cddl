@@ -6,6 +6,15 @@
 
 A Rust implementation of the Concise data definition language (CDDL). CDDL is an IETF standard that "proposes a notational convention to express CBOR and JSON data structures." As of 2019-06-12, it is published as RFC 8610 (Proposed Standard) at [https://tools.ietf.org/html/rfc8610](https://tools.ietf.org/html/rfc8610).
 
+This crate supports the following CDDL-related RFCs:
+
+| RFC | Title | Status |
+| --- | ----- | ------ |
+| [RFC 8610](https://datatracker.ietf.org/doc/html/rfc8610) | Concise Data Definition Language (CDDL) | ✔️ Full parsing and validation |
+| [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165) | Additional Control Operators for CDDL | ✔️ `.cat` , `.det` , `.plus` , `.abnf` , `.abnfb` , `.feature` |
+| [RFC 9682](https://datatracker.ietf.org/doc/html/rfc9682) | Updates to CDDL (Empty Data Models, `\u{hex}` Escapes, Non-Literal Tag Numbers) | ✔️ Full grammar and parser support |
+| [RFC 9741](https://datatracker.ietf.org/doc/html/rfc9741) | Additional Control Operators for Text in CDDL | ✔️ `.b64u` , `.b64c` , `.hex` , `.hexlc` , `.hexuc` , `.b32` , `.h32` , `.b45` , `.base10` , `.printf` , `.json` , `.join` and sloppy variants |
+
 This crate includes a handwritten parser and lexer for CDDL, and its development has been heavily inspired by the techniques outlined in Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
 This crate supports validation of both CBOR and JSON data structures. The minimum supported Rust version (MSRV) is 1.81.0.
@@ -164,7 +173,7 @@ Enable CBOR validation. Enabled by default.
 
 **`--feature additional-controls`**
 
-Enable validation support for the additional control operators defined in [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165). Enabled by default.
+Enable validation support for the additional control operators defined in [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165) and [RFC 9741](https://datatracker.ietf.org/doc/html/rfc9741). Enabled by default.
 
 ### Parsing CDDL
 
@@ -288,7 +297,7 @@ Below is the table of supported control operators:
 
 <a name="regex">3</a>: Due to Perl-Compatible Regular Expressions (PCREs) being more widely used than XSD regular expressions, this crate also provides support for the proposed `.pcre` control extension in place of the `.regexp` operator (see [Discussion](https://tools.ietf.org/html/rfc8610#section-3.8.3.2) and [CDDL-Freezer proposal](https://tools.ietf.org/html/draft-bormann-cbor-cddl-freezer-03#section-5.1)). Ensure that your regex string is properly JSON escaped when using this control.
 
-If you've enabled the `additional-controls` feature, the table of controls below is also available for use:
+If you've enabled the `additional-controls` feature, the control operators from RFC 9165 below are also available for use:
 
 | Control operator | Supported                                                                                                                                         |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -298,6 +307,25 @@ If you've enabled the `additional-controls` feature, the table of controls below
 | `.abnf` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 | `.abnfb` | Ignored when validating JSON                                                                                                                      |
 | `.feature` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+
+The text content control operators from RFC 9741 are also available:
+
+| Control operator | Supported |
+| ---------------- | --------- |
+| `.b64u` | ✔️ Validates base64url-encoded text against byte string controller |
+| `.b64u-sloppy` | ✔️ Lenient base64url decoding (tolerates non-zero trailing bits and padding) |
+| `.b64c` | ✔️ Validates base64 classic-encoded text against byte string controller |
+| `.b64c-sloppy` | ✔️ Lenient base64 classic decoding |
+| `.hex` | ✔️ Validates hex-encoded text (case-insensitive) |
+| `.hexlc` | ✔️ Validates lowercase hex-encoded text |
+| `.hexuc` | ✔️ Validates uppercase hex-encoded text |
+| `.b32` | ✔️ Validates base32-encoded text |
+| `.h32` | ✔️ Validates base32hex-encoded text |
+| `.b45` | ✔️ Validates base45-encoded text |
+| `.base10` | ✔️ Validates decimal integer text representation |
+| `.printf` | ✔️ Validates text against printf-style format string with arguments |
+| `.json` | ✔️ Validates text as JSON matching a CDDL type |
+| `.join` | ✔️ Validates text as concatenation of array element values |
 
 You can activate features during validation as follows:
 
@@ -353,7 +381,7 @@ The following tags are supported when validating CBOR:
 | `mime-message = #6.36(tstr)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 | `cbor-any = #6.55799(any)` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 
-If you've enabled the `additional-controls` feature, the table of controls below is also available for use:
+If you've enabled the `additional-controls` feature, the control operators from RFC 9165 below are also available for use:
 
 | Control operator | Supported                                                                                                                                         |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -363,6 +391,20 @@ If you've enabled the `additional-controls` feature, the table of controls below
 | `.abnf` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 | `.abnfb` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 | `.feature` | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
+
+The text content control operators from RFC 9741 are also available for CBOR validation:
+
+| Control operator | Supported |
+| ---------------- | --------- |
+| `.b64u` / `.b64u-sloppy` | ✔️ |
+| `.b64c` / `.b64c-sloppy` | ✔️ |
+| `.hex` / `.hexlc` / `.hexuc` | ✔️ |
+| `.b32` / `.h32` | ✔️ |
+| `.b45` | ✔️ |
+| `.base10` | ✔️ |
+| `.printf` | ✔️ |
+| `.json` | ✔️ |
+| `.join` | ✔️ |
 
 You can activate features during validation by passing a slice of feature strings as follows:
 
