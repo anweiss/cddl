@@ -144,6 +144,9 @@ async function initWasm() {
 let checkRefs = false;
 const REFS_CACHE_KEY = 'cddl-playground-check-refs';
 
+let autoFormat = false;
+const FORMAT_CACHE_KEY = 'cddl-playground-auto-format';
+
 /**
  * Normalise a WASM error object into the shape the UI expects.
  */
@@ -335,9 +338,78 @@ function jumpTo(line, column) {
   editor.revealLineInCenter(line);
 }
 
+// ─── CDDL Formatter ────────────────────────────────────────────────────────────
+
+/**
+ * Format CDDL source text.
+ * - Normalise blank lines (collapse multiple into one)
+ * - Indent group entries inside { }, [ ], ( ) by 2 spaces
+ * - Trim trailing whitespace
+ * - Ensure trailing newline
+ */
+function formatCDDL(source) {
+  const lines = source.split('\n');
+  const out = [];
+  let depth = 0;
+  let prevBlank = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i].trimEnd();
+    const stripped = line.trim();
+
+    // Collapse multiple blank lines into one
+    if (stripped === '') {
+      if (!prevBlank && out.length > 0) out.push('');
+      prevBlank = true;
+      continue;
+    }
+    prevBlank = false;
+
+    // Closing delimiters reduce indent before this line
+    const leadingClose = stripped.match(/^[\]})]+/);
+    if (leadingClose) {
+      depth = Math.max(0, depth - leadingClose[0].length);
+    }
+
+    // Re-indent
+    const indent = '  '.repeat(depth);
+    out.push(indent + stripped);
+
+    // Count net openers on this line (ignoring those inside strings/comments)
+    const noComment = stripped.replace(/;.*$/, '');
+    const noStrings = noComment.replace(/"[^"]*"/g, '').replace(/'[^']*'/g, '');
+    for (const ch of noStrings) {
+      if (ch === '{' || ch === '[' || ch === '(') depth++;
+      else if (ch === '}' || ch === ']' || ch === ')') depth = Math.max(0, depth - 1);
+    }
+  }
+
+  // Trim trailing blank lines, then add one trailing newline
+  while (out.length > 0 && out[out.length - 1] === '') out.pop();
+  out.push('');
+
+  return out.join('\n');
+}
+
+function applyFormat() {
+  if (!editor) return;
+  const model = editor.getModel();
+  const source = model.getValue();
+  const formatted = formatCDDL(source);
+  if (formatted !== source) {
+    // Use pushEditOperations so it's undoable
+    const fullRange = model.getFullModelRange();
+    editor.executeEdits('cddl-format', [{
+      range: fullRange,
+      text: formatted,
+    }]);
+  }
+}
+
 // ─── Validation loop ───────────────────────────────────────────────────────────
 
 let validationTimer;
+let formatTimer;
 
 function scheduleValidation() {
   clearTimeout(validationTimer);
@@ -516,6 +588,20 @@ function boot() {
     if (editor) runValidation();
   });
 
+  // Auto-format toggle
+  const formatTrack = document.getElementById('formatTrack');
+  try {
+    autoFormat = localStorage.getItem(FORMAT_CACHE_KEY) === 'true';
+  } catch (_) {}
+  if (autoFormat) formatTrack.classList.add('active');
+
+  document.getElementById('formatToggle').addEventListener('click', () => {
+    autoFormat = !autoFormat;
+    formatTrack.classList.toggle('active', autoFormat);
+    try { localStorage.setItem(FORMAT_CACHE_KEY, autoFormat); } catch (_) {}
+    if (autoFormat && editor) applyFormat();
+  });
+
   const container = document.getElementById('cddlEditor');
   if (!container) return;
 
@@ -554,8 +640,19 @@ function boot() {
     cursorPosition.textContent = `Ln ${e.position.lineNumber}, Col ${e.position.column}`;
   });
 
-  // Real-time validation
-  editor.onDidChangeModelContent(scheduleValidation);
+  // Intercept Ctrl/Cmd+S — prevent browser save, trigger format instead
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+    applyFormat();
+  });
+
+  // Real-time validation (also auto-format on change if enabled)
+  editor.onDidChangeModelContent(() => {
+    scheduleValidation();
+    if (autoFormat) {
+      clearTimeout(formatTimer);
+      formatTimer = setTimeout(applyFormat, 600);
+    }
+  });
 
   // Problems panel toggle
   document.getElementById('problemsHeader').addEventListener('click', () => {
