@@ -2,8 +2,6 @@
 
 [![crates.io](https://img.shields.io/crates/v/cddl.svg)](https://crates.io/crates/cddl) [![docs.rs](https://docs.rs/cddl/badge.svg)](https://docs.rs/cddl) [![Build and Test](https://github.com/anweiss/cddl/workflows/Build%20and%20Test/badge.svg)](https://github.com/anweiss/cddl/actions?query=workflow%3A%22Build+and+Test%22) [![Active Development](https://img.shields.io/badge/Maintenance%20Level-Actively%20Developed-brightgreen.svg)](https://gist.github.com/cheerfulstoic/d107229326a01ff0f333a1d3476e068d)
 
-> This crate was originally developed as a personal learning exercise for getting acquainted with Rust and parsing in general. There are likely more performant and stable libraries out there for parsing CDDL. While there are some examples of this crate being used in production, careful consideration should be made prior to using this crate as such.
-
 A Rust implementation of the Concise data definition language (CDDL). CDDL is an IETF standard that "proposes a notational convention to express CBOR and JSON data structures." As of 2019-06-12, it is published as RFC 8610 (Proposed Standard) at [https://tools.ietf.org/html/rfc8610](https://tools.ietf.org/html/rfc8610).
 
 This crate supports the following CDDL-related RFCs:
@@ -15,7 +13,7 @@ This crate supports the following CDDL-related RFCs:
 | [RFC 9682](https://datatracker.ietf.org/doc/html/rfc9682) | Updates to CDDL (Empty Data Models, `\u{hex}` Escapes, Non-Literal Tag Numbers) | ✔️ Full grammar and parser support |
 | [RFC 9741](https://datatracker.ietf.org/doc/html/rfc9741) | Additional Control Operators for Text in CDDL | ✔️ `.b64u` , `.b64c` , `.hex` , `.hexlc` , `.hexuc` , `.b32` , `.h32` , `.b45` , `.base10` , `.printf` , `.json` , `.join` and sloppy variants |
 
-This crate includes a handwritten parser and lexer for CDDL, and its development has been heavily inspired by the techniques outlined in Thorsten Ball's book ["Writing An Interpretor In Go"](https://interpreterbook.com/). The AST has been built to closely match the rules defined by the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
+This crate uses [Pest](https://pest.rs/) (a PEG parser generator for Rust) to parse CDDL. The grammar is defined in [ `cddl.pest` ](cddl.pest) and closely follows the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
 This crate supports validation of both CBOR and JSON data structures. The minimum supported Rust version (MSRV) is 1.81.0.
 
@@ -35,9 +33,18 @@ Also bundled into this repository is a basic language server implementation and 
 
 ## Non-goals
 
-* Performance (if this crate gains enough traction, it may be prudent to conduct more formal profiling and/or explore using a parser-combinator framework like [nom](https://github.com/Geal/nom))
 * Support CBOR diagnostic notation
 * I-JSON compatibility
+
+## Used in
+
+This crate is used in several notable projects:
+
+| Project | Description |
+| ------- | ----------- |
+| [google/cddlconv](https://github.com/google/cddlconv) | A command-line utility for converting CDDL to TypeScript and Zod schemas |
+| [dcSpark/cddl-codegen](https://github.com/dcSpark/cddl-codegen) | Generates Rust, WASM and JSON serialization code from CDDL specifications, used in the Cardano blockchain ecosystem |
+| [input-output-hk/catalyst-core](https://github.com/input-output-hk/catalyst-core) | Core Catalyst governance engine for Cardano, uses this crate for CBOR validation of CIP-36 voter registration data |
 
 ## Why Rust?
 
