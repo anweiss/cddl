@@ -423,13 +423,36 @@ function toMarker(model, err) {
     endCol = Math.min(col + 1, lineContent.length + 1);
   }
 
-  // If the error points past the end of the line, highlight the whole line
-  if (col > lineContent.length) {
+  // If the error points past the end of the line or the line is empty/whitespace,
+  // move the marker to the previous non-empty line (e.g. "test" with no "=" —
+  // the parser reports the error on the following line where it expected "=").
+  if (col > lineContent.length || lineContent.trim().length === 0) {
+    let targetLine = lineNumber;
+    let targetContent = lineContent;
+    while (targetLine > 1 && targetContent.trim().length === 0) {
+      targetLine--;
+      targetContent = model.getLineContent(targetLine);
+    }
+    // Highlight the last token on that line
+    const trimmed = targetContent.trimEnd();
+    const lastTokenMatch = trimmed.match(/[a-zA-Z_][\w\-]*$|"[^"]*"$|'[^']*'$|\S+$/);
+    if (lastTokenMatch) {
+      const start = trimmed.length - lastTokenMatch[0].length + 1;
+      return {
+        startLineNumber: targetLine,
+        startColumn: start,
+        endLineNumber: targetLine,
+        endColumn: trimmed.length + 1,
+        message: err.message,
+        severity,
+        source: 'cddl',
+      };
+    }
     return {
-      startLineNumber: lineNumber,
+      startLineNumber: targetLine,
       startColumn: 1,
-      endLineNumber: lineNumber,
-      endColumn: lineContent.length + 1,
+      endLineNumber: targetLine,
+      endColumn: targetContent.length + 1,
       message: err.message,
       severity,
       source: 'cddl',
