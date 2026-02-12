@@ -279,12 +279,40 @@
       border-top: 1px solid var(--border);
       display: flex;
       flex-direction: column;
-      max-height: 40vh;
-      transition: max-height var(--transition);
+      height: 180px;
+      min-height: 33px;
+      max-height: 70vh;
+      position: relative;
     }
 
     .problems-panel.collapsed {
-      max-height: 33px;
+      height: 33px !important;
+    }
+
+    .resize-handle {
+      position: absolute;
+      top: -3px;
+      left: 0;
+      right: 0;
+      height: 6px;
+      cursor: ns-resize;
+      z-index: 5;
+    }
+
+    .resize-handle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: transparent;
+      transition: background var(--transition);
+    }
+
+    .resize-handle:hover::after,
+    .resize-handle.active::after {
+      background: var(--accent);
     }
 
     .problems-header {
@@ -555,6 +583,7 @@
 
     <!-- Problems Panel (inline debugger) -->
     <div class="problems-panel" id="problemsPanel">
+      <div class="resize-handle" id="resizeHandle"></div>
       <div class="problems-header" id="problemsHeader">
         <div class="problems-header-left">
           <span>Problems</span>

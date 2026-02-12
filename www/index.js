@@ -517,6 +517,44 @@ function boot() {
   // Problems panel toggle
   document.getElementById('problemsHeader').addEventListener('click', () => {
     problemsPanel.classList.toggle('collapsed');
+    if (!problemsPanel.classList.contains('collapsed')) {
+      editor.layout();
+    }
+  });
+
+  // Problems panel resize
+  const resizeHandle = document.getElementById('resizeHandle');
+  let resizing = false;
+
+  resizeHandle.addEventListener('mousedown', (e) => {
+    if (problemsPanel.classList.contains('collapsed')) return;
+    e.preventDefault();
+    resizing = true;
+    resizeHandle.classList.add('active');
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+
+    const startY = e.clientY;
+    const startHeight = problemsPanel.offsetHeight;
+
+    function onMouseMove(ev) {
+      const delta = startY - ev.clientY;
+      const newHeight = Math.max(33, Math.min(startHeight + delta, window.innerHeight * 0.7));
+      problemsPanel.style.height = newHeight + 'px';
+      editor.layout();
+    }
+
+    function onMouseUp() {
+      resizing = false;
+      resizeHandle.classList.remove('active');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    }
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
   });
 
   // Window resize
