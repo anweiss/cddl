@@ -123,28 +123,26 @@ async function initWasm() {
     const wasmImport = await import('../pkg/cddl.js');
     await wasmImport.default();
     wasmModule = wasmImport;
-    return typeof wasmModule.cddl_from_str === 'function';
+    return typeof wasmModule.validate_cddl_from_str === 'function';
   } catch (err) {
     console.error('Failed to load WASM:', err);
     return false;
   }
 }
 
-// ─── Error normalisation ──────────────────────────────────────────────────────
+// ─── Validation ───────────────────────────────────────────────────────────────
 //
-// `cddl_from_str` either:
-//   • returns successfully (valid CDDL)
-//   • throws an **Array** of structured `ParserError` objects:
-//       { position: { line, column, range: [start, end], index }, msg: { short, extended } }
-//   • throws a plain **string** (for non-parser errors like regex issues)
+// All parsing and partial compilation is handled by the Rust WASM library.
+// `validate_cddl_from_str` returns an array of structured errors (empty = valid).
+// Each error: { position: { line, column, range: [start, end], index },
+//               msg: { short, extended } }
 //
-// We normalise every error into:
-//   { line, column, range, message, category }
+// We normalise each into: { line, column, range, message, category }
 
 /**
- * Extract a structured error from a WASM ParserError object.
+ * Normalise a WASM error object into the shape the UI expects.
  */
-function normaliseStructuredError(err) {
+function normaliseError(err) {
   const line = err.position?.line ?? 1;
   const column = err.position?.column ?? 1;
   const range =
@@ -152,67 +150,17 @@ function normaliseStructuredError(err) {
       ? err.position.range
       : null;
 
-  // Prefer the short message; fall back to extended, then toString
-  let message = err.msg?.short || err.msg?.extended || '';
-  if (!message && typeof err.toString === 'function') {
-    message = err.toString();
-  }
+  let message = err.msg?.short || err.msg?.extended || 'Unknown error';
 
-  return formatError({ line, column, range, message });
-}
-
-/**
- * Best-effort extraction from a plain error string (non-parser errors).
- */
-function normaliseStringError(str) {
-  let line = 1;
-  let column = 1;
-  let message = str.replace(/^Error:\s*/i, '');
-
-  // "┌─ input:LINE:COL"
-  const loc = str.match(/┌─\s*input:(\d+):(\d+)/);
-  if (loc) {
-    line = +loc[1];
-    column = +loc[2];
-
-    // Try to pull the message from the last non-decoration line
-    const lines = str.split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const t = lines[i]?.trim();
-      if (
-        t &&
-        !/[─│╭╰┌┐└┘^]/.test(t) &&
-        !/^\d+\s*│/.test(t) &&
-        !/^(Lexer error|Parser error)/i.test(t)
-      ) {
-        message = t;
-        break;
-      }
-    }
-  } else {
-    // Fallback: "line N" / "column N"
-    const lm = str.match(/line\s+(\d+)/i);
-    if (lm) line = +lm[1];
-    const cm = str.match(/column\s+(\d+)/i);
-    if (cm) column = +cm[1];
-  }
-
-  return formatError({ line, column, range: null, message });
-}
-
-/**
- * Clean up message text and assign an error category.
- */
-function formatError({ line, column, range, message }) {
-  // Strip prefixes
+  // Strip redundant prefixes
   message = message.replace(/^(Lexer error|Parser error|Error)[.:]\s*/i, '').trim();
 
-  // Capitalise
+  // Capitalise first letter
   if (message && /^[a-z]/.test(message)) {
     message = message[0].toUpperCase() + message.slice(1);
   }
 
-  // Sentence-ending punctuation
+  // Ensure sentence-ending punctuation
   if (message && !/[.!?]$/.test(message)) {
     message += '.';
   }
@@ -232,156 +180,29 @@ function formatError({ line, column, range, message }) {
   return { line, column, range, message, category };
 }
 
-// ─── Validation  ──────────────────────────────────────────────────────────────
-//
-// Full-document parse: calls `cddl_from_str` on the complete input.
-// If that succeeds, the document is valid.
-// Otherwise we collect the errors.
-//
-// Partial compilation: when the full parse fails we additionally attempt to
-// parse each top-level rule individually, so we can report errors across the
-// entire file rather than only stopping at the first failure.
-
-function validateFull(cddlText) {
-  try {
-    if (!wasmModule?.cddl_from_str) throw new Error('WASM not ready');
-    wasmModule.cddl_from_str(cddlText);
-    return { isValid: true, errors: [] };
-  } catch (error) {
-    return { isValid: false, errors: extractErrors(error) };
-  }
-}
-
 /**
- * Turn a thrown value into an array of normalised errors.
- */
-function extractErrors(error) {
-  if (Array.isArray(error)) {
-    return error.map(normaliseStructuredError);
-  }
-  if (error && typeof error === 'object' && (error.position || error.msg)) {
-    return [normaliseStructuredError(error)];
-  }
-  return [normaliseStringError(String(error))];
-}
-
-/**
- * Split the CDDL source into top-level rule blocks.
- *
- * A "block" starts at a line that looks like a rule assignment
- * (`identifier = ...` / `identifier /= ...` / `identifier //= ...`)
- * and continues until the next such line.  Comment-only lines and blank lines
- * between rules are attached to the *following* rule.
- *
- * Returns an array of `{ text, startLine }` objects (1-based line numbers).
- */
-function splitRules(source) {
-  const lines = source.split('\n');
-  const blocks = [];
-  let current = null;
-
-  // Match lines that begin a rule: `ident = ...`, `ident /= ...`, `ident //= ...`
-  const ruleStart = /^[a-zA-Z_$][\w\-$]*\s*(?:\/\/=|\/=|=)/;
-
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].replace(/;.*$/, '').trim(); // strip comments
-    if (ruleStart.test(trimmed)) {
-      // Save previous block
-      if (current) blocks.push(current);
-      current = { lines: [lines[i]], startLine: i + 1 };
-    } else {
-      if (current) {
-        current.lines.push(lines[i]);
-      } else {
-        // Leading comments / blank lines before first rule – start a block
-        current = { lines: [lines[i]], startLine: i + 1 };
-      }
-    }
-  }
-  if (current) blocks.push(current);
-
-  return blocks.map((b) => ({
-    text: b.lines.join('\n'),
-    startLine: b.startLine,
-  }));
-}
-
-/**
- * Validates the full document, then does partial per-rule compilation
- * to surface errors beyond the first failure.
+ * Validate CDDL text using the WASM library.
+ * Returns { isValid, errors }.
  */
 function validateCDDLText(cddlText) {
-  // 1. Full-document parse
-  const full = validateFull(cddlText);
-  if (full.isValid) return full;
+  if (!wasmModule?.validate_cddl_from_str) {
+    return { isValid: false, errors: [{ line: 1, column: 1, range: null, message: 'WASM module not ready.', category: 'Internal' }] };
+  }
 
-  // 2. Partial compilation – parse each rule block independently
-  const blocks = splitRules(cddlText);
-  const allErrors = [];
-  const seen = new Set(); // dedup key: "line:col:message"
-
-  // Add errors from the full parse first
-  for (const err of full.errors) {
-    const key = `${err.line}:${err.column}:${err.message}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      allErrors.push(err);
+  try {
+    const rawErrors = wasmModule.validate_cddl_from_str(cddlText);
+    if (!Array.isArray(rawErrors) || rawErrors.length === 0) {
+      return { isValid: true, errors: [] };
     }
+    const errors = rawErrors.map(normaliseError);
+    return { isValid: false, errors };
+  } catch (err) {
+    // Unexpected failure — surface it as a single error
+    return {
+      isValid: false,
+      errors: [{ line: 1, column: 1, range: null, message: String(err), category: 'Internal' }],
+    };
   }
-
-  // Try each block individually
-  for (const block of blocks) {
-    const trimmed = block.text.trim();
-    if (!trimmed || /^;/.test(trimmed)) continue; // skip pure-comment blocks
-
-    try {
-      wasmModule.cddl_from_str(block.text);
-    } catch (blockError) {
-      const blockErrors = extractErrors(blockError);
-
-      for (const err of blockErrors) {
-        // Adjust line numbers to be document-relative
-        const adjusted = {
-          ...err,
-          line: err.line + block.startLine - 1,
-        };
-
-        // Adjust range offsets if present
-        if (err.range) {
-          // Compute byte offset of the block start in the original source
-          const blockByteOffset = byteOffset(cddlText, block.startLine - 1);
-          adjusted.range = [
-            err.range[0] + blockByteOffset,
-            err.range[1] + blockByteOffset,
-          ];
-        }
-
-        const key = `${adjusted.line}:${adjusted.column}:${adjusted.message}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          allErrors.push(adjusted);
-        }
-      }
-    }
-  }
-
-  // Sort errors by position
-  allErrors.sort((a, b) => a.line - b.line || a.column - b.column);
-
-  return { isValid: false, errors: allErrors };
-}
-
-/**
- * Compute the byte offset (UTF-8) of a given 0-based line index
- * within the source string.
- */
-function byteOffset(source, lineIndex) {
-  let offset = 0;
-  const lines = source.split('\n');
-  for (let i = 0; i < lineIndex && i < lines.length; i++) {
-    offset += new TextEncoder().encode(lines[i] + '\n').length;
-  }
-  return offset;
 }
 
 // ─── UI State ──────────────────────────────────────────────────────────────────

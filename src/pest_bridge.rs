@@ -286,6 +286,269 @@ pub fn cddl_from_pest_str<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
   convert_cddl(pairs, input)
 }
 
+/// A collected parser error with position and message, used for partial
+/// compilation results.
+#[cfg(target_arch = "wasm32")]
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct CollectedError {
+  /// Error position in the source
+  pub position: Position,
+  /// Error message
+  pub msg: ErrorMsg,
+}
+
+/// Validate CDDL input and return **all** errors found via partial compilation.
+///
+/// Strategy:
+///   1. Attempt a full-document parse.  If it succeeds the input is valid and
+///      an empty error list is returned.
+///   2. When the full parse fails, collect its error(s) and additionally split
+///      the source into individual top-level rule blocks.  Each block is parsed
+///      independently so that errors beyond the first failure are surfaced.
+///   3. All errors are deduplicated, and sorted by position.
+#[cfg(target_arch = "wasm32")]
+pub fn validate_cddl(input: &str) -> Vec<CollectedError> {
+  // 1. Full-document parse
+  match cddl_from_pest_str(input) {
+    Ok(_) => Vec::new(),
+    Err(e) => {
+      let mut errors = Vec::new();
+      let mut seen = std::collections::HashSet::new();
+
+      // Collect the full-parse error
+      push_error(&e, &mut errors, &mut seen);
+
+      // 2. Partial compilation – split into rule blocks and parse each
+      let blocks = split_rule_blocks(input);
+
+      for block in &blocks {
+        let trimmed = block.text.trim();
+        if trimmed.is_empty() || trimmed.starts_with(';') {
+          continue;
+        }
+
+        if let Err(block_err) = cddl_from_pest_str(&block.text) {
+          push_error_with_offset(&block_err, block, input, &mut errors, &mut seen);
+        }
+      }
+
+      // 3. Sort by position
+      errors.sort_by(|a, b| {
+        a.position
+          .line
+          .cmp(&b.position.line)
+          .then(a.position.column.cmp(&b.position.column))
+      });
+
+      errors
+    }
+  }
+}
+
+/// A block of source text corresponding to a single top-level rule.
+#[cfg(target_arch = "wasm32")]
+struct RuleBlock {
+  text: String,
+  /// 1-based line number of the first line of this block in the original source
+  start_line: usize,
+  /// Byte offset of this block's first character in the original source
+  byte_offset: usize,
+}
+
+/// Split CDDL source into top-level rule blocks.
+///
+/// A block starts at a line whose non-comment content matches the beginning of
+/// a rule definition (`identifier` followed by `=`, `/=` or `//=`).  Everything
+/// up to the next such line belongs to the current block.
+#[cfg(target_arch = "wasm32")]
+fn split_rule_blocks(input: &str) -> Vec<RuleBlock> {
+  let mut blocks: Vec<RuleBlock> = Vec::new();
+  let mut current_lines: Vec<&str> = Vec::new();
+  let mut current_start_line: usize = 1;
+  let mut current_byte_offset: usize = 0;
+
+  // Regex-free: a line starts a rule if its non-comment prefix matches
+  // `<identifier>  <ws>*  ( = | /= | //= )`
+  fn is_rule_start(line: &str) -> bool {
+    let stripped = line.trim_start();
+    // Identifier: starts with [a-zA-Z_$@], followed by [a-zA-Z0-9_\-$@]*
+    let mut chars = stripped.chars().peekable();
+    match chars.peek() {
+      Some(&c) if c.is_ascii_alphabetic() || c == '_' || c == '$' || c == '@' => {
+        chars.next();
+      }
+      _ => return false,
+    }
+    while let Some(&c) = chars.peek() {
+      if c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '$' || c == '@' || c == '.' {
+        chars.next();
+      } else {
+        break;
+      }
+    }
+    // Skip whitespace
+    while let Some(&c) = chars.peek() {
+      if c == ' ' || c == '\t' {
+        chars.next();
+      } else {
+        break;
+      }
+    }
+    // Optional generic params <...>
+    if chars.peek() == Some(&'<') {
+      let mut depth = 0i32;
+      while let Some(&c) = chars.peek() {
+        chars.next();
+        if c == '<' {
+          depth += 1;
+        } else if c == '>' {
+          depth -= 1;
+          if depth == 0 {
+            break;
+          }
+        }
+      }
+      // Skip whitespace after '>'
+      while let Some(&c) = chars.peek() {
+        if c == ' ' || c == '\t' {
+          chars.next();
+        } else {
+          break;
+        }
+      }
+    }
+    // Must see `=`, `/=` or `//=`
+    match chars.peek() {
+      Some(&'=') => true,
+      Some(&'/') => {
+        chars.next();
+        match chars.peek() {
+          Some(&'=') => true, // `/=`
+          Some(&'/') => {
+            chars.next();
+            chars.peek() == Some(&'=') // `//=`
+          }
+          _ => false,
+        }
+      }
+      _ => false,
+    }
+  }
+
+  let lines: Vec<&str> = input.split('\n').collect();
+  let mut byte_pos: usize = 0;
+
+  for (i, line) in lines.iter().enumerate() {
+    let stripped = line.replace(';', "\x00"); // cheap comment strip
+    let without_comment: &str = stripped.split('\x00').next().unwrap_or("");
+    let _ = without_comment; // not used directly, we use is_rule_start on full line
+
+    if is_rule_start(line) && !current_lines.is_empty() {
+      // Flush previous block
+      blocks.push(RuleBlock {
+        text: current_lines.join("\n"),
+        start_line: current_start_line,
+        byte_offset: current_byte_offset,
+      });
+      current_lines = vec![line];
+      current_start_line = i + 1;
+      current_byte_offset = byte_pos;
+    } else {
+      if current_lines.is_empty() {
+        current_start_line = i + 1;
+        current_byte_offset = byte_pos;
+      }
+      current_lines.push(line);
+    }
+
+    byte_pos += line.len() + 1; // +1 for the '\n'
+  }
+
+  if !current_lines.is_empty() {
+    blocks.push(RuleBlock {
+      text: current_lines.join("\n"),
+      start_line: current_start_line,
+      byte_offset: current_byte_offset,
+    });
+  }
+
+  blocks
+}
+
+/// Push an error into the collection, deduplicating by (line, column, short message).
+#[cfg(target_arch = "wasm32")]
+fn push_error(
+  error: &Error,
+  errors: &mut Vec<CollectedError>,
+  seen: &mut std::collections::HashSet<String>,
+) {
+  if let Error::PARSER {
+    #[cfg(feature = "ast-span")]
+    position,
+    msg,
+  } = error
+  {
+    let key = format!("{}:{}:{}", position.line, position.column, msg.short);
+    if seen.insert(key) {
+      errors.push(CollectedError {
+        position: *position,
+        msg: msg.clone(),
+      });
+    }
+  } else {
+    // Non-parser error (e.g. regex) — use default position
+    let msg_text = error.to_string();
+    let key = format!("0:0:{}", msg_text);
+    if seen.insert(key) {
+      errors.push(CollectedError {
+        position: Position::default(),
+        msg: ErrorMsg {
+          short: msg_text,
+          extended: None,
+        },
+      });
+    }
+  }
+}
+
+/// Push an error from a partial-compilation block, adjusting positions to be
+/// relative to the original full document.
+#[cfg(target_arch = "wasm32")]
+fn push_error_with_offset(
+  error: &Error,
+  block: &RuleBlock,
+  _input: &str,
+  errors: &mut Vec<CollectedError>,
+  seen: &mut std::collections::HashSet<String>,
+) {
+  if let Error::PARSER {
+    #[cfg(feature = "ast-span")]
+    position,
+    msg,
+  } = error
+  {
+    let adjusted = Position {
+      line: position.line + block.start_line - 1,
+      column: position.column,
+      range: (
+        position.range.0 + block.byte_offset,
+        position.range.1 + block.byte_offset,
+      ),
+      index: position.index + block.byte_offset,
+    };
+
+    let key = format!("{}:{}:{}", adjusted.line, adjusted.column, msg.short);
+    if seen.insert(key) {
+      errors.push(CollectedError {
+        position: adjusted,
+        msg: msg.clone(),
+      });
+    }
+  } else {
+    push_error(error, errors, seen);
+  }
+}
+
 /// Convert Pest Pairs to CDDL AST
 fn convert_cddl<'a>(mut pairs: Pairs<'a, Rule>, input: &'a str) -> Result<ast::CDDL<'a>, Error> {
   let pair = pairs.next().ok_or_else(|| Error::PARSER {
