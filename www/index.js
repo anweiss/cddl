@@ -597,7 +597,7 @@ function boot() {
     checkRefs = !checkRefs;
     refCheckTrack.classList.toggle('active', checkRefs);
     try { localStorage.setItem(REFS_CACHE_KEY, checkRefs); } catch (_) {}
-    if (editor) runValidation();
+    if (editor) { lastInput = ''; runValidation(); }
   });
 
   // Format-on-save toggle
