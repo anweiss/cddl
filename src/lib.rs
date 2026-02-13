@@ -24,7 +24,7 @@
 //! grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of
 //! the spec. All CDDL must use UTF-8 for its encoding per the spec.
 //!
-//! This crate supports validation of both CBOR and JSON data structures. This
+//! This crate supports validation of CBOR, JSON, and CSV data structures. This
 //! crate's minimum supported Rust version (MSRV) is 1.81.0.
 //!
 //! Also bundled into this repository is a basic language server implementation
@@ -37,6 +37,7 @@
 //! - [x] Verify conformance of CDDL documents against RFC 8610
 //! - [x] Validate CBOR data structures
 //! - [x] Validate JSON documents
+//! - [x] Validate CSV data
 //! - [ ] Generate dummy JSON from conformant CDDL
 //! - [x] As close to zero-copy as possible
 //! - [x] Compile WebAssembly target for browser and Node.js
@@ -58,9 +59,9 @@
 //!
 //! A CLI is available for various platforms. The tool supports parsing of CDDL
 //! files for verifying conformance against RFC 8610. It can also be used to
-//! validate JSON documents and CBOR binary files against CDDL documents.
-//! Detailed information about the JSON and CBOR validation implementation can
-//! be found in the sections below.
+//! validate JSON documents, CBOR binary files, and CSV files against CDDL
+//! documents. Detailed information about the JSON, CBOR, and CSV validation
+//! implementation can be found in the sections below.
 //!
 //! ### Installation
 //!
@@ -102,10 +103,10 @@
 //! docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
 //! ```
 //!
-//! You can validate JSON documents and/or CBOR binary files:
+//! You can validate JSON documents, CBOR binary files, and/or CSV files:
 //!
 //! ```sh
-//! cddl validate [OPTIONS] --cddl <CDDL> <--stdin|--json <JSON>...|--cbor <CBOR>...>
+//! cddl validate [OPTIONS] --cddl <CDDL> <--stdin|--json <JSON>...|--cbor <CBOR>...|--csv <CSV>...>
 //! ```
 //!
 //! It also supports validating files from STDIN (if it detects the input as
@@ -199,6 +200,12 @@
 //! **`--feature cbor`**
 //!
 //! Enable CBOR validation. Enabled by default.
+//!
+//! **`--feature csv-validate`**
+//!
+//! Enable CSV validation per
+//! [draft-bormann-cbor-cddl-csv-07](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/07/).
+//! Enabled by default.
 //!
 //! **`--feature additional-controls`**
 //!

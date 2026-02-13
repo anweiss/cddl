@@ -12,6 +12,7 @@ This crate supports the following CDDL-related RFCs:
 | [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165) | Additional Control Operators for CDDL | ✔️ `.cat` , `.det` , `.plus` , `.abnf` , `.abnfb` , `.feature` |
 | [RFC 9682](https://datatracker.ietf.org/doc/html/rfc9682) | Updates to CDDL (Empty Data Models, `\u{hex}` Escapes, Non-Literal Tag Numbers) | ✔️ Full grammar and parser support |
 | [RFC 9741](https://datatracker.ietf.org/doc/html/rfc9741) | Additional Control Operators for Text in CDDL | ✔️ `.b64u` , `.b64c` , `.hex` , `.hexlc` , `.hexuc` , `.b32` , `.h32` , `.b45` , `.base10` , `.printf` , `.json` , `.join` and sloppy variants |
+| [draft-bormann-cbor-cddl-csv-07](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/07/) | Using CDDL for CSV | ✔️ CSV validation via generic data model mapping |
 
 This crate uses [Pest](https://pest.rs/) (a PEG parser generator for Rust) to parse CDDL. The grammar is defined in [ `cddl.pest` ](cddl.pest) and closely follows the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
@@ -25,6 +26,7 @@ Also bundled into this repository is a basic language server implementation and 
 * [x] Verify conformance of CDDL documents against RFC 8610
 * [x] Validate CBOR data structures
 * [x] Validate JSON documents
+* [x] Validate CSV data
 * [ ] Generate dummy JSON from conformant CDDL
 * [x] As close to zero-copy as possible
 * [x] Compile WebAssembly target for browser and Node.js
@@ -87,10 +89,16 @@ If using Docker:
 docker run -it --rm -v $PWD:/cddl -w /cddl ghcr.io/anweiss/cddl-cli:<version> help
 ```
 
-You can validate JSON documents and/or CBOR binary files:
+You can validate JSON documents, CBOR binary files, and/or CSV files:
 
 ```sh
-cddl validate [OPTIONS] --cddl <CDDL> <--stdin|--json <JSON>...|--cbor <CBOR>...>
+cddl validate [OPTIONS] --cddl <CDDL> <--stdin|--json <JSON>...|--cbor <CBOR>...|--csv <CSV>...>
+```
+
+For CSV files, use the `--csv-header` flag if the first row is a header:
+
+```sh
+cddl validate --cddl schema.cddl --csv data.csv --csv-header
 ```
 
 It also supports validating files from STDIN (if it detects the input as valid UTF-8, it will attempt to validate the input as JSON, otherwise it will treat it as CBOR):
@@ -176,6 +184,10 @@ Enable JSON validation. Enabled by default.
 **`--feature cbor`**
 
 Enable CBOR validation. Enabled by default.
+
+**`--feature csv-validate`**
+
+Enable CSV validation per [draft-bormann-cbor-cddl-csv-07](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/07/). Enabled by default.
 
 **`--feature additional-controls`**
 
@@ -347,6 +359,35 @@ let json = r#""v""#;
 
 assert!(validate_json_from_str(cddl, json, Some(&["json"])).is_ok())
 ```
+
+### Validating CSV
+
+```rust
+use cddl::validate_csv_from_str;
+
+let cddl = r#"person-file = [*person-record]
+person-record = [name: text, age: uint]"#;
+
+let csv = "Alice,30\nBob,25\n";
+
+assert!(validate_csv_from_str(cddl, csv, None, None).is_ok())
+```
+
+This crate implements CSV validation as described in [draft-bormann-cbor-cddl-csv-07](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/07/). CSV data is parsed according to [RFC 4180](https://datatracker.ietf.org/doc/html/rfc4180) and mapped to the CDDL generic data model:
+
+```cddl
+csv = [?header, *record]
+header = [+header-field]
+record = [+field]
+header-field = text
+field = text
+```
+
+Each row becomes an array of fields, and the entire CSV becomes an array of rows. Fields are text strings by default, but the validator coerces them to their JSON representation when the CDDL schema specifies application-level types such as `uint` , `int` , or `float` .
+
+The `has_header` parameter controls whether the first row is treated as a header row (kept as text strings without numeric coercion). When using the CLI, pass `--csv-header` to enable this.
+
+The first non-group rule in the CDDL definition determines the root type for validation, which should describe the entire CSV as an array of records.
 
 #### Comparing with JSON schema and JSON schema language
 
