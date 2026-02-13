@@ -1,4 +1,4 @@
-#![cfg(all(feature = "cbor", feature = "json"))]
+#![cfg(all(feature = "cbor", feature = "json", feature = "csv-validate"))]
 #![cfg(not(feature = "lsp"))]
 #![cfg(not(test))]
 #![allow(unused_imports)]
@@ -10,7 +10,8 @@ extern crate log;
 use cddl::cddl_from_str;
 #[cfg(not(target_arch = "wasm32"))]
 use cddl::{
-  parser::root_type_name_from_cddl_str, validate_cbor_from_slice, validate_json_from_str,
+  parser::root_type_name_from_cddl_str, validate_cbor_from_slice, validate_csv_from_str,
+  validate_json_from_str,
 };
 use clap::{ArgAction, ArgGroup, Args, Parser, Subcommand};
 
@@ -50,8 +51,8 @@ enum Commands {
 }
 
 #[derive(Args)]
-#[clap(about = "Validate JSON and/or CBOR against a CDDL definition")]
-#[clap(group(ArgGroup::new("targets").required(true).multiple(true).args(&["stdin", "json", "cbor"])))]
+#[clap(about = "Validate JSON, CBOR, and/or CSV against a CDDL definition")]
+#[clap(group(ArgGroup::new("targets").required(true).multiple(true).args(&["stdin", "json", "cbor", "csv"])))]
 struct Validate {
   #[clap(short = 'd', long = "cddl", help = "CDDL document")]
   cddl: String,
@@ -78,6 +79,15 @@ struct Validate {
     use_value_delimiter = true
   )]
   cbor: Option<Vec<String>>,
+  #[clap(
+    long = "csv",
+    help = "CSV file(s) to validate (per draft-bormann-cbor-cddl-csv-07)",
+    action = ArgAction::Append,
+    use_value_delimiter = true
+  )]
+  csv: Option<Vec<String>>,
+  #[clap(long = "csv-header", help = "Indicates the CSV file has a header row")]
+  csv_header: bool,
   #[clap(
     long = "stdin",
     help = "JSON or CBOR input from stdin. Assumes UTF-8 encoding is JSON, otherwise parses as CBOR"
@@ -222,6 +232,47 @@ fn main() -> Result<(), Box<dyn Error>> {
           let c = validate_cbor_from_slice(&cddl_str, &data);
 
           match c {
+            Ok(_) => {
+              info!("Validation of {:?} is successful", p);
+            }
+            Err(e) => {
+              error!(
+                cli.ci,
+                "Validation of {:?} failed: {}",
+                p,
+                e.to_string().trim_end()
+              );
+            }
+          }
+        }
+      }
+
+      if let Some(files) = &validate.csv {
+        let has_header = if validate.csv_header {
+          Some(true)
+        } else {
+          None
+        };
+
+        for file in files {
+          let p = Path::new(file);
+          if !p.exists() {
+            error!(cli.ci, "CSV file {:?} does not exist", p);
+
+            continue;
+          }
+
+          #[cfg(feature = "additional-controls")]
+          let r = validate_csv_from_str(
+            &cddl_str,
+            &fs::read_to_string(file)?,
+            has_header,
+            enabled_features.as_deref(),
+          );
+          #[cfg(not(feature = "additional-controls"))]
+          let r = validate_csv_from_str(&cddl_str, &fs::read_to_string(file)?, has_header);
+
+          match r {
             Ok(_) => {
               info!("Validation of {:?} is successful", p);
             }

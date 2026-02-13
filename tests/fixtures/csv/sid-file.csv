@@ -1,0 +1,11 @@
+ietf-sid-file,ietf-system,2014-08-06,
+description,Example sid file
+dependency,ietf-yang-types,2013-07-15
+dependency,ietf-inet-types,2013-07-15
+dependency,ietf-netconf-acm,2018-02-14
+dependency,iana-crypt-hash,2014-08-06
+range,1700,100
+1700,module,ietf-system,
+1701,identity,authentication-method,
+1702,identity,local-users,
+1703,identity,radius,

@@ -1,0 +1,28 @@
+; CSV data model for a simplified SID file (draft-bormann-cbor-cddl-csv-07)
+; header = absent
+
+SID-File = [*record]
+record = meta-record / description-record / dependency-record / range-record / item-record
+
+empty = ""
+
+meta-record = ["ietf-sid-file",
+               module-name: text,
+               module-revision: empty / text,
+               sid-file-revision: empty / text]
+
+description-record = ["description",
+                       description: empty / text]
+
+dependency-record = ["dependency",
+                      module-name: text,
+                      module-revision: text]
+
+range-record = ["range",
+                entry-point: uint,
+                size: uint]
+
+item-record = [sid: uint,
+               namespace: text,
+               identifier: text,
+               status: empty / text]

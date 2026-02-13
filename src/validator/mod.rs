@@ -4,6 +4,8 @@
 pub mod cbor;
 /// Custom CBOR value type with simple value support
 pub mod cbor_value;
+/// CSV validation implementation (draft-bormann-cbor-cddl-csv-07)
+pub mod csv_validator;
 /// JSON validation implementation
 pub mod json;
 
@@ -280,6 +282,40 @@ pub fn validate_cbor_from_slice(
   cv.validate()
     .map_err(|e| JsValue::from(e.to_string()))
     .map(|_| JsValue::default())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "csv-validate")]
+#[cfg(feature = "additional-controls")]
+/// Validate CSV string from a given CDDL document string.
+///
+/// Implements draft-bormann-cbor-cddl-csv-07. CSV data is parsed according to
+/// RFC 4180 and mapped to the CDDL generic data model. Fields are coerced to
+/// their JSON representation for validation.
+///
+/// `has_header` indicates whether the first row is a header. Defaults to `false`.
+pub fn validate_csv_from_str(
+  cddl: &str,
+  csv_data: &str,
+  has_header: Option<bool>,
+  enabled_features: Option<&[&str]>,
+) -> csv_validator::Result {
+  csv_validator::validate_csv_from_str(cddl, csv_data, has_header, enabled_features)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "csv-validate")]
+#[cfg(not(feature = "additional-controls"))]
+/// Validate CSV string from a given CDDL document string.
+///
+/// Implements draft-bormann-cbor-cddl-csv-07. CSV data is parsed according to
+/// RFC 4180 and mapped to the CDDL generic data model.
+pub fn validate_csv_from_str(
+  cddl: &str,
+  csv_data: &str,
+  has_header: Option<bool>,
+) -> csv_validator::Result {
+  csv_validator::validate_csv_from_str(cddl, csv_data, has_header)
 }
 
 /// Find non-choice alternate rule from a given identifier

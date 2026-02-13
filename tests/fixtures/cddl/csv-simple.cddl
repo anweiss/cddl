@@ -1,0 +1,4 @@
+; A simple CSV schema: records with name and age
+; header = absent
+person-file = [*person-record]
+person-record = [name: text, age: uint]
