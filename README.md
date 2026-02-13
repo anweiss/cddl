@@ -16,7 +16,7 @@ This crate supports the following CDDL-related RFCs:
 
 This crate uses [Pest](https://pest.rs/) (a PEG parser generator for Rust) to parse CDDL. The grammar is defined in [ `cddl.pest` ](cddl.pest) and closely follows the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
-This crate supports validation of both CBOR and JSON data structures. The minimum supported Rust version (MSRV) is 1.81.0.
+This crate supports validation of CBOR, JSON, and CSV data structures. The minimum supported Rust version (MSRV) is 1.88.0.
 
 Also bundled into this repository is a basic language server implementation and extension for Visual Studio Code for editing CDDL. The implementation is backed by the compiled WebAssembly target included in this crate.
 
@@ -53,7 +53,7 @@ Rust is a systems programming language designed around safety and is ideally-sui
 
 ## CLI
 
-A CLI is available for various platforms. The tool supports parsing of CDDL files for verifying conformance against RFC 8610. It can also be used to validate JSON documents and CBOR binary files against CDDL documents. Detailed information about the JSON and CBOR validation implementation can be found in the sections below.
+A CLI is available for various platforms. The tool supports parsing of CDDL files for verifying conformance against RFC 8610. It can also be used to validate JSON documents, CBOR binary files, and CSV files against CDDL documents. Detailed information about the JSON, CBOR, and CSV validation implementation can be found in the sections below.
 
 ### Installation
 
@@ -111,7 +111,7 @@ cat reputon.cbor | cddl validate --cddl reputon.cddl --stdin
 or using Docker:
 
 ```sh
-docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.10.1 validate --cddl reputon.cddl --stdin < reputon.json
+docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.10.2 validate --cddl reputon.cddl --stdin < reputon.json
 ```
 
 ## Website
@@ -156,10 +156,10 @@ Simply add the dependency to `Cargo.toml` :
 
 ```toml
 [dependencies]
-cddl = "0.10.1"
+cddl = "0.10.2"
 ```
 
-Both JSON and CBOR validation require `std` .
+JSON, CBOR, and CSV validation all require `std` .
 
 ### Feature flags
 
@@ -474,9 +474,9 @@ Only the lexer and parser can be used in a `no_std` context provided that a heap
 
 ```toml
 [dependencies]
-cddl = { version = "0.10.1", default-features = false }
+cddl = { version = "0.10.2", default-features = false }
 ```
 
 Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling and diagnostics.
 
-Both JSON and CBOR validation are dependent on their respective heap allocated `Value` types, but since these types aren't supported in a `no_std` context, they subsequently aren't supported by this crate in `no_std` .
+JSON, CBOR, and CSV validation are dependent on their respective heap allocated `Value` types, but since these types aren't supported in a `no_std` context, they subsequently aren't supported by this crate in `no_std` .

@@ -25,7 +25,7 @@
 //! the spec. All CDDL must use UTF-8 for its encoding per the spec.
 //!
 //! This crate supports validation of CBOR, JSON, and CSV data structures. This
-//! crate's minimum supported Rust version (MSRV) is 1.81.0.
+//! crate's minimum supported Rust version (MSRV) is 1.88.0.
 //!
 //! Also bundled into this repository is a basic language server implementation
 //! and extension for Visual Studio Code for editing CDDL. The implementation is
@@ -121,7 +121,7 @@
 //! or using Docker:
 //!
 //! ```sh
-//! docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.10.1 validate --cddl reputon.cddl --stdin < reputon.json
+//! docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.10.2 validate --cddl reputon.cddl --stdin < reputon.json
 //! ```
 //!
 //! ## Website
@@ -171,7 +171,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cddl = "0.10.1"
+//! cddl = "0.10.2"
 //! ```
 //!
 //! ### Feature flags
