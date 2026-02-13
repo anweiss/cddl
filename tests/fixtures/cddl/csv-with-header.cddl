@@ -1,0 +1,5 @@
+; CSV with header row
+; header = present
+with-header = [header-row, *data-row]
+header-row = ["name", "score"]
+data-row = [name: text, score: uint]

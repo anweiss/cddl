@@ -42,6 +42,7 @@ serde = { version = "1.0.228", optional = true, features = ["derive"] }
 ciborium = { version = "0.2.0", optional = true }
 ciborium-ll = { version = "0.2.0", optional = true }
 ciborium-io = { version = "0.2.0", optional = true }
+csv = { version = "1.3", optional = true }
 serde_json = { version = "1.0.145", optional = true, default-features = false, features = [
     "std",
 ] }
@@ -79,6 +80,7 @@ default = [
     "ast-comments",
     "json",
     "cbor",
+    "csv-validate",
     "additional-controls",
     "ast-parent",
     "wasm-bindgen",
@@ -108,10 +110,11 @@ ast-comments = []
 ast-parent = []
 json = ["std"]
 cbor = ["std"]
+csv-validate = ["std", "json", "csv"]
 
 [[bin]]
 name = "cddl"
-required-features = ["std", "json", "cbor"]
+required-features = ["std", "json", "cbor", "csv-validate"]
 path = "src/bin/cli.rs"
 
 [profile.release]

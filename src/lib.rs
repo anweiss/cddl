@@ -544,3 +544,10 @@ pub use self::validator::validate_cbor_from_slice;
 #[cfg(not(feature = "lsp"))]
 #[cfg(not(target_arch = "wasm32"))]
 pub use self::validator::validate_json_from_str;
+
+#[doc(inline)]
+#[cfg(feature = "std")]
+#[cfg(feature = "csv-validate")]
+#[cfg(not(feature = "lsp"))]
+#[cfg(not(target_arch = "wasm32"))]
+pub use self::validator::validate_csv_from_str;
