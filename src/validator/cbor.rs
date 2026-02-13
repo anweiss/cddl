@@ -129,13 +129,13 @@ impl std::error::Error for ValidationError {
 impl<T: std::fmt::Debug> Error<T> {
   fn from_validator(cv: &CBORValidator, reason: String) -> Self {
     Error::Validation(vec![ValidationError {
-      cddl_location: cv.cddl_location.clone(),
-      cbor_location: cv.cbor_location.clone(),
+      cddl_location: cv.state.cddl_location.clone(),
+      cbor_location: cv.state.data_location.clone(),
       reason,
-      is_multi_type_choice: cv.is_multi_type_choice,
-      is_group_to_choice_enum: cv.is_group_to_choice_enum,
-      type_group_name_entry: cv.type_group_name_entry.map(|e| e.to_string()),
-      is_multi_group_choice: cv.is_multi_group_choice,
+      is_multi_type_choice: cv.state.is_multi_type_choice,
+      is_group_to_choice_enum: cv.state.is_group_to_choice_enum,
+      type_group_name_entry: cv.state.type_group_name_entry.map(|e| e.to_string()),
+      is_multi_group_choice: cv.state.is_multi_group_choice,
     }])
   }
 }
@@ -143,80 +143,25 @@ impl<T: std::fmt::Debug> Error<T> {
 /// cbor validator type
 #[derive(Clone)]
 pub struct CBORValidator<'a> {
-  cddl: &'a CDDL<'a>,
+  /// Shared validation state (common CDDL tracking fields).
+  /// Access shared fields via `self.state.*`.
+  pub state: super::ValidationState<'a>,
   cbor: Value,
   errors: Vec<ValidationError>,
-  cddl_location: String,
-  cbor_location: String,
-  // Occurrence indicator detected in current state of AST evaluation
-  occurrence: Option<Occur>,
-  // Current group entry index detected in current state of AST evaluation
-  group_entry_idx: Option<usize>,
   // cbor object value hoisted from previous state of AST evaluation
   object_value: Option<Value>,
-  // Is member key detected in current state of AST evaluation
-  is_member_key: bool,
-  // Is a cut detected in current state of AST evaluation
-  is_cut_present: bool,
   // Str value of cut detected in current state of AST evaluation
   cut_value: Option<Type1<'a>>,
-  // Validate the generic rule given by str ident in current state of AST
-  // evaluation
-  eval_generic_rule: Option<&'a str>,
-  // Aggregation of generic rules
-  generic_rules: Vec<GenericRule<'a>>,
-  // Control operator token detected in current state of AST evaluation
-  ctrl: Option<token::ControlOperator>,
-  // Is a group to choice enumeration detected in current state of AST
-  // evaluation
-  is_group_to_choice_enum: bool,
-  // Are 2 or more type choices detected in current state of AST evaluation
-  is_multi_type_choice: bool,
-  // Are 2 or more group choices detected in current state of AST evaluation
-  is_multi_group_choice: bool,
-  // Type/group name entry detected in current state of AST evaluation. Used
-  // only for providing more verbose error messages
-  type_group_name_entry: Option<&'a str>,
-  // Whether or not to advance to the next group entry if member key validation
-  // fails as detected during the current state of AST evaluation
-  advance_to_next_entry: bool,
-  // Is validation checking for map quality
-  is_ctrl_map_equality: bool,
-  entry_counts: Option<Vec<EntryCount>>,
   // Collect map entry keys that have already been validated
   validated_keys: Option<Vec<Value>>,
   // Collect map entry values that have yet to be validated
   values_to_validate: Option<Vec<Value>>,
   // Whether or not the validator is validating a map entry value
   validating_value: bool,
-  // Collect valid array indices when entries are type choices
-  valid_array_items: Option<Vec<usize>>,
   // Collect invalid array item errors where the key is the index of the invalid
   // array item
   array_errors: Option<HashMap<usize, Vec<ValidationError>>>,
-  is_colon_shortcut_present: bool,
-  is_root: bool,
-  is_multi_type_choice_type_rule_validating_array: bool,
-  // Track visited rules to prevent infinite recursion
-  visited_rules: std::collections::HashSet<String>,
-  #[cfg(not(target_arch = "wasm32"))]
-  #[cfg(feature = "additional-controls")]
-  enabled_features: Option<&'a [&'a str]>,
-  #[cfg(target_arch = "wasm32")]
-  #[cfg(feature = "additional-controls")]
-  enabled_features: Option<Box<[JsValue]>>,
-  #[cfg(feature = "additional-controls")]
-  has_feature_errors: bool,
-  #[cfg(feature = "additional-controls")]
-  disabled_features: Option<Vec<String>>,
   range_upper: Option<usize>,
-}
-
-#[derive(Clone, Debug)]
-struct GenericRule<'a> {
-  name: &'a str,
-  params: Vec<&'a str>,
-  args: Vec<Type1<'a>>,
 }
 
 impl<'a> CBORValidator<'a> {
@@ -225,39 +170,15 @@ impl<'a> CBORValidator<'a> {
   /// New cborValidation from CDDL AST and cbor value
   pub fn new(cddl: &'a CDDL<'a>, cbor: Value, enabled_features: Option<&'a [&'a str]>) -> Self {
     CBORValidator {
-      cddl,
+      state: super::ValidationState::new(cddl, enabled_features),
       cbor,
       errors: Vec::default(),
-      cddl_location: String::new(),
-      cbor_location: String::new(),
-      occurrence: None,
-      group_entry_idx: None,
       object_value: None,
-      is_member_key: false,
-      is_cut_present: false,
       cut_value: None,
-      eval_generic_rule: None,
-      generic_rules: Vec::new(),
-      ctrl: None,
-      is_group_to_choice_enum: false,
-      is_multi_type_choice: false,
-      is_multi_group_choice: false,
-      type_group_name_entry: None,
-      advance_to_next_entry: false,
-      is_ctrl_map_equality: false,
-      entry_counts: None,
       validated_keys: None,
       values_to_validate: None,
       validating_value: false,
-      valid_array_items: None,
       array_errors: None,
-      is_colon_shortcut_present: false,
-      is_root: false,
-      is_multi_type_choice_type_rule_validating_array: false,
-      visited_rules: std::collections::HashSet::new(),
-      enabled_features,
-      has_feature_errors: false,
-      disabled_features: None,
       range_upper: None,
     }
   }
@@ -267,36 +188,15 @@ impl<'a> CBORValidator<'a> {
   /// New cborValidation from CDDL AST and cbor value
   pub fn new(cddl: &'a CDDL<'a>, cbor: Value) -> Self {
     CBORValidator {
-      cddl,
+      state: super::ValidationState::new(cddl),
       cbor,
       errors: Vec::default(),
-      cddl_location: String::new(),
-      cbor_location: String::new(),
-      occurrence: None,
-      group_entry_idx: None,
       object_value: None,
-      is_member_key: false,
-      is_cut_present: false,
       cut_value: None,
-      eval_generic_rule: None,
-      generic_rules: Vec::new(),
-      ctrl: None,
-      is_group_to_choice_enum: false,
-      is_multi_type_choice: false,
-      is_multi_group_choice: false,
-      type_group_name_entry: None,
-      advance_to_next_entry: false,
-      is_ctrl_map_equality: false,
-      entry_counts: None,
       validated_keys: None,
       values_to_validate: None,
       validating_value: false,
-      valid_array_items: None,
       array_errors: None,
-      is_colon_shortcut_present: false,
-      is_root: false,
-      is_multi_type_choice_type_rule_validating_array: false,
-      visited_rules: std::collections::HashSet::new(),
       range_upper: None,
     }
   }
@@ -306,39 +206,15 @@ impl<'a> CBORValidator<'a> {
   /// New cborValidation from CDDL AST and cbor value
   pub fn new(cddl: &'a CDDL<'a>, cbor: Value, enabled_features: Option<Box<[JsValue]>>) -> Self {
     CBORValidator {
-      cddl,
+      state: super::ValidationState::new(cddl, enabled_features),
       cbor,
       errors: Vec::default(),
-      cddl_location: String::new(),
-      cbor_location: String::new(),
-      occurrence: None,
-      group_entry_idx: None,
       object_value: None,
-      is_member_key: false,
-      is_cut_present: false,
       cut_value: None,
-      eval_generic_rule: None,
-      generic_rules: Vec::new(),
-      ctrl: None,
-      is_group_to_choice_enum: false,
-      is_multi_type_choice: false,
-      is_multi_group_choice: false,
-      type_group_name_entry: None,
-      advance_to_next_entry: false,
-      is_ctrl_map_equality: false,
-      entry_counts: None,
       validated_keys: None,
       values_to_validate: None,
       validating_value: false,
-      valid_array_items: None,
       array_errors: None,
-      is_colon_shortcut_present: false,
-      is_root: false,
-      is_multi_type_choice_type_rule_validating_array: false,
-      visited_rules: std::collections::HashSet::new(),
-      enabled_features,
-      has_feature_errors: false,
-      disabled_features: None,
       range_upper: None,
     }
   }
@@ -348,36 +224,15 @@ impl<'a> CBORValidator<'a> {
   /// New cborValidation from CDDL AST and cbor value
   pub fn new(cddl: &'a CDDL<'a>, cbor: Value) -> Self {
     CBORValidator {
-      cddl,
+      state: super::ValidationState::new(cddl),
       cbor,
       errors: Vec::default(),
-      cddl_location: String::new(),
-      cbor_location: String::new(),
-      occurrence: None,
-      group_entry_idx: None,
       object_value: None,
-      is_member_key: false,
-      is_cut_present: false,
       cut_value: None,
-      eval_generic_rule: None,
-      generic_rules: Vec::new(),
-      ctrl: None,
-      is_group_to_choice_enum: false,
-      is_multi_type_choice: false,
-      is_multi_group_choice: false,
-      type_group_name_entry: None,
-      advance_to_next_entry: false,
-      is_ctrl_map_equality: false,
-      entry_counts: None,
       validated_keys: None,
       values_to_validate: None,
       validating_value: false,
-      valid_array_items: None,
       array_errors: None,
-      is_colon_shortcut_present: false,
-      is_root: false,
-      is_multi_type_choice_type_rule_validating_array: false,
-      visited_rules: std::collections::HashSet::new(),
       range_upper: None,
     }
   }
@@ -390,15 +245,15 @@ impl<'a> CBORValidator<'a> {
   /// Create a new CBORValidator with inherited recursion state
   fn new_with_recursion_state(&self, cbor: Value) -> CBORValidator<'a> {
     #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-    let mut cv = CBORValidator::new(self.cddl, cbor, self.enabled_features.clone());
+    let mut cv = CBORValidator::new(self.state.cddl, cbor, self.state.enabled_features.clone());
     #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-    let mut cv = CBORValidator::new(self.cddl, cbor, self.enabled_features);
+    let mut cv = CBORValidator::new(self.state.cddl, cbor, self.state.enabled_features);
     #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(self.cddl, cbor);
+    let mut cv = CBORValidator::new(self.state.cddl, cbor);
 
-    cv.generic_rules = self.generic_rules.clone();
-    cv.eval_generic_rule = self.eval_generic_rule;
-    cv.visited_rules = self.visited_rules.clone();
+    cv.state.generic_rules = self.state.generic_rules.clone();
+    cv.state.eval_generic_rule = self.state.eval_generic_rule;
+    cv.state.visited_rules = self.state.visited_rules.clone();
     cv
   }
 
@@ -411,20 +266,20 @@ impl<'a> CBORValidator<'a> {
   {
     if let Value::Array(a) = &self.cbor {
       // Member keys are annotation only in an array context
-      if self.is_member_key {
+      if self.state.is_member_key {
         return Ok(());
       }
 
       match validate_array_occurrence(
-        self.occurrence.as_ref(),
-        self.entry_counts.as_ref().map(|ec| &ec[..]),
+        self.state.occurrence.as_ref(),
+        self.state.entry_counts.as_ref().map(|ec| &ec[..]),
         a,
       ) {
         Ok((iter_items, allow_empty_array)) => {
           if iter_items {
             for (idx, v) in a.iter().enumerate() {
-              if let Some(indices) = &self.valid_array_items {
-                if self.is_multi_type_choice && indices.contains(&idx) {
+              if let Some(indices) = &self.state.valid_array_items {
+                if self.state.is_multi_type_choice && indices.contains(&idx) {
                   continue;
                 }
               }
@@ -436,11 +291,15 @@ impl<'a> CBORValidator<'a> {
               #[cfg(not(feature = "additional-controls"))]
               let mut cv = self.new_with_recursion_state(v.clone());
 
-              cv.generic_rules = self.generic_rules.clone();
-              cv.eval_generic_rule = self.eval_generic_rule;
-              cv.ctrl = self.ctrl;
-              cv.is_multi_type_choice = self.is_multi_type_choice;
-              let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
+              cv.state.generic_rules = self.state.generic_rules.clone();
+              cv.state.eval_generic_rule = self.state.eval_generic_rule;
+              cv.state.ctrl = self.state.ctrl;
+              cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+              let _ = write!(
+                cv.state.data_location,
+                "{}/{}",
+                self.state.data_location, idx
+              );
 
               match token {
                 ArrayItemToken::Value(value) => cv.visit_value(value)?,
@@ -457,11 +316,11 @@ impl<'a> CBORValidator<'a> {
                 ArrayItemToken::TaggedData(tagged_data) => cv.visit_type2(tagged_data)?,
               }
 
-              if self.is_multi_type_choice && cv.errors.is_empty() {
-                if let Some(indices) = &mut self.valid_array_items {
+              if self.state.is_multi_type_choice && cv.errors.is_empty() {
+                if let Some(indices) = &mut self.state.valid_array_items {
                   indices.push(idx);
                 } else {
-                  self.valid_array_items = Some(vec![idx]);
+                  self.state.valid_array_items = Some(vec![idx]);
                 }
                 continue;
               }
@@ -479,10 +338,10 @@ impl<'a> CBORValidator<'a> {
               }
             }
           } else {
-            let idx = if !self.is_multi_type_choice {
-              self.group_entry_idx.take()
+            let idx = if !self.state.is_multi_type_choice {
+              self.state.group_entry_idx.take()
             } else {
-              self.group_entry_idx
+              self.state.group_entry_idx
             };
 
             if let Some(idx) = idx {
@@ -494,9 +353,13 @@ impl<'a> CBORValidator<'a> {
                 #[cfg(not(feature = "additional-controls"))]
                 let mut cv = self.new_with_recursion_state(v.clone());
 
-                cv.ctrl = self.ctrl;
-                cv.is_multi_type_choice = self.is_multi_type_choice;
-                let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
+                cv.state.ctrl = self.state.ctrl;
+                cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+                let _ = write!(
+                  cv.state.data_location,
+                  "{}/{}",
+                  self.state.data_location, idx
+                );
 
                 match token {
                   ArrayItemToken::Value(value) => cv.visit_value(value)?,
@@ -517,7 +380,7 @@ impl<'a> CBORValidator<'a> {
               } else if !allow_empty_array {
                 self.add_error(token.error_msg(Some(idx)));
               }
-            } else if !self.is_multi_type_choice {
+            } else if !self.state.is_multi_type_choice {
               self.add_error(format!("{}, got {:?}", token.error_msg(None), self.cbor));
             }
           }
@@ -539,7 +402,7 @@ impl<'a> CBORValidator<'a> {
       Type2::UintValue { value, .. } => Ok(*value),
       Type2::Typename { ident, .. } => {
         // Look up the identifier in the CDDL rules
-        for rule in self.cddl.rules.iter() {
+        for rule in self.state.cddl.rules.iter() {
           if let Rule::Type { rule, .. } = rule {
             if rule.name.ident == ident.ident {
               // Found the rule, now check if it's a simple uint value
@@ -571,13 +434,13 @@ where
   cbor::Error<T>: From<cbor::Error<std::io::Error>>,
 {
   fn validate(&mut self) -> std::result::Result<(), cbor::Error<T>> {
-    for r in self.cddl.rules.iter() {
+    for r in self.state.cddl.rules.iter() {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {
         if rule.generic_params.is_none() {
-          self.is_root = true;
+          self.state.is_root = true;
           self.visit_type_rule(rule)?;
-          self.is_root = false;
+          self.state.is_root = false;
           break;
         }
       }
@@ -593,12 +456,12 @@ where
   fn add_error(&mut self, reason: String) {
     self.errors.push(ValidationError {
       reason,
-      cddl_location: self.cddl_location.clone(),
-      cbor_location: self.cbor_location.clone(),
-      is_multi_type_choice: self.is_multi_type_choice,
-      is_multi_group_choice: self.is_multi_group_choice,
-      is_group_to_choice_enum: self.is_group_to_choice_enum,
-      type_group_name_entry: self.type_group_name_entry.map(|e| e.to_string()),
+      cddl_location: self.state.cddl_location.clone(),
+      cbor_location: self.state.data_location.clone(),
+      is_multi_type_choice: self.state.is_multi_type_choice,
+      is_multi_group_choice: self.state.is_multi_group_choice,
+      is_group_to_choice_enum: self.state.is_group_to_choice_enum,
+      type_group_name_entry: self.state.type_group_name_entry.map(|e| e.to_string()),
     });
   }
 }
@@ -610,13 +473,14 @@ where
   fn visit_type_rule(&mut self, tr: &TypeRule<'a>) -> visitor::Result<Error<T>> {
     if let Some(gp) = &tr.generic_params {
       if let Some(gr) = self
+        .state
         .generic_rules
         .iter_mut()
         .find(|r| r.name == tr.name.ident)
       {
         gr.params = gp.params.iter().map(|p| p.param.ident).collect();
       } else {
-        self.generic_rules.push(GenericRule {
+        self.state.generic_rules.push(GenericRule {
           name: tr.name.ident,
           params: gp.params.iter().map(|p| p.param.ident).collect(),
           args: Vec::new(),
@@ -624,12 +488,12 @@ where
       }
     }
 
-    let type_choice_alternates = type_choice_alternates_from_ident(self.cddl, &tr.name);
+    let type_choice_alternates = type_choice_alternates_from_ident(self.state.cddl, &tr.name);
     if !type_choice_alternates.is_empty() {
-      self.is_multi_type_choice = true;
+      self.state.is_multi_type_choice = true;
 
       if self.cbor.is_array() {
-        self.is_multi_type_choice_type_rule_validating_array = true;
+        self.state.is_multi_type_choice_type_rule_validating_array = true;
       }
 
       // When there are type choice alternates, we need to treat the main rule
@@ -665,7 +529,7 @@ where
     }
 
     if tr.value.type_choices.len() > 1 && self.cbor.is_array() {
-      self.is_multi_type_choice_type_rule_validating_array = true;
+      self.state.is_multi_type_choice_type_rule_validating_array = true;
     }
 
     self.visit_type(&tr.value)
@@ -674,13 +538,14 @@ where
   fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> visitor::Result<Error<T>> {
     if let Some(gp) = &gr.generic_params {
       if let Some(gr) = self
+        .state
         .generic_rules
         .iter_mut()
         .find(|r| r.name == gr.name.ident)
       {
         gr.params = gp.params.iter().map(|p| p.param.ident).collect();
       } else {
-        self.generic_rules.push(GenericRule {
+        self.state.generic_rules.push(GenericRule {
           name: gr.name.ident,
           params: gp.params.iter().map(|p| p.param.ident).collect(),
           args: Vec::new(),
@@ -688,9 +553,9 @@ where
       }
     }
 
-    let group_choice_alternates = group_choice_alternates_from_ident(self.cddl, &gr.name);
+    let group_choice_alternates = group_choice_alternates_from_ident(self.state.cddl, &gr.name);
     if !group_choice_alternates.is_empty() {
-      self.is_multi_group_choice = true;
+      self.state.is_multi_group_choice = true;
     }
 
     let error_count = self.errors.len();
@@ -712,7 +577,7 @@ where
   fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<Error<T>> {
     // Special case for nested array in literal position
     if let Value::Array(outer_array) = &self.cbor {
-      if let Some(idx) = self.group_entry_idx {
+      if let Some(idx) = self.state.group_entry_idx {
         // We're processing a specific array item
         if let Some(item) = outer_array.get(idx) {
           if item.is_array() {
@@ -720,18 +585,26 @@ where
             for tc in t.type_choices.iter() {
               if let Type2::Array { .. } = &tc.type1.type2 {
                 #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-                let mut cv =
-                  CBORValidator::new(self.cddl, item.clone(), self.enabled_features.clone());
+                let mut cv = CBORValidator::new(
+                  self.state.cddl,
+                  item.clone(),
+                  self.state.enabled_features.clone(),
+                );
                 #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-                let mut cv = CBORValidator::new(self.cddl, item.clone(), self.enabled_features);
+                let mut cv =
+                  CBORValidator::new(self.state.cddl, item.clone(), self.state.enabled_features);
                 #[cfg(not(feature = "additional-controls"))]
-                let mut cv = CBORValidator::new(self.cddl, item.clone());
+                let mut cv = CBORValidator::new(self.state.cddl, item.clone());
 
-                cv.generic_rules = self.generic_rules.clone();
-                cv.eval_generic_rule = self.eval_generic_rule;
-                cv.is_multi_type_choice = self.is_multi_type_choice;
+                cv.state.generic_rules = self.state.generic_rules.clone();
+                cv.state.eval_generic_rule = self.state.eval_generic_rule;
+                cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
 
-                let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
+                let _ = write!(
+                  cv.state.data_location,
+                  "{}/{}",
+                  self.state.data_location, idx
+                );
 
                 // Visit the type choice with the inner array value
                 cv.visit_type_choice(tc)?;
@@ -747,7 +620,7 @@ where
 
     // Regular type processing
     if t.type_choices.len() > 1 {
-      self.is_multi_type_choice = true;
+      self.state.is_multi_type_choice = true;
     }
 
     let initial_error_count = self.errors.len();
@@ -755,7 +628,7 @@ where
 
     for type_choice in t.type_choices.iter() {
       if matches!(self.cbor, Value::Array(_))
-        && !self.is_multi_type_choice_type_rule_validating_array
+        && !self.state.is_multi_type_choice_type_rule_validating_array
       {
         let error_count = self.errors.len();
 
@@ -763,8 +636,8 @@ where
 
         #[cfg(feature = "additional-controls")]
         if self.errors.len() == error_count
-          && !self.has_feature_errors
-          && self.disabled_features.is_none()
+          && !self.state.has_feature_errors
+          && self.state.disabled_features.is_none()
         {
           // Disregard invalid type choice validation errors if one of the
           // choices validates successfully
@@ -802,7 +675,9 @@ where
       // If this choice validates successfully (no errors), use it
       if choice_validator.errors.is_empty() {
         #[cfg(feature = "additional-controls")]
-        if !choice_validator.has_feature_errors || choice_validator.disabled_features.is_some() {
+        if !choice_validator.state.has_feature_errors
+          || choice_validator.state.disabled_features.is_some()
+        {
           // Clear any accumulated errors and return success
           let type_choice_error_count = self.errors.len() - initial_error_count;
           if type_choice_error_count > 0 {
@@ -840,14 +715,14 @@ where
 
   fn visit_group(&mut self, g: &Group<'a>) -> visitor::Result<Error<T>> {
     if g.group_choices.len() > 1 {
-      self.is_multi_group_choice = true;
+      self.state.is_multi_group_choice = true;
     }
 
     // Map equality/inequality validation
-    if self.is_ctrl_map_equality {
-      if let Some(t) = &self.ctrl {
+    if self.state.is_ctrl_map_equality {
+      if let Some(t) = &self.state.ctrl {
         if let Value::Map(m) = &self.cbor {
-          let entry_counts = entry_counts_from_group(self.cddl, g);
+          let entry_counts = entry_counts_from_group(self.state.cddl, g);
           let len = m.len();
           if let ControlOperator::EQ | ControlOperator::NE = t {
             if !validate_entry_count(&entry_counts, len) {
@@ -871,7 +746,7 @@ where
       }
     }
 
-    self.is_ctrl_map_equality = false;
+    self.state.is_ctrl_map_equality = false;
 
     let initial_error_count = self.errors.len();
     for group_choice in g.group_choices.iter() {
@@ -895,9 +770,9 @@ where
   }
 
   fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<Error<T>> {
-    if self.is_group_to_choice_enum {
+    if self.state.is_group_to_choice_enum {
       let initial_error_count = self.errors.len();
-      for tc in type_choices_from_group_choice(self.cddl, gc).iter() {
+      for tc in type_choices_from_group_choice(self.state.cddl, gc).iter() {
         let error_count = self.errors.len();
         self.visit_type_choice(tc)?;
         if self.errors.len() == error_count {
@@ -915,7 +790,7 @@ where
     }
 
     for (idx, ge) in gc.group_entries.iter().enumerate() {
-      self.group_entry_idx = Some(idx);
+      self.state.group_entry_idx = Some(idx);
 
       self.visit_group_entry(&ge.0)?;
     }
@@ -956,7 +831,7 @@ where
               ));
             }
           }
-          Value::Text(s) => match self.ctrl {
+          Value::Text(s) => match self.state.ctrl {
             Some(ControlOperator::SIZE) => {
               let len = s.len();
               let s = s.clone();
@@ -1049,8 +924,9 @@ where
         ..
       } = controller
       {
-        if let Some(name) = self.eval_generic_rule {
+        if let Some(name) = self.state.eval_generic_rule {
           if let Some(gr) = self
+            .state
             .generic_rules
             .iter()
             .find(|&gr| gr.name == name)
@@ -1073,8 +949,9 @@ where
         }
       }
 
-      if let Some(name) = self.eval_generic_rule {
+      if let Some(name) = self.state.eval_generic_rule {
         if let Some(gr) = self
+          .state
           .generic_rules
           .iter()
           .find(|&gr| gr.name == name)
@@ -1096,27 +973,27 @@ where
       ControlOperator::EQ => {
         match target {
           Type2::Typename { ident, .. } => {
-            if is_ident_string_data_type(self.cddl, ident)
-              || is_ident_numeric_data_type(self.cddl, ident)
+            if is_ident_string_data_type(self.state.cddl, ident)
+              || is_ident_numeric_data_type(self.state.cddl, ident)
             {
               return self.visit_type2(controller);
             }
           }
           Type2::Array { group, .. } => {
             if let Value::Array(_) = &self.cbor {
-              self.entry_counts = Some(entry_counts_from_group(self.cddl, group));
+              self.state.entry_counts = Some(entry_counts_from_group(self.state.cddl, group));
               self.visit_type2(controller)?;
-              self.entry_counts = None;
+              self.state.entry_counts = None;
               return Ok(());
             }
           }
           Type2::Map { .. } => {
             if let Value::Map(_) = &self.cbor {
-              self.ctrl = Some(ctrl);
-              self.is_ctrl_map_equality = true;
+              self.state.ctrl = Some(ctrl);
+              self.state.is_ctrl_map_equality = true;
               self.visit_type2(controller)?;
-              self.ctrl = None;
-              self.is_ctrl_map_equality = false;
+              self.state.ctrl = None;
+              self.state.is_ctrl_map_equality = false;
               return Ok(());
             }
           }
@@ -1130,30 +1007,30 @@ where
       ControlOperator::NE => {
         match target {
           Type2::Typename { ident, .. } => {
-            if is_ident_string_data_type(self.cddl, ident)
-              || is_ident_numeric_data_type(self.cddl, ident)
+            if is_ident_string_data_type(self.state.cddl, ident)
+              || is_ident_numeric_data_type(self.state.cddl, ident)
             {
-              self.ctrl = Some(ctrl);
+              self.state.ctrl = Some(ctrl);
               self.visit_type2(controller)?;
-              self.ctrl = None;
+              self.state.ctrl = None;
               return Ok(());
             }
           }
           Type2::Array { .. } => {
             if let Value::Array(_) = &self.cbor {
-              self.ctrl = Some(ctrl);
+              self.state.ctrl = Some(ctrl);
               self.visit_type2(controller)?;
-              self.ctrl = None;
+              self.state.ctrl = None;
               return Ok(());
             }
           }
           Type2::Map { .. } => {
             if let Value::Map(_) = &self.cbor {
-              self.ctrl = Some(ctrl);
-              self.is_ctrl_map_equality = true;
+              self.state.ctrl = Some(ctrl);
+              self.state.is_ctrl_map_equality = true;
               self.visit_type2(controller)?;
-              self.ctrl = None;
-              self.is_ctrl_map_equality = false;
+              self.state.ctrl = None;
+              self.state.is_ctrl_map_equality = false;
               return Ok(());
             }
           }
@@ -1166,10 +1043,10 @@ where
       }
       ControlOperator::LT | ControlOperator::GT | ControlOperator::GE | ControlOperator::LE => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_numeric_data_type(self.cddl, ident) => {
-            self.ctrl = Some(ctrl);
+          Type2::Typename { ident, .. } if is_ident_numeric_data_type(self.state.cddl, ident) => {
+            self.state.ctrl = Some(ctrl);
             self.visit_type2(controller)?;
-            self.ctrl = None;
+            self.state.ctrl = None;
             Ok(())
           }
           _ => {
@@ -1183,13 +1060,13 @@ where
       }
       ControlOperator::SIZE => match target {
         Type2::Typename { ident, .. }
-          if is_ident_string_data_type(self.cddl, ident)
-            || is_ident_uint_data_type(self.cddl, ident)
-            || is_ident_byte_string_data_type(self.cddl, ident) =>
+          if is_ident_string_data_type(self.state.cddl, ident)
+            || is_ident_uint_data_type(self.state.cddl, ident)
+            || is_ident_byte_string_data_type(self.state.cddl, ident) =>
         {
-          self.ctrl = Some(ctrl);
+          self.state.ctrl = Some(ctrl);
           self.visit_type2(controller)?;
-          self.ctrl = None;
+          self.state.ctrl = None;
           Ok(())
         }
         _ => {
@@ -1201,14 +1078,14 @@ where
         }
       },
       ControlOperator::AND => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
         self.visit_type2(target)?;
         self.visit_type2(controller)?;
-        self.ctrl = None;
+        self.state.ctrl = None;
         Ok(())
       }
       ControlOperator::WITHIN => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         let no_errors = self.errors.len() == error_count;
@@ -1224,37 +1101,37 @@ where
           ));
         }
 
-        self.ctrl = None;
+        self.state.ctrl = None;
 
         Ok(())
       }
       ControlOperator::DEFAULT => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
         let error_count = self.errors.len();
         self.visit_type2(target)?;
         if self.errors.len() != error_count {
           #[cfg(feature = "ast-span")]
-          if let Some(Occur::Optional { .. }) = self.occurrence.take() {
+          if let Some(Occur::Optional { .. }) = self.state.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {:?}",
               controller, self.cbor
             ));
           }
           #[cfg(not(feature = "ast-span"))]
-          if let Some(Occur::Optional {}) = self.occurrence.take() {
+          if let Some(Occur::Optional {}) = self.state.occurrence.take() {
             self.add_error(format!(
               "expected default value {}, got {:?}",
               controller, self.cbor
             ));
           }
         }
-        self.ctrl = None;
+        self.state.ctrl = None;
         Ok(())
       }
       ControlOperator::REGEXP | ControlOperator::PCRE => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match self.cbor {
               Value::Text(_) | Value::Array(_) => self.visit_type2(controller)?,
               _ => self.add_error(format!(
@@ -1268,14 +1145,16 @@ where
             target
           )),
         }
-        self.ctrl = None;
+        self.state.ctrl = None;
 
         Ok(())
       }
       ControlOperator::CBOR | ControlOperator::CBORSEQ => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
         match target {
-          Type2::Typename { ident, .. } if is_ident_byte_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. }
+            if is_ident_byte_string_data_type(self.state.cddl, ident) =>
+          {
             match &self.cbor {
               Value::Bytes(b) => {
                 // Handle direct byte string case
@@ -1283,16 +1162,20 @@ where
                 match inner_value {
                   Ok(value) => {
                     #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-                    let mut cv =
-                      CBORValidator::new(self.cddl, value, self.enabled_features.clone());
+                    let mut cv = CBORValidator::new(
+                      self.state.cddl,
+                      value,
+                      self.state.enabled_features.clone(),
+                    );
                     #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-                    let mut cv = CBORValidator::new(self.cddl, value, self.enabled_features);
+                    let mut cv =
+                      CBORValidator::new(self.state.cddl, value, self.state.enabled_features);
                     #[cfg(not(feature = "additional-controls"))]
-                    let mut cv = CBORValidator::new(self.cddl, value);
+                    let mut cv = CBORValidator::new(self.state.cddl, value);
 
-                    cv.generic_rules = self.generic_rules.clone();
-                    cv.eval_generic_rule = self.eval_generic_rule;
-                    cv.cbor_location.push_str(&self.cbor_location);
+                    cv.state.generic_rules = self.state.generic_rules.clone();
+                    cv.state.eval_generic_rule = self.state.eval_generic_rule;
+                    cv.state.data_location.push_str(&self.state.data_location);
 
                     cv.visit_type2(controller)?;
 
@@ -1312,37 +1195,48 @@ where
                     let inner_value = decode_cbor(b);
                     match inner_value {
                       Ok(value) => {
-                        let current_location = self.cbor_location.clone();
+                        let current_location = self.state.data_location.clone();
                         #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-                        let mut cv =
-                          CBORValidator::new(self.cddl, value, self.enabled_features.clone());
+                        let mut cv = CBORValidator::new(
+                          self.state.cddl,
+                          value,
+                          self.state.enabled_features.clone(),
+                        );
                         #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-                        let mut cv = CBORValidator::new(self.cddl, value, self.enabled_features);
+                        let mut cv =
+                          CBORValidator::new(self.state.cddl, value, self.state.enabled_features);
                         #[cfg(not(feature = "additional-controls"))]
-                        let mut cv = CBORValidator::new(self.cddl, value);
+                        let mut cv = CBORValidator::new(self.state.cddl, value);
 
-                        cv.generic_rules = self.generic_rules.clone();
-                        cv.eval_generic_rule = self.eval_generic_rule;
-                        let _ = write!(cv.cbor_location, "{}/{}", self.cbor_location, idx);
+                        cv.state.generic_rules = self.state.generic_rules.clone();
+                        cv.state.eval_generic_rule = self.state.eval_generic_rule;
+                        let _ = write!(
+                          cv.state.data_location,
+                          "{}/{}",
+                          self.state.data_location, idx
+                        );
 
                         cv.visit_type2(controller)?;
 
                         if !cv.errors.is_empty() {
                           self.errors.append(&mut cv.errors);
                         }
-                        self.cbor_location = current_location;
+                        self.state.data_location = current_location;
                       }
                       Err(e) => {
                         let error_msg =
                           format!("error decoding embedded CBOR at index {}: {}", idx, e);
                         self.errors.push(ValidationError {
                           reason: error_msg,
-                          cddl_location: self.cddl_location.clone(),
-                          cbor_location: self.cbor_location.clone(),
-                          is_multi_type_choice: self.is_multi_type_choice,
-                          is_multi_group_choice: self.is_multi_group_choice,
-                          is_group_to_choice_enum: self.is_group_to_choice_enum,
-                          type_group_name_entry: self.type_group_name_entry.map(|e| e.to_string()),
+                          cddl_location: self.state.cddl_location.clone(),
+                          cbor_location: self.state.data_location.clone(),
+                          is_multi_type_choice: self.state.is_multi_type_choice,
+                          is_multi_group_choice: self.state.is_multi_group_choice,
+                          is_group_to_choice_enum: self.state.is_group_to_choice_enum,
+                          type_group_name_entry: self
+                            .state
+                            .type_group_name_entry
+                            .map(|e| e.to_string()),
                         });
                       }
                     }
@@ -1353,12 +1247,15 @@ where
                     );
                     self.errors.push(ValidationError {
                       reason: error_msg,
-                      cddl_location: self.cddl_location.clone(),
-                      cbor_location: self.cbor_location.clone(),
-                      is_multi_type_choice: self.is_multi_type_choice,
-                      is_multi_group_choice: self.is_multi_group_choice,
-                      is_group_to_choice_enum: self.is_group_to_choice_enum,
-                      type_group_name_entry: self.type_group_name_entry.map(|e| e.to_string()),
+                      cddl_location: self.state.cddl_location.clone(),
+                      cbor_location: self.state.data_location.clone(),
+                      is_multi_type_choice: self.state.is_multi_type_choice,
+                      is_multi_group_choice: self.state.is_multi_group_choice,
+                      is_group_to_choice_enum: self.state.is_group_to_choice_enum,
+                      type_group_name_entry: self
+                        .state
+                        .type_group_name_entry
+                        .map(|e| e.to_string()),
                     });
                   }
                 }
@@ -1376,16 +1273,16 @@ where
             target
           )),
         }
-        self.ctrl = None;
+        self.state.ctrl = None;
 
         Ok(())
       }
       ControlOperator::BITS => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
         match target {
           Type2::Typename { ident, .. }
-            if is_ident_byte_string_data_type(self.cddl, ident)
-              || is_ident_uint_data_type(self.cddl, ident) =>
+            if is_ident_byte_string_data_type(self.state.cddl, ident)
+              || is_ident_uint_data_type(self.state.cddl, ident) =>
           {
             match &self.cbor {
               Value::Bytes(_) | Value::Array(_) => self.visit_type2(controller)?,
@@ -1401,15 +1298,15 @@ where
             target
           )),
         }
-        self.ctrl = None;
+        self.state.ctrl = None;
 
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
       ControlOperator::CAT => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
 
-        match cat_operation(self.cddl, target, controller, false) {
+        match cat_operation(self.state.cddl, target, controller, false) {
           Ok(values) => {
             let error_count = self.errors.len();
             for v in values.iter() {
@@ -1429,15 +1326,15 @@ where
           Err(e) => self.add_error(e),
         }
 
-        self.ctrl = None;
+        self.state.ctrl = None;
 
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
       ControlOperator::DET => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
 
-        match cat_operation(self.cddl, target, controller, true) {
+        match cat_operation(self.state.cddl, target, controller, true) {
           Ok(values) => {
             let error_count = self.errors.len();
 
@@ -1457,15 +1354,15 @@ where
           Err(e) => self.add_error(e),
         }
 
-        self.ctrl = None;
+        self.state.ctrl = None;
 
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
       ControlOperator::PLUS => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
 
-        match plus_operation(self.cddl, target, controller) {
+        match plus_operation(self.state.cddl, target, controller) {
           Ok(values) => {
             let error_count = self.errors.len();
             for v in values.iter() {
@@ -1487,20 +1384,20 @@ where
           Err(e) => self.add_error(e),
         }
 
-        self.ctrl = None;
+        self.state.ctrl = None;
 
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
       ControlOperator::ABNF => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
 
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match self.cbor {
               Value::Text(_) | Value::Array(_) => {
                 if let Type2::ParenthesizedType { pt, .. } = controller {
-                  match abnf_from_complex_controller(self.cddl, pt) {
+                  match abnf_from_complex_controller(self.state.cddl, pt) {
                     Ok(values) => {
                       let error_count = self.errors.len();
                       for v in values.iter() {
@@ -1535,20 +1432,22 @@ where
           )),
         }
 
-        self.ctrl = None;
+        self.state.ctrl = None;
 
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
       ControlOperator::ABNFB => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
 
         match target {
-          Type2::Typename { ident, .. } if is_ident_byte_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. }
+            if is_ident_byte_string_data_type(self.state.cddl, ident) =>
+          {
             match self.cbor {
               Value::Bytes(_) | Value::Array(_) => {
                 if let Type2::ParenthesizedType { pt, .. } = controller {
-                  match abnf_from_complex_controller(self.cddl, pt) {
+                  match abnf_from_complex_controller(self.state.cddl, pt) {
                     Ok(values) => {
                       let error_count = self.errors.len();
                       for v in values.iter() {
@@ -1583,27 +1482,28 @@ where
           )),
         }
 
-        self.ctrl = None;
+        self.state.ctrl = None;
 
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
       #[cfg(not(target_arch = "wasm32"))]
       ControlOperator::FEATURE => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
 
-        if let Some(ef) = self.enabled_features {
-          let tv = text_value_from_type2(self.cddl, controller);
+        if let Some(ef) = self.state.enabled_features {
+          let tv = text_value_from_type2(self.state.cddl, controller);
           if let Some(Type2::TextValue { value, .. }) = tv {
             if ef.contains(&&**value) {
               let err_count = self.errors.len();
               self.visit_type2(target)?;
               if self.errors.len() > err_count {
-                self.has_feature_errors = true;
+                self.state.has_feature_errors = true;
               }
-              self.ctrl = None;
+              self.state.ctrl = None;
             } else {
               self
+                .state
                 .disabled_features
                 .get_or_insert(vec![value.to_string()])
                 .push(value.to_string());
@@ -1614,11 +1514,12 @@ where
               let err_count = self.errors.len();
               self.visit_type2(target)?;
               if self.errors.len() > err_count {
-                self.has_feature_errors = true;
+                self.state.has_feature_errors = true;
               }
-              self.ctrl = None;
+              self.state.ctrl = None;
             } else {
               self
+                .state
                 .disabled_features
                 .get_or_insert(vec![value.to_string()])
                 .push(value.to_string());
@@ -1626,27 +1527,28 @@ where
           }
         }
 
-        self.ctrl = None;
+        self.state.ctrl = None;
 
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
       #[cfg(target_arch = "wasm32")]
       ControlOperator::FEATURE => {
-        self.ctrl = Some(ctrl);
+        self.state.ctrl = Some(ctrl);
 
-        if let Some(ef) = &self.enabled_features {
-          let tv = text_value_from_type2(self.cddl, controller);
+        if let Some(ef) = &self.state.enabled_features {
+          let tv = text_value_from_type2(self.state.cddl, controller);
           if let Some(Type2::TextValue { value, .. }) = tv {
             if ef.contains(&JsValue::from(value.as_ref())) {
               let err_count = self.errors.len();
               self.visit_type2(target)?;
               if self.errors.len() > err_count {
-                self.has_feature_errors = true;
+                self.state.has_feature_errors = true;
               }
-              self.ctrl = None;
+              self.state.ctrl = None;
             } else {
               self
+                .state
                 .disabled_features
                 .get_or_insert(vec![value.to_string()])
                 .push(value.to_string());
@@ -1657,11 +1559,12 @@ where
               let err_count = self.errors.len();
               self.visit_type2(target)?;
               if self.errors.len() > err_count {
-                self.has_feature_errors = true;
+                self.state.has_feature_errors = true;
               }
-              self.ctrl = None;
+              self.state.ctrl = None;
             } else {
               self
+                .state
                 .disabled_features
                 .get_or_insert(vec![value.to_string()])
                 .push(value.to_string());
@@ -1669,14 +1572,14 @@ where
           }
         }
 
-        self.ctrl = None;
+        self.state.ctrl = None;
 
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
       ControlOperator::B64U => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_b64u_text(target, controller, s, false) {
@@ -1708,7 +1611,7 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::B64C => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_b64c_text(target, controller, s, false) {
@@ -1740,7 +1643,7 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::B64USLOPPY => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_b64u_text(target, controller, s, true) {
@@ -1772,7 +1675,7 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::B64CSLOPPY => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_b64c_text(target, controller, s, true) {
@@ -1804,7 +1707,7 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::HEX => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_hex_text(
@@ -1841,7 +1744,7 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::HEXLC => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_hex_text(
@@ -1878,7 +1781,7 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::HEXUC => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_hex_text(
@@ -1915,7 +1818,7 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::B32 => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_b32_text(target, controller, s, false) {
@@ -1947,7 +1850,7 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::H32 => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_b32_text(target, controller, s, true) {
@@ -1979,7 +1882,7 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::B45 => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_b45_text(target, controller, s) {
@@ -2011,7 +1914,7 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::BASE10 => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_base10_text(target, controller, s) {
@@ -2043,7 +1946,7 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::PRINTF => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_printf_text(target, controller, s) {
@@ -2075,7 +1978,7 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::JSON => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_json_text(target, controller, s) {
@@ -2104,14 +2007,14 @@ where
       #[cfg(feature = "additional-controls")]
       ControlOperator::JOIN => {
         match target {
-          Type2::Typename { ident, .. } if is_ident_string_data_type(self.cddl, ident) => {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
                 match crate::validator::control::validate_join_text(
                   target,
                   controller,
                   s,
-                  Some(self.cddl),
+                  Some(self.state.cddl),
                 ) {
                   Ok(is_valid) => {
                     if !is_valid {
@@ -2139,30 +2042,31 @@ where
   }
 
   fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error<T>> {
-    if matches!(self.ctrl, Some(ControlOperator::CBOR)) {
+    if matches!(self.state.ctrl, Some(ControlOperator::CBOR)) {
       if let Value::Bytes(b) = &self.cbor {
         let value = decode_cbor(b);
         match value {
           Ok(value) => {
-            let current_location = self.cbor_location.clone();
+            let current_location = self.state.data_location.clone();
 
             #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-            let mut cv = CBORValidator::new(self.cddl, value, self.enabled_features.clone());
+            let mut cv =
+              CBORValidator::new(self.state.cddl, value, self.state.enabled_features.clone());
             #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-            let mut cv = CBORValidator::new(self.cddl, value, self.enabled_features);
+            let mut cv = CBORValidator::new(self.state.cddl, value, self.state.enabled_features);
             #[cfg(not(feature = "additional-controls"))]
-            let mut cv = CBORValidator::new(self.cddl, value);
+            let mut cv = CBORValidator::new(self.state.cddl, value);
 
-            cv.generic_rules = self.generic_rules.clone();
-            cv.eval_generic_rule = self.eval_generic_rule;
-            cv.is_multi_type_choice = self.is_multi_type_choice;
-            cv.is_multi_group_choice = self.is_multi_group_choice;
-            cv.cbor_location.push_str(&self.cbor_location);
-            cv.type_group_name_entry = self.type_group_name_entry;
+            cv.state.generic_rules = self.state.generic_rules.clone();
+            cv.state.eval_generic_rule = self.state.eval_generic_rule;
+            cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+            cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+            cv.state.data_location.push_str(&self.state.data_location);
+            cv.state.type_group_name_entry = self.state.type_group_name_entry;
             cv.visit_type2(t2)?;
 
             if cv.errors.is_empty() {
-              self.cbor_location = current_location;
+              self.state.data_location = current_location;
               return Ok(());
             }
 
@@ -2175,39 +2079,39 @@ where
       }
 
       return Ok(());
-    } else if matches!(self.ctrl, Some(ControlOperator::CBORSEQ)) {
+    } else if matches!(self.state.ctrl, Some(ControlOperator::CBORSEQ)) {
       if let Value::Bytes(b) = &self.cbor {
         let value = decode_cbor(b);
         match value {
           Ok(Value::Array(_)) => {
-            let current_location = self.cbor_location.clone();
+            let current_location = self.state.data_location.clone();
 
             #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
             let mut cv = CBORValidator::new(
-              self.cddl,
+              self.state.cddl,
               value.unwrap_or(Value::Null),
-              self.enabled_features.clone(),
+              self.state.enabled_features.clone(),
             );
             #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
             let mut cv = CBORValidator::new(
-              self.cddl,
+              self.state.cddl,
               value.unwrap_or(Value::Null),
-              self.enabled_features,
+              self.state.enabled_features,
             );
 
             #[cfg(not(feature = "additional-controls"))]
-            let mut cv = CBORValidator::new(self.cddl, value.unwrap_or(Value::Null));
+            let mut cv = CBORValidator::new(self.state.cddl, value.unwrap_or(Value::Null));
 
-            cv.generic_rules = self.generic_rules.clone();
-            cv.eval_generic_rule = self.eval_generic_rule;
-            cv.is_multi_type_choice = self.is_multi_type_choice;
-            cv.is_multi_group_choice = self.is_multi_group_choice;
-            cv.cbor_location.push_str(&self.cbor_location);
-            cv.type_group_name_entry = self.type_group_name_entry;
+            cv.state.generic_rules = self.state.generic_rules.clone();
+            cv.state.eval_generic_rule = self.state.eval_generic_rule;
+            cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+            cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+            cv.state.data_location.push_str(&self.state.data_location);
+            cv.state.type_group_name_entry = self.state.type_group_name_entry;
             cv.visit_type2(t2)?;
 
             if cv.errors.is_empty() {
-              self.cbor_location = current_location;
+              self.state.data_location = current_location;
               return Ok(());
             }
 
@@ -2230,24 +2134,29 @@ where
       Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value.clone())),
       Type2::Map { group, .. } => match &self.cbor {
         Value::Map(m) => {
-          if self.is_member_key {
-            let current_location = self.cbor_location.clone();
+          if self.state.is_member_key {
+            let current_location = self.state.data_location.clone();
 
             for (k, v) in m.iter() {
               #[cfg(feature = "additional-controls")]
               #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-              let mut cv = CBORValidator::new(self.cddl, k.clone(), self.enabled_features.clone());
+              let mut cv = CBORValidator::new(
+                self.state.cddl,
+                k.clone(),
+                self.state.enabled_features.clone(),
+              );
               #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-              let mut cv = CBORValidator::new(self.cddl, k.clone(), self.enabled_features);
+              let mut cv =
+                CBORValidator::new(self.state.cddl, k.clone(), self.state.enabled_features);
               #[cfg(not(feature = "additional-controls"))]
-              let mut cv = CBORValidator::new(self.cddl, k.clone());
+              let mut cv = CBORValidator::new(self.state.cddl, k.clone());
 
-              cv.generic_rules = self.generic_rules.clone();
-              cv.eval_generic_rule = self.eval_generic_rule;
-              cv.is_multi_type_choice = self.is_multi_type_choice;
-              cv.is_multi_group_choice = self.is_multi_group_choice;
-              cv.cbor_location.push_str(&self.cbor_location);
-              cv.type_group_name_entry = self.type_group_name_entry;
+              cv.state.generic_rules = self.state.generic_rules.clone();
+              cv.state.eval_generic_rule = self.state.eval_generic_rule;
+              cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+              cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+              cv.state.data_location.push_str(&self.state.data_location);
+              cv.state.type_group_name_entry = self.state.type_group_name_entry;
               cv.visit_type2(t2)?;
 
               if cv.errors.is_empty() {
@@ -2256,7 +2165,7 @@ where
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
-                self.cbor_location = current_location;
+                self.state.data_location = current_location;
                 return Ok(());
               }
 
@@ -2271,7 +2180,7 @@ where
             && group.group_choices[0].group_entries.is_empty()
             && !m.is_empty()
             && !matches!(
-              self.ctrl,
+              self.state.ctrl,
               Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
             )
           {
@@ -2295,7 +2204,7 @@ where
             }
           }
 
-          self.is_cut_present = false;
+          self.state.is_cut_present = false;
           self.cut_value = None;
           Ok(())
         }
@@ -2311,7 +2220,7 @@ where
             && group.group_choices[0].group_entries.is_empty()
             && !a.is_empty()
             && !matches!(
-              self.ctrl,
+              self.state.ctrl,
               Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
             )
           {
@@ -2319,12 +2228,12 @@ where
             return Ok(());
           }
 
-          self.entry_counts = Some(entry_counts_from_group(self.cddl, group));
+          self.state.entry_counts = Some(entry_counts_from_group(self.state.cddl, group));
           self.visit_group(group)?;
-          self.entry_counts = None;
+          self.state.entry_counts = None;
 
           if let Some(errors) = &mut self.array_errors {
-            if let Some(indices) = &self.valid_array_items {
+            if let Some(indices) = &self.state.valid_array_items {
               for idx in indices.iter() {
                 errors.remove(idx);
               }
@@ -2335,31 +2244,36 @@ where
             }
           }
 
-          self.valid_array_items = None;
+          self.state.valid_array_items = None;
           self.array_errors = None;
 
           Ok(())
         }
-        Value::Map(m) if self.is_member_key => {
-          let current_location = self.cbor_location.clone();
+        Value::Map(m) if self.state.is_member_key => {
+          let current_location = self.state.data_location.clone();
 
-          self.entry_counts = Some(entry_counts_from_group(self.cddl, group));
+          self.state.entry_counts = Some(entry_counts_from_group(self.state.cddl, group));
 
           for (k, v) in m.iter() {
             #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-            let mut cv = CBORValidator::new(self.cddl, k.clone(), self.enabled_features.clone());
+            let mut cv = CBORValidator::new(
+              self.state.cddl,
+              k.clone(),
+              self.state.enabled_features.clone(),
+            );
             #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-            let mut cv = CBORValidator::new(self.cddl, k.clone(), self.enabled_features);
+            let mut cv =
+              CBORValidator::new(self.state.cddl, k.clone(), self.state.enabled_features);
             #[cfg(not(feature = "additional-controls"))]
-            let mut cv = CBORValidator::new(self.cddl, k.clone());
+            let mut cv = CBORValidator::new(self.state.cddl, k.clone());
 
-            cv.generic_rules = self.generic_rules.clone();
-            cv.entry_counts = self.entry_counts.clone();
-            cv.eval_generic_rule = self.eval_generic_rule;
-            cv.is_multi_type_choice = self.is_multi_type_choice;
-            cv.is_multi_group_choice = self.is_multi_group_choice;
-            cv.cbor_location.push_str(&self.cbor_location);
-            cv.type_group_name_entry = self.type_group_name_entry;
+            cv.state.generic_rules = self.state.generic_rules.clone();
+            cv.state.entry_counts = self.state.entry_counts.clone();
+            cv.state.eval_generic_rule = self.state.eval_generic_rule;
+            cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+            cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+            cv.state.data_location.push_str(&self.state.data_location);
+            cv.state.type_group_name_entry = self.state.type_group_name_entry;
             cv.visit_type2(t2)?;
 
             if cv.errors.is_empty() {
@@ -2368,14 +2282,14 @@ where
                 .validated_keys
                 .get_or_insert(vec![k.clone()])
                 .push(k.clone());
-              self.cbor_location = current_location;
+              self.state.data_location = current_location;
               return Ok(());
             }
 
             self.errors.append(&mut cv.errors);
           }
 
-          self.entry_counts = None;
+          self.state.entry_counts = None;
 
           Ok(())
         }
@@ -2390,8 +2304,9 @@ where
         ..
       } => {
         if let Some(ga) = generic_args {
-          if let Some(rule) = rule_from_ident(self.cddl, ident) {
+          if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
             if let Some(gr) = self
+              .state
               .generic_rules
               .iter_mut()
               .find(|gr| gr.name == ident.ident)
@@ -2400,7 +2315,7 @@ where
                 gr.args.push((*arg.arg).clone());
               }
             } else if let Some(params) = generic_params_from_rule(rule) {
-              self.generic_rules.push(GenericRule {
+              self.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
                 args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
@@ -2408,17 +2323,24 @@ where
             }
 
             #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-            let mut cv =
-              CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features.clone());
+            let mut cv = CBORValidator::new(
+              self.state.cddl,
+              self.cbor.clone(),
+              self.state.enabled_features.clone(),
+            );
             #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-            let mut cv = CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features);
+            let mut cv = CBORValidator::new(
+              self.state.cddl,
+              self.cbor.clone(),
+              self.state.enabled_features,
+            );
             #[cfg(not(feature = "additional-controls"))]
-            let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
+            let mut cv = CBORValidator::new(self.state.cddl, self.cbor.clone());
 
-            cv.generic_rules = self.generic_rules.clone();
-            cv.eval_generic_rule = Some(ident.ident);
-            cv.is_group_to_choice_enum = true;
-            cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.state.generic_rules = self.state.generic_rules.clone();
+            cv.state.eval_generic_rule = Some(ident.ident);
+            cv.state.is_group_to_choice_enum = true;
+            cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
             cv.visit_rule(rule)?;
 
             self.errors.append(&mut cv.errors);
@@ -2427,7 +2349,7 @@ where
           }
         }
 
-        if group_rule_from_ident(self.cddl, ident).is_none() {
+        if group_rule_from_ident(self.state.cddl, ident).is_none() {
           self.add_error(format!(
             "rule {} must be a group rule to turn it into a choice",
             ident
@@ -2435,16 +2357,16 @@ where
           return Ok(());
         }
 
-        self.is_group_to_choice_enum = true;
+        self.state.is_group_to_choice_enum = true;
         self.visit_identifier(ident)?;
-        self.is_group_to_choice_enum = false;
+        self.state.is_group_to_choice_enum = false;
 
         Ok(())
       }
       Type2::ChoiceFromInlineGroup { group, .. } => {
-        self.is_group_to_choice_enum = true;
+        self.state.is_group_to_choice_enum = true;
         self.visit_group(group)?;
-        self.is_group_to_choice_enum = false;
+        self.state.is_group_to_choice_enum = false;
         Ok(())
       }
       Type2::Typename {
@@ -2453,8 +2375,9 @@ where
         ..
       } => {
         if let Some(ga) = generic_args {
-          if let Some(rule) = rule_from_ident(self.cddl, ident) {
+          if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
             if let Some(gr) = self
+              .state
               .generic_rules
               .iter_mut()
               .find(|gr| gr.name == ident.ident)
@@ -2463,7 +2386,7 @@ where
                 gr.args.push((*arg.arg).clone());
               }
             } else if let Some(params) = generic_params_from_rule(rule) {
-              self.generic_rules.push(GenericRule {
+              self.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
                 args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
@@ -2471,16 +2394,23 @@ where
             }
 
             #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-            let mut cv =
-              CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features.clone());
+            let mut cv = CBORValidator::new(
+              self.state.cddl,
+              self.cbor.clone(),
+              self.state.enabled_features.clone(),
+            );
             #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-            let mut cv = CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features);
+            let mut cv = CBORValidator::new(
+              self.state.cddl,
+              self.cbor.clone(),
+              self.state.enabled_features,
+            );
             #[cfg(not(feature = "additional-controls"))]
-            let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
+            let mut cv = CBORValidator::new(self.state.cddl, self.cbor.clone());
 
-            cv.generic_rules = self.generic_rules.clone();
-            cv.eval_generic_rule = Some(ident.ident);
-            cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.state.generic_rules = self.state.generic_rules.clone();
+            cv.state.eval_generic_rule = Some(ident.ident);
+            cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
             cv.visit_rule(rule)?;
 
             self.errors.append(&mut cv.errors);
@@ -2489,9 +2419,9 @@ where
           }
         }
 
-        let type_choice_alternates = type_choice_alternates_from_ident(self.cddl, ident);
+        let type_choice_alternates = type_choice_alternates_from_ident(self.state.cddl, ident);
         if !type_choice_alternates.is_empty() {
-          self.is_multi_type_choice = true;
+          self.state.is_multi_type_choice = true;
         }
 
         let error_count = self.errors.len();
@@ -2532,8 +2462,9 @@ where
         }
 
         if let Some(ga) = generic_args {
-          if let Some(rule) = unwrap_rule_from_ident(self.cddl, ident) {
+          if let Some(rule) = unwrap_rule_from_ident(self.state.cddl, ident) {
             if let Some(gr) = self
+              .state
               .generic_rules
               .iter_mut()
               .find(|gr| gr.name == ident.ident)
@@ -2542,7 +2473,7 @@ where
                 gr.args.push((*arg.arg).clone());
               }
             } else if let Some(params) = generic_params_from_rule(rule) {
-              self.generic_rules.push(GenericRule {
+              self.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
                 args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
@@ -2550,16 +2481,23 @@ where
             }
 
             #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-            let mut cv =
-              CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features.clone());
+            let mut cv = CBORValidator::new(
+              self.state.cddl,
+              self.cbor.clone(),
+              self.state.enabled_features.clone(),
+            );
             #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-            let mut cv = CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features);
+            let mut cv = CBORValidator::new(
+              self.state.cddl,
+              self.cbor.clone(),
+              self.state.enabled_features,
+            );
             #[cfg(not(feature = "additional-controls"))]
-            let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
+            let mut cv = CBORValidator::new(self.state.cddl, self.cbor.clone());
 
-            cv.generic_rules = self.generic_rules.clone();
-            cv.eval_generic_rule = Some(ident.ident);
-            cv.is_multi_type_choice = self.is_multi_type_choice;
+            cv.state.generic_rules = self.state.generic_rules.clone();
+            cv.state.eval_generic_rule = Some(ident.ident);
+            cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
             cv.visit_rule(rule)?;
 
             self.errors.append(&mut cv.errors);
@@ -2568,7 +2506,7 @@ where
           }
         }
 
-        if let Some(rule) = unwrap_rule_from_ident(self.cddl, ident) {
+        if let Some(rule) = unwrap_rule_from_ident(self.state.cddl, ident) {
           return self.visit_rule(rule);
         }
 
@@ -2605,21 +2543,25 @@ where
 
           #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
           let mut cv = CBORValidator::new(
-            self.cddl,
+            self.state.cddl,
             value.as_ref().clone(),
-            self.enabled_features.clone(),
+            self.state.enabled_features.clone(),
           );
           #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-          let mut cv = CBORValidator::new(self.cddl, value.as_ref().clone(), self.enabled_features);
+          let mut cv = CBORValidator::new(
+            self.state.cddl,
+            value.as_ref().clone(),
+            self.state.enabled_features,
+          );
           #[cfg(not(feature = "additional-controls"))]
-          let mut cv = CBORValidator::new(self.cddl, value.as_ref().clone());
+          let mut cv = CBORValidator::new(self.state.cddl, value.as_ref().clone());
 
-          cv.generic_rules = self.generic_rules.clone();
-          cv.eval_generic_rule = self.eval_generic_rule;
-          cv.is_multi_type_choice = self.is_multi_type_choice;
-          cv.is_multi_group_choice = self.is_multi_group_choice;
-          cv.cbor_location.push_str(&self.cbor_location);
-          cv.type_group_name_entry = self.type_group_name_entry;
+          cv.state.generic_rules = self.state.generic_rules.clone();
+          cv.state.eval_generic_rule = self.state.eval_generic_rule;
+          cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+          cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+          cv.state.data_location.push_str(&self.state.data_location);
+          cv.state.type_group_name_entry = self.state.type_group_name_entry;
           cv.visit_type(t)?;
 
           self.errors.append(&mut cv.errors);
@@ -2891,8 +2833,9 @@ where
   }
 
   fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error<T>> {
-    if let Some(name) = self.eval_generic_rule {
+    if let Some(name) = self.state.eval_generic_rule {
       if let Some(gr) = self
+        .state
         .generic_rules
         .iter()
         .find(|&gr| gr.name == name)
@@ -2908,36 +2851,36 @@ where
       }
     }
 
-    // self.is_colon_shortcut_present is only true when the ident is part of a
+    // self.state.is_colon_shortcut_present is only true when the ident is part of a
     // member key
-    if !self.is_colon_shortcut_present {
-      if let Some(r) = rule_from_ident(self.cddl, ident) {
+    if !self.state.is_colon_shortcut_present {
+      if let Some(r) = rule_from_ident(self.state.cddl, ident) {
         // Check for recursion to prevent stack overflow
         let rule_key = ident.ident.to_string();
-        if self.visited_rules.contains(&rule_key) {
+        if self.state.visited_rules.contains(&rule_key) {
           // We've already validated this rule in the current validation path
           // This is a recursive reference, so we allow it and assume it's valid
           return Ok(());
         }
 
         // Mark this rule as visited before recursing
-        self.visited_rules.insert(rule_key.clone());
+        self.state.visited_rules.insert(rule_key.clone());
         let result = self.visit_rule(r);
         // Remove the rule from visited set after processing
-        self.visited_rules.remove(&rule_key);
+        self.state.visited_rules.remove(&rule_key);
 
         return result;
       }
     }
 
-    if is_ident_any_type(self.cddl, ident) {
+    if is_ident_any_type(self.state.cddl, ident) {
       return Ok(());
     }
 
     // Special case for array values - check if we're in an array context and this
     // is a reference to another array type
     if let Value::Array(_) = &self.cbor {
-      if let Some(Rule::Type { rule, .. }) = rule_from_ident(self.cddl, ident) {
+      if let Some(Rule::Type { rule, .. }) = rule_from_ident(self.state.cddl, ident) {
         for tc in rule.value.type_choices.iter() {
           if let Type2::Array { .. } = &tc.type1.type2 {
             return self.visit_type_choice(tc);
@@ -2947,14 +2890,14 @@ where
     }
 
     match &self.cbor {
-      Value::Null if is_ident_null_data_type(self.cddl, ident) => Ok(()),
-      Value::Bytes(_) if is_ident_byte_string_data_type(self.cddl, ident) => Ok(()),
+      Value::Null if is_ident_null_data_type(self.state.cddl, ident) => Ok(()),
+      Value::Bytes(_) if is_ident_byte_string_data_type(self.state.cddl, ident) => Ok(()),
       Value::Bool(b) => {
-        if is_ident_bool_data_type(self.cddl, ident) {
+        if is_ident_bool_data_type(self.state.cddl, ident) {
           return Ok(());
         }
 
-        if ident_matches_bool_value(self.cddl, ident, *b) {
+        if ident_matches_bool_value(self.state.cddl, ident, *b) {
           return Ok(());
         }
 
@@ -2962,15 +2905,15 @@ where
         Ok(())
       }
       Value::Integer(i) => {
-        if is_ident_uint_data_type(self.cddl, ident) {
+        if is_ident_uint_data_type(self.state.cddl, ident) {
           if i128::from(*i).is_negative() {
             self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
           }
 
           Ok(())
-        } else if is_ident_integer_data_type(self.cddl, ident) {
+        } else if is_ident_integer_data_type(self.state.cddl, ident) {
           Ok(())
-        } else if is_ident_time_data_type(self.cddl, ident) {
+        } else if is_ident_time_data_type(self.state.cddl, ident) {
           if let chrono::LocalResult::None =
             Utc.timestamp_millis_opt((i128::from(*i) * 1000) as i64)
           {
@@ -2988,9 +2931,9 @@ where
         }
       }
       Value::Float(f) => {
-        if is_ident_float_data_type(self.cddl, ident) {
+        if is_ident_float_data_type(self.state.cddl, ident) {
           Ok(())
-        } else if is_ident_time_data_type(self.cddl, ident) {
+        } else if is_ident_time_data_type(self.state.cddl, ident) {
           if let chrono::LocalResult::None = Utc.timestamp_millis_opt((*f * 1000f64) as i64) {
             let f = *f;
             self.add_error(format!(
@@ -3006,22 +2949,22 @@ where
         }
       }
       Value::Text(s) => {
-        if is_ident_uri_data_type(self.cddl, ident) {
+        if is_ident_uri_data_type(self.state.cddl, ident) {
           if let Err(e) = uriparse::URI::try_from(&**s) {
             self.add_error(format!("expected URI data type, decoding error: {}", e));
           }
-        } else if is_ident_b64url_data_type(self.cddl, ident) {
+        } else if is_ident_b64url_data_type(self.state.cddl, ident) {
           if let Err(e) = base64_url::decode(s) {
             self.add_error(format!(
               "expected base64 URL data type, decoding error: {}",
               e
             ));
           }
-        } else if is_ident_tdate_data_type(self.cddl, ident) {
+        } else if is_ident_tdate_data_type(self.state.cddl, ident) {
           if let Err(e) = chrono::DateTime::parse_from_rfc3339(s) {
             self.add_error(format!("expected tdate data type, decoding error: {}", e));
           }
-        } else if is_ident_string_data_type(self.cddl, ident) {
+        } else if is_ident_string_data_type(self.state.cddl, ident) {
           return Ok(());
         } else {
           self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
@@ -3032,7 +2975,7 @@ where
       Value::Tag(tag, value) => {
         match *tag {
           0 => {
-            if is_ident_tdate_data_type(self.cddl, ident) {
+            if is_ident_tdate_data_type(self.state.cddl, ident) {
               if let Value::Text(value) = value.as_ref() {
                 if let Err(e) = chrono::DateTime::parse_from_rfc3339(value) {
                   self.add_error(format!("expected tdate data type, decoding error: {}", e));
@@ -3045,7 +2988,7 @@ where
             }
           }
           1 => {
-            if is_ident_time_data_type(self.cddl, ident) {
+            if is_ident_time_data_type(self.state.cddl, ident) {
               if let Value::Integer(value) = *value.as_ref() {
                 let dt = Utc.timestamp_opt(value.try_into().unwrap(), 0);
                 if let chrono::LocalResult::None = dt {
@@ -3078,87 +3021,87 @@ where
       }
       Value::Array(_) => self.validate_array_items(&ArrayItemToken::Identifier(ident)),
       Value::Map(m) => {
-        match &self.occurrence {
+        match &self.state.occurrence {
           #[cfg(feature = "ast-span")]
           Some(Occur::Optional { .. }) | None => {
-            if is_ident_string_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_string_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Text(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                let _ = write!(self.state.data_location, "/{:?}", v);
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
             }
 
-            if is_ident_integer_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_integer_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Integer(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                let _ = write!(self.state.data_location, "/{:?}", v);
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
             }
 
-            if is_ident_bool_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_bool_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Bool(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                let _ = write!(self.state.data_location, "/{:?}", v);
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
             }
 
-            if is_ident_null_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_null_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                let _ = write!(self.state.data_location, "/{:?}", v);
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
             }
 
-            if is_ident_byte_string_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_byte_string_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Bytes(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                let _ = write!(self.state.data_location, "/{:?}", v);
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
             }
 
-            if is_ident_float_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_float_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                let _ = write!(self.state.data_location, "/{:?}", v);
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -3180,14 +3123,14 @@ where
           }
           #[cfg(not(feature = "ast-span"))]
           Some(Occur::Optional {}) | None => {
-            if is_ident_string_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_string_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Text(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                self.cbor_location.push_str(&format!("/{}", value));
+                self.state.data_location.push_str(&format!("/{}", value));
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -3195,70 +3138,70 @@ where
               return Ok(());
             }
 
-            if is_ident_integer_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_integer_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Integer(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                self.cbor_location.push_str(&format!("/{}", value));
+                self.state.data_location.push_str(&format!("/{}", value));
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
             }
 
-            if is_ident_bool_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_bool_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Bool(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                self.cbor_location.push_str(&format!("/{}", value));
+                self.state.data_location.push_str(&format!("/{}", value));
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
             }
 
-            if is_ident_null_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_null_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                self.cbor_location.push_str(&format!("/{}", value));
+                self.state.data_location.push_str(&format!("/{}", value));
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
             }
 
-            if is_ident_byte_string_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_byte_string_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Bytes(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                self.cbor_location.push_str(&format!("/{}", value));
+                self.state.data_location.push_str(&format!("/{}", value));
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
             }
 
-            if is_ident_float_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_float_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                self.cbor_location.push_str(&format!("/{}", value));
+                self.state.data_location.push_str(&format!("/{}", value));
               } else {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
@@ -3281,7 +3224,7 @@ where
           Some(occur) => {
             let mut errors = Vec::new();
 
-            if is_ident_string_data_type(self.cddl, ident) {
+            if is_ident_string_data_type(self.state.cddl, ident) {
               let values_to_validate = m
                 .iter()
                 .filter_map(|(k, v)| {
@@ -3308,7 +3251,7 @@ where
               self.values_to_validate = Some(values_to_validate);
             }
 
-            if is_ident_integer_data_type(self.cddl, ident) {
+            if is_ident_integer_data_type(self.state.cddl, ident) {
               let mut errors = Vec::new();
               let values_to_validate = m
                 .iter()
@@ -3336,7 +3279,7 @@ where
               self.values_to_validate = Some(values_to_validate);
             }
 
-            if is_ident_bool_data_type(self.cddl, ident) {
+            if is_ident_bool_data_type(self.state.cddl, ident) {
               let mut errors = Vec::new();
               let values_to_validate = m
                 .iter()
@@ -3364,7 +3307,7 @@ where
               self.values_to_validate = Some(values_to_validate);
             }
 
-            if is_ident_byte_string_data_type(self.cddl, ident) {
+            if is_ident_byte_string_data_type(self.state.cddl, ident) {
               let mut errors = Vec::new();
               let values_to_validate = m
                 .iter()
@@ -3392,7 +3335,7 @@ where
               self.values_to_validate = Some(values_to_validate);
             }
 
-            if is_ident_null_data_type(self.cddl, ident) {
+            if is_ident_null_data_type(self.state.cddl, ident) {
               let mut errors = Vec::new();
               let values_to_validate = m
                 .iter()
@@ -3420,7 +3363,7 @@ where
               self.values_to_validate = Some(values_to_validate);
             }
 
-            if is_ident_float_data_type(self.cddl, ident) {
+            if is_ident_float_data_type(self.state.cddl, ident) {
               let mut errors = Vec::new();
               let values_to_validate = m
                 .iter()
@@ -3571,14 +3514,14 @@ where
               }
             }
 
-            if is_ident_string_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_string_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Text(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                let _ = write!(self.state.data_location, "/{:?}", v);
               } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
                 || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
@@ -3588,14 +3531,14 @@ where
               return Ok(());
             }
 
-            if is_ident_integer_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_integer_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Integer(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                let _ = write!(self.state.data_location, "/{:?}", v);
               } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
                 || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
@@ -3604,14 +3547,14 @@ where
               return Ok(());
             }
 
-            if is_ident_bool_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_bool_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Bool(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                let _ = write!(self.state.data_location, "/{:?}", v);
               } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
                 || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
@@ -3620,14 +3563,14 @@ where
               return Ok(());
             }
 
-            if is_ident_null_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_null_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                let _ = write!(self.state.data_location, "/{:?}", v);
               } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
                 || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
@@ -3636,14 +3579,14 @@ where
               return Ok(());
             }
 
-            if is_ident_byte_string_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_byte_string_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Bytes(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                let _ = write!(self.state.data_location, "/{:?}", v);
               } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
                 || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
@@ -3652,14 +3595,14 @@ where
               return Ok(());
             }
 
-            if is_ident_float_data_type(self.cddl, ident) && !self.validating_value {
+            if is_ident_float_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
                   .push(k.clone());
                 self.object_value = Some(v.clone());
-                let _ = write!(self.cbor_location, "/{:?}", v);
+                let _ = write!(self.state.data_location, "/{:?}", v);
               } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
                 || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
               {
@@ -3705,17 +3648,17 @@ where
       self.visit_occurrence(occur)?;
     }
 
-    let current_location = self.cbor_location.clone();
+    let current_location = self.state.data_location.clone();
 
     if let Some(mk) = &entry.member_key {
       let error_count = self.errors.len();
-      self.is_member_key = true;
+      self.state.is_member_key = true;
       self.visit_memberkey(mk)?;
-      self.is_member_key = false;
+      self.state.is_member_key = false;
 
       // Move to next entry if member key validation fails
       if self.errors.len() != error_count {
-        self.advance_to_next_entry = true;
+        self.state.advance_to_next_entry = true;
         return Ok(());
       }
     }
@@ -3723,26 +3666,30 @@ where
     if let Some(values) = &self.values_to_validate {
       for v in values.iter() {
         #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-        let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features.clone());
+        let mut cv = CBORValidator::new(
+          self.state.cddl,
+          v.clone(),
+          self.state.enabled_features.clone(),
+        );
         #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-        let mut cv = CBORValidator::new(self.cddl, v.clone(), self.enabled_features);
+        let mut cv = CBORValidator::new(self.state.cddl, v.clone(), self.state.enabled_features);
         #[cfg(not(feature = "additional-controls"))]
-        let mut cv = CBORValidator::new(self.cddl, v.clone());
+        let mut cv = CBORValidator::new(self.state.cddl, v.clone());
 
-        cv.generic_rules = self.generic_rules.clone();
-        cv.eval_generic_rule = self.eval_generic_rule;
-        cv.is_multi_type_choice = self.is_multi_type_choice;
-        cv.is_multi_group_choice = self.is_multi_group_choice;
-        cv.cbor_location.push_str(&self.cbor_location);
-        cv.type_group_name_entry = self.type_group_name_entry;
+        cv.state.generic_rules = self.state.generic_rules.clone();
+        cv.state.eval_generic_rule = self.state.eval_generic_rule;
+        cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+        cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+        cv.state.data_location.push_str(&self.state.data_location);
+        cv.state.type_group_name_entry = self.state.type_group_name_entry;
         cv.validating_value = true;
         cv.visit_type(&entry.entry_type)?;
 
-        self.cbor_location = current_location.clone();
+        self.state.data_location = current_location.clone();
 
         self.errors.append(&mut cv.errors);
         if entry.occur.is_some() {
-          self.occurrence = None;
+          self.state.occurrence = None;
         }
       }
 
@@ -3751,29 +3698,29 @@ where
 
     if let Some(v) = self.object_value.take() {
       #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-      let mut cv = CBORValidator::new(self.cddl, v, self.enabled_features.clone());
+      let mut cv = CBORValidator::new(self.state.cddl, v, self.state.enabled_features.clone());
       #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-      let mut cv = CBORValidator::new(self.cddl, v, self.enabled_features);
+      let mut cv = CBORValidator::new(self.state.cddl, v, self.state.enabled_features);
       #[cfg(not(feature = "additional-controls"))]
-      let mut cv = CBORValidator::new(self.cddl, v);
+      let mut cv = CBORValidator::new(self.state.cddl, v);
 
-      cv.generic_rules = self.generic_rules.clone();
-      cv.eval_generic_rule = self.eval_generic_rule;
-      cv.is_multi_type_choice = self.is_multi_type_choice;
-      cv.is_multi_group_choice = self.is_multi_group_choice;
-      cv.cbor_location.push_str(&self.cbor_location);
-      cv.type_group_name_entry = self.type_group_name_entry;
+      cv.state.generic_rules = self.state.generic_rules.clone();
+      cv.state.eval_generic_rule = self.state.eval_generic_rule;
+      cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+      cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+      cv.state.data_location.push_str(&self.state.data_location);
+      cv.state.type_group_name_entry = self.state.type_group_name_entry;
       cv.visit_type(&entry.entry_type)?;
 
-      self.cbor_location = current_location;
+      self.state.data_location = current_location;
 
       self.errors.append(&mut cv.errors);
       if entry.occur.is_some() {
-        self.occurrence = None;
+        self.state.occurrence = None;
       }
 
       Ok(())
-    } else if !self.advance_to_next_entry {
+    } else if !self.state.advance_to_next_entry {
       self.visit_type(&entry.entry_type)
     } else {
       Ok(())
@@ -3784,11 +3731,12 @@ where
     &mut self,
     entry: &TypeGroupnameEntry<'a>,
   ) -> visitor::Result<Error<T>> {
-    self.type_group_name_entry = Some(entry.name.ident);
+    self.state.type_group_name_entry = Some(entry.name.ident);
 
     if let Some(ga) = &entry.generic_args {
-      if let Some(rule) = rule_from_ident(self.cddl, &entry.name) {
+      if let Some(rule) = rule_from_ident(self.state.cddl, &entry.name) {
         if let Some(gr) = self
+          .state
           .generic_rules
           .iter_mut()
           .find(|gr| gr.name == entry.name.ident)
@@ -3797,7 +3745,7 @@ where
             gr.args.push((*arg.arg).clone());
           }
         } else if let Some(params) = generic_params_from_rule(rule) {
-          self.generic_rules.push(GenericRule {
+          self.state.generic_rules.push(GenericRule {
             name: entry.name.ident,
             params,
             args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
@@ -3805,16 +3753,23 @@ where
         }
 
         #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-        let mut cv =
-          CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features.clone());
+        let mut cv = CBORValidator::new(
+          self.state.cddl,
+          self.cbor.clone(),
+          self.state.enabled_features.clone(),
+        );
         #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-        let mut cv = CBORValidator::new(self.cddl, self.cbor.clone(), self.enabled_features);
+        let mut cv = CBORValidator::new(
+          self.state.cddl,
+          self.cbor.clone(),
+          self.state.enabled_features,
+        );
         #[cfg(not(feature = "additional-controls"))]
-        let mut cv = CBORValidator::new(self.cddl, self.cbor.clone());
+        let mut cv = CBORValidator::new(self.state.cddl, self.cbor.clone());
 
-        cv.generic_rules = self.generic_rules.clone();
-        cv.eval_generic_rule = Some(entry.name.ident);
-        cv.is_multi_type_choice = self.is_multi_type_choice;
+        cv.state.generic_rules = self.state.generic_rules.clone();
+        cv.state.eval_generic_rule = Some(entry.name.ident);
+        cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
         cv.visit_rule(rule)?;
 
         self.errors.append(&mut cv.errors);
@@ -3823,9 +3778,9 @@ where
       }
     }
 
-    let type_choice_alternates = type_choice_alternates_from_ident(self.cddl, &entry.name);
+    let type_choice_alternates = type_choice_alternates_from_ident(self.state.cddl, &entry.name);
     if !type_choice_alternates.is_empty() {
-      self.is_multi_type_choice = true;
+      self.state.is_multi_type_choice = true;
     }
 
     let error_count = self.errors.len();
@@ -3842,9 +3797,9 @@ where
     }
 
     let error_count = self.errors.len();
-    let group_choice_alternates = group_choice_alternates_from_ident(self.cddl, &entry.name);
+    let group_choice_alternates = group_choice_alternates_from_ident(self.state.cddl, &entry.name);
     if !group_choice_alternates.is_empty() {
-      self.is_multi_group_choice = true;
+      self.state.is_multi_group_choice = true;
     }
 
     for ge in group_choice_alternates {
@@ -3860,7 +3815,7 @@ where
     }
 
     walk_type_groupname_entry(self, entry)?;
-    self.type_group_name_entry = None;
+    self.state.type_group_name_entry = None;
 
     Ok(())
   }
@@ -3868,14 +3823,14 @@ where
   fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<Error<T>> {
     match mk {
       MemberKey::Type1 { is_cut, .. } => {
-        self.is_cut_present = *is_cut;
+        self.state.is_cut_present = *is_cut;
         walk_memberkey(self, mk)?;
-        self.is_cut_present = false;
+        self.state.is_cut_present = false;
       }
       MemberKey::Bareword { .. } => {
-        self.is_colon_shortcut_present = true;
+        self.state.is_colon_shortcut_present = true;
         walk_memberkey(self, mk)?;
-        self.is_colon_shortcut_present = false;
+        self.state.is_colon_shortcut_present = false;
       }
       _ => return walk_memberkey(self, mk),
     }
@@ -3886,7 +3841,7 @@ where
   fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error<T>> {
     let error: Option<String> = match &self.cbor {
       Value::Integer(i) => match value {
-        token::Value::INT(v) => match &self.ctrl {
+        token::Value::INT(v) => match &self.state.ctrl {
           Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
             if i128::from(*i) != *v as i128 =>
           {
@@ -3922,12 +3877,12 @@ where
           }
           _ => Some(format!(
             "expected value {} {}, got {:?}",
-            self.ctrl.unwrap(),
+            self.state.ctrl.unwrap(),
             v,
             i
           )),
         },
-        token::Value::UINT(v) => match &self.ctrl {
+        token::Value::UINT(v) => match &self.state.ctrl {
           Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
             if i128::from(*i) != *v as i128 =>
           {
@@ -3978,7 +3933,7 @@ where
           }
           _ => Some(format!(
             "expected value {} {}, got {:?}",
-            self.ctrl.unwrap(),
+            self.state.ctrl.unwrap(),
             v,
             i
           )),
@@ -3987,7 +3942,7 @@ where
         _ => Some(format!("expected {}, got {:?}", value, i)),
       },
       Value::Float(f) => match value {
-        token::Value::FLOAT(v) => match &self.ctrl {
+        token::Value::FLOAT(v) => match &self.state.ctrl {
           Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
             if (*f - *v).abs() > f64::EPSILON =>
           {
@@ -4023,7 +3978,7 @@ where
           }
           _ => Some(format!(
             "expected value {} {}, got {:?}",
-            self.ctrl.unwrap(),
+            self.state.ctrl.unwrap(),
             v,
             f
           )),
@@ -4031,7 +3986,7 @@ where
         _ => Some(format!("expected {}, got {:?}", value, f)),
       },
       Value::Text(s) => match value {
-        token::Value::TEXT(t) => match &self.ctrl {
+        token::Value::TEXT(t) => match &self.state.ctrl {
           Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) => {
             if s != t {
               None
@@ -4060,12 +4015,13 @@ where
             #[cfg(feature = "additional-controls")]
             if s == t {
               None
-            } else if let Some(ControlOperator::CAT) | Some(ControlOperator::DET) = &self.ctrl {
+            } else if let Some(ControlOperator::CAT) | Some(ControlOperator::DET) = &self.state.ctrl
+            {
               Some(format!(
                 "expected value to match concatenated string {}, got \"{}\"",
                 value, s
               ))
-            } else if let Some(ctrl) = &self.ctrl {
+            } else if let Some(ctrl) = &self.state.ctrl {
               Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
             } else {
               Some(format!("expected value {} got \"{}\"", value, s))
@@ -4074,14 +4030,14 @@ where
             #[cfg(not(feature = "additional-controls"))]
             if s == t {
               None
-            } else if let Some(ctrl) = &self.ctrl {
+            } else if let Some(ctrl) = &self.state.ctrl {
               Some(format!("expected value {} {}, got \"{}\"", ctrl, value, s))
             } else {
               Some(format!("expected value {} got \"{}\"", value, s))
             }
           }
         },
-        token::Value::UINT(u) => match &self.ctrl {
+        token::Value::UINT(u) => match &self.state.ctrl {
           Some(ControlOperator::SIZE) => {
             if s.len() == *u {
               None
@@ -4097,7 +4053,7 @@ where
         _ => Some(format!("expected {}, got \"{}\"", value, s)),
       },
       Value::Bytes(b) => match value {
-        token::Value::UINT(v) => match &self.ctrl {
+        token::Value::UINT(v) => match &self.state.ctrl {
           Some(ControlOperator::SIZE) => {
             if let Some(range_upper) = self.range_upper.as_ref() {
               let len = b.len();
@@ -4124,7 +4080,7 @@ where
                   } else {
                     Some(format!(
                       "expected value {} {}, got {:?}",
-                      self.ctrl.unwrap(),
+                      self.state.ctrl.unwrap(),
                       v,
                       b
                     ))
@@ -4132,7 +4088,7 @@ where
                 } else {
                   Some(format!(
                     "expected value {} {}, got {:?}",
-                    self.ctrl.unwrap(),
+                    self.state.ctrl.unwrap(),
                     v,
                     b
                   ))
@@ -4140,7 +4096,7 @@ where
               } else {
                 Some(format!(
                   "expected value {} {}, got {:?}",
-                  self.ctrl.unwrap(),
+                  self.state.ctrl.unwrap(),
                   v,
                   b
                 ))
@@ -4148,14 +4104,14 @@ where
             } else {
               Some(format!(
                 "expected value {} {}, got {:?}",
-                self.ctrl.unwrap(),
+                self.state.ctrl.unwrap(),
                 v,
                 b
               ))
             }
           }
           _ => {
-            if let Some(ctrl) = self.ctrl {
+            if let Some(ctrl) = self.state.ctrl {
               Some(format!("expected value {} {}, got {:?}", ctrl, v, b))
             } else {
               Some(format!("expected value {}, got {:?}", v, b))
@@ -4163,7 +4119,7 @@ where
           }
         },
         #[cfg(feature = "additional-controls")]
-        token::Value::TEXT(t) => match &self.ctrl {
+        token::Value::TEXT(t) => match &self.state.ctrl {
           Some(ControlOperator::ABNFB) => {
             validate_abnf(t, std::str::from_utf8(b).map_err(Error::UTF8Parsing)?)
               .err()
@@ -4176,13 +4132,13 @@ where
           }
           _ => Some(format!(
             "expected value {} {}, got {:?}",
-            self.ctrl.unwrap(),
+            self.state.ctrl.unwrap(),
             t,
             b
           )),
         },
         #[cfg(feature = "additional-controls")]
-        token::Value::BYTE(bv) => match &self.ctrl {
+        token::Value::BYTE(bv) => match &self.state.ctrl {
           Some(ControlOperator::ABNFB) => match bv {
             ByteValue::UTF8(utf8bv) => validate_abnf(
               std::str::from_utf8(utf8bv).map_err(Error::UTF8Parsing)?,
@@ -4226,7 +4182,7 @@ where
           },
           _ => Some(format!(
             "expected value {} {}, got {:?}",
-            self.ctrl.unwrap(),
+            self.state.ctrl.unwrap(),
             bv,
             b
           )),
@@ -4239,7 +4195,7 @@ where
         None
       }
       Value::Map(o) => {
-        if self.is_cut_present {
+        if self.state.is_cut_present {
           self.cut_value = Some(Type1::from(value.clone()));
         }
 
@@ -4258,24 +4214,25 @@ where
         {
           self.validated_keys.get_or_insert(vec![k.clone()]).push(k);
           self.object_value = Some(v.clone());
-          let _ = write!(self.cbor_location, "/{}", value);
+          let _ = write!(self.state.data_location, "/{}", value);
 
           None
         } else if let Some(Occur::Optional { .. }) | Some(Occur::ZeroOrMore { .. }) =
-          &self.occurrence.take()
+          &self.state.occurrence.take()
         {
-          self.advance_to_next_entry = true;
+          self.state.advance_to_next_entry = true;
           None
         } else if let Some(Occur::Exact {
           lower: None,
           upper: None,
           ..
-        }) = &self.occurrence.take()
+        }) = &self.state.occurrence.take()
         {
           // Handle Exact { lower: None, upper: None } as zero-or-more (for backward compatibility)
-          self.advance_to_next_entry = true;
+          self.state.advance_to_next_entry = true;
           None
-        } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.ctrl {
+        } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.state.ctrl
+        {
           None
         } else {
           Some(format!("object missing key: {}", value))
@@ -4288,15 +4245,15 @@ where
         {
           self.validated_keys.get_or_insert(vec![k.clone()]).push(k);
           self.object_value = Some(v.clone());
-          self.cbor_location.push_str(&format!("/{}", value));
+          self.state.data_location.push_str(&format!("/{}", value));
 
           None
         } else if let Some(Occur::Optional {}) | Some(Occur::ZeroOrMore {}) =
-          &self.occurrence.take()
+          &self.state.occurrence.take()
         {
-          self.advance_to_next_entry = true;
+          self.state.advance_to_next_entry = true;
           None
-        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.ctrl {
+        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.state.ctrl {
           None
         } else {
           Some(format!("object missing key: {}", value))
@@ -4313,7 +4270,7 @@ where
   }
 
   fn visit_occurrence(&mut self, o: &Occurrence<'a>) -> visitor::Result<Error<T>> {
-    self.occurrence = Some(o.occur);
+    self.state.occurrence = Some(o.occur);
 
     Ok(())
   }

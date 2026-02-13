@@ -13,13 +13,14 @@ mod control;
 
 use crate::{
   ast::{
-    Group, GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type2, TypeChoice,
-    TypeRule, CDDL,
+    Group, GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type1, Type2,
+    TypeChoice, TypeRule, CDDL,
   },
-  token::*,
+  token::{self, *},
   visitor::Visitor,
 };
 
+use std::collections::HashSet;
 use std::error::Error;
 
 #[cfg(feature = "cbor")]
@@ -53,6 +54,238 @@ pub trait Validator<'a, 'b, E: Error>: Visitor<'a, 'b, E> {
   fn validate(&mut self) -> std::result::Result<(), E>;
   /// Collect validation errors
   fn add_error(&mut self, reason: String);
+}
+
+/// Generic rule representation used during validation.
+///
+/// Tracks a named rule along with its generic parameters and the concrete
+/// type arguments it has been instantiated with during AST evaluation.
+#[derive(Clone, Debug)]
+pub struct GenericRule<'a> {
+  /// Rule name
+  pub name: &'a str,
+  /// Generic parameter names
+  pub params: Vec<&'a str>,
+  /// Concrete type arguments for this instantiation
+  pub args: Vec<Type1<'a>>,
+}
+
+/// Shared validation state used by all format-specific validators.
+///
+/// This struct contains the common CDDL AST tracking fields that are
+/// identical across JSON, CBOR, and other validators. By composing with
+/// this struct, new validators can reuse all the tracking infrastructure
+/// without duplicating the ~25 fields needed for proper CDDL evaluation.
+///
+/// # Creating a new validator
+///
+/// To create a new format-specific validator:
+///
+/// 1. Define a struct containing `state: ValidationState<'a>` and your
+///    format-specific fields (e.g., the data value, validated keys, errors).
+/// 2. Implement `Deref<Target = ValidationState<'a>>` and `DerefMut` to
+///    enable transparent access to the shared state fields.
+/// 3. Implement the `Visitor` trait, providing format-specific logic in
+///    methods like `visit_identifier` and `visit_value`.
+/// 4. Implement the `Validator` trait for your entry point.
+///
+/// The shared state handles occurrence tracking, group entry indexing,
+/// generic rule management, control operator tracking, feature flags,
+/// and recursion detection — all of which are identical across validators.
+#[derive(Clone)]
+pub struct ValidationState<'a> {
+  /// Reference to the CDDL AST being validated against
+  pub cddl: &'a CDDL<'a>,
+  /// Current location in the CDDL document
+  pub cddl_location: String,
+  /// Current location in the data being validated (e.g., JSON Pointer or
+  /// CBOR path). Uses a generic name so validators for any format can share
+  /// the same field.
+  pub data_location: String,
+  /// Occurrence indicator detected in current state of AST evaluation
+  pub occurrence: Option<Occur>,
+  /// Current group entry index detected in current state of AST evaluation
+  pub group_entry_idx: Option<usize>,
+  /// Is member key detected in current state of AST evaluation
+  pub is_member_key: bool,
+  /// Is a cut detected in current state of AST evaluation
+  pub is_cut_present: bool,
+  /// Validate the generic rule given by str ident in current state of AST
+  /// evaluation
+  pub eval_generic_rule: Option<&'a str>,
+  /// Aggregation of generic rules
+  pub generic_rules: Vec<GenericRule<'a>>,
+  /// Control operator token detected in current state of AST evaluation
+  pub ctrl: Option<token::ControlOperator>,
+  /// Is a group to choice enumeration detected in current state of AST
+  /// evaluation
+  pub is_group_to_choice_enum: bool,
+  /// Are 2 or more type choices detected in current state of AST evaluation
+  pub is_multi_type_choice: bool,
+  /// Are 2 or more group choices detected in current state of AST evaluation
+  pub is_multi_group_choice: bool,
+  /// Type/group name entry detected in current state of AST evaluation. Used
+  /// only for providing more verbose error messages
+  pub type_group_name_entry: Option<&'a str>,
+  /// Whether or not to advance to the next group entry if member key
+  /// validation fails as detected during the current state of AST evaluation
+  pub advance_to_next_entry: bool,
+  /// Is validation checking for map equality
+  pub is_ctrl_map_equality: bool,
+  /// Entry counts for array/map validation
+  pub entry_counts: Option<Vec<EntryCount>>,
+  /// Collect valid array indices when entries are type choices
+  pub valid_array_items: Option<Vec<usize>>,
+  /// Is colon shortcut present in member key
+  pub is_colon_shortcut_present: bool,
+  /// Is the current rule the root rule
+  pub is_root: bool,
+  /// Is multi type choice type rule validating an array
+  pub is_multi_type_choice_type_rule_validating_array: bool,
+  /// Track visited rules to prevent infinite recursion during validation
+  pub visited_rules: HashSet<String>,
+  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(feature = "additional-controls")]
+  /// Enabled features for validation
+  pub enabled_features: Option<&'a [&'a str]>,
+  #[cfg(target_arch = "wasm32")]
+  #[cfg(feature = "additional-controls")]
+  /// Enabled features for validation (WASM)
+  pub enabled_features: Option<Box<[JsValue]>>,
+  #[cfg(feature = "additional-controls")]
+  /// Whether feature-related errors have been detected
+  pub has_feature_errors: bool,
+  #[cfg(feature = "additional-controls")]
+  /// Disabled features encountered during validation
+  pub disabled_features: Option<Vec<String>>,
+}
+
+impl<'a> ValidationState<'a> {
+  /// Create a new `ValidationState` with default values.
+  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(feature = "additional-controls")]
+  pub fn new(cddl: &'a CDDL<'a>, enabled_features: Option<&'a [&'a str]>) -> Self {
+    ValidationState {
+      cddl,
+      cddl_location: String::new(),
+      data_location: String::new(),
+      occurrence: None,
+      group_entry_idx: None,
+      is_member_key: false,
+      is_cut_present: false,
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
+      ctrl: None,
+      is_group_to_choice_enum: false,
+      is_multi_type_choice: false,
+      is_multi_group_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
+      entry_counts: None,
+      valid_array_items: None,
+      is_colon_shortcut_present: false,
+      is_root: false,
+      is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: HashSet::new(),
+      enabled_features,
+      has_feature_errors: false,
+      disabled_features: None,
+    }
+  }
+
+  /// Create a new `ValidationState` with default values.
+  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(not(feature = "additional-controls"))]
+  pub fn new(cddl: &'a CDDL<'a>) -> Self {
+    ValidationState {
+      cddl,
+      cddl_location: String::new(),
+      data_location: String::new(),
+      occurrence: None,
+      group_entry_idx: None,
+      is_member_key: false,
+      is_cut_present: false,
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
+      ctrl: None,
+      is_group_to_choice_enum: false,
+      is_multi_type_choice: false,
+      is_multi_group_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
+      entry_counts: None,
+      valid_array_items: None,
+      is_colon_shortcut_present: false,
+      is_root: false,
+      is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: HashSet::new(),
+    }
+  }
+
+  /// Create a new `ValidationState` with default values.
+  #[cfg(target_arch = "wasm32")]
+  #[cfg(feature = "additional-controls")]
+  pub fn new(cddl: &'a CDDL<'a>, enabled_features: Option<Box<[JsValue]>>) -> Self {
+    ValidationState {
+      cddl,
+      cddl_location: String::new(),
+      data_location: String::new(),
+      occurrence: None,
+      group_entry_idx: None,
+      is_member_key: false,
+      is_cut_present: false,
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
+      ctrl: None,
+      is_group_to_choice_enum: false,
+      is_multi_type_choice: false,
+      is_multi_group_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
+      entry_counts: None,
+      valid_array_items: None,
+      is_colon_shortcut_present: false,
+      is_root: false,
+      is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: HashSet::new(),
+      enabled_features,
+      has_feature_errors: false,
+      disabled_features: None,
+    }
+  }
+
+  /// Create a new `ValidationState` with default values.
+  #[cfg(target_arch = "wasm32")]
+  #[cfg(not(feature = "additional-controls"))]
+  pub fn new(cddl: &'a CDDL<'a>) -> Self {
+    ValidationState {
+      cddl,
+      cddl_location: String::new(),
+      data_location: String::new(),
+      occurrence: None,
+      group_entry_idx: None,
+      is_member_key: false,
+      is_cut_present: false,
+      eval_generic_rule: None,
+      generic_rules: Vec::new(),
+      ctrl: None,
+      is_group_to_choice_enum: false,
+      is_multi_type_choice: false,
+      is_multi_group_choice: false,
+      type_group_name_entry: None,
+      advance_to_next_entry: false,
+      is_ctrl_map_equality: false,
+      entry_counts: None,
+      valid_array_items: None,
+      is_colon_shortcut_present: false,
+      is_root: false,
+      is_multi_type_choice_type_rule_validating_array: false,
+      visited_rules: HashSet::new(),
+    }
+  }
 }
 
 impl CDDL<'_> {
