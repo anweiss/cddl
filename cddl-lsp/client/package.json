@@ -21,6 +21,6 @@
     "@types/vscode": "^1.109.0",
     "@vscode/test-electron": "^2.4.1",
     "glob": "^13.0.2",
-    "mocha": "^11.3.0"
+    "mocha": "^11.7.5"
   }
 }
