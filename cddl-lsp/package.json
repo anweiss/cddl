@@ -129,7 +129,7 @@
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.41.0",
     "@vscode/vsce": "^3.2.2",
-    "eslint": "^9.39.2",
+    "eslint": "^10.0.0",
     "merge-options": "^3.0.4",
     "mocha": "^11.3.0",
     "rimraf": "^6.1.2",
