@@ -279,11 +279,272 @@ fn pest_span_to_position(span: &PestSpan, input: &str) -> Position {
   }
 }
 
+/// Standard prelude names from RFC 8610 §D
+const STANDARD_PRELUDE: &[&str] = &[
+  "any",
+  "uint",
+  "nint",
+  "int",
+  "bstr",
+  "bytes",
+  "tstr",
+  "text",
+  "tdate",
+  "time",
+  "number",
+  "biguint",
+  "bignint",
+  "bigint",
+  "integer",
+  "unsigned",
+  "decfrac",
+  "bigfloat",
+  "eb64url",
+  "eb64legacy",
+  "eb16",
+  "encoded-cbor",
+  "uri",
+  "b64url",
+  "b64legacy",
+  "regexp",
+  "mime-message",
+  "cbor-any",
+  "float16",
+  "float32",
+  "float64",
+  "float16-32",
+  "float32-64",
+  "float",
+  "false",
+  "true",
+  "bool",
+  "nil",
+  "null",
+  "undefined",
+];
+
 /// Parse CDDL from string using Pest parser and convert to AST
 pub fn cddl_from_pest_str<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
   let pairs = CddlParser::parse(Rule::cddl, input).map_err(|e| convert_pest_error(e, input))?;
 
   convert_cddl(pairs, input)
+}
+
+/// Parse CDDL from string, converting to AST and checking for undefined references.
+///
+/// This is the same as `cddl_from_pest_str` but additionally verifies that all
+/// referenced type/group names are either defined by a rule in the document,
+/// part of the standard prelude (RFC 8610 §D), a generic parameter, or a
+/// socket/plug reference.
+pub fn cddl_from_pest_str_checked<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
+  let pairs = CddlParser::parse(Rule::cddl, input).map_err(|e| convert_pest_error(e, input))?;
+
+  // Clone pairs so we can check for undefined references after AST conversion
+  let pairs_for_ref_check = pairs.clone();
+
+  let cddl = convert_cddl(pairs, input)?;
+
+  // Check for undefined references
+  if let Some((name, _pos)) = find_first_undefined_reference(pairs_for_ref_check, input) {
+    return Err(Error::PARSER {
+      #[cfg(feature = "ast-span")]
+      position: _pos,
+      msg: ErrorMsg {
+        short: format!("missing definition for rule {}", name),
+        extended: None,
+      },
+    });
+  }
+
+  Ok(cddl)
+}
+
+/// Walk a successful pest parse tree to find the first undefined reference.
+///
+/// Returns `Some((name, position))` if an undefined reference is found.
+fn find_first_undefined_reference(
+  pairs: Pairs<'_, Rule>,
+  input: &str,
+) -> Option<(String, Position)> {
+  use std::collections::HashSet;
+
+  let prelude: HashSet<&str> = STANDARD_PRELUDE.iter().copied().collect();
+
+  // Phase 1: collect all defined rule names and per-rule generic parameters
+  let mut defined: HashSet<String> = HashSet::new();
+  let mut rule_generic_params: HashMap<usize, HashSet<String>> = HashMap::new();
+
+  fn collect_definitions(
+    pair: &Pair<'_, Rule>,
+    defined: &mut HashSet<String>,
+    rule_generic_params: &mut HashMap<usize, HashSet<String>>,
+  ) {
+    if pair.as_rule() == Rule::rule {
+      let mut generic_params_for_rule: HashSet<String> = HashSet::new();
+      for inner in pair.clone().into_inner() {
+        match inner.as_rule() {
+          Rule::typename | Rule::groupname => {
+            for id_pair in inner.into_inner() {
+              if id_pair.as_rule() == Rule::id {
+                defined.insert(id_pair.as_str().to_string());
+              }
+            }
+          }
+          Rule::generic_params => {
+            for gp in inner.into_inner() {
+              if gp.as_rule() == Rule::generic_param {
+                for id_pair in gp.into_inner() {
+                  if id_pair.as_rule() == Rule::id {
+                    generic_params_for_rule.insert(id_pair.as_str().to_string());
+                  }
+                }
+              }
+            }
+          }
+          _ => {}
+        }
+      }
+      if !generic_params_for_rule.is_empty() {
+        rule_generic_params.insert(pair.as_span().start(), generic_params_for_rule);
+      }
+    }
+    for inner in pair.clone().into_inner() {
+      collect_definitions(&inner, defined, rule_generic_params);
+    }
+  }
+
+  let pairs_clone = pairs.clone();
+  for pair in pairs_clone {
+    collect_definitions(&pair, &mut defined, &mut rule_generic_params);
+  }
+
+  // Phase 2: find the first undefined reference
+  struct RefFinder<'a> {
+    prelude: &'a HashSet<&'a str>,
+    defined: &'a HashSet<String>,
+    input: &'a str,
+    current_rule_generics: Option<&'a HashSet<String>>,
+    result: Option<(String, Position)>,
+  }
+
+  impl<'a> RefFinder<'a> {
+    fn walk(
+      &mut self,
+      pair: Pair<'_, Rule>,
+      rule_generic_params: &'a HashMap<usize, HashSet<String>>,
+    ) {
+      if self.result.is_some() {
+        return;
+      }
+
+      if pair.as_rule() == Rule::rule {
+        let generics = rule_generic_params.get(&pair.as_span().start());
+        let prev = self.current_rule_generics;
+        self.current_rule_generics = generics;
+        for inner in pair.into_inner() {
+          self.walk(inner, rule_generic_params);
+          if self.result.is_some() {
+            return;
+          }
+        }
+        self.current_rule_generics = prev;
+        return;
+      }
+
+      match pair.as_rule() {
+        Rule::type2 => {
+          for inner in pair.clone().into_inner() {
+            match inner.as_rule() {
+              Rule::typename | Rule::groupname => {
+                self.check_reference(&inner);
+                if self.result.is_some() {
+                  return;
+                }
+              }
+              _ => {}
+            }
+            self.walk(inner, rule_generic_params);
+            if self.result.is_some() {
+              return;
+            }
+          }
+          return;
+        }
+        Rule::group_entry => {
+          for inner in pair.clone().into_inner() {
+            if inner.as_rule() == Rule::groupname {
+              self.check_reference(&inner);
+              if self.result.is_some() {
+                return;
+              }
+            }
+            self.walk(inner, rule_generic_params);
+            if self.result.is_some() {
+              return;
+            }
+          }
+          return;
+        }
+        _ => {}
+      }
+
+      for inner in pair.into_inner() {
+        self.walk(inner, rule_generic_params);
+        if self.result.is_some() {
+          return;
+        }
+      }
+    }
+
+    fn check_reference(&mut self, pair: &Pair<'_, Rule>) {
+      // Skip socket/plug references ($typename, $$groupname)
+      for child in pair.clone().into_inner() {
+        if child.as_rule() == Rule::socket_type || child.as_rule() == Rule::socket_group {
+          return;
+        }
+      }
+
+      for id_pair in pair.clone().into_inner() {
+        if id_pair.as_rule() == Rule::id {
+          let name = id_pair.as_str();
+
+          if self.defined.contains(name)
+            || self.prelude.contains(name)
+            || self
+              .current_rule_generics
+              .is_some_and(|gp| gp.contains(name))
+          {
+            return;
+          }
+
+          // Also skip socket/plug references ($name, $$name)
+          if name.starts_with('$') {
+            return;
+          }
+
+          let pos = pest_span_to_position(&id_pair.as_span(), self.input);
+          self.result = Some((name.to_string(), pos));
+        }
+      }
+    }
+  }
+
+  let mut finder = RefFinder {
+    prelude: &prelude,
+    defined: &defined,
+    input,
+    current_rule_generics: None,
+    result: None,
+  };
+
+  for pair in pairs {
+    finder.walk(pair, &rule_generic_params);
+    if finder.result.is_some() {
+      break;
+    }
+  }
+
+  finder.result
 }
 
 /// A collected parser error with position and message, used for partial
@@ -602,50 +863,6 @@ fn push_error_with_offset(
 #[cfg(target_arch = "wasm32")]
 fn check_undefined_references(pairs: Pairs<'_, Rule>, input: &str) -> Vec<CollectedError> {
   use std::collections::{HashMap, HashSet};
-
-  /// Standard prelude names from RFC 8610 §D
-  const STANDARD_PRELUDE: &[&str] = &[
-    "any",
-    "uint",
-    "nint",
-    "int",
-    "bstr",
-    "bytes",
-    "tstr",
-    "text",
-    "tdate",
-    "time",
-    "number",
-    "biguint",
-    "bignint",
-    "bigint",
-    "integer",
-    "unsigned",
-    "decfrac",
-    "bigfloat",
-    "eb64url",
-    "eb64legacy",
-    "eb16",
-    "encoded-cbor",
-    "uri",
-    "b64url",
-    "b64legacy",
-    "regexp",
-    "mime-message",
-    "cbor-any",
-    "float16",
-    "float32",
-    "float64",
-    "float16-32",
-    "float32-64",
-    "float",
-    "false",
-    "true",
-    "bool",
-    "nil",
-    "null",
-    "undefined",
-  ];
 
   let prelude: HashSet<&str> = STANDARD_PRELUDE.iter().copied().collect();
 
@@ -2927,6 +3144,80 @@ person = {
         error_str
       );
     }
+  }
+
+  #[test]
+  fn test_undefined_reference_error() {
+    let input = "X = {\n  a: UnknownType,\n}\n";
+    let result = cddl_from_pest_str_checked(input);
+    assert!(result.is_err(), "Expected error for undefined reference");
+    let err = result.unwrap_err().to_string();
+    assert!(
+      err.contains("missing definition for rule UnknownType"),
+      "Expected 'missing definition for rule UnknownType', got: {}",
+      err
+    );
+  }
+
+  #[test]
+  fn test_prelude_types_not_flagged() {
+    let input = "X = { a: int, b: tstr, c: bool }\n";
+    let result = cddl_from_pest_str_checked(input);
+    assert!(
+      result.is_ok(),
+      "Prelude types should not be flagged: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_defined_rule_not_flagged() {
+    let input = "MyType = int\nX = { a: MyType }\n";
+    let result = cddl_from_pest_str_checked(input);
+    assert!(
+      result.is_ok(),
+      "Defined rules should not be flagged: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_generic_params_not_flagged() {
+    let input = "container<T> = { value: T }\n";
+    let result = cddl_from_pest_str_checked(input);
+    assert!(
+      result.is_ok(),
+      "Generic params should not be flagged: {:?}",
+      result.err()
+    );
+  }
+
+  #[test]
+  fn test_socket_plug_not_flagged() {
+    let input = "X = { a: $my-socket }\n";
+    let result = cddl_from_pest_str_checked(input);
+    assert!(
+      result.is_ok(),
+      "Socket/plug references should not be flagged: {:?}",
+      result.err()
+    );
+  }
+
+  #[cfg(not(target_arch = "wasm32"))]
+  #[test]
+  fn test_from_slice_undefined_reference() {
+    let cddl_input = "X = {\n  a: UnknownType,\n}\n";
+    let result = ast::CDDL::from_slice(cddl_input.as_bytes());
+    assert!(
+      result.is_err(),
+      "CDDL::from_slice should return error for undefined reference"
+    );
+    let err = result.unwrap_err();
+    assert!(
+      err.contains("missing definition for rule UnknownType"),
+      "Expected 'missing definition for rule UnknownType', got: {}",
+      err
+    );
   }
 }
 
