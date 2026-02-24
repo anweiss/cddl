@@ -108,11 +108,17 @@ fn report_pest_error(error: &Error, input: &str) {
 }
 
 impl CDDL<'_> {
-  /// Parses CDDL from a byte slice
+  /// Parses CDDL from a byte slice.
+  ///
+  /// This performs both syntactic parsing and semantic validation, including
+  /// checking that all referenced type/group names are defined.
   #[cfg(not(target_arch = "wasm32"))]
   pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL<'_>, String> {
     let str_input = std::str::from_utf8(input).map_err(|e| e.to_string())?;
-    cddl_from_str(str_input, false)
+    pest_bridge::cddl_from_pest_str_checked(str_input).map_err(|e| {
+      report_pest_error(&e, str_input);
+      e.to_string()
+    })
   }
 }
 
