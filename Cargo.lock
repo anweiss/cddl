@@ -682,9 +682,9 @@ dependencies = [
 
 [[package]]
 name = "pest_vm"
-version = "2.8.1"
+version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "267f825394d1787eb30fc82b1e5903b4a6eb600a78322f91f412dd189a6005e0"
+checksum = "6ab93bef9236b2d33dc5b78c069773e52a997eb1a268b8931e1c23e149e03185"
 dependencies = [
  "pest",
  "pest_meta",
