@@ -111,7 +111,7 @@ cat reputon.cbor | cddl validate --cddl reputon.cddl --stdin
 or using Docker:
 
 ```sh
-docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.10.2 validate --cddl reputon.cddl --stdin < reputon.json
+docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.10.3 validate --cddl reputon.cddl --stdin < reputon.json
 ```
 
 ## Website
@@ -156,7 +156,7 @@ Simply add the dependency to `Cargo.toml` :
 
 ```toml
 [dependencies]
-cddl = "0.10.2"
+cddl = "0.10.3"
 ```
 
 JSON, CBOR, and CSV validation all require `std` .
@@ -474,7 +474,7 @@ Only the lexer and parser can be used in a `no_std` context provided that a heap
 
 ```toml
 [dependencies]
-cddl = { version = "0.10.2", default-features = false }
+cddl = { version = "0.10.3", default-features = false }
 ```
 
 Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling and diagnostics.
