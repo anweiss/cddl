@@ -1164,7 +1164,25 @@ function toMarker(model, err) {
     };
   }
   if (col > lineContent.length || lineContent.trim().length === 0) {
-    // Nothing useful on this line — walk back to the previous non-empty line
+    // Column is past end-of-line or the line is empty/whitespace.
+    // First try: highlight the last token on the SAME line (if it has content).
+    const trimmedCurrent = lineContent.trimEnd();
+    if (trimmedCurrent.length > 0) {
+      const lastMatch = trimmedCurrent.match(/[a-zA-Z_][\w\-]*$|"[^"]*"$|'[^']*'$|\S+$/);
+      if (lastMatch) {
+        const start = trimmedCurrent.length - lastMatch[0].length + 1;
+        return {
+          startLineNumber: lineNumber,
+          startColumn: start,
+          endLineNumber: lineNumber,
+          endColumn: trimmedCurrent.length + 1,
+          message: err.message,
+          severity,
+          source: 'cddl',
+        };
+      }
+    }
+    // Current line is truly empty — walk back to the previous non-empty line
     let targetLine = lineNumber;
     let targetContent = lineContent;
     while (targetLine > 1) {

@@ -62,21 +62,153 @@ pub fn convert_pest_error(error: pest::error::Error<Rule>, input: &str) -> Error
     pest::error::InputLocation::Span((start, _)) => start,
   };
 
+  // Compute a meaningful range for highlighting.
+  //
+  // Pest reports errors at the position *after* the last successfully consumed
+  // token. When that position is at end-of-line or end-of-input (i.e. there is
+  // no forward token to highlight), scan backwards to find the preceding token
+  // and use its span so the error marker lands on something visible.
+  #[cfg(feature = "ast-span")]
+  let range = compute_error_range(index, input);
+
+  // Adjust line/column to the start of the range when we moved backwards
+  #[cfg(feature = "ast-span")]
+  let (adj_line, adj_column) = if range.0 < index {
+    let mut l = 1usize;
+    let mut c = 1usize;
+    for (i, ch) in input.char_indices() {
+      if i >= range.0 {
+        break;
+      }
+      if ch == '\n' {
+        l += 1;
+        c = 1;
+      } else {
+        c += 1;
+      }
+    }
+    (l, c)
+  } else {
+    (line, column)
+  };
+
   // Create enhanced error message with user-friendly rule names
   let (short_msg, extended_msg) = create_enhanced_error_message(&error, input);
 
   Error::PARSER {
     #[cfg(feature = "ast-span")]
     position: Position {
-      line,
-      column,
-      range: (index, index),
-      index,
+      line: adj_line,
+      column: adj_column,
+      range,
+      index: range.0,
     },
     msg: ErrorMsg {
       short: short_msg,
       extended: extended_msg,
     },
+  }
+}
+
+/// Compute a byte range for an error at `index` in `input`.
+///
+/// If `index` points at a visible token (identifier, number, etc.), return
+/// its span.  Otherwise scan backwards to the preceding token and return
+/// that span instead.  This ensures the error marker covers something the
+/// user can actually see.
+fn compute_error_range(index: usize, input: &str) -> (usize, usize) {
+  let bytes = input.as_bytes();
+
+  // Try forward first: if there is a token starting at `index`, use it.
+  if index < bytes.len() {
+    let ch = bytes[index];
+    if !ch.is_ascii_whitespace() && ch != b';' {
+      let end = scan_token_end(bytes, index);
+      if end > index {
+        return (index, end);
+      }
+    }
+  }
+
+  // Nothing useful at `index` — scan backwards to the previous token.
+  if index > 0 {
+    let mut pos = index;
+    // Skip whitespace / comments backwards
+    while pos > 0 {
+      pos -= 1;
+      let ch = bytes[pos];
+      if !ch.is_ascii_whitespace() && ch != b';' {
+        // Found a non-ws char. Find the start of this token.
+        let token_end = pos + 1;
+        let token_start = scan_token_start(bytes, pos);
+        return (token_start, token_end);
+      }
+    }
+  }
+
+  // Fallback: zero-width at index
+  (index, index)
+}
+
+/// Scan forward from `start` to find the end of a token (identifier, number,
+/// operator, etc.).
+fn scan_token_end(bytes: &[u8], start: usize) -> usize {
+  let mut pos = start;
+  if pos >= bytes.len() {
+    return pos;
+  }
+  let first = bytes[pos];
+  if first.is_ascii_alphanumeric() || first == b'_' || first == b'$' || first == b'@' {
+    // Identifier or number
+    while pos < bytes.len() {
+      let ch = bytes[pos];
+      if ch.is_ascii_alphanumeric()
+        || ch == b'_'
+        || ch == b'-'
+        || ch == b'.'
+        || ch == b'$'
+        || ch == b'@'
+      {
+        pos += 1;
+      } else {
+        break;
+      }
+    }
+  } else {
+    // Single character (operator, delimiter, etc.)
+    pos += 1;
+  }
+  pos
+}
+
+/// Scan backwards from `pos` to find the start of the token containing `pos`.
+fn scan_token_start(bytes: &[u8], pos: usize) -> usize {
+  let ch = bytes[pos];
+  if ch.is_ascii_alphanumeric()
+    || ch == b'_'
+    || ch == b'-'
+    || ch == b'.'
+    || ch == b'$'
+    || ch == b'@'
+  {
+    let mut start = pos;
+    while start > 0 {
+      let prev = bytes[start - 1];
+      if prev.is_ascii_alphanumeric()
+        || prev == b'_'
+        || prev == b'-'
+        || prev == b'.'
+        || prev == b'$'
+        || prev == b'@'
+      {
+        start -= 1;
+      } else {
+        break;
+      }
+    }
+    start
+  } else {
+    pos
   }
 }
 
@@ -3377,5 +3509,36 @@ ct-tag-number = 1668546817..1668612095"#;
     let input = "my-simple = #7.<0..23>";
     let result = cddl_from_pest_str(input);
     assert!(result.is_ok(), "#7.<type> should parse: {:?}", result.err());
+  }
+
+  #[test]
+  #[cfg(feature = "ast-span")]
+  fn test_error_position_for_invalid_second_rule() {
+    // When the input has a valid first rule and an invalid second "rule"
+    // (just a bare identifier with no assignment), the error position should
+    // point to the invalid token, not to the first rule.
+    let input = "value = 0x1\n\nbreak";
+    let result = cddl_from_pest_str(input);
+    assert!(result.is_err(), "Should fail to parse");
+    if let Err(crate::parser::Error::PARSER { position, msg, .. }) = result {
+      // The error should point to "break" on line 3
+      assert_eq!(
+        position.line, 3,
+        "Error should be on line 3 (at 'break'), not line {}. Message: {}",
+        position.line, msg.short
+      );
+      assert_eq!(
+        position.column, 1,
+        "Error should start at column 1 (start of 'break'), not column {}",
+        position.column
+      );
+      // The range should cover "break" (bytes 13..18)
+      assert_eq!(
+        position.range,
+        (13, 18),
+        "Range should cover 'break' (13..18), got {:?}",
+        position.range
+      );
+    }
   }
 }
