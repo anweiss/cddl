@@ -128,7 +128,7 @@
     "@types/node": "^24",
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.55.0",
-    "@vscode/vsce": "^3.2.2",
+    "@vscode/vsce": "^3.7.1",
     "eslint": "^9.39.2",
     "merge-options": "^3.0.4",
     "mocha": "^11.7.5",
