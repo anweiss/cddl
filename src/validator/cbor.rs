@@ -3774,9 +3774,9 @@ where
             // Create a new validator instance for the specific array element
             #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
             let mut cv = CBORValidator::new(
-              self.cddl,
+              self.state.cddl,
               element_value.clone(),
-              self.enabled_features.clone(),
+              self.state.enabled_features.clone(),
             );
             #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
             let mut cv = CBORValidator::new(
@@ -3826,7 +3826,7 @@ where
             }
             #[cfg(not(feature = "ast-span"))]
             if !matches!(
-              self.occurrence,
+              self.state.occurrence,
               Some(Occur::Optional {}) | Some(Occur::ZeroOrMore {}) | None
             ) {
               self.add_error(format!(
