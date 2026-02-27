@@ -204,6 +204,7 @@ fn validate_cbor_array_groups() {
 fn validate_cbor_array_record() {
   let cddl_input = r#"thing = [a: int, b: int, c: int]"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
+  // TODO: Fix to fail on empty array CBOR for record CDDL rule.
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY, None).unwrap_err();
 
   let cddl_input = r#"thing = [a: tstr, b: int]"#;
@@ -216,11 +217,13 @@ fn validate_cbor_array_record() {
   let input = BackwardsTuple(43, "Carol".to_string());
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
+  // TODO: Fix to fail on backwards record CBOR for record CDDL rule.
   validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
 
   let input = LongTuple("David".to_string(), 44, 45);
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
+  // TODO: Fix to fail on long record CBOR for record CDDL rule.
   validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
 
   let input = ShortTuple("Eve".to_string());
