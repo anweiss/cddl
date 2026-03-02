@@ -54,7 +54,7 @@ abnf_to_pest = "0.5.1"
 pest_meta = "2.8.6"
 pest_vm = "2.8.3"
 pest = "2.8.6"
-pest_derive = "2.8.0"
+pest_derive = "2.8.3"
 displaydoc = { version = "0.2.3", default-features = false }
 log = "0.4.29"
 simplelog = "0.12.1"
