@@ -563,6 +563,7 @@ reputon = {
   }
 
   #[test]
+  #[cfg(feature = "ast-span")]
   fn error_should_point_at_invalid_token_not_previous_rule() {
     // When a bare identifier like "break" follows a valid rule without an
     // assignment operator, the error must highlight "break" (the offending
