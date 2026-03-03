@@ -3,7 +3,7 @@
 #![cfg(feature = "additional-controls")]
 #![cfg(not(target_arch = "wasm32"))]
 
-//! Integration tests for CSV validation (draft-bormann-cbor-cddl-csv-07)
+//! Integration tests for CSV validation (draft-bormann-cbor-cddl-csv-08)
 
 use cddl::validate_csv_from_str;
 use std::fs;

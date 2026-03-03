@@ -4,7 +4,7 @@
 pub mod cbor;
 /// Custom CBOR value type with simple value support
 pub mod cbor_value;
-/// CSV validation implementation (draft-bormann-cbor-cddl-csv-07)
+/// CSV validation implementation (draft-bormann-cbor-cddl-csv-08)
 pub mod csv_validator;
 /// JSON validation implementation
 pub mod json;
@@ -522,7 +522,7 @@ pub fn validate_cbor_from_slice(
 #[cfg(feature = "additional-controls")]
 /// Validate CSV string from a given CDDL document string.
 ///
-/// Implements draft-bormann-cbor-cddl-csv-07. CSV data is parsed according to
+/// Implements draft-bormann-cbor-cddl-csv-08. CSV data is parsed according to
 /// RFC 4180 and mapped to the CDDL generic data model. Fields are coerced to
 /// their JSON representation for validation.
 ///
@@ -541,7 +541,7 @@ pub fn validate_csv_from_str(
 #[cfg(not(feature = "additional-controls"))]
 /// Validate CSV string from a given CDDL document string.
 ///
-/// Implements draft-bormann-cbor-cddl-csv-07. CSV data is parsed according to
+/// Implements draft-bormann-cbor-cddl-csv-08. CSV data is parsed according to
 /// RFC 4180 and mapped to the CDDL generic data model.
 pub fn validate_csv_from_str(
   cddl: &str,
