@@ -529,6 +529,10 @@ pub mod validator;
 /// CDDL AST visitor
 pub mod visitor;
 
+/// Code generation for deriving Rust types from CDDL
+#[cfg(feature = "codegen")]
+pub mod codegen;
+
 #[cfg(not(target_arch = "wasm32"))]
 mod parser_tests;
 
