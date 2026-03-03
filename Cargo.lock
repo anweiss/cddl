@@ -223,6 +223,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cddl-derive"
+version = "0.1.0"
+dependencies = [
+ "cddl",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

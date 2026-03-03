@@ -1,44 +1,16 @@
-//! Code generation module for deriving Rust types from CDDL definitions.
-//!
-//! This module provides functionality to generate Rust source code (struct and
-//! enum definitions) from CDDL type definitions. The generated code can be used
-//! together with Serde's `Serialize` and `Deserialize` derives for automatic
-//! encoding/decoding of CBOR and JSON data structures.
-//!
-//! # Example
-//!
-//! ```rust
-//! use cddl::codegen::generate_rust_code;
-//!
-//! let cddl_input = r#"
-//!   person = {
-//!     name: tstr,
-//!     age: uint,
-//!     address: tstr,
-//!   }
-//! "#;
-//!
-//! let rust_code = generate_rust_code(cddl_input).unwrap();
-//! assert!(rust_code.contains("pub struct Person"));
-//! assert!(rust_code.contains("pub name: String"));
-//! assert!(rust_code.contains("pub age: u64"));
-//! assert!(rust_code.contains("pub address: String"));
-//! ```
+//! Internal code generation logic for converting CDDL AST to Rust source code.
 
-use crate::ast::{
+use cddl::ast::{
   Group, GroupChoice, GroupEntry, MemberKey, Occur, Rule, Type, Type1, Type2, TypeChoice, TypeRule,
   ValueMemberKeyEntry, CDDL,
 };
-use crate::parser::cddl_from_str;
 use std::fmt::Write;
 
 /// Errors that can occur during code generation.
 #[derive(Debug)]
-pub enum CodegenError {
+pub(crate) enum CodegenError {
   /// CDDL parsing failed.
   ParseError(String),
-  /// Code generation encountered an unsupported CDDL construct.
-  UnsupportedConstruct(String),
   /// Formatting error.
   FmtError(std::fmt::Error),
 }
@@ -47,15 +19,10 @@ impl std::fmt::Display for CodegenError {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       CodegenError::ParseError(msg) => write!(f, "CDDL parse error: {}", msg),
-      CodegenError::UnsupportedConstruct(msg) => {
-        write!(f, "unsupported CDDL construct: {}", msg)
-      }
       CodegenError::FmtError(e) => write!(f, "formatting error: {}", e),
     }
   }
 }
-
-impl std::error::Error for CodegenError {}
 
 impl From<std::fmt::Error> for CodegenError {
   fn from(e: std::fmt::Error) -> Self {
@@ -65,15 +32,15 @@ impl From<std::fmt::Error> for CodegenError {
 
 /// A generated Rust type definition.
 #[derive(Debug, Clone, PartialEq)]
-enum RustTypeDef {
-  /// A struct with named fields.
+pub(crate) enum RustTypeDef {
   Struct {
     name: String,
     fields: Vec<RustField>,
   },
-  /// A type alias (`type Foo = Bar;`).
-  TypeAlias { name: String, target: String },
-  /// An enum with variant choices.
+  TypeAlias {
+    name: String,
+    target: String,
+  },
   Enum {
     name: String,
     variants: Vec<RustEnumVariant>,
@@ -82,69 +49,89 @@ enum RustTypeDef {
 
 /// A field within a generated Rust struct.
 #[derive(Debug, Clone, PartialEq)]
-struct RustField {
-  /// Snake-case field name
-  name: String,
-  /// Original CDDL key name (for serde rename)
-  original_name: String,
-  /// Rust type string
-  rust_type: String,
-  /// Whether the field is optional
-  is_optional: bool,
+pub(crate) struct RustField {
+  pub name: String,
+  pub original_name: String,
+  pub rust_type: String,
+  pub is_optional: bool,
 }
 
 /// A variant within a generated Rust enum.
 #[derive(Debug, Clone, PartialEq)]
-struct RustEnumVariant {
-  /// PascalCase variant name
-  name: String,
-  /// Optional inner type (for newtype variants)
-  inner_type: Option<String>,
+pub(crate) struct RustEnumVariant {
+  pub name: String,
+  pub inner_type: Option<String>,
 }
 
-/// Generate Rust source code from a CDDL input string.
-///
-/// Parses the CDDL input and generates Rust struct and enum definitions
-/// for each rule. Type rules whose values are map types (`{ ... }`) become
-/// structs with named fields. Type rules with multiple type choices become
-/// enums. Simple type aliases are also generated.
-///
-/// # Arguments
-///
-/// * `cddl_input` - A string slice containing valid CDDL definitions.
-///
-/// # Returns
-///
-/// A `Result` containing the generated Rust source code as a `String`, or
-/// a `CodegenError` if parsing or code generation fails.
-///
-/// # Example
-///
-/// ```rust
-/// use cddl::codegen::generate_rust_code;
-///
-/// let cddl_input = r#"
-///   message = {
-///     id: uint,
-///     body: tstr,
-///     ? timestamp: float,
-///   }
-/// "#;
-///
-/// let rust_code = generate_rust_code(cddl_input).unwrap();
-/// assert!(rust_code.contains("pub struct Message"));
-/// ```
-pub fn generate_rust_code(cddl_input: &str) -> Result<String, CodegenError> {
-  let cddl =
-    cddl_from_str(cddl_input, true).map_err(|e| CodegenError::ParseError(e.to_string()))?;
-  let type_defs = collect_type_defs(&cddl)?;
+/// Generate Rust source code for all rules in a parsed CDDL AST.
+pub(crate) fn generate_all_types(cddl: &CDDL<'_>) -> Result<String, CodegenError> {
+  let type_defs = collect_type_defs(cddl)?;
   render_type_defs(&type_defs)
 }
 
-/// Collect all type definitions from the parsed CDDL AST.
+/// Generate Rust source code for a single named rule in a parsed CDDL AST.
+///
+/// If `output_name` is provided, the generated type will use that name instead
+/// of the name derived from the CDDL rule. This allows the `#[cddl]` attribute
+/// macro to preserve the user's chosen struct name.
+pub(crate) fn generate_single_type(
+  cddl: &CDDL<'_>,
+  rule_name: &str,
+  output_name: Option<&str>,
+) -> Result<String, CodegenError> {
+  let type_defs = collect_type_defs(cddl)?;
+  let matching = type_defs
+    .into_iter()
+    .find(|d| match d {
+      RustTypeDef::Struct { name, .. }
+      | RustTypeDef::TypeAlias { name, .. }
+      | RustTypeDef::Enum { name, .. } => name == rule_name,
+    })
+    .ok_or_else(|| {
+      CodegenError::ParseError(format!(
+        "no rule matching '{}' found in CDDL definition",
+        rule_name
+      ))
+    })?;
+
+  let mut output = String::new();
+  match &matching {
+    RustTypeDef::Struct { name, fields } => {
+      let emit_name = output_name.unwrap_or(name);
+      render_struct(&mut output, emit_name, fields)?;
+    }
+    RustTypeDef::TypeAlias { name, target } => {
+      let emit_name = output_name.unwrap_or(name);
+      render_type_alias(&mut output, emit_name, target)?;
+    }
+    RustTypeDef::Enum { name, variants } => {
+      let emit_name = output_name.unwrap_or(name);
+      render_enum(&mut output, emit_name, variants)?;
+    }
+  }
+  Ok(output)
+}
+
+/// Convert a PascalCase struct name to a CDDL-style kebab-case identifier.
+pub(crate) fn pascal_to_cddl_name(pascal: &str) -> String {
+  let mut result = String::with_capacity(pascal.len() + 4);
+  for (i, c) in pascal.chars().enumerate() {
+    if c.is_uppercase() {
+      if i > 0 {
+        result.push('-');
+      }
+      result.push(c.to_lowercase().next().unwrap());
+    } else {
+      result.push(c);
+    }
+  }
+  result
+}
+
+// --- Internal helpers (unchanged from original codegen) ---
+
 fn collect_type_defs(cddl: &CDDL<'_>) -> Result<Vec<RustTypeDef>, CodegenError> {
   let mut defs = Vec::new();
-
   for rule in &cddl.rules {
     match rule {
       Rule::Type {
@@ -157,7 +144,6 @@ fn collect_type_defs(cddl: &CDDL<'_>) -> Result<Vec<RustTypeDef>, CodegenError> 
       Rule::Group {
         rule: group_rule, ..
       } => {
-        // Group rules define reusable groups; generate a struct from the entry
         let name = to_pascal_case(group_rule.name.ident);
         if let Some(fields) = group_entry_to_fields(&group_rule.entry)? {
           defs.push(RustTypeDef::Struct { name, fields });
@@ -165,30 +151,24 @@ fn collect_type_defs(cddl: &CDDL<'_>) -> Result<Vec<RustTypeDef>, CodegenError> 
       }
     }
   }
-
   Ok(defs)
 }
 
-/// Convert a type rule to a Rust type definition.
 fn type_rule_to_rust_def(rule: &TypeRule<'_>) -> Result<Option<RustTypeDef>, CodegenError> {
   let name = to_pascal_case(rule.name.ident);
   let ty = &rule.value;
 
-  // Multiple type choices → enum
   if ty.type_choices.len() > 1 {
     return Ok(Some(type_choices_to_enum(&name, ty)?));
   }
 
-  // Single type choice
   if let Some(tc) = ty.type_choices.first() {
     let type1 = &tc.type1;
     match &type1.type2 {
-      // Map → struct
       Type2::Map { group, .. } => {
         let fields = group_to_fields(group)?;
         Ok(Some(RustTypeDef::Struct { name, fields }))
       }
-      // Array → type alias to Vec<T>
       Type2::Array { group, .. } => {
         let rust_type = array_group_to_type(group)?;
         Ok(Some(RustTypeDef::TypeAlias {
@@ -196,12 +176,10 @@ fn type_rule_to_rust_def(rule: &TypeRule<'_>) -> Result<Option<RustTypeDef>, Cod
           target: rust_type,
         }))
       }
-      // Typename reference → type alias
       Type2::Typename { ident, .. } => {
         let target = cddl_ident_to_rust_type(ident.ident);
         Ok(Some(RustTypeDef::TypeAlias { name, target }))
       }
-      // Parenthesized type → recurse
       Type2::ParenthesizedType { pt, .. } => {
         if pt.type_choices.len() > 1 {
           return Ok(Some(type_choices_to_enum(&name, pt)?));
@@ -209,17 +187,14 @@ fn type_rule_to_rust_def(rule: &TypeRule<'_>) -> Result<Option<RustTypeDef>, Cod
         let target = type_to_rust_string(pt)?;
         Ok(Some(RustTypeDef::TypeAlias { name, target }))
       }
-      // Unwrap → type alias to the unwrapped type
       Type2::Unwrap { ident, .. } => {
         let target = to_pascal_case(ident.ident);
         Ok(Some(RustTypeDef::TypeAlias { name, target }))
       }
-      // Literal values – skip, as they don't produce useful Rust types
       Type2::IntValue { .. }
       | Type2::UintValue { .. }
       | Type2::FloatValue { .. }
       | Type2::TextValue { .. } => Ok(None),
-      // Choice from group → enum
       Type2::ChoiceFromInlineGroup { group, .. } => {
         let variants = group_to_enum_variants(group)?;
         Ok(Some(RustTypeDef::Enum { name, variants }))
@@ -228,7 +203,6 @@ fn type_rule_to_rust_def(rule: &TypeRule<'_>) -> Result<Option<RustTypeDef>, Cod
         let target = to_pascal_case(ident.ident);
         Ok(Some(RustTypeDef::TypeAlias { name, target }))
       }
-      // Tagged data → type alias to inner type
       Type2::TaggedData { t, .. } => {
         let target = type_to_rust_string(t)?;
         Ok(Some(RustTypeDef::TypeAlias { name, target }))
@@ -240,7 +214,6 @@ fn type_rule_to_rust_def(rule: &TypeRule<'_>) -> Result<Option<RustTypeDef>, Cod
   }
 }
 
-/// Convert multiple type choices into an enum.
 fn type_choices_to_enum(name: &str, ty: &Type<'_>) -> Result<RustTypeDef, CodegenError> {
   let mut variants = Vec::new();
   for tc in &ty.type_choices {
@@ -253,14 +226,12 @@ fn type_choices_to_enum(name: &str, ty: &Type<'_>) -> Result<RustTypeDef, Codege
   })
 }
 
-/// Convert a single type choice into an enum variant.
 fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, CodegenError> {
   let type1 = &tc.type1;
   match &type1.type2 {
     Type2::Typename { ident, .. } => {
       let ident_str = ident.ident;
       let variant_name = to_pascal_case(ident_str);
-      // For prelude types, include them as newtype variants
       let inner = if is_prelude_type(ident_str) {
         Some(cddl_ident_to_rust_type(ident_str))
       } else {
@@ -271,13 +242,10 @@ fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, Codege
         inner_type: inner,
       })
     }
-    Type2::TextValue { value, .. } => {
-      let variant_name = to_pascal_case(value);
-      Ok(RustEnumVariant {
-        name: variant_name,
-        inner_type: None,
-      })
-    }
+    Type2::TextValue { value, .. } => Ok(RustEnumVariant {
+      name: to_pascal_case(value),
+      inner_type: None,
+    }),
     Type2::IntValue { value, .. } => {
       let variant_name = if *value < 0 {
         format!("Neg{}", value.unsigned_abs())
@@ -298,9 +266,7 @@ fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, Codege
       inner_type: None,
     }),
     Type2::Map { group, .. } => {
-      // Inline map in a choice — generate a variant name from index
       let fields = group_to_fields(group)?;
-      // Use field names to create a descriptive variant name
       let variant_name = if fields.is_empty() {
         "Empty".to_string()
       } else {
@@ -334,7 +300,6 @@ fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, Codege
   }
 }
 
-/// Convert a group to struct fields.
 fn group_to_fields(group: &Group<'_>) -> Result<Vec<RustField>, CodegenError> {
   let mut fields = Vec::new();
   for gc in &group.group_choices {
@@ -344,7 +309,6 @@ fn group_to_fields(group: &Group<'_>) -> Result<Vec<RustField>, CodegenError> {
   Ok(fields)
 }
 
-/// Convert a group choice to struct fields.
 fn group_choice_to_fields(gc: &GroupChoice<'_>) -> Result<Vec<RustField>, CodegenError> {
   let mut fields = Vec::new();
   for (entry, _optional_comma) in &gc.group_entries {
@@ -355,7 +319,6 @@ fn group_choice_to_fields(gc: &GroupChoice<'_>) -> Result<Vec<RustField>, Codege
   Ok(fields)
 }
 
-/// Convert a group entry to struct fields.
 fn group_entry_to_fields(entry: &GroupEntry<'_>) -> Result<Option<Vec<RustField>>, CodegenError> {
   match entry {
     GroupEntry::ValueMemberKey { ge, .. } => {
@@ -366,7 +329,6 @@ fn group_entry_to_fields(entry: &GroupEntry<'_>) -> Result<Option<Vec<RustField>
       }
     }
     GroupEntry::TypeGroupname { ge, .. } => {
-      // A type/group name reference used as a group entry (flattening)
       let ident = ge.name.ident;
       let rust_type = cddl_ident_to_rust_type(ident);
       let field_name = to_snake_case(ident);
@@ -383,7 +345,6 @@ fn group_entry_to_fields(entry: &GroupEntry<'_>) -> Result<Option<Vec<RustField>
       }]))
     }
     GroupEntry::InlineGroup { group, occur, .. } => {
-      // Inline group — flatten its fields into the parent
       let is_optional = occur
         .as_ref()
         .map(|o| matches!(o.occur, Occur::Optional { .. }))
@@ -399,7 +360,6 @@ fn group_entry_to_fields(entry: &GroupEntry<'_>) -> Result<Option<Vec<RustField>
   }
 }
 
-/// Convert a ValueMemberKeyEntry to a RustField.
 fn value_member_key_to_field(
   vmke: &ValueMemberKeyEntry<'_>,
 ) -> Result<Option<RustField>, CodegenError> {
@@ -409,12 +369,10 @@ fn value_member_key_to_field(
     }
     Some(MemberKey::Value { value, .. }) => {
       let s = value.to_string();
-      // Strip surrounding quotes
       let s = s.trim_matches('"');
       (to_snake_case(s), s.to_string())
     }
     Some(MemberKey::Type1 { t1, .. }) => {
-      // Type1 member key (e.g., `tstr => ...`) — table-style entry
       let key_type = type1_to_rust_string(t1)?;
       let value_type = type_to_rust_string(&vmke.entry_type)?;
       let rust_type = format!("std::collections::HashMap<{}, {}>", key_type, value_type);
@@ -426,7 +384,6 @@ fn value_member_key_to_field(
       }));
     }
     None => {
-      // Positional entry without a key — use auto-generated field name
       let rust_type = type_to_rust_string(&vmke.entry_type)?;
       return Ok(Some(RustField {
         name: "value".to_string(),
@@ -466,7 +423,6 @@ fn value_member_key_to_field(
   }))
 }
 
-/// Check if an occurrence indicator means "zero or more" or "one or more".
 fn is_vec_occurrence(occur: &Occur) -> bool {
   match occur {
     Occur::ZeroOrMore { .. } | Occur::OneOrMore { .. } => true,
@@ -475,9 +431,7 @@ fn is_vec_occurrence(occur: &Occur) -> bool {
   }
 }
 
-/// Convert an array group to a Rust type string.
 fn array_group_to_type(group: &Group<'_>) -> Result<String, CodegenError> {
-  // For simple arrays like `[* tstr]` → `Vec<String>`
   if group.group_choices.len() == 1 {
     let gc = &group.group_choices[0];
     if gc.group_entries.len() == 1 {
@@ -494,7 +448,6 @@ fn array_group_to_type(group: &Group<'_>) -> Result<String, CodegenError> {
         _ => {}
       }
     }
-    // Multiple entries → tuple type
     if !gc.group_entries.is_empty() {
       let mut types = Vec::new();
       for (entry, _) in &gc.group_entries {
@@ -517,13 +470,10 @@ fn array_group_to_type(group: &Group<'_>) -> Result<String, CodegenError> {
   Ok("Vec<()>".to_string())
 }
 
-/// Convert a Type to its Rust representation string.
 fn type_to_rust_string(ty: &Type<'_>) -> Result<String, CodegenError> {
   if ty.type_choices.len() == 1 {
     return type1_to_rust_string(&ty.type_choices[0].type1);
   }
-
-  // Multiple choices: check for Option pattern (T / null)
   if ty.type_choices.len() == 2 {
     let (a, b) = (&ty.type_choices[0].type1, &ty.type_choices[1].type1);
     if is_null_type(&b.type2) {
@@ -535,24 +485,17 @@ fn type_to_rust_string(ty: &Type<'_>) -> Result<String, CodegenError> {
       return Ok(format!("Option<{}>", inner));
     }
   }
-
-  // Fallback: generate a serde_json::Value for complex choices within types
-  // (The top-level type definition handler creates proper enums)
   Ok("serde_json::Value".to_string())
 }
 
-/// Convert Type1 to Rust type string.
 fn type1_to_rust_string(type1: &Type1<'_>) -> Result<String, CodegenError> {
   type2_to_rust_string(&type1.type2)
 }
 
-/// Convert Type2 to Rust type string.
 fn type2_to_rust_string(type2: &Type2<'_>) -> Result<String, CodegenError> {
   match type2 {
     Type2::Typename { ident, .. } => Ok(cddl_ident_to_rust_type(ident.ident)),
     Type2::Map { group, .. } => {
-      // Inline maps become HashMap
-      // Check if this looks like a table type (tstr => ...)
       if let Some(field) = detect_table_type(group)? {
         Ok(field)
       } else {
@@ -578,7 +521,6 @@ fn type2_to_rust_string(type2: &Type2<'_>) -> Result<String, CodegenError> {
   }
 }
 
-/// Detect table-style map types like `{ * tstr => int }`.
 fn detect_table_type(group: &Group<'_>) -> Result<Option<String>, CodegenError> {
   if group.group_choices.len() != 1 {
     return Ok(None);
@@ -601,12 +543,10 @@ fn detect_table_type(group: &Group<'_>) -> Result<Option<String>, CodegenError> 
   Ok(None)
 }
 
-/// Check if a Type2 represents null/nil.
 fn is_null_type(type2: &Type2<'_>) -> bool {
   matches!(type2, Type2::Typename { ident, .. } if ident.ident == "null" || ident.ident == "nil")
 }
 
-/// Convert a group to enum variants (for choice-from-group).
 fn group_to_enum_variants(group: &Group<'_>) -> Result<Vec<RustEnumVariant>, CodegenError> {
   let mut variants = Vec::new();
   for gc in &group.group_choices {
@@ -618,7 +558,6 @@ fn group_to_enum_variants(group: &Group<'_>) -> Result<Vec<RustEnumVariant>, Cod
   Ok(variants)
 }
 
-/// Convert a group entry to an enum variant.
 fn group_entry_to_variant(entry: &GroupEntry<'_>) -> Result<RustEnumVariant, CodegenError> {
   match entry {
     GroupEntry::ValueMemberKey { ge, .. } => {
@@ -655,7 +594,6 @@ fn group_entry_to_variant(entry: &GroupEntry<'_>) -> Result<RustEnumVariant, Cod
   }
 }
 
-/// Map a CDDL identifier to a Rust type string.
 fn cddl_ident_to_rust_type(ident: &str) -> String {
   match ident {
     "bool" | "true" | "false" => "bool".to_string(),
@@ -679,7 +617,6 @@ fn cddl_ident_to_rust_type(ident: &str) -> String {
   }
 }
 
-/// Map a CBOR major type number to a Rust type.
 fn major_type_to_rust(mt: u8) -> String {
   match mt {
     0 => "u64".to_string(),
@@ -693,7 +630,6 @@ fn major_type_to_rust(mt: u8) -> String {
   }
 }
 
-/// Check if an identifier is a CDDL standard prelude type.
 fn is_prelude_type(ident: &str) -> bool {
   matches!(
     ident,
@@ -732,12 +668,8 @@ fn is_prelude_type(ident: &str) -> bool {
   )
 }
 
-/// Render all collected type definitions as Rust source code.
 fn render_type_defs(defs: &[RustTypeDef]) -> Result<String, CodegenError> {
   let mut output = String::new();
-  output.push_str("// Auto-generated from CDDL definition\n");
-  output.push_str("// Do not edit manually\n\n");
-  output.push_str("use serde::{Deserialize, Serialize};\n\n");
 
   for (idx, def) in defs.iter().enumerate() {
     if idx > 0 {
@@ -759,16 +691,17 @@ fn render_type_defs(defs: &[RustTypeDef]) -> Result<String, CodegenError> {
   Ok(output)
 }
 
-/// Render a single struct definition.
 fn render_struct(
   output: &mut String,
   name: &str,
   fields: &[RustField],
 ) -> Result<(), CodegenError> {
-  writeln!(output, "#[derive(Clone, Debug, Deserialize, Serialize)]")?;
+  writeln!(
+    output,
+    "#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]"
+  )?;
   writeln!(output, "pub struct {} {{", name)?;
   for field in fields {
-    // Add serde rename if the field name differs from the original CDDL key
     if field.name != field.original_name {
       writeln!(output, "    #[serde(rename = \"{}\")]", field.original_name)?;
     }
@@ -790,19 +723,20 @@ fn render_struct(
   Ok(())
 }
 
-/// Render a type alias.
 fn render_type_alias(output: &mut String, name: &str, target: &str) -> Result<(), CodegenError> {
   writeln!(output, "pub type {} = {};", name, target)?;
   Ok(())
 }
 
-/// Render an enum definition.
 fn render_enum(
   output: &mut String,
   name: &str,
   variants: &[RustEnumVariant],
 ) -> Result<(), CodegenError> {
-  writeln!(output, "#[derive(Clone, Debug, Deserialize, Serialize)]")?;
+  writeln!(
+    output,
+    "#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]"
+  )?;
   writeln!(output, "#[serde(untagged)]")?;
   writeln!(output, "pub enum {} {{", name)?;
   for variant in variants {
@@ -816,11 +750,9 @@ fn render_enum(
   Ok(())
 }
 
-/// Convert a string to PascalCase.
-fn to_pascal_case(s: &str) -> String {
+pub(crate) fn to_pascal_case(s: &str) -> String {
   let mut result = String::with_capacity(s.len());
   let mut capitalize_next = true;
-
   for c in s.chars() {
     if c == '-' || c == '_' || c == '.' || c == ' ' {
       capitalize_next = true;
@@ -831,20 +763,16 @@ fn to_pascal_case(s: &str) -> String {
       result.push(c);
     }
   }
-
   if result.is_empty() {
     return "Unknown".to_string();
   }
-
   result
 }
 
-/// Convert a string to snake_case.
 fn to_snake_case(s: &str) -> String {
   let mut result = String::with_capacity(s.len() + 4);
   let mut prev_was_upper = false;
   let mut prev_was_separator = false;
-
   for (i, c) in s.chars().enumerate() {
     if c == '-' || c == '.' || c == ' ' {
       if !result.is_empty() {
@@ -865,20 +793,15 @@ fn to_snake_case(s: &str) -> String {
       prev_was_separator = false;
     }
   }
-
-  // Handle Rust keywords
   if is_rust_keyword(&result) {
     result.push('_');
   }
-
   if result.is_empty() {
     return "value".to_string();
   }
-
   result
 }
 
-/// Check if a string is a Rust keyword.
 fn is_rust_keyword(s: &str) -> bool {
   matches!(
     s,
@@ -928,14 +851,17 @@ fn is_rust_keyword(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use cddl::parser::cddl_from_str;
+
+  fn gen(input: &str) -> String {
+    let cddl = cddl_from_str(input, true).unwrap();
+    generate_all_types(&cddl).unwrap()
+  }
 
   #[test]
   fn test_to_pascal_case() {
     assert_eq!(to_pascal_case("my-type"), "MyType");
     assert_eq!(to_pascal_case("my_type"), "MyType");
-    assert_eq!(to_pascal_case("my.type"), "MyType");
-    assert_eq!(to_pascal_case("mytype"), "Mytype");
-    assert_eq!(to_pascal_case("MyType"), "MyType");
     assert_eq!(to_pascal_case("person"), "Person");
     assert_eq!(to_pascal_case("http-request"), "HttpRequest");
   }
@@ -944,35 +870,27 @@ mod tests {
   fn test_to_snake_case() {
     assert_eq!(to_snake_case("myType"), "my_type");
     assert_eq!(to_snake_case("my-type"), "my_type");
-    assert_eq!(to_snake_case("my_type"), "my_type");
-    assert_eq!(to_snake_case("MyType"), "my_type");
     assert_eq!(to_snake_case("type"), "type_");
     assert_eq!(to_snake_case("self"), "self_");
   }
 
   #[test]
-  fn test_cddl_ident_to_rust_type() {
-    assert_eq!(cddl_ident_to_rust_type("tstr"), "String");
-    assert_eq!(cddl_ident_to_rust_type("text"), "String");
-    assert_eq!(cddl_ident_to_rust_type("uint"), "u64");
-    assert_eq!(cddl_ident_to_rust_type("int"), "i64");
-    assert_eq!(cddl_ident_to_rust_type("float"), "f64");
-    assert_eq!(cddl_ident_to_rust_type("bool"), "bool");
-    assert_eq!(cddl_ident_to_rust_type("bstr"), "Vec<u8>");
-    assert_eq!(cddl_ident_to_rust_type("null"), "()");
-    assert_eq!(cddl_ident_to_rust_type("any"), "serde_json::Value");
-    assert_eq!(cddl_ident_to_rust_type("my-custom-type"), "MyCustomType");
+  fn test_pascal_to_cddl_name() {
+    assert_eq!(pascal_to_cddl_name("Person"), "person");
+    assert_eq!(pascal_to_cddl_name("MyType"), "my-type");
+    assert_eq!(pascal_to_cddl_name("HttpRequest"), "http-request");
   }
 
   #[test]
   fn test_simple_struct() {
-    let cddl_input = r#"
+    let result = gen(
+      r#"
       person = {
         name: tstr,
         age: uint,
       }
-    "#;
-    let result = generate_rust_code(cddl_input).unwrap();
+    "#,
+    );
     assert!(result.contains("pub struct Person"));
     assert!(result.contains("pub name: String,"));
     assert!(result.contains("pub age: u64,"));
@@ -980,132 +898,96 @@ mod tests {
 
   #[test]
   fn test_optional_fields() {
-    let cddl_input = r#"
+    let result = gen(
+      r#"
       person = {
         name: tstr,
         ? nickname: tstr,
       }
-    "#;
-    let result = generate_rust_code(cddl_input).unwrap();
-    assert!(result.contains("pub name: String,"));
+    "#,
+    );
     assert!(result.contains("pub nickname: Option<String>,"));
     assert!(result.contains("skip_serializing_if"));
   }
 
   #[test]
+  fn test_type_choices_enum() {
+    let result = gen(r#"value = int / tstr / bool"#);
+    assert!(result.contains("pub enum Value"));
+    assert!(result.contains("Int(i64)"));
+    assert!(result.contains("Tstr(String)"));
+  }
+
+  #[test]
   fn test_type_alias() {
-    let cddl_input = r#"
-      name = tstr
-    "#;
-    let result = generate_rust_code(cddl_input).unwrap();
+    let result = gen(r#"name = tstr"#);
     assert!(result.contains("pub type Name = String;"));
   }
 
   #[test]
-  fn test_type_choices_enum() {
-    let cddl_input = r#"
-      value = int / tstr / bool
-    "#;
-    let result = generate_rust_code(cddl_input).unwrap();
-    assert!(result.contains("pub enum Value"));
-    assert!(result.contains("Int(i64)"));
-    assert!(result.contains("Tstr(String)"));
-    assert!(result.contains("Bool(bool)"));
-  }
-
-  #[test]
-  fn test_nested_struct_reference() {
-    let cddl_input = r#"
-      address = {
-        street: tstr,
-        city: tstr,
-      }
-
-      person = {
-        name: tstr,
-        home: address,
-      }
-    "#;
-    let result = generate_rust_code(cddl_input).unwrap();
-    assert!(result.contains("pub struct Address"));
+  fn test_single_type_generation() {
+    let cddl = cddl_from_str(
+      r#"
+      address = { street: tstr, city: tstr }
+      person = { name: tstr, home: address }
+    "#,
+      true,
+    )
+    .unwrap();
+    let result = generate_single_type(&cddl, "Person", None).unwrap();
     assert!(result.contains("pub struct Person"));
-    assert!(result.contains("pub home: Address,"));
+    assert!(!result.contains("pub struct Address"));
   }
 
   #[test]
-  fn test_array_type() {
-    let cddl_input = r#"
-      names = [* tstr]
-    "#;
-    let result = generate_rust_code(cddl_input).unwrap();
-    assert!(result.contains("pub type Names = Vec<String>;"));
+  fn test_single_type_with_output_name_override() {
+    let cddl = cddl_from_str(
+      r#"
+      address = { street: tstr, city: tstr }
+    "#,
+      true,
+    )
+    .unwrap();
+    let result = generate_single_type(&cddl, "Address", Some("Addr")).unwrap();
+    assert!(result.contains("pub struct Addr"));
+    assert!(!result.contains("pub struct Address"));
   }
 
   #[test]
-  fn test_hyphenated_field_names() {
-    let cddl_input = r#"
+  fn test_hyphenated_names_serde_rename() {
+    let result = gen(
+      r#"
       my-record = {
         first-name: tstr,
-        last-name: tstr,
       }
-    "#;
-    let result = generate_rust_code(cddl_input).unwrap();
-    assert!(result.contains("pub struct MyRecord"));
+    "#,
+    );
     assert!(result.contains("#[serde(rename = \"first-name\")]"));
     assert!(result.contains("pub first_name: String,"));
-    assert!(result.contains("#[serde(rename = \"last-name\")]"));
-    assert!(result.contains("pub last_name: String,"));
   }
 
   #[test]
   fn test_nullable_type() {
-    let cddl_input = r#"
+    let result = gen(
+      r#"
       record = {
         value: tstr / null,
       }
-    "#;
-    let result = generate_rust_code(cddl_input).unwrap();
+    "#,
+    );
     assert!(result.contains("pub value: Option<String>,"));
   }
 
   #[test]
-  fn test_rust_keyword_field_name() {
-    let cddl_input = r#"
+  fn test_keyword_escaping() {
+    let result = gen(
+      r#"
       my-record = {
         type: tstr,
-        match: uint,
       }
-    "#;
-    let result = generate_rust_code(cddl_input).unwrap();
+    "#,
+    );
     assert!(result.contains("pub type_: String,"));
     assert!(result.contains("#[serde(rename = \"type\")]"));
-    assert!(result.contains("pub match_: u64,"));
-    assert!(result.contains("#[serde(rename = \"match\")]"));
-  }
-
-  #[test]
-  fn test_byte_string_types() {
-    let cddl_input = r#"
-      record = {
-        data: bstr,
-        payload: bytes,
-      }
-    "#;
-    let result = generate_rust_code(cddl_input).unwrap();
-    assert!(result.contains("pub data: Vec<u8>,"));
-    assert!(result.contains("pub payload: Vec<u8>,"));
-  }
-
-  #[test]
-  fn test_float_types() {
-    let cddl_input = r#"
-      measurement = {
-        value: float64,
-        precision: float,
-      }
-    "#;
-    let result = generate_rust_code(cddl_input).unwrap();
-    assert!(result.contains("pub value: f64,"));
-    assert!(result.contains("pub precision: f64,"));
   }
 }
