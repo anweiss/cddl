@@ -27,6 +27,7 @@ Also bundled into this repository is a basic language server implementation and 
 * [x] Validate CBOR data structures
 * [x] Validate JSON documents
 * [x] Validate CSV data
+* [x] Generate Rust types from CDDL
 * [ ] Generate dummy JSON from conformant CDDL
 * [x] As close to zero-copy as possible
 * [x] Compile WebAssembly target for browser and Node.js
@@ -189,6 +190,10 @@ Enable CBOR validation. Enabled by default.
 
 Enable CSV validation per [draft-bormann-cbor-cddl-csv-07](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/07/). Enabled by default.
 
+**`--feature codegen`**
+
+Enable code generation for deriving Rust types (structs, enums, type aliases) from CDDL definitions. Not enabled by default.
+
 **`--feature additional-controls`**
 
 Enable validation support for the additional control operators defined in [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165) and [RFC 9741](https://datatracker.ietf.org/doc/html/rfc9741). Enabled by default.
@@ -201,6 +206,60 @@ use cddl::parser::cddl_from_str;
 let input = r#"myrule = int"#;
 assert!(cddl_from_str(input, true).is_ok())
 ```
+
+### Generating Rust types from CDDL
+
+With the `codegen` feature enabled, you can generate Rust source code from CDDL definitions:
+
+```toml
+[dependencies]
+cddl = { version = "0.10.3", features = ["codegen"] }
+```
+
+```rust
+use cddl::codegen::generate_rust_code;
+
+let cddl_input = r#"
+  person = {
+    name: tstr,
+    age: uint,
+    ? email: tstr,
+  }
+"#;
+
+let rust_code = generate_rust_code(cddl_input).unwrap();
+println!("{}", rust_code);
+```
+
+This produces:
+
+```rust
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Person {
+    pub name: String,
+    pub age: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+}
+```
+
+The code generator supports the following CDDL-to-Rust mappings:
+
+| CDDL construct | Rust output |
+| --- | --- |
+| Map types `{ key: type, ... }` | `struct` with named fields |
+| Type choices `a / b / c` | `enum` with variants |
+| Simple type references `foo = tstr` | `type` alias |
+| Array types `[* T]` | `Vec<T>` |
+| Table types `{ * tstr => T }` | `HashMap<String, T>` |
+| Optional fields `? key: type` | `Option<T>` with `skip_serializing_if` |
+| Nullable types `T / null` | `Option<T>` |
+| Hyphenated names `my-field` | snake_case field + `#[serde(rename = "my-field")]` |
+| Rust keywords `type`, `match` | Escaped with trailing `_` + serde rename |
+
+All standard prelude types (`tstr`, `uint`, `int`, `float`, `bstr`, `bool`, `null`, `any`, etc.) are mapped to their idiomatic Rust equivalents. All generated types include `Serialize` and `Deserialize` derives for use with Serde.
 
 ### Validating JSON
 
