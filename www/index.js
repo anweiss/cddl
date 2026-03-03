@@ -766,8 +766,9 @@ function enrichWithDelimiterCheck(errors, source) {
     const lc = err.message.toLowerCase();
     // Pest errors for missing closing delimiters mention these expected tokens
     const isMissingClose =
-      /expected.*\b(group_choice_op|group\s*entry|grpchoice|grpent|type_choice_op|type\b)/i.test(lc) ||
-      /expected.*\b(eoi|rule)\b/i.test(lc);
+      /expected.*\b(group_choice_op|group\s*entry|grpchoice|grpent|type_choice_op)\b/i.test(lc) ||
+      /expected.*\b(eoi|rule)\b/i.test(lc) ||
+      /expected.*\btype\b/i.test(lc) && !/type\s+assignment/i.test(lc);
 
     if (!isMissingClose) return err;
 

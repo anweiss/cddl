@@ -561,4 +561,25 @@ reputon = {
       }
     }
   }
+
+  #[test]
+  fn error_should_point_at_invalid_token_not_previous_rule() {
+    // When a bare identifier like "break" follows a valid rule without an
+    // assignment operator, the error must highlight "break" (the offending
+    // token), NOT the preceding rule's value "0x1".
+    let input = "value = 0x1\n\nbreak";
+    let err = cddl_from_pest_str(input).unwrap_err();
+    if let crate::parser::Error::PARSER { position, .. } = &err {
+      let highlighted = &input[position.range.0..position.range.1];
+      assert_eq!(
+        highlighted, "break",
+        "Error should underline 'break' but got '{}' at range {:?}",
+        highlighted, position.range
+      );
+      assert_eq!(position.line, 3, "Error should be on line 3");
+      assert_eq!(position.column, 1, "Error should start at column 1");
+    } else {
+      panic!("Expected PARSER error, got: {:?}", err);
+    }
+  }
 }
