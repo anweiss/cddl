@@ -190,10 +190,6 @@ Enable CBOR validation. Enabled by default.
 
 Enable CSV validation per [draft-bormann-cbor-cddl-csv-07](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/07/). Enabled by default.
 
-**`--feature codegen`**
-
-Enable code generation for deriving Rust types (structs, enums, type aliases) from CDDL definitions. Not enabled by default.
-
 **`--feature additional-controls`**
 
 Enable validation support for the additional control operators defined in [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165) and [RFC 9741](https://datatracker.ietf.org/doc/html/rfc9741). Enabled by default.
@@ -209,29 +205,29 @@ assert!(cddl_from_str(input, true).is_ok())
 
 ### Generating Rust types from CDDL
 
-With the `codegen` feature enabled, you can generate Rust source code from CDDL definitions:
+The companion crate [`cddl-derive`](cddl-derive/) provides proc macros for generating Rust types from CDDL definitions at compile time.
 
 ```toml
 [dependencies]
-cddl = { version = "0.10.3", features = ["codegen"] }
+cddl-derive = "0.1"
+serde = { version = "1", features = ["derive"] }
 ```
 
-```rust
-use cddl::codegen::generate_rust_code;
+#### Attribute macro — single struct
 
-let cddl_input = r#"
-  person = {
-    name: tstr,
-    age: uint,
-    ? email: tstr,
-  }
-"#;
+Apply `#[cddl(path = "...")]` to a stub struct. The macro reads the CDDL file,
+finds the matching rule (by converting the struct name from PascalCase to
+kebab-case), and replaces the struct with fully populated fields:
 
-let rust_code = generate_rust_code(cddl_input).unwrap();
-println!("{}", rust_code);
+```rust,ignore
+use cddl_derive::cddl;
+
+// schema.cddl contains: person = { name: tstr, age: uint, ? email: tstr }
+#[cddl(path = "schema.cddl")]
+struct Person;
 ```
 
-This produces:
+This expands at compile time to:
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -245,7 +241,26 @@ pub struct Person {
 }
 ```
 
-The code generator supports the following CDDL-to-Rust mappings:
+Use the `rule` attribute to target a specific CDDL rule name when the struct
+name does not match:
+
+```rust,ignore
+#[cddl(path = "schema.cddl", rule = "person-record")]
+struct MyPerson;
+```
+
+#### Function-like macro — all types
+
+`cddl_typegen!` generates Rust types for every rule in a CDDL file:
+
+```rust,ignore
+use cddl_derive::cddl_typegen;
+
+cddl_typegen!("schema.cddl");
+// Generates: struct Person { ... }, struct Address { ... }, etc.
+```
+
+#### Supported CDDL-to-Rust mappings
 
 | CDDL construct | Rust output |
 | --- | --- |

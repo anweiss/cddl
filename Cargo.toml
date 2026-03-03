@@ -1,3 +1,6 @@
+[workspace]
+members = ["cddl-derive"]
+
 [package]
 name = "cddl"
 description = "Parser for the Concise data definition language (CDDL)"
@@ -12,6 +15,7 @@ edition = "2018"
 rust-version = "1.88.0"
 exclude = [
     "cddl-lsp/**/*",
+    "cddl-derive/**/*",
     "www/**/*",
     ".github/**/*",
     ".devcontainer/**/*",
@@ -108,7 +112,6 @@ additional-controls = []
 ast-span = []
 ast-comments = []
 ast-parent = []
-codegen = ["std"]
 json = ["std"]
 cbor = ["std"]
 csv-validate = ["std", "json", "csv"]

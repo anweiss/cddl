@@ -1,0 +1,21 @@
+person = {
+  name: tstr,
+  age: uint,
+  ? email: tstr,
+}
+
+address = {
+  street: tstr,
+  city: tstr,
+  ? zip-code: tstr,
+}
+
+status = "active" / "inactive" / "pending"
+
+score = uint
+
+person-record = {
+  person: person,
+  home-address: address,
+  ? work-address: address,
+}

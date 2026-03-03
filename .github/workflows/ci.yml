@@ -10,6 +10,7 @@ on:
       - "Cargo.toml"
       - "src/**"
       - "tests/**"
+      - "cddl-derive/**"
   pull_request:
 
 name: Build and Test
@@ -63,7 +64,7 @@ jobs:
 
       - name: Check compilation for wasm target
         run: |
-          cargo +${{ matrix.rust_toolchain }} check --lib --target wasm32-unknown-unknown
+          cargo +${{ matrix.rust_toolchain }} check -p cddl --lib --target wasm32-unknown-unknown
 
   test-suite:
     strategy:
@@ -160,4 +161,4 @@ jobs:
       - name: cargo +${{ matrix.rust_toolchain }} clippy
         if: ${{ always() }}
         run: |
-          cargo +${{ matrix.rust_toolchain }} clippy --lib --target wasm32-unknown-unknown
+          cargo +${{ matrix.rust_toolchain }} clippy -p cddl --lib --target wasm32-unknown-unknown

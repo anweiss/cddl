@@ -1,0 +1,22 @@
+[package]
+name = "cddl-derive"
+description = "Proc macro for deriving Rust types from CDDL definitions"
+repository = "https://github.com/anweiss/cddl"
+license = "MIT"
+version = "0.1.0"
+authors = ["Andrew Weiss <andrew.weiss@outlook.com>"]
+edition = "2021"
+rust-version = "1.88.0"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+cddl = { version = "0.10.3", path = "..", default-features = false }
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
