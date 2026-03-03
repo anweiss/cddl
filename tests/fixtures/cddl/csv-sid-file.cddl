@@ -1,4 +1,4 @@
-; CSV data model for a simplified SID file (draft-bormann-cbor-cddl-csv-07)
+; CSV data model for a simplified SID file (draft-bormann-cbor-cddl-csv-08)
 ; header = absent
 
 SID-File = [*record]

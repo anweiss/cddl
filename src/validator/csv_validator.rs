@@ -2,7 +2,7 @@
 #![cfg(feature = "csv-validate")]
 #![cfg(not(feature = "lsp"))]
 
-//! CSV validation implementation based on draft-bormann-cbor-cddl-csv-07.
+//! CSV validation implementation based on draft-bormann-cbor-cddl-csv-08.
 //!
 //! This module validates CSV data against CDDL definitions. The generic data
 //! model for CSV is:
@@ -135,7 +135,7 @@ pub fn parse_csv_to_json(
 
 /// Coerce a CSV field text value to an appropriate JSON value.
 ///
-/// Per draft-bormann-cbor-cddl-csv-07: "As a preferred choice, the JSON
+/// Per draft-bormann-cbor-cddl-csv-08: "As a preferred choice, the JSON
 /// representation of the data model item, if it exists, MAY be chosen."
 ///
 /// - Empty string `""` stays as `String("")`
@@ -173,7 +173,7 @@ fn coerce_field(field: &str) -> serde_json::Value {
 /// Validate CSV string against a given CDDL document string.
 ///
 /// The CSV data is parsed according to RFC 4180 and mapped to the CDDL generic
-/// data model as described in draft-bormann-cbor-cddl-csv-07. The first rule in
+/// data model as described in draft-bormann-cbor-cddl-csv-08. The first rule in
 /// the CDDL document is used as the root validation type.
 ///
 /// `has_header` indicates whether the first row of the CSV is a header row.
@@ -198,7 +198,7 @@ pub fn validate_csv_from_str(
 /// Validate CSV string against a given CDDL document string.
 ///
 /// The CSV data is parsed according to RFC 4180 and mapped to the CDDL generic
-/// data model as described in draft-bormann-cbor-cddl-csv-07. The first rule in
+/// data model as described in draft-bormann-cbor-cddl-csv-08. The first rule in
 /// the CDDL document is used as the root validation type.
 ///
 /// `has_header` indicates whether the first row of the CSV is a header row.

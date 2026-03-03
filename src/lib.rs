@@ -204,7 +204,7 @@
 //! **`--feature csv-validate`**
 //!
 //! Enable CSV validation per
-//! [draft-bormann-cbor-cddl-csv-07](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/07/).
+//! [draft-bormann-cbor-cddl-csv-08](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/08/).
 //! Enabled by default.
 //!
 //! **`--feature additional-controls`**

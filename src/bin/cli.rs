@@ -81,7 +81,7 @@ struct Validate {
   cbor: Option<Vec<String>>,
   #[clap(
     long = "csv",
-    help = "CSV file(s) to validate (per draft-bormann-cbor-cddl-csv-07)",
+    help = "CSV file(s) to validate (per draft-bormann-cbor-cddl-csv-08)",
     action = ArgAction::Append,
     use_value_delimiter = true
   )]

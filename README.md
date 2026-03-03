@@ -12,7 +12,7 @@ This crate supports the following CDDL-related RFCs:
 | [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165) | Additional Control Operators for CDDL | ✔️ `.cat` , `.det` , `.plus` , `.abnf` , `.abnfb` , `.feature` |
 | [RFC 9682](https://datatracker.ietf.org/doc/html/rfc9682) | Updates to CDDL (Empty Data Models, `\u{hex}` Escapes, Non-Literal Tag Numbers) | ✔️ Full grammar and parser support |
 | [RFC 9741](https://datatracker.ietf.org/doc/html/rfc9741) | Additional Control Operators for Text in CDDL | ✔️ `.b64u` , `.b64c` , `.hex` , `.hexlc` , `.hexuc` , `.b32` , `.h32` , `.b45` , `.base10` , `.printf` , `.json` , `.join` and sloppy variants |
-| [draft-bormann-cbor-cddl-csv-07](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/07/) | Using CDDL for CSV | ✔️ CSV validation via generic data model mapping |
+| [draft-bormann-cbor-cddl-csv-08](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/08/) | Using CDDL for CSV | ✔️ CSV validation via generic data model mapping |
 
 This crate uses [Pest](https://pest.rs/) (a PEG parser generator for Rust) to parse CDDL. The grammar is defined in [ `cddl.pest` ](cddl.pest) and closely follows the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
@@ -188,7 +188,7 @@ Enable CBOR validation. Enabled by default.
 
 **`--feature csv-validate`**
 
-Enable CSV validation per [draft-bormann-cbor-cddl-csv-07](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/07/). Enabled by default.
+Enable CSV validation per [draft-bormann-cbor-cddl-csv-08](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/08/). Enabled by default.
 
 **`--feature additional-controls`**
 
@@ -447,7 +447,7 @@ let csv = "Alice,30\nBob,25\n";
 assert!(validate_csv_from_str(cddl, csv, None, None).is_ok())
 ```
 
-This crate implements CSV validation as described in [draft-bormann-cbor-cddl-csv-07](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/07/). CSV data is parsed according to [RFC 4180](https://datatracker.ietf.org/doc/html/rfc4180) and mapped to the CDDL generic data model:
+This crate implements CSV validation as described in [draft-bormann-cbor-cddl-csv-08](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/08/). CSV data is parsed according to [RFC 4180](https://datatracker.ietf.org/doc/html/rfc4180) and mapped to the CDDL generic data model:
 
 ```cddl
 csv = [?header, *record]
