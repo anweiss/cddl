@@ -20,5 +20,8 @@
   "devDependencies": {
     "@wasm-tool/wasm-pack-plugin": "^1.7.0",
     "copy-webpack-plugin": "^13.0.1"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.4"
   }
 }
