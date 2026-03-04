@@ -1425,8 +1425,9 @@ function boot() {
     resizeRaf = requestAnimationFrame(() => editor.layout());
   });
 
-  // Initial layout
+  // Initial layout + focus so keyboard shortcuts work immediately
   editor.layout();
+  editor.focus();
 
   // Init WASM then validate
   initWasm().then((ok) => {
