@@ -47,6 +47,7 @@
     "webpack-dev-server": "^5.2.3"
   },
   "overrides": {
-    "serialize-javascript": "^7.0.4"
+    "serialize-javascript": "^7.0.4",
+    "dompurify": ">=3.3.2"
   }
 }
