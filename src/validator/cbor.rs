@@ -3815,7 +3815,7 @@ where
             #[cfg(feature = "ast-span")]
             if !matches!(
               self.state.occurrence,
-              Some(Occur::Optional { .. }) | Some(Occur::ZeroOrMore { .. }) | None
+              Some(Occur::Optional { .. }) | Some(Occur::ZeroOrMore { .. })
             ) {
               self.add_error(format!(
                 "expected array element at index {}, but array only has {} elements",
@@ -3826,7 +3826,7 @@ where
             #[cfg(not(feature = "ast-span"))]
             if !matches!(
               self.state.occurrence,
-              Some(Occur::Optional {}) | Some(Occur::ZeroOrMore {}) | None
+              Some(Occur::Optional {}) | Some(Occur::ZeroOrMore {})
             ) {
               self.add_error(format!(
                 "expected array element at index {}, but array only has {} elements",
