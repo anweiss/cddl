@@ -989,7 +989,6 @@ where
             return Ok(());
           }
         }
-        self.add_error(format!("expected type uint, got {:?}", self.cbor));
         return Ok(());
       } else if is_ident_integer_data_type(self.state.cddl, target_ident)
         && !matches!(self.cbor, Value::Integer(_))
