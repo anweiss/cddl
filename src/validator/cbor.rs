@@ -1396,8 +1396,23 @@ where
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match self.cbor {
               Value::Text(_) | Value::Array(_) => {
-                if let Type2::ParenthesizedType { pt, .. } = controller {
-                  match abnf_from_complex_controller(self.state.cddl, pt) {
+                let complex_ctrl_result = if let Type2::ParenthesizedType { pt, .. } = controller {
+                  Some(abnf_from_complex_controller(self.state.cddl, pt))
+                } else if let Type2::Typename { ident, .. } = controller {
+                  if let Some(Rule::Type { rule, .. }) = rule_from_ident(self.state.cddl, ident) {
+                    match abnf_from_complex_controller(self.state.cddl, &rule.value) {
+                      Ok(values) => Some(Ok(values)),
+                      Err(_) => None,
+                    }
+                  } else {
+                    None
+                  }
+                } else {
+                  None
+                };
+
+                if let Some(result) = complex_ctrl_result {
+                  match result {
                     Ok(values) => {
                       let error_count = self.errors.len();
                       for v in values.iter() {
@@ -1446,8 +1461,23 @@ where
           {
             match self.cbor {
               Value::Bytes(_) | Value::Array(_) => {
-                if let Type2::ParenthesizedType { pt, .. } = controller {
-                  match abnf_from_complex_controller(self.state.cddl, pt) {
+                let complex_ctrl_result = if let Type2::ParenthesizedType { pt, .. } = controller {
+                  Some(abnf_from_complex_controller(self.state.cddl, pt))
+                } else if let Type2::Typename { ident, .. } = controller {
+                  if let Some(Rule::Type { rule, .. }) = rule_from_ident(self.state.cddl, ident) {
+                    match abnf_from_complex_controller(self.state.cddl, &rule.value) {
+                      Ok(values) => Some(Ok(values)),
+                      Err(_) => None,
+                    }
+                  } else {
+                    None
+                  }
+                } else {
+                  None
+                };
+
+                if let Some(result) = complex_ctrl_result {
+                  match result {
                     Ok(values) => {
                       let error_count = self.errors.len();
                       for v in values.iter() {
@@ -5060,6 +5090,49 @@ mod tests {
       ),
       Err(other) => panic!("Unexpected error type: {:?}", other),
     }
+
+    Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn validate_abnf_with_det_typename_controller(
+  ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl_str = indoc!(
+      r#"
+        start = modified-date-time
+
+        modified-date-time = text .abnf modified-dt-abnf
+        modified-dt-abnf = "modified-dt" .det rfc3339z
+
+        rfc3339z = '
+           date-fullyear   = 4DIGIT
+           date-month      = 2DIGIT
+           date-mday       = 2DIGIT
+           time-hour       = 2DIGIT
+           time-minute     = 2DIGIT
+           time-second     = 2DIGIT
+           time-secfrac    = "." 1*DIGIT
+           DIGIT           =  %x30-39
+           partial-time    = time-hour ":" time-minute ":" time-second [time-secfrac]
+           full-date       = date-fullyear "-" date-month "-" date-mday
+           modified-dt     = full-date ["T" partial-time "Z"]
+        '
+      "#
+    );
+
+    let cbor = Value::Text("1985-04-12T23:20:50.52Z".to_string());
+    let cddl = cddl_from_str(cddl_str, true)?;
+    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    cv.validate()?;
+
+    // Also test that an invalid datetime is correctly rejected
+    let cbor_invalid = Value::Text("not-a-date".to_string());
+    let mut cv_invalid = CBORValidator::new(&cddl, cbor_invalid, None);
+    assert!(
+      cv_invalid.validate().is_err(),
+      "Expected validation to fail for invalid datetime value"
+    );
 
     Ok(())
   }
