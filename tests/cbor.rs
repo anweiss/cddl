@@ -201,7 +201,6 @@ fn validate_cbor_array_groups() {
 }
 
 #[test]
-#[ignore]
 fn validate_cbor_array_record() {
   let cddl_input = r#"thing = [a: int, b: int, c: int]"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
@@ -222,7 +221,6 @@ fn validate_cbor_array_record() {
   let input = LongTuple("David".to_string(), 44, 45);
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
-  // FIXME: LongTuple results in false positive.
   validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
 
   let input = ShortTuple("Eve".to_string());
