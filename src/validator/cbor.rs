@@ -3797,6 +3797,50 @@ where
     } else if !self.state.advance_to_next_entry {
       // This path handles array elements (when object_value is None)
       if let Value::Array(a) = &self.cbor {
+        // Check array length against entry counts on the first entry to catch
+        // arrays with extra elements (e.g. 3-element array vs [a: tstr, b: int]).
+        // Skip the check when an occurrence indicator is active (e.g. * Node),
+        // because those allow variable-length arrays.
+        if self.state.group_entry_idx == Some(0) && self.state.occurrence.is_none() {
+          let length_errors: Vec<String> =
+            if let Some(entry_counts) = self.state.entry_counts.as_ref() {
+              let len = a.len();
+              if !validate_entry_count(entry_counts, len) {
+                if entry_counts.len() > 1 {
+                  let counts: Vec<String> =
+                    entry_counts.iter().map(|ec| ec.count.to_string()).collect();
+                  vec![format!(
+                    "expected array with length matching one of [{}], got {}",
+                    counts.join(", "),
+                    len
+                  )]
+                } else {
+                  entry_counts
+                    .iter()
+                    .map(|ec| {
+                      if let Some(occur) = &ec.entry_occurrence {
+                        format!("expected array with length per occurrence {}", occur)
+                      } else {
+                        format!("expected array with length {}, got {}", ec.count, len)
+                      }
+                    })
+                    .collect()
+                }
+              } else {
+                Vec::new()
+              }
+            } else {
+              Vec::new()
+            };
+
+          if !length_errors.is_empty() {
+            for e in length_errors {
+              self.add_error(e);
+            }
+            return Ok(());
+          }
+        }
+
         // Use the index set by visit_group_choice
         if let Some(idx) = self.state.group_entry_idx {
           if let Some(element_value) = a.get(idx) {

@@ -201,7 +201,6 @@ fn validate_cbor_array_groups() {
 }
 
 #[test]
-#[ignore]
 fn validate_cbor_array_record() {
   let cddl_input = r#"thing = [a: int, b: int, c: int]"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
@@ -222,7 +221,6 @@ fn validate_cbor_array_record() {
   let input = LongTuple("David".to_string(), 44, 45);
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
-  // FIXME: LongTuple results in false positive.
   validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
 
   let input = ShortTuple("Eve".to_string());
@@ -520,4 +518,22 @@ fn validate_cbor_simple_values() {
   let cddl_input = r#"thing = #7.22"#;
   validate_cbor_from_slice(cddl_input, cbor::NULL, None).unwrap();
   validate_cbor_from_slice(cddl_input, cbor::BOOL_TRUE, None).unwrap_err();
+}
+
+/// Regression test for https://github.com/anweiss/cddl/issues/465
+#[test]
+fn validate_cbor_array_record_extra_elements() {
+  let cddl_input = r#"thing = [a: tstr, b: int]"#;
+
+  // Exact match: ["testString", 1] should pass
+  let input = PersonTuple("testString".to_string(), 1);
+  let mut cbor_bytes = Vec::new();
+  ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
+  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
+
+  // Extra element: ["testString", 1, 2] must fail
+  let input = LongTuple("testString".to_string(), 1, 2);
+  let mut cbor_bytes = Vec::new();
+  ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
+  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
 }
