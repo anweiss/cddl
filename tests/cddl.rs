@@ -35,6 +35,21 @@ fn verify_json_validation() -> json::Result {
   )
 }
 
+/// Regression test for https://github.com/anweiss/cddl/issues/465
+#[test]
+fn validate_json_array_record_extra_elements() {
+  let cddl_input = r#"thing = [a: tstr, b: int]"#;
+
+  // Exact match should pass
+  validate_json_from_str(cddl_input, r#"["testString", 1]"#, None).unwrap();
+
+  // Extra element must fail
+  validate_json_from_str(cddl_input, r#"["testString", 1, 2]"#, None).unwrap_err();
+
+  // Too few elements must fail
+  validate_json_from_str(cddl_input, r#"["testString"]"#, None).unwrap_err();
+}
+
 #[cfg(test)]
 mod test_rfc9165_controls {
   use cddl::cddl_from_str;
