@@ -544,13 +544,17 @@ assert!(validate_cbor_from_slice(cddl, cbor, Some(&["cbor"])).is_ok())
 
 ## `no_std` support
 
-Only the lexer and parser can be used in a `no_std` context provided that a heap allocator is available. This can be enabled by opting out of the default features in your `Cargo.toml` file as follows:
+The lexer and parser can be used in a `no_std` context (including bare-metal targets such as `thumbv7em-none-eabihf`) provided that a heap allocator is available. This is enabled by opting out of the default features in your `Cargo.toml` file:
 
 ```toml
 [dependencies]
 cddl = { version = "0.10.4", default-features = false }
 ```
 
-Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling and diagnostics.
+When the `std` feature is disabled, the crate declares `#![no_std]` and relies on `core` and `alloc` only. All std-only dependencies (codespan-reporting, hexf-parse, regex, simplelog, log, pest_vm, pest_meta, abnf_to_pest) are gated behind the `std` feature flag and will not be compiled.
 
-JSON, CBOR, and CSV validation are dependent on their respective heap allocated `Value` types, but since these types aren't supported in a `no_std` context, they subsequently aren't supported by this crate in `no_std` .
+Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling, diagnostics, and AST construction.
+
+Note: hexadecimal float literals (`hexfloat`) are not supported in `no_std` mode since they depend on the `hexf-parse` crate which requires `std`.
+
+JSON, CBOR, and CSV validation are dependent on their respective heap allocated `Value` types, but since these types aren't supported in a `no_std` context, they subsequently aren't supported by this crate in `no_std`.

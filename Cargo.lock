@@ -183,7 +183,7 @@ dependencies = [
 
 [[package]]
 name = "cddl"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "abnf_to_pest",
  "base16",
@@ -207,9 +207,11 @@ dependencies = [
  "log",
  "pest",
  "pest_derive",
+ "pest_generator",
  "pest_meta",
  "pest_vm",
  "pretty_assertions",
+ "proc-macro2",
  "regex",
  "regex-syntax",
  "serde",

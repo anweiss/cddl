@@ -1,4 +1,12 @@
-use std::{borrow::Cow, convert::TryFrom, fmt};
+use core::{convert::TryFrom, fmt};
+
+#[cfg(not(feature = "std"))]
+use alloc::borrow::Cow;
+#[cfg(feature = "std")]
+use std::borrow::Cow;
+
+#[cfg(not(feature = "std"))]
+use alloc::string::String;
 
 #[cfg(target_arch = "wasm32")]
 use serde::{Deserialize, Serialize};
@@ -496,7 +504,7 @@ pub enum ByteValue<'a> {
 impl fmt::Display for ByteValue<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      ByteValue::UTF8(b) => write!(f, "'{}'", std::str::from_utf8(b).map_err(|_| fmt::Error)?),
+      ByteValue::UTF8(b) => write!(f, "'{}'", core::str::from_utf8(b).map_err(|_| fmt::Error)?),
       ByteValue::B16(b) => write!(
         f,
         "h'{}'",
@@ -525,7 +533,7 @@ pub enum SocketPlug {
   GROUP,
 }
 
-impl std::str::FromStr for SocketPlug {
+impl core::str::FromStr for SocketPlug {
   type Err = &'static str;
 
   fn from_str(s: &str) -> Result<Self, Self::Err> {

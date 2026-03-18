@@ -497,6 +497,10 @@
 
 #![allow(dead_code)]
 #![warn(missing_docs)]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(not(feature = "std"))]
+extern crate alloc;
 
 #[cfg(feature = "std")]
 extern crate serde_json;

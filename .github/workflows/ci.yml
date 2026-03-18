@@ -43,6 +43,13 @@ jobs:
         run: |
           cargo +${{ matrix.rust_toolchain }} check --locked --all --bins --examples --tests --no-default-features
 
+      - name: Install thumbv7em-none-eabihf target
+        run: rustup target add thumbv7em-none-eabihf
+
+      - name: Check no_std compilation
+        run: |
+          cargo +${{ matrix.rust_toolchain }} check -p cddl --lib --no-default-features --target thumbv7em-none-eabihf
+
   compilation-check:
     uses: anweiss/cddl/.github/workflows/compilation-check.yml@main
 

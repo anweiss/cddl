@@ -36,3 +36,12 @@ jobs:
           RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         run: |
           cargo +$RUST_TOOLCHAIN check --all --bins --examples --tests --no-default-features
+
+      - name: Install thumbv7em-none-eabihf target
+        run: rustup target add thumbv7em-none-eabihf
+
+      - name: Check no_std compilation
+        env:
+          RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          cargo +$RUST_TOOLCHAIN check -p cddl --lib --no-default-features --target thumbv7em-none-eabihf

@@ -46,8 +46,18 @@ use pest::{
   Parser as PestParser, Span as PestSpan,
 };
 
+#[cfg(not(feature = "std"))]
+use alloc::borrow::Cow;
+#[cfg(feature = "std")]
 use std::borrow::Cow;
+
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeMap as HashMap;
+#[cfg(feature = "std")]
 use std::collections::HashMap;
+
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
 
 /// Convert a Pest error to the existing parser error format with enhanced messages
 pub fn convert_pest_error(error: pest::error::Error<Rule>, input: &str) -> Error {
@@ -468,6 +478,7 @@ pub fn cddl_from_pest_str<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
 /// referenced type/group names are either defined by a rule in the document,
 /// part of the standard prelude (RFC 8610 §D), a generic parameter, or a
 /// socket/plug reference.
+#[cfg(feature = "std")]
 pub fn cddl_from_pest_str_checked<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
   let pairs = CddlParser::parse(Rule::cddl, input).map_err(|e| convert_pest_error(e, input))?;
 
@@ -494,6 +505,7 @@ pub fn cddl_from_pest_str_checked<'a>(input: &'a str) -> Result<ast::CDDL<'a>, E
 /// Walk a successful pest parse tree to find the first undefined reference.
 ///
 /// Returns `Some((name, position))` if an undefined reference is found.
+#[cfg(feature = "std")]
 fn find_first_undefined_reference(
   pairs: Pairs<'_, Rule>,
   input: &str,
@@ -2046,14 +2058,24 @@ fn convert_number_to_type2<'a>(
         return Ok(ast::Type2::FloatValue { value: val, span });
       }
       Rule::hexfloat => {
-        let val = hexf_parse::parse_hexf64(inner.as_str(), false).map_err(|_| Error::PARSER {
-          position: pest_span_to_position(&inner.as_span(), input),
-          msg: ErrorMsg {
-            short: "Invalid hexfloat".to_string(),
-            extended: None,
-          },
-        })?;
-        return Ok(ast::Type2::FloatValue { value: val, span });
+        #[cfg(feature = "std")]
+        {
+          let val = hexf_parse::parse_hexf64(inner.as_str(), false).map_err(|_| Error::PARSER {
+            position: pest_span_to_position(&inner.as_span(), input),
+            msg: ErrorMsg {
+              short: "Invalid hexfloat".to_string(),
+              extended: None,
+            },
+          })?;
+          return Ok(ast::Type2::FloatValue { value: val, span });
+        }
+        #[cfg(not(feature = "std"))]
+        {
+          return Err(Error::PARSER {
+            position: pest_span_to_position(&inner.as_span(), input),
+            msg: crate::error::MsgType::InvalidHexFloat.into(),
+          });
+        }
       }
       _ => {}
     }
@@ -2103,13 +2125,22 @@ fn convert_number_to_type2<'a>(
         return Ok(ast::Type2::FloatValue { value: val });
       }
       Rule::hexfloat => {
-        let val = hexf_parse::parse_hexf64(inner.as_str(), false).map_err(|_| Error::PARSER {
-          msg: ErrorMsg {
-            short: "Invalid hexfloat".to_string(),
-            extended: None,
-          },
-        })?;
-        return Ok(ast::Type2::FloatValue { value: val });
+        #[cfg(feature = "std")]
+        {
+          let val = hexf_parse::parse_hexf64(inner.as_str(), false).map_err(|_| Error::PARSER {
+            msg: ErrorMsg {
+              short: "Invalid hexfloat".to_string(),
+              extended: None,
+            },
+          })?;
+          return Ok(ast::Type2::FloatValue { value: val });
+        }
+        #[cfg(not(feature = "std"))]
+        {
+          return Err(Error::PARSER {
+            msg: crate::error::MsgType::InvalidHexFloat.into(),
+          });
+        }
       }
       _ => {}
     }
@@ -2393,7 +2424,7 @@ fn convert_group_choice<'a>(
           optional_comma: false,
           #[cfg(feature = "ast-comments")]
           trailing_comments: None,
-          _a: std::marker::PhantomData,
+          _a: core::marker::PhantomData,
         },
       ));
     }
@@ -2605,7 +2636,7 @@ fn convert_occurrence<'a>(
               },
               #[cfg(feature = "ast-comments")]
               comments: None,
-              _a: std::marker::PhantomData,
+              _a: core::marker::PhantomData,
             });
           }
         }
@@ -2639,7 +2670,7 @@ fn convert_occurrence<'a>(
       occur,
       #[cfg(feature = "ast-comments")]
       comments: None,
-      _a: std::marker::PhantomData,
+      _a: core::marker::PhantomData,
     });
   }
 

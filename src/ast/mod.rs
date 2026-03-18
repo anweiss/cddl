@@ -8,11 +8,18 @@ use crate::token::{
   ByteValue, ControlOperator, RangeValue, SocketPlug, TagConstraint, Token, Value,
 };
 
-use std::{
-  borrow::Cow,
+use core::{
   fmt::{self, Write},
   marker::PhantomData,
 };
+
+#[cfg(not(feature = "std"))]
+use alloc::borrow::Cow;
+#[cfg(feature = "std")]
+use std::borrow::Cow;
+
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
 
 #[cfg(target_arch = "wasm32")]
 use serde::{self, Serialize};
@@ -1261,13 +1268,13 @@ impl fmt::Display for Type2<'_> {
       Type2::UTF8ByteString { value, .. } => write!(
         f,
         "'{}'",
-        std::str::from_utf8(value).map_err(|_| fmt::Error)?
+        core::str::from_utf8(value).map_err(|_| fmt::Error)?
       ),
       Type2::B16ByteString { value, .. } => {
-        write!(f, "{}", std::str::from_utf8(value).map_err(|_| fmt::Error)?)
+        write!(f, "{}", core::str::from_utf8(value).map_err(|_| fmt::Error)?)
       }
       Type2::B64ByteString { value, .. } => {
-        write!(f, "{}", std::str::from_utf8(value).map_err(|_| fmt::Error)?)
+        write!(f, "{}", core::str::from_utf8(value).map_err(|_| fmt::Error)?)
       }
       Type2::Typename {
         ident,

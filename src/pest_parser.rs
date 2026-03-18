@@ -7,19 +7,27 @@
 
 #[allow(unused_imports)]
 use pest::Parser;
-use pest_derive::Parser;
 
-/// Pest parser for CDDL
-///
-/// This parser is generated from the `cddl.pest` grammar file using pest_derive.
-/// It provides an alternative parsing approach that can coexist with the existing
-/// handwritten parser.
-///
-/// The grammar file is located at the repository root as `cddl.pest`.
-#[allow(missing_docs)]
-#[derive(Parser)]
-#[grammar = "../cddl.pest"]
-pub struct CddlParser;
+// In std mode, use pest_derive to generate the parser at compile time.
+// In no_std mode, use the build-script-generated parser with fixed paths.
+#[cfg(feature = "std")]
+mod generated {
+  use pest_derive::Parser;
+
+  /// Pest parser for CDDL
+  #[allow(missing_docs)]
+  #[derive(Parser)]
+  #[grammar = "../cddl.pest"]
+  pub struct CddlParser;
+}
+
+#[cfg(not(feature = "std"))]
+mod generated {
+  #![allow(bindings_with_variant_name)]
+  include!(concat!(env!("OUT_DIR"), "/pest_parser_generated.rs"));
+}
+
+pub use generated::*;
 
 #[cfg(test)]
 mod tests {
