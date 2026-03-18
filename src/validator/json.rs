@@ -1348,20 +1348,59 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         }
         self.state.ctrl = None;
       }
-      ControlOperator::REGEXP | ControlOperator::PCRE => {
+      ControlOperator::REGEXP => {
         self.state.ctrl = Some(ctrl);
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match self.json {
               Value::String(_) | Value::Array(_) => self.visit_type2(controller)?,
               _ => self.add_error(format!(
-                ".regexp/.pcre control can only be matched against JSON string, got {}",
+                ".regexp control can only be matched against JSON string, got {}",
                 self.json
               )),
             }
           }
           _ => self.add_error(format!(
-            ".regexp/.pcre control can only be matched against string data type, got {}",
+            ".regexp control can only be matched against string data type, got {}",
+            target
+          )),
+        }
+        self.state.ctrl = None;
+      }
+      ControlOperator::PCRE => {
+        self.state.ctrl = Some(ctrl);
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
+            match self.json {
+              Value::String(_) | Value::Array(_) => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                ".pcre control can only be matched against JSON string, got {}",
+                self.json
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".pcre control can only be matched against string data type, got {}",
+            target
+          )),
+        }
+        self.state.ctrl = None;
+      }
+      #[cfg(feature = "freezer")]
+      ControlOperator::IREGEXP => {
+        self.state.ctrl = Some(ctrl);
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
+            match self.json {
+              Value::String(_) | Value::Array(_) => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                ".iregexp control can only be matched against JSON string, got {}",
+                self.json
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".iregexp control can only be matched against string data type, got {}",
             target
           )),
         }
@@ -3057,7 +3096,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
               Some(format!("expected {} .ne to \"{}\"", value, s))
             }
           }
-          Some(ControlOperator::REGEXP) | Some(ControlOperator::PCRE) => {
+          Some(ControlOperator::REGEXP) => {
             let re = regex::Regex::new(
               &format_regex(t)
                 .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
@@ -3068,6 +3107,43 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
               None
             } else {
               Some(format!("expected \"{}\" to match regex \"{}\"", s, t))
+            }
+          }
+          Some(ControlOperator::PCRE) => {
+            #[cfg(feature = "freezer")]
+            {
+              let anchored = format!("^(?:{})$", t);
+              let re = fancy_regex::Regex::new(&anchored)
+                .map_err(|e| Error::from_validator(self, e.to_string()))?;
+              match re.is_match(s) {
+                Ok(true) => None,
+                Ok(false) => Some(format!("expected \"{}\" to match pcre \"{}\"", s, t)),
+                Err(e) => Some(format!("pcre matching error: {}", e)),
+              }
+            }
+            #[cfg(not(feature = "freezer"))]
+            {
+              let re = regex::Regex::new(
+                &format_regex(t)
+                  .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
+              )
+              .map_err(|e| Error::from_validator(self, e.to_string()))?;
+              if re.is_match(s) {
+                None
+              } else {
+                Some(format!("expected \"{}\" to match pcre \"{}\"", s, t))
+              }
+            }
+          }
+          #[cfg(feature = "freezer")]
+          Some(ControlOperator::IREGEXP) => {
+            let anchored = format!("^(?:{})$", t);
+            let re = regex::Regex::new(&anchored)
+              .map_err(|e| Error::from_validator(self, e.to_string()))?;
+            if re.is_match(s) {
+              None
+            } else {
+              Some(format!("expected \"{}\" to match iregexp \"{}\"", s, t))
             }
           }
           #[cfg(feature = "additional-controls")]

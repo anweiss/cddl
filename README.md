@@ -13,6 +13,7 @@ This crate supports the following CDDL-related RFCs:
 | [RFC 9682](https://datatracker.ietf.org/doc/html/rfc9682) | Updates to CDDL (Empty Data Models, `\u{hex}` Escapes, Non-Literal Tag Numbers) | ✔️ Full grammar and parser support |
 | [RFC 9741](https://datatracker.ietf.org/doc/html/rfc9741) | Additional Control Operators for Text in CDDL | ✔️ `.b64u` , `.b64c` , `.hex` , `.hexlc` , `.hexuc` , `.b32` , `.h32` , `.b45` , `.base10` , `.printf` , `.json` , `.join` and sloppy variants |
 | [draft-bormann-cbor-cddl-csv-08](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/08/) | Using CDDL for CSV | ✔️ CSV validation via generic data model mapping |
+| [draft-bormann-cbor-cddl-freezer-17](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-17) | CDDL Feature Freezer | ✔️ `.pcre` (PCRE2), `.iregexp` (RFC 9485), `.bitfield` |
 
 This crate uses [Pest](https://pest.rs/) (a PEG parser generator for Rust) to parse CDDL. The grammar is defined in [ `cddl.pest` ](cddl.pest) and closely follows the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
@@ -193,6 +194,14 @@ Enable CSV validation per [draft-bormann-cbor-cddl-csv-08](https://datatracker.i
 **`--feature additional-controls`**
 
 Enable validation support for the additional control operators defined in [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165) and [RFC 9741](https://datatracker.ietf.org/doc/html/rfc9741). Enabled by default.
+
+**`--feature freezer`**
+
+Enable control operators from the [CDDL Feature Freezer](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-17) draft. Enabled by default. Includes:
+
+- `.pcre` — PCRE2 regular expressions via `fancy-regex` (supports lookahead, lookbehind, backreferences). Patterns are anchored on both sides per the spec.
+- `.iregexp` — [RFC 9485](https://datatracker.ietf.org/doc/html/rfc9485) interoperable regular expressions. Anchored matching.
+- `.bitfield` — Structured bitfield validation for unsigned integers. The controller is an array of bit widths; the validator checks that the uint value fits within the total declared bit width.
 
 ### Parsing CDDL
 
@@ -387,7 +396,7 @@ Below is the table of supported control operators:
 
 <a name="number">2</a>: While JSON itself does not distinguish between integers and floating-point numbers, this crate does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON. Refer to [Appendix E.](https://tools.ietf.org/html/rfc8610#appendix-E) of the standard for more details on the implications of using CDDL with JSON numbers.
 
-<a name="regex">3</a>: Due to Perl-Compatible Regular Expressions (PCREs) being more widely used than XSD regular expressions, this crate also provides support for the proposed `.pcre` control extension in place of the `.regexp` operator (see [Discussion](https://tools.ietf.org/html/rfc8610#section-3.8.3.2) and [CDDL-Freezer proposal](https://tools.ietf.org/html/draft-bormann-cbor-cddl-freezer-03#section-5.1)). Ensure that your regex string is properly JSON escaped when using this control.
+<a name="regex">3</a>: Due to Perl-Compatible Regular Expressions (PCREs) being more widely used than XSD regular expressions, this crate also provides support for the `.pcre` control operator from the [CDDL Feature Freezer](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-17). When the `freezer` feature is enabled, `.pcre` uses the `fancy-regex` crate for full PCRE2 support (lookahead, lookbehind, backreferences). Patterns are anchored on both sides per the spec. When `freezer` is disabled, `.pcre` falls back to the same XSD regex engine as `.regexp`.
 
 If you've enabled the `additional-controls` feature, the control operators from RFC 9165 below are also available for use:
 
@@ -418,6 +427,14 @@ The text content control operators from RFC 9741 are also available:
 | `.printf` | ✔️ Validates text against printf-style format string with arguments |
 | `.json` | ✔️ Validates text as JSON matching a CDDL type |
 | `.join` | ✔️ Validates text as concatenation of array element values |
+
+If you've enabled the `freezer` feature, the control operators from the [CDDL Feature Freezer](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-17) draft are also available:
+
+| Control operator | Supported |
+| ---------------- | --------- |
+| `.pcre` | ✔️ PCRE2 regex via `fancy-regex` (lookahead, lookbehind, backreferences) |
+| `.iregexp` | ✔️ RFC 9485 interoperable regular expressions |
+| `.bitfield` | ✔️ Bitfield validation for unsigned integers (CBOR only) |
 
 You can activate features during validation as follows:
 
@@ -526,6 +543,14 @@ The text content control operators from RFC 9741 are also available for CBOR val
 | `.printf` | ✔️ |
 | `.json` | ✔️ |
 | `.join` | ✔️ |
+
+If you've enabled the `freezer` feature, the CDDL Feature Freezer operators are also available:
+
+| Control operator | Supported |
+| ---------------- | --------- |
+| `.pcre` | ✔️ PCRE2 regex via `fancy-regex` |
+| `.iregexp` | ✔️ RFC 9485 interoperable regular expressions |
+| `.bitfield` | ✔️ Bitfield width validation for uints |
 
 You can activate features during validation by passing a slice of feature strings as follows:
 

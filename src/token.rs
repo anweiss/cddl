@@ -264,6 +264,14 @@ pub enum ControlOperator {
   /// Proposed control extension to support Perl-Compatible Regular Expressions
   /// (PCREs). See <https://tools.ietf.org/html/rfc8610#section-3.8.3.2s>
   PCRE,
+  #[cfg(feature = "freezer")]
+  /// .iregexp control operator (RFC 9485)
+  /// I-Regexp interoperable regular expressions
+  IREGEXP,
+  #[cfg(feature = "freezer")]
+  /// .bitfield control operator (draft-bormann-cbor-cddl-freezer)
+  /// Validates bitfield layout in uint values
+  BITFIELD,
   #[cfg(feature = "additional-controls")]
   /// .cat control operator (rfc 9165)
   CAT,
@@ -569,6 +577,10 @@ impl fmt::Display for ControlOperator {
       ControlOperator::BITS => write!(f, ".bits"),
       ControlOperator::REGEXP => write!(f, ".regexp"),
       ControlOperator::PCRE => write!(f, ".pcre"),
+      #[cfg(feature = "freezer")]
+      ControlOperator::IREGEXP => write!(f, ".iregexp"),
+      #[cfg(feature = "freezer")]
+      ControlOperator::BITFIELD => write!(f, ".bitfield"),
       ControlOperator::CBOR => write!(f, ".cbor"),
       ControlOperator::CBORSEQ => write!(f, ".cborseq"),
       ControlOperator::WITHIN => write!(f, ".within"),
@@ -731,6 +743,10 @@ pub fn lookup_control_from_str(ident: &str) -> Option<ControlOperator> {
     ".ne" => Some(ControlOperator::NE),
     ".default" => Some(ControlOperator::DEFAULT),
     ".pcre" => Some(ControlOperator::PCRE),
+    #[cfg(feature = "freezer")]
+    ".iregexp" => Some(ControlOperator::IREGEXP),
+    #[cfg(feature = "freezer")]
+    ".bitfield" => Some(ControlOperator::BITFIELD),
     #[cfg(feature = "additional-controls")]
     ".cat" => Some(ControlOperator::CAT),
     #[cfg(feature = "additional-controls")]
