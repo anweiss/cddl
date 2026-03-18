@@ -12,7 +12,7 @@ rust-version = "1.88.0"
 proc-macro = true
 
 [dependencies]
-cddl = { version = "0.10.3", path = "..", default-features = false }
+cddl = { version = "0.10.4", path = "..", default-features = false }
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
