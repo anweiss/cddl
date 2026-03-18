@@ -31,16 +31,10 @@ jobs:
         run: |
           cargo +$RUST_TOOLCHAIN check --all --bins --examples --tests
 
-      - name: Check compilation with no features
-        env:
-          RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
-        run: |
-          cargo +$RUST_TOOLCHAIN check --all --bins --examples --tests --no-default-features
-
       - name: Install thumbv7em-none-eabihf target
         run: rustup target add thumbv7em-none-eabihf
 
-      - name: Check no_std compilation
+      - name: Check compilation with no features
         env:
           RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         run: |

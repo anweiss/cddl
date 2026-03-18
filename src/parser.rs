@@ -121,7 +121,7 @@ fn report_pest_error(error: &Error, input: &str) {
 
     let config = term::Config::default();
     let writer = StandardStream::stderr(ColorChoice::Auto);
-    let _ = term::emit(&mut writer.lock(), &config, &files, &diagnostic);
+    let _ = term::emit_to_io_write(&mut writer.lock(), &config, &files, &diagnostic);
   }
 }
 

@@ -60,6 +60,7 @@ use std::collections::HashMap;
 use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
 
 /// Convert a Pest error to the existing parser error format with enhanced messages
+#[allow(unused_variables)]
 pub fn convert_pest_error(error: pest::error::Error<Rule>, input: &str) -> Error {
   let (line, column, byte_pos) = match error.line_col {
     pest::error::LineColLocation::Pos((line, col)) => (line, col, error.location.clone()),
@@ -1400,6 +1401,7 @@ fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a
 }
 
 /// Convert identifier (typename or groupname)
+#[allow(unused_variables)]
 fn convert_identifier<'a>(
   pair: Pair<'a, Rule>,
   input: &'a str,
@@ -1437,6 +1439,7 @@ fn convert_identifier<'a>(
 }
 
 /// Convert generic parameters
+#[allow(unused_variables)]
 fn convert_generic_params<'a>(
   pair: Pair<'a, Rule>,
   input: &'a str,
@@ -1649,6 +1652,7 @@ fn convert_type1<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type1<
 }
 
 /// Convert control operator
+#[allow(unused_variables)]
 fn convert_control_operator<'a>(
   pair: Pair<'a, Rule>,
   input: &'a str,
@@ -2093,7 +2097,7 @@ fn convert_number_to_type2<'a>(
 #[cfg(not(feature = "ast-span"))]
 fn convert_number_to_type2<'a>(
   pair: Pair<'a, Rule>,
-  input: &'a str,
+  _input: &'a str,
 ) -> Result<ast::Type2<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
@@ -2228,7 +2232,7 @@ fn convert_bytes_value_to_type2<'a>(
 #[cfg(not(feature = "ast-span"))]
 fn convert_bytes_value_to_type2<'a>(
   pair: Pair<'a, Rule>,
-  input: &'a str,
+  _input: &'a str,
 ) -> Result<ast::Type2<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
@@ -2599,6 +2603,7 @@ fn convert_group_entry<'a>(
 }
 
 /// Convert occurrence indicator
+#[allow(unused_variables)]
 fn convert_occurrence<'a>(
   pair: Pair<'a, Rule>,
   input: &'a str,
