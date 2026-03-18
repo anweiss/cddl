@@ -38,6 +38,7 @@ clap = { version = "4.6", optional = true, features = ["derive"] }
 codespan-reporting = { version = "0.13.1", optional = true }
 hexf-parse = { version = "0.2.1", optional = true }
 itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
+fancy-regex = { version = "0.14", optional = true }
 regex = { version = "1.12.3", optional = true, default-features = false, features = [
     "std",
     "unicode-perl",
@@ -93,6 +94,7 @@ default = [
     "additional-controls",
     "ast-parent",
     "wasm-bindgen",
+    "freezer",
 ]
 std = [
     "base16/alloc",
@@ -124,6 +126,7 @@ std = [
 ]
 lsp = ["std"]
 additional-controls = []
+freezer = ["fancy-regex"]
 ast-span = []
 ast-comments = []
 ast-parent = []

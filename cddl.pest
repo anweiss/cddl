@@ -108,12 +108,12 @@ range_op_exclusive = { "..." }
 //   .b64u/.b64c/.hex/.b32/.b45 - encoding constraints
 //   .printf/.json/.join - formatting operations
 control_op = { "." ~ control_name }
-control_name = { "size" | "bits" | "regexp" | "pcre" | "cbor" | "cborseq" 
+control_name = { "size" | "bits" | "regexp" | "pcre" | "iregexp" | "cbor" | "cborseq" 
                | "within" | "and" | "lt" | "le" | "gt" | "ge" | "eq" | "ne" 
                | "default" | "cat" | "det" | "plus" | "abnfb" | "abnf" 
                | "feature" | "b64u-sloppy" | "b64c-sloppy" | "b64u" | "b64c"
                | "hexuc" | "hexlc" | "hex" | "base10" | "printf" | "json" | "join" 
-               | "b32" | "h32" | "b45" }
+               | "b32" | "h32" | "b45" | "bitfield" }
 
 controller = { type2 }
 

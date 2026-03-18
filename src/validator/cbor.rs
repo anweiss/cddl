@@ -989,6 +989,12 @@ where
             return Ok(());
           }
         }
+        // For bitfield, fall through to the match ctrl block
+        #[cfg(feature = "freezer")]
+        if ctrl != ControlOperator::BITFIELD {
+          return Ok(());
+        }
+        #[cfg(not(feature = "freezer"))]
         return Ok(());
       } else if is_ident_integer_data_type(self.state.cddl, target_ident)
         && !matches!(self.cbor, Value::Integer(_))
@@ -1172,25 +1178,116 @@ where
         self.state.ctrl = None;
         Ok(())
       }
-      ControlOperator::REGEXP | ControlOperator::PCRE => {
+      ControlOperator::REGEXP => {
         self.state.ctrl = Some(ctrl);
         match target {
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match self.cbor {
               Value::Text(_) | Value::Array(_) => self.visit_type2(controller)?,
               _ => self.add_error(format!(
-                ".regexp/.pcre control can only be matched against CBOR string, got {:?}",
+                ".regexp control can only be matched against CBOR string, got {:?}",
                 self.cbor
               )),
             }
           }
           _ => self.add_error(format!(
-            ".regexp/.pcre control can only be matched against string data type, got {}",
+            ".regexp control can only be matched against string data type, got {}",
             target
           )),
         }
         self.state.ctrl = None;
 
+        Ok(())
+      }
+      ControlOperator::PCRE => {
+        self.state.ctrl = Some(ctrl);
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
+            match self.cbor {
+              Value::Text(_) | Value::Array(_) => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                ".pcre control can only be matched against CBOR string, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".pcre control can only be matched against string data type, got {}",
+            target
+          )),
+        }
+        self.state.ctrl = None;
+
+        Ok(())
+      }
+      #[cfg(feature = "freezer")]
+      ControlOperator::IREGEXP => {
+        self.state.ctrl = Some(ctrl);
+        match target {
+          Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
+            match self.cbor {
+              Value::Text(_) | Value::Array(_) => self.visit_type2(controller)?,
+              _ => self.add_error(format!(
+                ".iregexp control can only be matched against CBOR string, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".iregexp control can only be matched against string data type, got {}",
+            target
+          )),
+        }
+        self.state.ctrl = None;
+
+        Ok(())
+      }
+      #[cfg(feature = "freezer")]
+      ControlOperator::BITFIELD => {
+        self.state.ctrl = Some(ctrl);
+        match target {
+          Type2::Typename { ident, .. } if is_ident_uint_data_type(self.state.cddl, ident) => {
+            match &self.cbor {
+              Value::Integer(i) if i128::from(*i) >= 0i128 => {
+                let int_val = i128::from(*i) as u128;
+                match extract_bitfield_widths(controller) {
+                  Some(total_bits) if total_bits > 0 && total_bits <= 128 => {
+                    let max_val = if total_bits >= 128 {
+                      u128::MAX
+                    } else {
+                      (1u128 << total_bits) - 1
+                    };
+                    if int_val > max_val {
+                      self.add_error(format!(
+                        "value {} exceeds .bitfield capacity of {} bits (max {})",
+                        int_val, total_bits, max_val
+                      ));
+                    }
+                  }
+                  Some(_) => {
+                    self
+                      .add_error(".bitfield total bit width must be between 1 and 128".to_string());
+                  }
+                  None => {
+                    self.add_error(
+                      ".bitfield controller must be an array of uint values representing bit widths"
+                        .to_string(),
+                    );
+                  }
+                }
+              }
+              _ => self.add_error(format!(
+                ".bitfield control can only be matched against a non-negative integer, got {:?}",
+                self.cbor
+              )),
+            }
+          }
+          _ => self.add_error(format!(
+            ".bitfield control can only be matched against uint data type, got {}",
+            target
+          )),
+        }
+        self.state.ctrl = None;
         Ok(())
       }
       ControlOperator::CBOR | ControlOperator::CBORSEQ => {
@@ -4186,7 +4283,7 @@ where
               Some(format!("expected {} .ne to \"{}\"", value, s))
             }
           }
-          Some(ControlOperator::REGEXP) | Some(ControlOperator::PCRE) => {
+          Some(ControlOperator::REGEXP) => {
             let re = regex::Regex::new(
               &format_regex(t)
                 .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
@@ -4197,6 +4294,43 @@ where
               None
             } else {
               Some(format!("expected \"{}\" to match regex \"{}\"", s, t))
+            }
+          }
+          Some(ControlOperator::PCRE) => {
+            #[cfg(feature = "freezer")]
+            {
+              let anchored = format!("^(?:{})$", t);
+              let re = fancy_regex::Regex::new(&anchored)
+                .map_err(|e| Error::from_validator(self, e.to_string()))?;
+              match re.is_match(s) {
+                Ok(true) => None,
+                Ok(false) => Some(format!("expected \"{}\" to match pcre \"{}\"", s, t)),
+                Err(e) => Some(format!("pcre matching error: {}", e)),
+              }
+            }
+            #[cfg(not(feature = "freezer"))]
+            {
+              let re = regex::Regex::new(
+                &format_regex(t)
+                  .ok_or_else(|| Error::from_validator(self, "malformed regex".to_string()))?,
+              )
+              .map_err(|e| Error::from_validator(self, e.to_string()))?;
+              if re.is_match(s) {
+                None
+              } else {
+                Some(format!("expected \"{}\" to match pcre \"{}\"", s, t))
+              }
+            }
+          }
+          #[cfg(feature = "freezer")]
+          Some(ControlOperator::IREGEXP) => {
+            let anchored = format!("^(?:{})$", t);
+            let re = regex::Regex::new(&anchored)
+              .map_err(|e| Error::from_validator(self, e.to_string()))?;
+            if re.is_match(s) {
+              None
+            } else {
+              Some(format!("expected \"{}\" to match iregexp \"{}\"", s, t))
             }
           }
           #[cfg(feature = "additional-controls")]
@@ -4478,6 +4612,62 @@ pub fn token_value_into_cbor_value(value: token::Value) -> Value {
     token::Value::BYTE(b) => match b {
       ByteValue::UTF8(b) | ByteValue::B16(b) | ByteValue::B64(b) => Value::Bytes(b.into_owned()),
     },
+  }
+}
+
+/// Extracts total bit width from a bitfield controller Type2.
+/// The controller should be an array of uint values representing bit widths,
+/// e.g., `[1, 2, 4]` means 1 + 2 + 4 = 7 bits total.
+#[cfg(feature = "freezer")]
+fn extract_bitfield_widths(controller: &Type2) -> Option<u128> {
+  if let Type2::Array { group, .. } = controller {
+    let mut total_bits: u128 = 0;
+    for gc in group.group_choices.iter() {
+      for (ge, _) in gc.group_entries.iter() {
+        match ge {
+          GroupEntry::ValueMemberKey { ge: vmke, .. } => {
+            // Extract the uint value from the entry type
+            if let Some(width) = extract_uint_from_type(&vmke.entry_type) {
+              total_bits = total_bits.checked_add(width as u128)?;
+            } else {
+              return None;
+            }
+          }
+          GroupEntry::TypeGroupname { ge: tge, .. } => {
+            // Type group name entry — try to extract from its name
+            if let Ok(width) = tge.name.ident.parse::<usize>() {
+              total_bits = total_bits.checked_add(width as u128)?;
+            } else {
+              return None;
+            }
+          }
+          _ => return None,
+        }
+      }
+    }
+    Some(total_bits)
+  } else {
+    None
+  }
+}
+
+/// Extracts a uint value from a Type AST node.
+#[cfg(feature = "freezer")]
+fn extract_uint_from_type(t: &crate::ast::Type) -> Option<usize> {
+  if t.type_choices.len() != 1 {
+    return None;
+  }
+  let tc = &t.type_choices[0];
+  extract_uint_from_type2(&tc.type1.type2)
+}
+
+/// Extracts a uint value from a Type2 AST node.
+#[cfg(feature = "freezer")]
+fn extract_uint_from_type2(t2: &Type2) -> Option<usize> {
+  match t2 {
+    Type2::UintValue { value, .. } => Some(*value),
+    Type2::IntValue { value, .. } if *value >= 0 => Some(*value as usize),
+    _ => None,
   }
 }
 
