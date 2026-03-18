@@ -1,5 +1,6 @@
 [workspace]
 members = ["cddl-derive"]
+resolver = "2"
 
 [package]
 name = "cddl"
@@ -34,10 +35,10 @@ base16 = { version = "0.2.1", default-features = false }
 data-encoding = { version = "2.10.0", default-features = false }
 chrono = { version = "0.4.44", optional = true }
 clap = { version = "4.6", optional = true, features = ["derive"] }
-codespan-reporting = "0.13.1"
-hexf-parse = "0.2.1"
-itertools = "0.14.0"
-regex = { version = "1.12.3", default-features = false, features = [
+codespan-reporting = { version = "0.13.1", optional = true }
+hexf-parse = { version = "0.2.1", optional = true }
+itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
+regex = { version = "1.12.3", optional = true, default-features = false, features = [
     "std",
     "unicode-perl",
 ] }
@@ -54,14 +55,18 @@ uriparse = { version = "0.6.3", optional = true }
 base64-url = { version = "3.0.2", optional = true }
 base45 = { version = "3.2.0", optional = true }
 hex = { version = "0.4.3", optional = true }
-abnf_to_pest = "0.5.1"
-pest_meta = "2.8.6"
-pest_vm = "2.8.6"
-pest = "2.8.6"
+abnf_to_pest = { version = "0.5.1", optional = true }
+pest_meta = { version = "2.8.6", optional = true }
+pest_vm = { version = "2.8.6", optional = true }
+pest = { version = "2.8.6", default-features = false }
 pest_derive = "2.8.6"
 displaydoc = { version = "0.2.3", default-features = false }
-log = "0.4.29"
-simplelog = "0.12.1"
+log = { version = "0.4.29", optional = true }
+simplelog = { version = "0.12.1", optional = true }
+
+[build-dependencies]
+pest_generator = "2.8.6"
+proc-macro2 = "1.0"
 
 [dev-dependencies]
 indoc = "2.0.7"
@@ -106,6 +111,16 @@ std = [
     "base45",
     "hex",
     "regex-syntax",
+    "codespan-reporting",
+    "hexf-parse",
+    "simplelog",
+    "log",
+    "abnf_to_pest",
+    "pest_meta",
+    "pest_vm",
+    "regex",
+    "pest/std",
+    "itertools/use_std",
 ]
 lsp = ["std"]
 additional-controls = []

@@ -16,7 +16,7 @@ jobs:
         shell: bash
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install Rust
         env:
@@ -31,8 +31,13 @@ jobs:
         run: |
           cargo +$RUST_TOOLCHAIN check --all --bins --examples --tests
 
+      - name: Install thumbv7em-none-eabihf target
+        env:
+          RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: rustup target add thumbv7em-none-eabihf --toolchain $RUST_TOOLCHAIN
+
       - name: Check compilation with no features
         env:
           RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         run: |
-          cargo +$RUST_TOOLCHAIN check --all --bins --examples --tests --no-default-features
+          cargo +$RUST_TOOLCHAIN check -p cddl --lib --no-default-features --target thumbv7em-none-eabihf

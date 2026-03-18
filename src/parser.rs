@@ -1,7 +1,11 @@
-use super::{ast::*, error::ErrorMsg, lexer::Position, pest_bridge};
+use super::{ast::*, error::ErrorMsg, pest_bridge};
 
-use std::result;
+#[cfg(feature = "std")]
+use super::lexer::Position;
 
+use core::result;
+
+#[cfg(feature = "std")]
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
   files::SimpleFiles,
@@ -9,6 +13,9 @@ use codespan_reporting::{
   term::termcolor::{ColorChoice, StandardStream},
 };
 use displaydoc::Display;
+
+#[cfg(not(feature = "std"))]
+use alloc::string::{String, ToString};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -39,10 +46,12 @@ pub enum Error {
     msg: ErrorMsg,
   },
   /// Regex error
+  #[cfg(feature = "std")]
   #[displaydoc("regex parsing error: {0}")]
   REGEX(regex::Error),
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for Error {}
 
 /// Returns a `ast::CDDL` from a `&str`
@@ -59,6 +68,7 @@ impl std::error::Error for Error {}
 ///
 /// let input = r#"myrule = int"#;
 /// let _ = cddl_from_str(input, true);
+#[cfg(feature = "std")]
 #[cfg(not(target_arch = "wasm32"))]
 pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDDL<'_>, String> {
   pest_bridge::cddl_from_pest_str(input).map_err(|e| {
@@ -69,7 +79,15 @@ pub fn cddl_from_str(input: &str, print_stderr: bool) -> std::result::Result<CDD
   })
 }
 
+/// Returns a `ast::CDDL` from a `&str` (no_std version, no stderr output)
+#[cfg(not(feature = "std"))]
+#[cfg(not(target_arch = "wasm32"))]
+pub fn cddl_from_str(input: &str, _print_stderr: bool) -> core::result::Result<CDDL<'_>, String> {
+  pest_bridge::cddl_from_pest_str(input).map_err(|e| e.to_string())
+}
+
 /// Print a pest parser error to stderr with codespan diagnostics
+#[cfg(feature = "std")]
 fn report_pest_error(error: &Error, input: &str) {
   if let Error::PARSER {
     #[cfg(feature = "ast-span")]
@@ -103,7 +121,7 @@ fn report_pest_error(error: &Error, input: &str) {
 
     let config = term::Config::default();
     let writer = StandardStream::stderr(ColorChoice::Auto);
-    let _ = term::emit(&mut writer.lock(), &config, &files, &diagnostic);
+    let _ = term::emit_to_io_write(&mut writer.lock(), &config, &files, &diagnostic);
   }
 }
 
@@ -112,6 +130,7 @@ impl CDDL<'_> {
   ///
   /// This performs both syntactic parsing and semantic validation, including
   /// checking that all referenced type/group names are defined.
+  #[cfg(feature = "std")]
   #[cfg(not(target_arch = "wasm32"))]
   pub fn from_slice(input: &[u8]) -> std::result::Result<CDDL<'_>, String> {
     let str_input = std::str::from_utf8(input).map_err(|e| e.to_string())?;

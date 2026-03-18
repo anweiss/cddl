@@ -46,10 +46,21 @@ use pest::{
   Parser as PestParser, Span as PestSpan,
 };
 
+#[cfg(not(feature = "std"))]
+use alloc::borrow::Cow;
+#[cfg(feature = "std")]
 use std::borrow::Cow;
+
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeMap as HashMap;
+#[cfg(feature = "std")]
 use std::collections::HashMap;
 
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
+
 /// Convert a Pest error to the existing parser error format with enhanced messages
+#[allow(unused_variables)]
 pub fn convert_pest_error(error: pest::error::Error<Rule>, input: &str) -> Error {
   let (line, column, byte_pos) = match error.line_col {
     pest::error::LineColLocation::Pos((line, col)) => (line, col, error.location.clone()),
@@ -468,6 +479,7 @@ pub fn cddl_from_pest_str<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
 /// referenced type/group names are either defined by a rule in the document,
 /// part of the standard prelude (RFC 8610 §D), a generic parameter, or a
 /// socket/plug reference.
+#[cfg(feature = "std")]
 pub fn cddl_from_pest_str_checked<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
   let pairs = CddlParser::parse(Rule::cddl, input).map_err(|e| convert_pest_error(e, input))?;
 
@@ -494,6 +506,7 @@ pub fn cddl_from_pest_str_checked<'a>(input: &'a str) -> Result<ast::CDDL<'a>, E
 /// Walk a successful pest parse tree to find the first undefined reference.
 ///
 /// Returns `Some((name, position))` if an undefined reference is found.
+#[cfg(feature = "std")]
 fn find_first_undefined_reference(
   pairs: Pairs<'_, Rule>,
   input: &str,
@@ -1388,6 +1401,7 @@ fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a
 }
 
 /// Convert identifier (typename or groupname)
+#[allow(unused_variables)]
 fn convert_identifier<'a>(
   pair: Pair<'a, Rule>,
   input: &'a str,
@@ -1425,6 +1439,7 @@ fn convert_identifier<'a>(
 }
 
 /// Convert generic parameters
+#[allow(unused_variables)]
 fn convert_generic_params<'a>(
   pair: Pair<'a, Rule>,
   input: &'a str,
@@ -1637,6 +1652,7 @@ fn convert_type1<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Type1<
 }
 
 /// Convert control operator
+#[allow(unused_variables)]
 fn convert_control_operator<'a>(
   pair: Pair<'a, Rule>,
   input: &'a str,
@@ -2046,14 +2062,24 @@ fn convert_number_to_type2<'a>(
         return Ok(ast::Type2::FloatValue { value: val, span });
       }
       Rule::hexfloat => {
-        let val = hexf_parse::parse_hexf64(inner.as_str(), false).map_err(|_| Error::PARSER {
-          position: pest_span_to_position(&inner.as_span(), input),
-          msg: ErrorMsg {
-            short: "Invalid hexfloat".to_string(),
-            extended: None,
-          },
-        })?;
-        return Ok(ast::Type2::FloatValue { value: val, span });
+        #[cfg(feature = "std")]
+        {
+          let val = hexf_parse::parse_hexf64(inner.as_str(), false).map_err(|_| Error::PARSER {
+            position: pest_span_to_position(&inner.as_span(), input),
+            msg: ErrorMsg {
+              short: "Invalid hexfloat".to_string(),
+              extended: None,
+            },
+          })?;
+          return Ok(ast::Type2::FloatValue { value: val, span });
+        }
+        #[cfg(not(feature = "std"))]
+        {
+          return Err(Error::PARSER {
+            position: pest_span_to_position(&inner.as_span(), input),
+            msg: crate::error::MsgType::InvalidHexFloat.into(),
+          });
+        }
       }
       _ => {}
     }
@@ -2071,7 +2097,7 @@ fn convert_number_to_type2<'a>(
 #[cfg(not(feature = "ast-span"))]
 fn convert_number_to_type2<'a>(
   pair: Pair<'a, Rule>,
-  input: &'a str,
+  _input: &'a str,
 ) -> Result<ast::Type2<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
@@ -2103,13 +2129,22 @@ fn convert_number_to_type2<'a>(
         return Ok(ast::Type2::FloatValue { value: val });
       }
       Rule::hexfloat => {
-        let val = hexf_parse::parse_hexf64(inner.as_str(), false).map_err(|_| Error::PARSER {
-          msg: ErrorMsg {
-            short: "Invalid hexfloat".to_string(),
-            extended: None,
-          },
-        })?;
-        return Ok(ast::Type2::FloatValue { value: val });
+        #[cfg(feature = "std")]
+        {
+          let val = hexf_parse::parse_hexf64(inner.as_str(), false).map_err(|_| Error::PARSER {
+            msg: ErrorMsg {
+              short: "Invalid hexfloat".to_string(),
+              extended: None,
+            },
+          })?;
+          return Ok(ast::Type2::FloatValue { value: val });
+        }
+        #[cfg(not(feature = "std"))]
+        {
+          return Err(Error::PARSER {
+            msg: crate::error::MsgType::InvalidHexFloat.into(),
+          });
+        }
       }
       _ => {}
     }
@@ -2197,7 +2232,7 @@ fn convert_bytes_value_to_type2<'a>(
 #[cfg(not(feature = "ast-span"))]
 fn convert_bytes_value_to_type2<'a>(
   pair: Pair<'a, Rule>,
-  input: &'a str,
+  _input: &'a str,
 ) -> Result<ast::Type2<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
@@ -2393,7 +2428,7 @@ fn convert_group_choice<'a>(
           optional_comma: false,
           #[cfg(feature = "ast-comments")]
           trailing_comments: None,
-          _a: std::marker::PhantomData,
+          _a: core::marker::PhantomData,
         },
       ));
     }
@@ -2568,6 +2603,7 @@ fn convert_group_entry<'a>(
 }
 
 /// Convert occurrence indicator
+#[allow(unused_variables)]
 fn convert_occurrence<'a>(
   pair: Pair<'a, Rule>,
   input: &'a str,
@@ -2605,7 +2641,7 @@ fn convert_occurrence<'a>(
               },
               #[cfg(feature = "ast-comments")]
               comments: None,
-              _a: std::marker::PhantomData,
+              _a: core::marker::PhantomData,
             });
           }
         }
@@ -2639,7 +2675,7 @@ fn convert_occurrence<'a>(
       occur,
       #[cfg(feature = "ast-comments")]
       comments: None,
-      _a: std::marker::PhantomData,
+      _a: core::marker::PhantomData,
     });
   }
 

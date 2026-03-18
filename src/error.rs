@@ -1,4 +1,7 @@
-use std::fmt;
+use core::fmt;
+
+#[cfg(not(feature = "std"))]
+use alloc::string::String;
 
 #[cfg(target_arch = "wasm32")]
 use serde::Serialize;
@@ -11,7 +14,7 @@ pub struct ErrorMsg {
 }
 
 impl fmt::Display for ErrorMsg {
-  fn fmt(&self, f: &mut std::fmt::Formatter) -> fmt::Result {
+  fn fmt(&self, f: &mut core::fmt::Formatter) -> fmt::Result {
     write!(f, "{}", self.short)
   }
 }
