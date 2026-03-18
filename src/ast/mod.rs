@@ -1271,10 +1271,18 @@ impl fmt::Display for Type2<'_> {
         core::str::from_utf8(value).map_err(|_| fmt::Error)?
       ),
       Type2::B16ByteString { value, .. } => {
-        write!(f, "{}", core::str::from_utf8(value).map_err(|_| fmt::Error)?)
+        write!(
+          f,
+          "{}",
+          core::str::from_utf8(value).map_err(|_| fmt::Error)?
+        )
       }
       Type2::B64ByteString { value, .. } => {
-        write!(f, "{}", core::str::from_utf8(value).map_err(|_| fmt::Error)?)
+        write!(
+          f,
+          "{}",
+          core::str::from_utf8(value).map_err(|_| fmt::Error)?
+        )
       }
       Type2::Typename {
         ident,

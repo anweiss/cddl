@@ -28,7 +28,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install Rust
         run: |
@@ -40,7 +40,7 @@ jobs:
           cargo +${{ matrix.rust_toolchain }} check --locked --all --bins --examples --tests
 
       - name: Install thumbv7em-none-eabihf target
-        run: rustup target add thumbv7em-none-eabihf
+        run: rustup target add thumbv7em-none-eabihf --toolchain ${{ matrix.rust_toolchain }}
 
       - name: Check compilation with no features
         run: |
@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install Rust
         run: |
@@ -78,7 +78,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install Rust
         run: |
@@ -96,7 +96,7 @@ jobs:
     if: contains(github.ref, 'vscode-extension') != true
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           persist-credentials: false
 
@@ -126,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install Rust
         run: |
@@ -152,7 +152,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install Rust
         run: |
