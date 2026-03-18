@@ -169,13 +169,12 @@ jobs:
           cd pkg
           PKG_VERSION=$(node -p "require('./package.json').version")
           echo "Attempting to publish @anweiss/cddl@${PKG_VERSION}"
-          npm publish --access=public || {
-            STATUS=$?
-            if grep -q "409 Conflict" <<< "$(npm publish --access=public 2>&1)"; then
-              echo "Package @anweiss/cddl@${PKG_VERSION} already exists on GitHub Package Registry, skipping publish"
-              exit 0
+          OUTPUT=$(npm publish --access=public 2>&1) && echo "$OUTPUT" || {
+            if echo "$OUTPUT" | grep -qE "409 Conflict|cannot publish over the previously published version"; then
+              echo "Package @anweiss/cddl@${PKG_VERSION} already exists, skipping"
             else
-              exit $STATUS
+              echo "$OUTPUT" >&2
+              exit 1
             fi
           }
 
@@ -183,13 +182,12 @@ jobs:
           cd ../cddl-languageserver
           LSP_VERSION=$(node -p "require('./package.json').version")
           echo "Attempting to publish @anweiss/cddl-languageserver@${LSP_VERSION}"
-          npm publish --access=public || {
-            STATUS=$?
-            if grep -q "409 Conflict" <<< "$(npm publish --access=public 2>&1)"; then
-              echo "Package @anweiss/cddl-languageserver@${LSP_VERSION} already exists on GitHub Package Registry, skipping publish"
-              exit 0
+          OUTPUT=$(npm publish --access=public 2>&1) && echo "$OUTPUT" || {
+            if echo "$OUTPUT" | grep -qE "409 Conflict|cannot publish over the previously published version"; then
+              echo "Package @anweiss/cddl-languageserver@${LSP_VERSION} already exists, skipping"
             else
-              exit $STATUS
+              echo "$OUTPUT" >&2
+              exit 1
             fi
           }
 
