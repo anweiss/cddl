@@ -413,6 +413,123 @@ fn validate_range_operators() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn validate_cbor_start_with_tag() -> Result<(), Box<dyn Error>> {
+    // CDDL where the starting rule is a tagged integer
+    let cddl_input = r#"start = #6.42(int)"#; // Tag 42 followed by an integer
+
+    // --- Positive Test ---
+    // Valid CBOR: Tag 42 followed by integer 10
+    let valid_cbor_val = Value::Tag(42, Box::new(Value::Integer(10.into())));
+    let mut valid_cbor_bytes = Vec::new();
+    ciborium::ser::into_writer(&valid_cbor_val, &mut valid_cbor_bytes)?;
+    validate_cbor_from_slice(cddl_input, &valid_cbor_bytes,None) 
+        .expect("Validation should succeed for correct tag and type");
+
+    // --- Negative Tests ---
+    // 1. Incorrect Tag: Tag 99 wrapping the correct array
+    let wrong_tag_val = Value::Tag(99, Box::new(valid_cbor_val.clone())); // Reuse inner array
+    let mut wrong_tag_bytes = Vec::new();
+    ciborium::ser::into_writer(&wrong_tag_val, &mut wrong_tag_bytes)?;
+    validate_cbor_from_slice(cddl_input, &wrong_tag_bytes, None)
+        .expect_err("Validation should fail for incorrect tag");
+
+    // 2. Incorrect Type: Tag 42 followed by a string
+    let wrong_type_val = Value::Tag(42, Box::new(Value::Text("hello".to_string())));
+    let mut wrong_type_bytes = Vec::new();
+    ciborium::ser::into_writer(&wrong_type_val, &mut wrong_type_bytes)?;
+    validate_cbor_from_slice(cddl_input, &wrong_type_bytes, None)
+        .expect_err("Validation should fail for incorrect type under correct tag");
+
+    // 3. Missing Tag: Just the integer 10
+    let no_tag_val = Value::Integer(10.into());
+    let mut no_tag_bytes = Vec::new();
+    ciborium::ser::into_writer(&no_tag_val, &mut no_tag_bytes)?;
+    validate_cbor_from_slice(cddl_input, &no_tag_bytes, None)
+        .expect_err("Validation should fail for missing tag");
+
+    // 4. Different Type (No Tag): Just a boolean
+    validate_cbor_from_slice(cddl_input, cbor::BOOL_TRUE, None)
+        .expect_err("Validation should fail for completely wrong type");
+
+    Ok(())
+}
+
+#[test]
+fn validate_cbor_start_with_tagged_array() -> Result<(), Box<dyn Error>> {
+    // CDDL definition based on COSE_Sign1
+    let cddl_input = r#"
+        COSE_Sign1_Tagged = #6.18(COSE_Sign1)
+
+        COSE_Sign1 = [
+            Headers,
+            payload : bstr / nil,
+            signature : bstr
+        ]
+
+        Headers = { * int => any } ; Simplified for testing
+    "#;
+
+    // --- Positive Test ---
+    // Valid CBOR: Tag 18 wrapping [ {}, b"payload", b"sig" ]
+    let headers_map = Value::Map(vec![]); // Empty map for Headers
+    let payload_bstr = Value::Bytes(b"payload".to_vec());
+    let signature_bstr = Value::Bytes(b"sig".to_vec());
+    let cose_sign1_array = Value::Array(vec![headers_map.clone(), payload_bstr.clone(), signature_bstr.clone()]);
+    let valid_cbor_val = Value::Tag(18, Box::new(cose_sign1_array.clone()));
+
+    let mut valid_cbor_bytes = Vec::new();
+    ciborium::ser::into_writer(&valid_cbor_val, &mut valid_cbor_bytes)?;
+    validate_cbor_from_slice(cddl_input, &valid_cbor_bytes, None) // Use None to validate against the first rule (COSE_Sign1_Tagged)
+        .expect("Validation should succeed for correct tag and array structure");
+
+    // --- Positive Test (nil payload) ---
+     let payload_nil = Value::Null;
+     let cose_sign1_array_nil_payload = Value::Array(vec![headers_map.clone(), payload_nil, signature_bstr.clone()]);
+     let valid_cbor_nil_payload_val = Value::Tag(18, Box::new(cose_sign1_array_nil_payload));
+     let mut valid_cbor_nil_payload_bytes = Vec::new();
+     ciborium::ser::into_writer(&valid_cbor_nil_payload_val, &mut valid_cbor_nil_payload_bytes)?;
+     validate_cbor_from_slice(cddl_input, &valid_cbor_nil_payload_bytes, None)
+         .expect("Validation should succeed for correct tag and array structure with nil payload");
+
+
+    // --- Negative Tests ---
+    // 1. Incorrect Tag: Tag 99 wrapping the correct array
+    let wrong_tag_val = Value::Tag(99, Box::new(cose_sign1_array.clone())); // Reuse inner array
+    let mut wrong_tag_bytes = Vec::new();
+    ciborium::ser::into_writer(&wrong_tag_val, &mut wrong_tag_bytes)?;
+    validate_cbor_from_slice(cddl_input, &wrong_tag_bytes, None)
+        .expect_err("Validation should fail for incorrect tag");
+
+    // 2. Correct Tag, Incorrect Array Structure (wrong type for payload)
+    let wrong_payload_type = Value::Text("not bytes".to_string());
+    let wrong_array_payload_val = Value::Array(vec![headers_map.clone(), wrong_payload_type, signature_bstr.clone()]);
+    let wrong_type_val = Value::Tag(18, Box::new(wrong_array_payload_val));
+    let mut wrong_type_bytes = Vec::new();
+    ciborium::ser::into_writer(&wrong_type_val, &mut wrong_type_bytes)?;
+    validate_cbor_from_slice(cddl_input, &wrong_type_bytes, None)
+        .expect_err("Validation should fail for incorrect payload type within the tagged array");
+
+        /* 
+    // 3. Correct Tag, Incorrect Array Structure (missing element)
+    let missing_element_array = Value::Array(vec![headers_map.clone(), payload_bstr.clone()]); // Missing signature
+    let wrong_array_len_val = Value::Tag(18, Box::new(missing_element_array));
+    let mut wrong_array_len_bytes = Vec::new();
+    ciborium::ser::into_writer(&wrong_array_len_val, &mut wrong_array_len_bytes)?;
+    validate_cbor_from_slice(cddl_input, &wrong_array_len_bytes, None)
+        .expect_err("Validation should fail for incorrect array length within the tagged array");
+*/
+
+    // 4. Missing Tag: Just the COSE_Sign1 array
+    let no_tag_val = cose_sign1_array.clone(); // Get the inner array directly
+    let mut no_tag_bytes = Vec::new();
+    ciborium::ser::into_writer(&no_tag_val, &mut no_tag_bytes)?;
+    validate_cbor_from_slice(cddl_input, &no_tag_bytes, None)
+        .expect_err("Validation should fail for missing tag");
+
+    Ok(())
+}
+
+#[test]
 fn validate_cbor_size_range_with_constant() -> Result<(), Box<dyn Error>> {
   let cddl_input = r#"
         person = {name: tstr .size (1..max_tstr_length), age: uint}
