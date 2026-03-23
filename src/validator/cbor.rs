@@ -320,7 +320,19 @@ impl<'a> CBORValidator<'a> {
                 if let Some(indices) = &mut self.state.valid_array_items {
                   indices.push(idx);
                 } else {
-                  self.state.valid_array_items = Some(vec![idx]);
+                    // Element index out of bounds, add error only if occurrence requires it
+                    match self.state.occurrence {
+                        #[cfg(feature = "ast-span")]
+                        Some(Occur::OneOrMore { .. }) | Some(Occur::Exact { .. }) => {
+                            self.add_error(format!("expected array element at index {}, but array only has {} elements", idx, a.len()));
+                        }
+                        #[cfg(not(feature = "ast-span"))]
+                        Some(Occur::OneOrMore {}) | Some(Occur::Exact { .. }) => {
+                            self.add_error(format!("expected array element at index {}, but array only has {} elements", idx, a.len()));
+                        }
+                        _ => {} // Do nothing if occurrence is Optional, ZeroOrMore, or None
+                    }
+                    return Ok(());
                 }
                 continue;
               }
