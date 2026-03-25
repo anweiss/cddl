@@ -320,19 +320,27 @@ impl<'a> CBORValidator<'a> {
                 if let Some(indices) = &mut self.state.valid_array_items {
                   indices.push(idx);
                 } else {
-                    // Element index out of bounds, add error only if occurrence requires it
-                    match self.state.occurrence {
-                        #[cfg(feature = "ast-span")]
-                        Some(Occur::OneOrMore { .. }) | Some(Occur::Exact { .. }) => {
-                            self.add_error(format!("expected array element at index {}, but array only has {} elements", idx, a.len()));
-                        }
-                        #[cfg(not(feature = "ast-span"))]
-                        Some(Occur::OneOrMore {}) | Some(Occur::Exact { .. }) => {
-                            self.add_error(format!("expected array element at index {}, but array only has {} elements", idx, a.len()));
-                        }
-                        _ => {} // Do nothing if occurrence is Optional, ZeroOrMore, or None
+                  // Element index out of bounds, add error only if occurrence requires it
+                  match self.state.occurrence {
+                    #[cfg(feature = "ast-span")]
+                    Some(Occur::OneOrMore { .. }) | Some(Occur::Exact { .. }) => {
+                      self.add_error(format!(
+                        "expected array element at index {}, but array only has {} elements",
+                        idx,
+                        a.len()
+                      ));
                     }
-                    return Ok(());
+                    #[cfg(not(feature = "ast-span"))]
+                    Some(Occur::OneOrMore {}) | Some(Occur::Exact { .. }) => {
+                      self.add_error(format!(
+                        "expected array element at index {}, but array only has {} elements",
+                        idx,
+                        a.len()
+                      ));
+                    }
+                    _ => {} // Do nothing if occurrence is Optional, ZeroOrMore, or None
+                  }
+                  return Ok(());
                 }
                 continue;
               }
@@ -5509,13 +5517,27 @@ mod tests {
     "#;
     let cddl = cddl_from_str(cddl_str, true).unwrap();
     let cbor = Value::Array(vec![Value::Integer(42.into())]);
+    let cbor1 = Value::Array(vec![Value::Text(String::from("test-string"))]);
 
     #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let (mut cv, mut cv1) = {
+      let cv = CBORValidator::new(&cddl, cbor, None);
+      let cv1 = CBORValidator::new(&cddl, cbor1, None);
+      (cv, cv1)
+    };
     #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, cbor);
+    let (mut cv, mut cv1) = {
+      let cv = CBORValidator::new(&cddl, cbor);
+      let cv1 = CBORValidator::new(&cddl, cbor1);
+      (cv, cv1)
+    };
+
     assert!(
       cv.validate().is_ok(),
+      "Optional multi-type-choice should pass for a valid element"
+    );
+    assert!(
+      cv1.validate().is_ok(),
       "Optional multi-type-choice should pass for a valid element"
     );
   }
@@ -5531,13 +5553,26 @@ mod tests {
       Value::Integer(1.into()),
       Value::Text("hello".to_string()),
     ]);
+    let cbor_empty = Value::Array(vec![]);
 
     #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let (mut cv, mut cv_empty) = {
+      let cv = CBORValidator::new(&cddl, cbor, None);
+      let cv_empty = CBORValidator::new(&cddl, cbor_empty, None);
+      (cv, cv_empty)
+    };
     #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, cbor);
+    let (mut cv, mut cv_empty) = {
+      let cv = CBORValidator::new(&cddl, cbor);
+      let cv_empty = CBORValidator::new(&cddl, cbor_empty);
+      (cv, cv_empty)
+    };
     assert!(
       cv.validate().is_ok(),
+      "Zero-or-more multi-type-choice should pass for valid elements"
+    );
+    assert!(
+      cv_empty.validate().is_ok(),
       "Zero-or-more multi-type-choice should pass for valid elements"
     );
   }
@@ -5568,10 +5603,7 @@ mod tests {
       root = [+ uint]
     "#;
     let cddl = cddl_from_str(cddl_str, true).unwrap();
-    let cbor = Value::Array(vec![
-      Value::Integer(1.into()),
-      Value::Integer(2.into()),
-    ]);
+    let cbor = Value::Array(vec![Value::Integer(1.into()), Value::Integer(2.into())]);
 
     #[cfg(feature = "additional-controls")]
     let mut cv = CBORValidator::new(&cddl, cbor, None);
