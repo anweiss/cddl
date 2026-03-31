@@ -38,12 +38,12 @@ clap = { version = "4.6", optional = true, features = ["derive"] }
 codespan-reporting = { version = "0.13.1", optional = true }
 hexf-parse = { version = "0.2.1", optional = true }
 itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
-fancy-regex = { version = "0.14", optional = true }
+fancy-regex = { version = "0.17", optional = true }
 regex = { version = "1.12.3", optional = true, default-features = false, features = [
     "std",
     "unicode-perl",
 ] }
-regex-syntax = { version = "0.8.6", optional = true }
+regex-syntax = { version = "0.8.10", optional = true }
 serde = { version = "1.0.228", optional = true, features = ["derive"] }
 ciborium = { version = "0.2.0", optional = true }
 ciborium-ll = { version = "0.2.0", optional = true }
@@ -53,7 +53,7 @@ serde_json = { version = "1.0.149", optional = true, default-features = false, f
     "std",
 ] }
 uriparse = { version = "0.6.3", optional = true }
-base64-url = { version = "3.0.2", optional = true }
+base64-url = { version = "3.0.3", optional = true }
 base45 = { version = "3.2.0", optional = true }
 hex = { version = "0.4.3", optional = true }
 abnf_to_pest = { version = "0.5.1", optional = true }
@@ -72,14 +72,14 @@ proc-macro2 = "1.0"
 [dev-dependencies]
 indoc = "2.0.7"
 pretty_assertions = "1.2.0"
-wasm-bindgen-test = "0.3.64"
+wasm-bindgen-test = "0.3.65"
 hex = "0.4.3"                # Add hex crate for tests
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.6"
 serde-wasm-bindgen = { version = "0.6.5", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
-wasm-bindgen-test = "0.3.64"
+wasm-bindgen-test = "0.3.65"
 js-sys = "0.3.64"
 web-sys = { version = "0.3.64", features = ["console"] }
 
