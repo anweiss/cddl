@@ -40,24 +40,21 @@ mod no_std_codegen {
       proc_macro2::TokenStream::from_iter(vec![
         // #[grammar_inline = "<grammar>"]
         proc_macro2::TokenTree::Punct(proc_macro2::Punct::new('#', proc_macro2::Spacing::Alone)),
-        proc_macro2::TokenTree::Group(proc_macro2::Group::new(
-          proc_macro2::Delimiter::Bracket,
-          {
-            let mut ts = proc_macro2::TokenStream::new();
-            ts.extend(vec![
-              proc_macro2::TokenTree::Ident(proc_macro2::Ident::new(
-                "grammar_inline",
-                proc_macro2::Span::call_site(),
-              )),
-              proc_macro2::TokenTree::Punct(proc_macro2::Punct::new(
-                '=',
-                proc_macro2::Spacing::Alone,
-              )),
-              proc_macro2::TokenTree::Literal(proc_macro2::Literal::string(&grammar)),
-            ]);
-            ts
-          },
-        )),
+        proc_macro2::TokenTree::Group(proc_macro2::Group::new(proc_macro2::Delimiter::Bracket, {
+          let mut ts = proc_macro2::TokenStream::new();
+          ts.extend(vec![
+            proc_macro2::TokenTree::Ident(proc_macro2::Ident::new(
+              "grammar_inline",
+              proc_macro2::Span::call_site(),
+            )),
+            proc_macro2::TokenTree::Punct(proc_macro2::Punct::new(
+              '=',
+              proc_macro2::Spacing::Alone,
+            )),
+            proc_macro2::TokenTree::Literal(proc_macro2::Literal::string(&grammar)),
+          ]);
+          ts
+        })),
         // pub struct CddlParser;
         proc_macro2::TokenTree::Ident(proc_macro2::Ident::new(
           "pub",
