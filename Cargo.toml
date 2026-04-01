@@ -66,8 +66,8 @@ log = { version = "0.4.29", optional = true }
 simplelog = { version = "0.12.1", optional = true }
 
 [build-dependencies]
-pest_generator = "2.8.6"
-proc-macro2 = "1.0"
+pest_generator = { version = "2.8.6", optional = true }
+proc-macro2 = { version = "1.0", optional = true }
 
 [dev-dependencies]
 indoc = "2.0.7"
@@ -133,6 +133,7 @@ ast-parent = []
 json = ["std"]
 cbor = ["std"]
 csv-validate = ["std", "json", "csv"]
+_build-parser = ["dep:pest_generator", "dep:proc-macro2"]
 
 [[bin]]
 name = "cddl"

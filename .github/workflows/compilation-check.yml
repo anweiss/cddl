@@ -40,4 +40,4 @@ jobs:
         env:
           RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         run: |
-          cargo +$RUST_TOOLCHAIN check -p cddl --lib --no-default-features --target thumbv7em-none-eabihf
+          cargo +$RUST_TOOLCHAIN check -p cddl --lib --no-default-features --features _build-parser --target thumbv7em-none-eabihf
