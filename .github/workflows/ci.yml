@@ -44,10 +44,10 @@ jobs:
 
       - name: Check compilation with no features
         run: |
-          cargo +${{ matrix.rust_toolchain }} check --locked -p cddl --lib --no-default-features --target thumbv7em-none-eabihf
+          cargo +${{ matrix.rust_toolchain }} check --locked -p cddl --lib --no-default-features --features _build-parser --target thumbv7em-none-eabihf
 
   compilation-check:
-    uses: anweiss/cddl/.github/workflows/compilation-check.yml@main
+    uses: ./.github/workflows/compilation-check.yml
 
   wasm-compilation-check:
     strategy:
