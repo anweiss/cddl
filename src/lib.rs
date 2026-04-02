@@ -446,8 +446,8 @@
 //! | `time = #6.1(number)`                    | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 //! | `biguint = #6.2(bstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 //! | `bignint = #6.3(bstr)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
-//! | `decfrac = #6.4([e10: int, m: integer])` | not yet implemented                                                                                                                               |
-//! | `bigfloat = #6.5([e2: int, m: integer])` | not yet implemented                                                                                                                               |
+//! | `decfrac = #6.4([e10: int, m: integer])` | ✔️ |
+//! | `bigfloat = #6.5([e2: int, m: integer])` | ✔️ |
 //! | `eb64url = #6.21(any)`                   | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 //! | `eb64legacy = #6.22(any)`                | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |
 //! | `eb16 = #6.23(any)`                      | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> |

@@ -1715,6 +1715,59 @@ impl<'a> From<ByteValue<'a>> for Type2<'a> {
   }
 }
 
+/// Build an array type `[token1, token2, ...]` for use in tagged data definitions
+fn array_type_from_tokens<'a>(tokens: &[Token<'a>]) -> Type<'a> {
+  let group_entries: Vec<GroupEntry> = tokens
+    .iter()
+    .map(|token| GroupEntry::TypeGroupname {
+      ge: TypeGroupnameEntry {
+        occur: None,
+        name: Identifier::from(token.clone()),
+        generic_args: None,
+      },
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+      #[cfg(feature = "ast-comments")]
+      leading_comments: None,
+      #[cfg(feature = "ast-comments")]
+      trailing_comments: None,
+    })
+    .collect();
+
+  let t2 = Type2::Array {
+    group: Group {
+      group_choices: vec![GroupChoice::new(group_entries)],
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    },
+    #[cfg(feature = "ast-span")]
+    span: Span::default(),
+    #[cfg(feature = "ast-comments")]
+    comments_before_group: None,
+    #[cfg(feature = "ast-comments")]
+    comments_after_group: None,
+  };
+
+  Type {
+    type_choices: vec![TypeChoice {
+      type1: Type1 {
+        type2: t2,
+        operator: None,
+        #[cfg(feature = "ast-span")]
+        span: Span::default(),
+        #[cfg(feature = "ast-comments")]
+        comments_after_type: None,
+      },
+      #[cfg(feature = "ast-comments")]
+      comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
+      comments_after_type: None,
+    }],
+    #[cfg(feature = "ast-span")]
+    span: Span::default(),
+  }
+}
+
 /// Retrieve `Type2` from token if it is a tag type in the standard prelude
 pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
   match token {
@@ -1758,8 +1811,26 @@ pub fn tag_from_token<'a>(token: &Token) -> Option<Type2<'a>> {
       #[cfg(feature = "ast-span")]
       span: Span::default(),
     }),
-    Token::DECFRAC => unimplemented!(),
-    Token::BIGFLOAT => unimplemented!(),
+    Token::DECFRAC => Some(Type2::TaggedData {
+      tag: Some(TagConstraint::Literal(4)),
+      t: array_type_from_tokens(&[Token::INT, Token::INTEGER]),
+      #[cfg(feature = "ast-comments")]
+      comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
+      comments_after_type: None,
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    }),
+    Token::BIGFLOAT => Some(Type2::TaggedData {
+      tag: Some(TagConstraint::Literal(5)),
+      t: array_type_from_tokens(&[Token::INT, Token::INTEGER]),
+      #[cfg(feature = "ast-comments")]
+      comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
+      comments_after_type: None,
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    }),
     Token::EB64URL => Some(Type2::TaggedData {
       tag: Some(TagConstraint::Literal(21)),
       t: type_from_token(Token::ANY),

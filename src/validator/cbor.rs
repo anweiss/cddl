@@ -3080,6 +3080,14 @@ where
       }
     }
 
+    // Handle standard prelude tagged types (decfrac, bigfloat) through the generic TaggedData path
+    let token = lookup_ident(ident.ident);
+    if let Token::DECFRAC | Token::BIGFLOAT = token {
+      if let Some(tagged_data_type) = tag_from_token(&token) {
+        return self.visit_type2(&tagged_data_type);
+      }
+    }
+
     match &self.cbor {
       Value::Null if is_ident_null_data_type(self.state.cddl, ident) => Ok(()),
       Value::Bytes(_) if is_ident_byte_string_data_type(self.state.cddl, ident) => Ok(()),
