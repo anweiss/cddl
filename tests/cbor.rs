@@ -537,3 +537,105 @@ fn validate_cbor_array_record_extra_elements() {
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
   validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
 }
+
+#[test]
+fn validate_decfrac_and_bigfloat() -> Result<(), Box<dyn Error>> {
+  // Helper to encode a ciborium Value to CBOR bytes
+  fn cbor_encode(val: &Value) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(val, &mut bytes).unwrap();
+    bytes
+  }
+
+  // Valid decfrac: Tag(4, [int, integer]) e.g. 273.15 = 27315 * 10^(-2)
+  let cddl_input = r#"temperature = decfrac"#;
+  let cbor_val = Value::Tag(
+    4,
+    Box::new(Value::Array(vec![
+      Value::Integer((-2).into()),
+      Value::Integer(27315.into()),
+    ])),
+  );
+  let bytes = cbor_encode(&cbor_val);
+  validate_cbor_from_slice(cddl_input, &bytes, None)?;
+
+  // Valid bigfloat: Tag(5, [int, integer]) e.g. 1.5 = 3 * 2^(-1)
+  let cddl_input = r#"measurement = bigfloat"#;
+  let cbor_val = Value::Tag(
+    5,
+    Box::new(Value::Array(vec![
+      Value::Integer((-1).into()),
+      Value::Integer(3.into()),
+    ])),
+  );
+  let bytes = cbor_encode(&cbor_val);
+  validate_cbor_from_slice(cddl_input, &bytes, None)?;
+
+  // Invalid: wrong tag for decfrac (tag 5 instead of 4)
+  let cddl_input = r#"temperature = decfrac"#;
+  let cbor_val = Value::Tag(
+    5,
+    Box::new(Value::Array(vec![
+      Value::Integer((-2).into()),
+      Value::Integer(27315.into()),
+    ])),
+  );
+  let bytes = cbor_encode(&cbor_val);
+  assert!(validate_cbor_from_slice(cddl_input, &bytes, None).is_err());
+
+  // Invalid: wrong tag for bigfloat (tag 4 instead of 5)
+  let cddl_input = r#"measurement = bigfloat"#;
+  let cbor_val = Value::Tag(
+    4,
+    Box::new(Value::Array(vec![
+      Value::Integer((-1).into()),
+      Value::Integer(3.into()),
+    ])),
+  );
+  let bytes = cbor_encode(&cbor_val);
+  assert!(validate_cbor_from_slice(cddl_input, &bytes, None).is_err());
+
+  // Invalid: not an array inside tag
+  let cddl_input = r#"temperature = decfrac"#;
+  let cbor_val = Value::Tag(4, Box::new(Value::Integer(42.into())));
+  let bytes = cbor_encode(&cbor_val);
+  assert!(validate_cbor_from_slice(cddl_input, &bytes, None).is_err());
+
+  // Invalid: array with wrong types (float instead of int for exponent)
+  let cddl_input = r#"temperature = decfrac"#;
+  let cbor_val = Value::Tag(
+    4,
+    Box::new(Value::Array(vec![
+      Value::Float(1.5),
+      Value::Integer(27315.into()),
+    ])),
+  );
+  let bytes = cbor_encode(&cbor_val);
+  assert!(validate_cbor_from_slice(cddl_input, &bytes, None).is_err());
+
+  // Valid: using with explicit tag notation
+  let cddl_input = r#"mytype = #6.4([int, integer])"#;
+  let cbor_val = Value::Tag(
+    4,
+    Box::new(Value::Array(vec![
+      Value::Integer((-2).into()),
+      Value::Integer(27315.into()),
+    ])),
+  );
+  let bytes = cbor_encode(&cbor_val);
+  validate_cbor_from_slice(cddl_input, &bytes, None)?;
+
+  // Valid: bigfloat with bignum mantissa (tag 2 biguint)
+  let cddl_input = r#"big_measurement = bigfloat"#;
+  let cbor_val = Value::Tag(
+    5,
+    Box::new(Value::Array(vec![
+      Value::Integer((-1).into()),
+      Value::Tag(2, Box::new(Value::Bytes(vec![0x01, 0x00]))),
+    ])),
+  );
+  let bytes = cbor_encode(&cbor_val);
+  validate_cbor_from_slice(cddl_input, &bytes, None)?;
+
+  Ok(())
+}

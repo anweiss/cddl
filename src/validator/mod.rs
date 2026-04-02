@@ -905,6 +905,42 @@ pub fn is_ident_time_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
+/// Is the given identifier associated with a decfrac data type
+pub fn is_ident_decfrac_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  if let Token::DECFRAC = lookup_ident(ident.ident) {
+    return true;
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        is_ident_decfrac_data_type(cddl, ident)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
+/// Is the given identifier associated with a bigfloat data type
+pub fn is_ident_bigfloat_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  if let Token::BIGFLOAT = lookup_ident(ident.ident) {
+    return true;
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if &rule.name == ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        is_ident_bigfloat_data_type(cddl, ident)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
 /// Is the given identifier associated with a numeric data type
 pub fn is_ident_numeric_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   if let Token::UINT
