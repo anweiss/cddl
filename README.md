@@ -158,7 +158,7 @@ Simply add the dependency to `Cargo.toml` :
 
 ```toml
 [dependencies]
-cddl = "0.10.4"
+cddl = "0.10.5"
 ```
 
 JSON, CBOR, and CSV validation all require `std` .
@@ -573,7 +573,7 @@ The lexer and parser can be used in a `no_std` context (including bare-metal tar
 
 ```toml
 [dependencies]
-cddl = { version = "0.10.4", default-features = false }
+cddl = { version = "0.10.5", default-features = false }
 ```
 
 When the `std` feature is disabled, the crate declares `#![no_std]` and relies on `core` and `alloc` only. All std-only dependencies (codespan-reporting, hexf-parse, regex, simplelog, log, pest_vm, pest_meta, abnf_to_pest) are gated behind the `std` feature flag and will not be compiled.
