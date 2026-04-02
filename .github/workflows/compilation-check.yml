@@ -3,6 +3,9 @@ name: Compilation check
 on:
   workflow_call:
 
+permissions:
+  contents: read
+
 jobs:
   compilation-check:
     strategy:
