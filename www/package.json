@@ -42,7 +42,7 @@
     "path-browserify": "^1.0.1",
     "style-loader": "^4.0.0",
     "util": "^0.12.5",
-    "webpack": "^5.106.1",
+    "webpack": "^5.106.2",
     "webpack-cli": "^7.0.2",
     "webpack-dev-server": "^5.2.3"
   },
