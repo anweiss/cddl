@@ -9,3 +9,12 @@ e = ( f )
 f = ( g )
 g = h
 h = ()
+
+; RFC 8610 §3.5.1: memberkey may be any type1.
+; Range-typed memberkey with an occurrence indicator.
+ranged_keys = {? 0 : [* int], * 3 .. 255 => [* int]}
+
+; Array-typed memberkey carrying an internal control op, under `+`.
+arr_keys = { + [tag : k_tag, index : uint .size 4] => [ data : payload ] }
+k_tag = uint
+payload = any
