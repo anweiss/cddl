@@ -32,7 +32,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 base16 = { version = "0.2.1", default-features = false }
 # base64 = { version = "0.21.0", default-features = false }
-data-encoding = { version = "2.10.0", default-features = false }
+data-encoding = { version = "2.11.0", default-features = false }
 chrono = { version = "0.4.44", optional = true }
 clap = { version = "4.6", optional = true, features = ["derive"] }
 codespan-reporting = { version = "0.13.1", optional = true }
