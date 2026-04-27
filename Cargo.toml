@@ -38,7 +38,7 @@ clap = { version = "4.6", optional = true, features = ["derive"] }
 codespan-reporting = { version = "0.13.1", optional = true }
 hexf-parse = { version = "0.2.1", optional = true }
 itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
-fancy-regex = { version = "0.17", optional = true }
+fancy-regex = { version = "0.18", optional = true }
 regex = { version = "1.12.3", optional = true, default-features = false, features = [
     "std",
     "unicode-perl",
