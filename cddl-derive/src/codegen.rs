@@ -764,7 +764,15 @@ pub(crate) fn to_pascal_case(s: &str) -> String {
     result.extend(first.to_uppercase());
 
     let rest: String = chars.collect();
-    let segment_is_all_caps = segment.chars().all(|c| !c.is_lowercase());
+    let mut has_alpha = false;
+    let segment_is_all_caps = segment.chars().all(|c| {
+      if c.is_alphabetic() {
+        has_alpha = true;
+        c.is_uppercase()
+      } else {
+        true
+      }
+    }) && has_alpha;
     if segment_is_all_caps {
       for c in rest.chars() {
         result.extend(c.to_lowercase());
