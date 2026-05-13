@@ -2700,6 +2700,23 @@ fn convert_member_key_simple<'a>(
 ) -> Result<ast::MemberKey<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
+      Rule::type1 => {
+        // type1 form (RFC 8610 §3.5.1): "type1 S [\"^\" S] \"=>\"".
+        // Always an arrow-map member key; ignore is_arrow_map flag here.
+        let t1 = convert_type1(inner, input)?;
+        return Ok(ast::MemberKey::Type1 {
+          t1: Box::new(t1),
+          is_cut,
+          #[cfg(feature = "ast-span")]
+          span,
+          #[cfg(feature = "ast-comments")]
+          comments_before_cut: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_cut: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_arrowmap: None,
+        });
+      }
       Rule::bareword => {
         if is_arrow_map {
           // Convert bareword to Type1 for arrow map
@@ -2875,6 +2892,20 @@ fn convert_member_key_simple<'a>(
 ) -> Result<ast::MemberKey<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
+      Rule::type1 => {
+        // type1 form (RFC 8610 §3.5.1): always an arrow-map member key.
+        let t1 = convert_type1(inner, input)?;
+        return Ok(ast::MemberKey::Type1 {
+          t1: Box::new(t1),
+          is_cut,
+          #[cfg(feature = "ast-comments")]
+          comments_before_cut: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_cut: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_arrowmap: None,
+        });
+      }
       Rule::bareword => {
         if is_arrow_map {
           // Convert bareword to Type1 for arrow map

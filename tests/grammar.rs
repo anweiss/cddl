@@ -317,4 +317,44 @@ ct-tag-number = 1668546817..1668612095"#;
       result.err()
     );
   }
+
+  #[test]
+  fn test_type1_memberkey_range() {
+    // RFC 8610 §3.5.1: memberkey may be any type1, including a range, with an
+    // occurrence indicator (e.g. `* 3 .. 255 => ...`).
+    let input = "ranged_keys = {? 0 : [* int], * 3 .. 255 => [* int]}";
+    let result = CDDLParser::parse(Rule::cddl, input);
+    assert!(
+      result.is_ok(),
+      "ranged memberkey with occurrence should parse: {:?}",
+      result.err()
+    );
+    let bridge_result = cddl::pest_bridge::cddl_from_pest_str_checked(input);
+    assert!(
+      bridge_result.is_ok(),
+      "ranged memberkey should pass full bridge + reference check: {:?}",
+      bridge_result.err()
+    );
+  }
+
+  #[test]
+  fn test_type1_memberkey_array_with_control() {
+    // RFC 8610 §3.5.1: memberkey may be a typed array with a control op as
+    // type1 (e.g. `+ [tag : .., index : uint .size 4] => ...`).
+    let input = "arr_keys = { + [tag : k_tag, index : uint .size 4] => [ data : payload ] }
+k_tag = uint
+payload = any";
+    let result = CDDLParser::parse(Rule::cddl, input);
+    assert!(
+      result.is_ok(),
+      "array-typed memberkey with control op should parse: {:?}",
+      result.err()
+    );
+    let bridge_result = cddl::pest_bridge::cddl_from_pest_str_checked(input);
+    assert!(
+      bridge_result.is_ok(),
+      "array-typed memberkey should pass full bridge + reference check: {:?}",
+      bridge_result.err()
+    );
+  }
 }

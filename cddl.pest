@@ -181,8 +181,22 @@ group_entry = { occur? ~ S ~ member_key ~ S ~ cut? ~ S ~ "=>" ~ S ~ type_expr
 // Cut marker (^) prevents backtracking past this point in validation
 cut = { "^" }
 
-// Member keys can be barewords, type names, or literal values
-member_key = { bareword | typename ~ generic_args? | value }
+// Member keys can be:
+//   type1 [^] =>       (any type1 expression as a computed key, per RFC 8610 §3.5.1)
+//   bareword :         (identifier-style key for maps)
+//   value :            (literal value key)
+// The type1-form is gated by a lookahead for "=>" (with optional cut "^") so
+// it does not steal parses from the bareword/value ":"-form. The optional cut
+// "^" itself is left for `group_entry` to consume so that the existing AST
+// conversion (which looks for a Rule::cut child) keeps working unchanged.
+// The bareword/typename/value alternatives keep their original shape so the
+// AST conversion code does not need to change for the common cases.
+member_key = {
+    type1 ~ S ~ &(("^" ~ S)? ~ "=>")
+  | bareword
+  | typename ~ generic_args?
+  | value
+}
 
 // =============================================================================
 // OCCURRENCE INDICATORS
