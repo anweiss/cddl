@@ -752,15 +752,33 @@ fn render_enum(
 
 pub(crate) fn to_pascal_case(s: &str) -> String {
   let mut result = String::with_capacity(s.len());
-  let mut capitalize_next = true;
-  for c in s.chars() {
-    if c == '-' || c == '_' || c == '.' || c == ' ' {
-      capitalize_next = true;
-    } else if capitalize_next {
-      result.extend(c.to_uppercase());
-      capitalize_next = false;
+  for segment in s
+    .split(|c: char| !c.is_alphanumeric())
+    .filter(|segment| !segment.is_empty())
+  {
+    let mut chars = segment.chars();
+    let Some(first) = chars.next() else {
+      continue;
+    };
+
+    result.extend(first.to_uppercase());
+
+    let rest: String = chars.collect();
+    let mut has_alpha = false;
+    let segment_is_all_caps = segment.chars().all(|c| {
+      if c.is_alphabetic() {
+        has_alpha = true;
+        c.is_uppercase()
+      } else {
+        true
+      }
+    }) && has_alpha;
+    if segment_is_all_caps {
+      for c in rest.chars() {
+        result.extend(c.to_lowercase());
+      }
     } else {
-      result.push(c);
+      result.push_str(&rest);
     }
   }
   if result.is_empty() {
@@ -774,30 +792,36 @@ fn to_snake_case(s: &str) -> String {
   let mut prev_was_upper = false;
   let mut prev_was_separator = false;
   for (i, c) in s.chars().enumerate() {
-    if c == '-' || c == '.' || c == ' ' {
-      if !result.is_empty() {
-        result.push('_');
-      }
-      prev_was_separator = true;
-      prev_was_upper = false;
-    } else if c.is_uppercase() {
+    if c.is_uppercase() {
       if i > 0 && !prev_was_upper && !prev_was_separator {
         result.push('_');
       }
       result.push(c.to_lowercase().next().unwrap());
       prev_was_upper = true;
       prev_was_separator = false;
-    } else {
+    } else if c.is_lowercase() || c.is_ascii_digit() {
       result.push(c);
       prev_was_upper = false;
       prev_was_separator = false;
+    } else {
+      if !result.is_empty() && !result.ends_with('_') {
+        result.push('_');
+      }
+      prev_was_separator = true;
+      prev_was_upper = false;
     }
   }
-  if is_rust_keyword(&result) {
-    result.push('_');
+  while result.ends_with('_') {
+    result.pop();
   }
   if result.is_empty() {
     return "value".to_string();
+  }
+  if result.chars().next().unwrap().is_ascii_digit() {
+    result.insert(0, '_');
+  }
+  if is_rust_keyword(&result) {
+    result.push('_');
   }
   result
 }
@@ -864,6 +888,7 @@ mod tests {
     assert_eq!(to_pascal_case("my_type"), "MyType");
     assert_eq!(to_pascal_case("person"), "Person");
     assert_eq!(to_pascal_case("http-request"), "HttpRequest");
+    assert_eq!(to_pascal_case("EXCLUSION_RANGE-map"), "ExclusionRangeMap");
   }
 
   #[test]
@@ -872,6 +897,8 @@ mod tests {
     assert_eq!(to_snake_case("my-type"), "my_type");
     assert_eq!(to_snake_case("type"), "type_");
     assert_eq!(to_snake_case("self"), "self_");
+    assert_eq!(to_snake_case("dc:format"), "dc_format");
+    assert_eq!(to_snake_case("informational_URI"), "informational_uri");
   }
 
   #[test]
@@ -989,5 +1016,44 @@ mod tests {
     );
     assert!(result.contains("pub type_: String,"));
     assert!(result.contains("#[serde(rename = \"type\")]"));
+  }
+
+  #[test]
+  fn test_symbolic_field_name_sanitization() {
+    let result = gen(
+      r#"
+      record = {
+        "dc:format": tstr,
+      }
+    "#,
+    );
+    assert!(result.contains("pub dc_format: String,"));
+    assert!(result.contains("#[serde(rename = \"dc:format\")]"));
+  }
+
+  #[test]
+  fn test_upper_snake_field_name_sanitization() {
+    let result = gen(
+      r#"
+      record = {
+        "informational_URI": tstr,
+      }
+    "#,
+    );
+    assert!(result.contains("pub informational_uri: String,"));
+    assert!(result.contains("#[serde(rename = \"informational_URI\")]"));
+  }
+
+  #[test]
+  fn test_upper_snake_rule_name_to_pascal() {
+    let result = gen(
+      r#"
+      EXCLUSION_RANGE-map = {
+        start: uint,
+        end: uint,
+      }
+    "#,
+    );
+    assert!(result.contains("pub struct ExclusionRangeMap"));
   }
 }
