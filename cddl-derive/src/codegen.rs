@@ -217,6 +217,7 @@ fn apply_recursive_boxing(defs: &mut [RustTypeDef]) {
     for &dst in targets {
       if src == dst {
         has_self_loop[src] = true;
+        break;
       }
     }
   }
@@ -229,7 +230,12 @@ fn apply_recursive_boxing(defs: &mut [RustTypeDef]) {
       continue;
     };
     let src_scc = scc_ids[src_idx];
-    let is_cyclic_scc = scc_sizes.get(&src_scc).copied().unwrap_or(0) > 1 || has_self_loop[src_idx];
+    let is_cyclic_scc = scc_sizes
+      .get(&src_scc)
+      .copied()
+      .expect("SCC size must exist for every computed SCC id")
+      > 1
+      || has_self_loop[src_idx];
     if !is_cyclic_scc {
       continue;
     }
@@ -241,6 +247,7 @@ fn apply_recursive_boxing(defs: &mut [RustTypeDef]) {
       if scc_ids[dst_idx] != src_scc {
         continue;
       }
+      // Box descending edges in cyclic SCCs so cycle breaking is deterministic.
       if name.as_str() >= field.rust_type.as_str() {
         field.is_boxed = true;
       }
@@ -249,6 +256,8 @@ fn apply_recursive_boxing(defs: &mut [RustTypeDef]) {
 }
 
 fn compute_scc_ids(edges: &[Vec<usize>]) -> Vec<usize> {
+  const UNVISITED: usize = usize::MAX;
+
   fn dfs(node: usize, edges: &[Vec<usize>], visited: &mut [bool], order: &mut Vec<usize>) {
     if visited[node] {
       return;
@@ -261,7 +270,7 @@ fn compute_scc_ids(edges: &[Vec<usize>]) -> Vec<usize> {
   }
 
   fn reverse_dfs(node: usize, rev_edges: &[Vec<usize>], scc_id: usize, scc_ids: &mut [usize]) {
-    if scc_ids[node] != usize::MAX {
+    if scc_ids[node] != UNVISITED {
       return;
     }
     scc_ids[node] = scc_id;
@@ -283,10 +292,10 @@ fn compute_scc_ids(edges: &[Vec<usize>]) -> Vec<usize> {
     }
   }
 
-  let mut scc_ids = vec![usize::MAX; edges.len()];
+  let mut scc_ids = vec![UNVISITED; edges.len()];
   let mut next_scc = 0;
   while let Some(node) = order.pop() {
-    if scc_ids[node] == usize::MAX {
+    if scc_ids[node] == UNVISITED {
       reverse_dfs(node, &rev_edges, next_scc, &mut scc_ids);
       next_scc += 1;
     }
