@@ -131,19 +131,20 @@ pub(crate) fn pascal_to_cddl_name(pascal: &str) -> String {
 // --- Internal helpers (unchanged from original codegen) ---
 
 fn collect_type_defs(cddl: &CDDL<'_>) -> Result<Vec<RustTypeDef>, CodegenError> {
-  // Count how many type rules map to each generated Rust name so that
+  // Group type rules by their generated Rust name in a single pass so that
   // socket/plug alternates (e.g. `$foo /= int` and `$foo /= tstr`) can be
   // merged into a single enum instead of producing duplicate definitions.
-  let mut type_rule_counts: std::collections::HashMap<String, usize> =
+  let mut type_rule_alternates: std::collections::HashMap<String, Vec<&TypeRule<'_>>> =
     std::collections::HashMap::new();
   for rule in &cddl.rules {
     if let Rule::Type {
       rule: type_rule, ..
     } = rule
     {
-      *type_rule_counts
+      type_rule_alternates
         .entry(to_pascal_case(type_rule.name.ident))
-        .or_insert(0) += 1;
+        .or_default()
+        .push(type_rule);
     }
   }
 
@@ -155,20 +156,13 @@ fn collect_type_defs(cddl: &CDDL<'_>) -> Result<Vec<RustTypeDef>, CodegenError> 
         rule: type_rule, ..
       } => {
         let name = to_pascal_case(type_rule.name.ident);
-        if type_rule_counts.get(&name).copied().unwrap_or(0) > 1 {
+        let alternates = type_rule_alternates.get(&name);
+        if alternates.map(|a| a.len()).unwrap_or(0) > 1 {
           // Multiple type rules share this name (socket/plug alternates).
           // Merge all of their type choices into a single enum, emitting it
           // once at the position of the first alternate.
           if merged.insert(name.clone()) {
-            let alternates: Vec<&TypeRule<'_>> = cddl
-              .rules
-              .iter()
-              .filter_map(|r| match r {
-                Rule::Type { rule: tr, .. } if to_pascal_case(tr.name.ident) == name => Some(tr),
-                _ => None,
-              })
-              .collect();
-            defs.push(merge_type_rules_to_enum(&name, &alternates)?);
+            defs.push(merge_type_rules_to_enum(&name, alternates.unwrap())?);
           }
         } else if let Some(def) = type_rule_to_rust_def(type_rule)? {
           defs.push(def);
@@ -1014,6 +1008,7 @@ mod tests {
     // of producing duplicate `pub type Foo = ...;` definitions.
     assert_eq!(result.matches("pub enum Foo").count(), 1);
     assert!(!result.contains("pub type Foo"));
+    assert!(result.contains("#[serde(untagged)]"));
     assert!(result.contains("Int(i64)"));
     assert!(result.contains("Tstr(String)"));
   }
