@@ -58,6 +58,7 @@ pub(crate) struct RustField {
   pub rust_type: String,
   pub is_optional: bool,
   pub doc: Vec<String>,
+  pub is_boxed: bool,
 }
 
 /// A variant within a generated Rust enum.
@@ -262,7 +263,156 @@ fn collect_type_defs(
       }
     }
   }
+  apply_recursive_boxing(&mut defs);
   Ok(defs)
+}
+
+fn apply_recursive_boxing(defs: &mut [RustTypeDef]) {
+  let mut names = Vec::new();
+  for def in defs.iter() {
+    match def {
+      RustTypeDef::Struct { name, .. }
+      | RustTypeDef::TypeAlias { name, .. }
+      | RustTypeDef::Enum { name, .. } => names.push(name.clone()),
+    }
+  }
+
+  let mut index_by_name = std::collections::HashMap::new();
+  for (idx, name) in names.iter().enumerate() {
+    index_by_name.insert(name.clone(), idx);
+  }
+
+  let mut edges: Vec<Vec<usize>> = vec![Vec::new(); names.len()];
+  for def in defs.iter() {
+    match def {
+      RustTypeDef::Struct { name, fields, .. } => {
+        let Some(&src_idx) = index_by_name.get(name) else {
+          continue;
+        };
+        for field in fields {
+          if let Some(&dst_idx) = index_by_name.get(&field.rust_type) {
+            edges[src_idx].push(dst_idx);
+          }
+        }
+      }
+      RustTypeDef::TypeAlias { name, target, .. } => {
+        let Some(&src_idx) = index_by_name.get(name) else {
+          continue;
+        };
+        if let Some(&dst_idx) = index_by_name.get(target) {
+          edges[src_idx].push(dst_idx);
+        }
+      }
+      RustTypeDef::Enum { name, variants, .. } => {
+        let Some(&src_idx) = index_by_name.get(name) else {
+          continue;
+        };
+        for variant in variants {
+          if let Some(inner) = &variant.inner_type {
+            if let Some(&dst_idx) = index_by_name.get(inner) {
+              edges[src_idx].push(dst_idx);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  let scc_ids = compute_scc_ids(&edges);
+  let mut scc_sizes: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+  for &scc_id in &scc_ids {
+    *scc_sizes.entry(scc_id).or_insert(0) += 1;
+  }
+  let mut has_self_loop = vec![false; names.len()];
+  for (src, targets) in edges.iter().enumerate() {
+    for &dst in targets {
+      if src == dst {
+        has_self_loop[src] = true;
+        break;
+      }
+    }
+  }
+
+  for def in defs.iter_mut() {
+    let RustTypeDef::Struct { name, fields, .. } = def else {
+      continue;
+    };
+    let Some(&src_idx) = index_by_name.get(name) else {
+      continue;
+    };
+    let src_scc = scc_ids[src_idx];
+    let is_cyclic_scc = scc_sizes
+      .get(&src_scc)
+      .copied()
+      .expect("SCC size must exist for every computed SCC id")
+      > 1
+      || has_self_loop[src_idx];
+    if !is_cyclic_scc {
+      continue;
+    }
+
+    for field in fields.iter_mut() {
+      let Some(&dst_idx) = index_by_name.get(&field.rust_type) else {
+        continue;
+      };
+      if scc_ids[dst_idx] != src_scc {
+        continue;
+      }
+      // Box descending edges in cyclic SCCs so cycle breaking is deterministic.
+      if name.as_str() >= field.rust_type.as_str() {
+        field.is_boxed = true;
+      }
+    }
+  }
+}
+
+fn compute_scc_ids(edges: &[Vec<usize>]) -> Vec<usize> {
+  const UNVISITED: usize = usize::MAX;
+
+  fn dfs(node: usize, edges: &[Vec<usize>], visited: &mut [bool], order: &mut Vec<usize>) {
+    if visited[node] {
+      return;
+    }
+    visited[node] = true;
+    for &next in &edges[node] {
+      dfs(next, edges, visited, order);
+    }
+    order.push(node);
+  }
+
+  fn reverse_dfs(node: usize, rev_edges: &[Vec<usize>], scc_id: usize, scc_ids: &mut [usize]) {
+    if scc_ids[node] != UNVISITED {
+      return;
+    }
+    scc_ids[node] = scc_id;
+    for &next in &rev_edges[node] {
+      reverse_dfs(next, rev_edges, scc_id, scc_ids);
+    }
+  }
+
+  let mut order = Vec::with_capacity(edges.len());
+  let mut visited = vec![false; edges.len()];
+  for node in 0..edges.len() {
+    dfs(node, edges, &mut visited, &mut order);
+  }
+
+  let mut rev_edges = vec![Vec::new(); edges.len()];
+  for (src, targets) in edges.iter().enumerate() {
+    for &dst in targets {
+      rev_edges[dst].push(src);
+    }
+  }
+
+  let mut scc_ids = vec![UNVISITED; edges.len()];
+  let mut next_scc = 0;
+  while let Some(node) = order.pop() {
+    if scc_ids[node] == UNVISITED {
+      reverse_dfs(node, &rev_edges, next_scc, &mut scc_ids);
+      next_scc += 1;
+    }
+  }
+
+  scc_ids
 }
 
 fn type_rule_to_rust_def(
@@ -310,7 +460,14 @@ fn type_rule_to_rust_def(
       Type2::IntValue { .. }
       | Type2::UintValue { .. }
       | Type2::FloatValue { .. }
-      | Type2::TextValue { .. } => Ok(None),
+      | Type2::TextValue { .. } => {
+        // Literal value rules (e.g. `color = "red"`) and numeric range rules
+        // (e.g. `scale = 1..10`, whose lower bound is parsed as a value) are
+        // emitted as type aliases to the underlying Rust type so that other
+        // rules referencing them resolve to a defined type.
+        let target = type1_to_rust_string(type1)?;
+        Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
+      }
       Type2::ChoiceFromInlineGroup { group, .. } => {
         let variants = group_to_enum_variants(group, comments)?;
         Ok(Some(RustTypeDef::Enum {
@@ -492,6 +649,7 @@ fn group_entry_to_fields(
         rust_type,
         is_optional,
         doc,
+        is_boxed: false,
       }]))
     }
     GroupEntry::InlineGroup { group, occur, .. } => {
@@ -534,6 +692,7 @@ fn value_member_key_to_field(
         rust_type,
         is_optional: false,
         doc,
+        is_boxed: false,
       }));
     }
     None => {
@@ -544,6 +703,7 @@ fn value_member_key_to_field(
         rust_type,
         is_optional: false,
         doc,
+        is_boxed: false,
       }));
     }
     _ => return Ok(None),
@@ -575,6 +735,7 @@ fn value_member_key_to_field(
     rust_type: final_type,
     is_optional,
     doc,
+    is_boxed: false,
   }))
 }
 
@@ -907,13 +1068,23 @@ fn render_struct(
         output,
         "    #[serde(skip_serializing_if = \"Option::is_none\")]"
       )?;
+      let optional_inner_type = if field.is_boxed {
+        format!("Box<{}>", field.rust_type)
+      } else {
+        field.rust_type.clone()
+      };
       writeln!(
         output,
         "    pub {}: Option<{}>,",
-        field.name, field.rust_type
+        field.name, optional_inner_type
       )?;
     } else {
-      writeln!(output, "    pub {}: {},", field.name, field.rust_type)?;
+      let field_type = if field.is_boxed {
+        format!("Box<{}>", field.rust_type)
+      } else {
+        field.rust_type.clone()
+      };
+      writeln!(output, "    pub {}: {},", field.name, field_type)?;
     }
   }
   writeln!(output, "}}")?;
@@ -1370,5 +1541,36 @@ status = "active" / "inactive"
 "#,
     );
     assert!(result.contains("/// The score value."));
+  }
+
+  #[test]
+  fn test_mutually_recursive_structs_are_boxed_deterministically() {
+    let result = gen(
+      r#"
+      node = {
+        ? "name": tstr,
+        ? "child": child,
+      }
+
+      child = {
+        ? "value": int,
+        ? "parent": node,
+      }
+    "#,
+    );
+    assert!(result.contains("pub child: Option<Box<Child>>,"));
+    assert!(result.contains("pub parent: Option<Node>,"));
+  }
+
+  #[test]
+  fn test_self_recursive_struct_is_boxed() {
+    let result = gen(
+      r#"
+      node = {
+        ? "child": node,
+      }
+    "#,
+    );
+    assert!(result.contains("pub child: Option<Box<Node>>,"));
   }
 }

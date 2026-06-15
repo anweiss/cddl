@@ -97,3 +97,29 @@ fn test_person_clone_and_debug() {
   let debug = format!("{:?}", p2);
   assert!(debug.contains("Frank"));
 }
+
+#[test]
+fn test_literal_type_alias() {
+  // `color = "red"` should emit a type alias to String.
+  let c: Color = "red".to_string();
+  assert_eq!(c, "red");
+}
+
+#[test]
+fn test_range_type_alias() {
+  // `scale = 1..10` should emit a type alias to the underlying numeric type.
+  let s: Scale = 5;
+  assert_eq!(s, 5);
+}
+
+#[test]
+fn test_container_references_literal_and_range() {
+  // `container` references the literal `color` and range `scale` rules, which
+  // must be emitted as types for this struct to compile.
+  let c = Container {
+    name: "red".to_string(),
+    level: 7,
+  };
+  assert_eq!(c.name, "red");
+  assert_eq!(c.level, 7);
+}
