@@ -118,19 +118,15 @@ impl CommentMap {
   pub(crate) fn docs_for(&self, line: usize) -> Vec<String> {
     let mut docs = Vec::new();
 
-    if line >= 2 {
-      let mut l = line - 1;
-      while l >= 1 {
-        match self.pure.get(l).and_then(|c| c.as_ref()) {
-          Some(c) => {
-            docs.push(c.clone());
-            l -= 1;
-          }
-          None => break,
-        }
+    // Walk upward over contiguous stand-alone comment lines. The range is empty
+    // when `line <= 1`, so there is no risk of unsigned underflow.
+    for l in (1..line).rev() {
+      match self.pure.get(l).and_then(|c| c.as_ref()) {
+        Some(c) => docs.push(c.clone()),
+        None => break,
       }
-      docs.reverse();
     }
+    docs.reverse();
 
     if let Some(Some(c)) = self.trailing.get(line) {
       docs.push(c.clone());
