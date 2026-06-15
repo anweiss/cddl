@@ -34,6 +34,13 @@
 //!
 //! cddl_typegen!("schema.cddl");
 //! ```
+//!
+//! # CDDL comments
+//!
+//! CDDL comments (`; ...`) are preserved as Rust doc comments on the generated
+//! types and fields. A comment (or several consecutive comment lines) directly
+//! above a rule or field becomes its leading documentation, and a comment
+//! trailing a definition on the same line is appended after it.
 
 extern crate proc_macro;
 
@@ -93,6 +100,9 @@ impl Parse for CddlAttrArgs {
 /// struct body with the generated fields. Derive macros for `Clone`, `Debug`,
 /// `serde::Serialize`, and `serde::Deserialize` are added automatically.
 ///
+/// CDDL comments on the matched rule and its fields are preserved as Rust doc
+/// comments on the generated struct and fields.
+///
 /// # Attributes
 ///
 /// - `path` (required) — path to the CDDL file, relative to the crate root.
@@ -148,15 +158,17 @@ pub fn cddl(attr: TokenStream, item: TokenStream) -> TokenStream {
   };
 
   // Generate code for the single rule, using the user's struct name
-  let generated = match codegen::generate_single_type(&cddl_ast, &pascal_rule, Some(&struct_name)) {
-    Ok(code) => code,
-    Err(e) => {
-      let msg = format!("codegen error: {}", e);
-      return syn::Error::new(proc_macro2::Span::call_site(), msg)
-        .to_compile_error()
-        .into();
-    }
-  };
+  let generated =
+    match codegen::generate_single_type(&cddl_ast, &pascal_rule, Some(&struct_name), &cddl_content)
+    {
+      Ok(code) => code,
+      Err(e) => {
+        let msg = format!("codegen error: {}", e);
+        return syn::Error::new(proc_macro2::Span::call_site(), msg)
+          .to_compile_error()
+          .into();
+      }
+    };
 
   // Parse the generated code as a token stream
   let tokens: proc_macro2::TokenStream = match generated.parse() {
@@ -189,7 +201,9 @@ pub fn cddl(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Generate all Rust types from a CDDL file.
 ///
 /// This macro reads the specified CDDL file at compile time and generates
-/// corresponding Rust structs, enums, and type aliases for every rule.
+/// corresponding Rust structs, enums, and type aliases for every rule. CDDL
+/// comments are preserved as Rust doc comments on the generated types and
+/// fields.
 ///
 /// # Example
 ///
@@ -229,7 +243,7 @@ pub fn cddl_typegen(input: TokenStream) -> TokenStream {
   };
 
   // Generate all types
-  let generated = match codegen::generate_all_types(&cddl_ast) {
+  let generated = match codegen::generate_all_types(&cddl_ast, &cddl_content) {
     Ok(code) => code,
     Err(e) => {
       let msg = format!("codegen error: {}", e);
