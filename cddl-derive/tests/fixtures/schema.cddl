@@ -19,3 +19,12 @@ person-record = {
   home-address: address,
   ? work-address: address,
 }
+
+color = "red"
+
+scale = 1..10
+
+container = {
+  name: color,
+  level: scale,
+}
