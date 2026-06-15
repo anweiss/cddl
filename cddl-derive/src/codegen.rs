@@ -135,13 +135,40 @@ pub(crate) fn pascal_to_cddl_name(pascal: &str) -> String {
 // --- Internal helpers (unchanged from original codegen) ---
 
 fn collect_type_defs(cddl: &CDDL<'_>) -> Result<Vec<RustTypeDef>, CodegenError> {
+  // Group type rules by their generated Rust name in a single pass so that
+  // socket/plug alternates (e.g. `$foo /= int` and `$foo /= tstr`) can be
+  // merged into a single enum instead of producing duplicate definitions.
+  let mut type_rule_alternates: std::collections::HashMap<String, Vec<&TypeRule<'_>>> =
+    std::collections::HashMap::new();
+  for rule in &cddl.rules {
+    if let Rule::Type {
+      rule: type_rule, ..
+    } = rule
+    {
+      type_rule_alternates
+        .entry(to_pascal_case(type_rule.name.ident))
+        .or_default()
+        .push(type_rule);
+    }
+  }
+
   let mut defs = Vec::new();
+  let mut merged: std::collections::HashSet<String> = std::collections::HashSet::new();
   for rule in &cddl.rules {
     match rule {
       Rule::Type {
         rule: type_rule, ..
       } => {
-        if let Some(def) = type_rule_to_rust_def(type_rule)? {
+        let name = to_pascal_case(type_rule.name.ident);
+        let alternates = type_rule_alternates.get(&name);
+        if alternates.map(|a| a.len()).unwrap_or(0) > 1 {
+          // Multiple type rules share this name (socket/plug alternates).
+          // Merge all of their type choices into a single enum, emitting it
+          // once at the position of the first alternate.
+          if merged.insert(name.clone()) {
+            defs.push(merge_type_rules_to_enum(&name, alternates.unwrap())?);
+          }
+        } else if let Some(def) = type_rule_to_rust_def(type_rule)? {
           defs.push(def);
         }
       }
@@ -157,6 +184,24 @@ fn collect_type_defs(cddl: &CDDL<'_>) -> Result<Vec<RustTypeDef>, CodegenError> 
   }
   apply_recursive_boxing(&mut defs);
   Ok(defs)
+}
+
+/// Merge the type choices of several socket/plug type rule alternates into a
+/// single enum definition.
+fn merge_type_rules_to_enum(
+  name: &str,
+  rules: &[&TypeRule<'_>],
+) -> Result<RustTypeDef, CodegenError> {
+  let mut variants = Vec::new();
+  for rule in rules {
+    for tc in &rule.value.type_choices {
+      variants.push(type_choice_to_variant(tc)?);
+    }
+  }
+  Ok(RustTypeDef::Enum {
+    name: name.to_string(),
+    variants,
+  })
 }
 
 fn apply_recursive_boxing(defs: &mut [RustTypeDef]) {
@@ -1150,6 +1195,23 @@ mod tests {
   fn test_type_alias() {
     let result = gen(r#"name = tstr"#);
     assert!(result.contains("pub type Name = String;"));
+  }
+
+  #[test]
+  fn test_socket_plug_alternates_merge_into_enum() {
+    let result = gen(
+      r#"
+      $foo /= int
+      $foo /= tstr
+    "#,
+    );
+    // The socket/plug alternates should be merged into a single enum instead
+    // of producing duplicate `pub type Foo = ...;` definitions.
+    assert_eq!(result.matches("pub enum Foo").count(), 1);
+    assert!(!result.contains("pub type Foo"));
+    assert!(result.contains("#[serde(untagged)]"));
+    assert!(result.contains("Int(i64)"));
+    assert!(result.contains("Tstr(String)"));
   }
 
   #[test]
