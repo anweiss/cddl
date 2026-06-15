@@ -194,7 +194,14 @@ fn type_rule_to_rust_def(rule: &TypeRule<'_>) -> Result<Option<RustTypeDef>, Cod
       Type2::IntValue { .. }
       | Type2::UintValue { .. }
       | Type2::FloatValue { .. }
-      | Type2::TextValue { .. } => Ok(None),
+      | Type2::TextValue { .. } => {
+        // Literal value rules (e.g. `color = "red"`) and numeric range rules
+        // (e.g. `scale = 1..10`, whose lower bound is parsed as a value) are
+        // emitted as type aliases to the underlying Rust type so that other
+        // rules referencing them resolve to a defined type.
+        let target = type1_to_rust_string(type1)?;
+        Ok(Some(RustTypeDef::TypeAlias { name, target }))
+      }
       Type2::ChoiceFromInlineGroup { group, .. } => {
         let variants = group_to_enum_variants(group)?;
         Ok(Some(RustTypeDef::Enum { name, variants }))
