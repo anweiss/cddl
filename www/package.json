@@ -44,7 +44,7 @@
     "util": "^0.12.5",
     "webpack": "^5.107.2",
     "webpack-cli": "^7.0.3",
-    "webpack-dev-server": "^5.2.3"
+    "webpack-dev-server": "^5.2.5"
   },
   "overrides": {
     "serialize-javascript": "^7.0.5",
