@@ -29,12 +29,6 @@ exclude = [
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-# Disable wasm-opt during wasm-pack builds. wasm-pack otherwise downloads a
-# pinned binaryen release to run wasm-opt, which can fail in CI when that asset
-# is unavailable, breaking the LSP extension build.
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false
-
 [dependencies]
 base16 = { version = "0.2.1", default-features = false }
 # base64 = { version = "0.21.0", default-features = false }
