@@ -62,6 +62,9 @@ pub(crate) struct RustField {
 pub(crate) struct RustEnumVariant {
   pub name: String,
   pub inner_type: Option<String>,
+  /// The CDDL string literal this variant corresponds to, used to emit a
+  /// `#[serde(rename = ...)]` attribute when it differs from the variant name.
+  pub rename: Option<String>,
 }
 
 /// Generate Rust source code for all rules in a parsed CDDL AST.
@@ -397,11 +400,13 @@ fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, Codege
       Ok(RustEnumVariant {
         name: variant_name,
         inner_type: inner,
+        rename: None,
       })
     }
     Type2::TextValue { value, .. } => Ok(RustEnumVariant {
       name: to_pascal_case(value),
       inner_type: None,
+      rename: Some(value.to_string()),
     }),
     Type2::IntValue { value, .. } => {
       let variant_name = if *value < 0 {
@@ -412,15 +417,18 @@ fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, Codege
       Ok(RustEnumVariant {
         name: variant_name,
         inner_type: None,
+        rename: None,
       })
     }
     Type2::UintValue { value, .. } => Ok(RustEnumVariant {
       name: format!("N{}", value),
       inner_type: None,
+      rename: None,
     }),
     Type2::FloatValue { value, .. } => Ok(RustEnumVariant {
       name: format!("F{}", value.to_string().replace(['.', '-'], "_")),
       inner_type: None,
+      rename: None,
     }),
     Type2::Map { group, .. } => {
       let fields = group_to_fields(group)?;
@@ -436,11 +444,13 @@ fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, Codege
       Ok(RustEnumVariant {
         name: variant_name,
         inner_type: None,
+        rename: None,
       })
     }
     Type2::Array { .. } => Ok(RustEnumVariant {
       name: "Array".to_string(),
       inner_type: Some("Vec<()>".to_string()),
+      rename: None,
     }),
     Type2::ParenthesizedType { pt, .. } => {
       let rust_type = type_to_rust_string(pt)?;
@@ -448,11 +458,13 @@ fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, Codege
       Ok(RustEnumVariant {
         name: variant_name,
         inner_type: Some(rust_type),
+        rename: None,
       })
     }
     _ => Ok(RustEnumVariant {
       name: "Unknown".to_string(),
       inner_type: None,
+      rename: None,
     }),
   }
 }
@@ -734,6 +746,7 @@ fn group_entry_to_variant(entry: &GroupEntry<'_>) -> Result<RustEnumVariant, Cod
       Ok(RustEnumVariant {
         name: variant_name,
         inner_type: Some(inner),
+        rename: None,
       })
     }
     GroupEntry::TypeGroupname { ge, .. } => {
@@ -746,11 +759,13 @@ fn group_entry_to_variant(entry: &GroupEntry<'_>) -> Result<RustEnumVariant, Cod
         } else {
           Some(variant_name)
         },
+        rename: None,
       })
     }
     GroupEntry::InlineGroup { .. } => Ok(RustEnumVariant {
       name: "Group".to_string(),
       inner_type: None,
+      rename: None,
     }),
   }
 }
@@ -911,6 +926,9 @@ fn render_enum(
   writeln!(output, "#[serde(untagged)]")?;
   writeln!(output, "pub enum {} {{", name)?;
   for variant in variants {
+    if let Some(rename) = &variant.rename {
+      writeln!(output, "    #[serde(rename = \"{}\")]", rename)?;
+    }
     if let Some(inner) = &variant.inner_type {
       writeln!(output, "    {}({}),", variant.name, inner)?;
     } else {
@@ -1114,6 +1132,18 @@ mod tests {
     assert!(result.contains("pub enum Value"));
     assert!(result.contains("Int(i64)"));
     assert!(result.contains("Tstr(String)"));
+  }
+
+  #[test]
+  fn test_string_literal_choices_serde_rename() {
+    let result = gen(r#"action = "created" / "updated" / "deleted""#);
+    assert!(result.contains("pub enum Action"));
+    assert!(result.contains("#[serde(rename = \"created\")]"));
+    assert!(result.contains("Created,"));
+    assert!(result.contains("#[serde(rename = \"updated\")]"));
+    assert!(result.contains("Updated,"));
+    assert!(result.contains("#[serde(rename = \"deleted\")]"));
+    assert!(result.contains("Deleted,"));
   }
 
   #[test]
