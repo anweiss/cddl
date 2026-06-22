@@ -36,14 +36,17 @@ pub(crate) enum RustTypeDef {
   Struct {
     name: String,
     fields: Vec<RustField>,
+    doc: Vec<String>,
   },
   TypeAlias {
     name: String,
     target: String,
+    doc: Vec<String>,
   },
   Enum {
     name: String,
     variants: Vec<RustEnumVariant>,
+    doc: Vec<String>,
   },
 }
 
@@ -54,6 +57,7 @@ pub(crate) struct RustField {
   pub original_name: String,
   pub rust_type: String,
   pub is_optional: bool,
+  pub doc: Vec<String>,
   pub is_boxed: bool,
 }
 
@@ -62,14 +66,110 @@ pub(crate) struct RustField {
 pub(crate) struct RustEnumVariant {
   pub name: String,
   pub inner_type: Option<String>,
+  pub doc: Vec<String>,
   /// The CDDL string literal this variant corresponds to, used to emit a
   /// `#[serde(rename = ...)]` attribute when it differs from the variant name.
   pub rename: Option<String>,
 }
 
+/// Doc comments extracted from CDDL source, indexed by 1-based source line.
+///
+/// CDDL comments (`; ...`) that appear on their own line immediately above a
+/// rule or field become "leading" documentation, and a comment trailing a
+/// definition on the same line is appended after it. Together they are emitted
+/// as Rust doc comments on the generated types and fields.
+#[derive(Debug, Default)]
+pub(crate) struct CommentMap {
+  /// For each 1-based line, the cleaned text of a stand-alone comment line.
+  pure: Vec<Option<String>>,
+  /// For each 1-based line, the cleaned text of a trailing comment.
+  trailing: Vec<Option<String>>,
+}
+
+impl CommentMap {
+  /// Build a comment map from raw CDDL source text.
+  pub(crate) fn new(source: &str) -> Self {
+    // Index 0 is a placeholder so that lines are addressable 1-based.
+    let mut pure = vec![None];
+    let mut trailing = vec![None];
+
+    for line in source.lines() {
+      let (code, comment) = split_comment(line);
+      match comment {
+        Some(c) => {
+          let cleaned = c.trim().to_string();
+          if code.trim().is_empty() {
+            pure.push(Some(cleaned));
+            trailing.push(None);
+          } else {
+            pure.push(None);
+            trailing.push(Some(cleaned));
+          }
+        }
+        None => {
+          pure.push(None);
+          trailing.push(None);
+        }
+      }
+    }
+
+    CommentMap { pure, trailing }
+  }
+
+  /// Collect the doc comment lines associated with the given 1-based source
+  /// line: any contiguous stand-alone comment lines directly above it, followed
+  /// by a trailing comment on the line itself.
+  pub(crate) fn docs_for(&self, line: usize) -> Vec<String> {
+    let mut docs = Vec::new();
+
+    // Walk upward over contiguous stand-alone comment lines. The range is empty
+    // when `line <= 1`, so there is no risk of unsigned underflow.
+    for l in (1..line).rev() {
+      match self.pure.get(l).and_then(|c| c.as_ref()) {
+        Some(c) => docs.push(c.clone()),
+        None => break,
+      }
+    }
+    docs.reverse();
+
+    if let Some(Some(c)) = self.trailing.get(line) {
+      docs.push(c.clone());
+    }
+
+    docs
+  }
+}
+
+/// Split a CDDL source line into its code portion and an optional trailing
+/// comment (the text following `;`, excluding the `;` itself). Semicolons
+/// inside text strings (`"..."`) or byte strings (`'...'`) are ignored.
+fn split_comment(line: &str) -> (&str, Option<&str>) {
+  let bytes = line.as_bytes();
+  let mut in_dquote = false;
+  let mut in_squote = false;
+  let mut i = 0;
+  while i < bytes.len() {
+    match bytes[i] {
+      b'\\' if in_dquote || in_squote => {
+        // Skip escaped character.
+        i += 1;
+      }
+      b'"' if !in_squote => in_dquote = !in_dquote,
+      b'\'' if !in_dquote => in_squote = !in_squote,
+      b';' if !in_dquote && !in_squote => {
+        return (&line[..i], Some(&line[i + 1..]));
+      }
+      _ => {}
+    }
+    i += 1;
+  }
+  (line, None)
+}
+
 /// Generate Rust source code for all rules in a parsed CDDL AST.
-pub(crate) fn generate_all_types(cddl: &CDDL<'_>) -> Result<String, CodegenError> {
-  let type_defs = collect_type_defs(cddl)?;
+pub(crate) fn generate_all_types(cddl: &CDDL<'_>, source: &str) -> Result<String, CodegenError> {
+  let comments = CommentMap::new(source);
+  let type_defs = collect_type_defs(cddl, &comments)?;
   render_type_defs(&type_defs)
 }
 
@@ -82,8 +182,10 @@ pub(crate) fn generate_single_type(
   cddl: &CDDL<'_>,
   rule_name: &str,
   output_name: Option<&str>,
+  source: &str,
 ) -> Result<String, CodegenError> {
-  let type_defs = collect_type_defs(cddl)?;
+  let comments = CommentMap::new(source);
+  let type_defs = collect_type_defs(cddl, &comments)?;
   let matching = type_defs
     .into_iter()
     .find(|d| match d {
@@ -100,17 +202,21 @@ pub(crate) fn generate_single_type(
 
   let mut output = String::new();
   match &matching {
-    RustTypeDef::Struct { name, fields } => {
+    RustTypeDef::Struct { name, fields, doc } => {
       let emit_name = output_name.unwrap_or(name);
-      render_struct(&mut output, emit_name, fields)?;
+      render_struct(&mut output, emit_name, fields, doc)?;
     }
-    RustTypeDef::TypeAlias { name, target } => {
+    RustTypeDef::TypeAlias { name, target, doc } => {
       let emit_name = output_name.unwrap_or(name);
-      render_type_alias(&mut output, emit_name, target)?;
+      render_type_alias(&mut output, emit_name, target, doc)?;
     }
-    RustTypeDef::Enum { name, variants } => {
+    RustTypeDef::Enum {
+      name,
+      variants,
+      doc,
+    } => {
       let emit_name = output_name.unwrap_or(name);
-      render_enum(&mut output, emit_name, variants)?;
+      render_enum(&mut output, emit_name, variants, doc)?;
     }
   }
   Ok(output)
@@ -134,7 +240,10 @@ pub(crate) fn pascal_to_cddl_name(pascal: &str) -> String {
 
 // --- Internal helpers (unchanged from original codegen) ---
 
-fn collect_type_defs(cddl: &CDDL<'_>) -> Result<Vec<RustTypeDef>, CodegenError> {
+fn collect_type_defs(
+  cddl: &CDDL<'_>,
+  comments: &CommentMap,
+) -> Result<Vec<RustTypeDef>, CodegenError> {
   // Group type rules by their generated Rust name in a single pass so that
   // socket/plug alternates (e.g. `$foo /= int` and `$foo /= tstr`) can be
   // merged into a single enum instead of producing duplicate definitions.
@@ -166,18 +275,28 @@ fn collect_type_defs(cddl: &CDDL<'_>) -> Result<Vec<RustTypeDef>, CodegenError> 
           // Merge all of their type choices into a single enum, emitting it
           // once at the position of the first alternate.
           if merged.insert(name.clone()) {
-            defs.push(merge_type_rules_to_enum(&name, alternates.unwrap())?);
+            let doc = comments.docs_for(type_rule.name.span.2);
+            defs.push(merge_type_rules_to_enum(
+              &name,
+              alternates.unwrap(),
+              comments,
+              doc,
+            )?);
           }
-        } else if let Some(def) = type_rule_to_rust_def(type_rule)? {
-          defs.push(def);
+        } else {
+          let doc = comments.docs_for(type_rule.name.span.2);
+          if let Some(def) = type_rule_to_rust_def(type_rule, comments, doc)? {
+            defs.push(def);
+          }
         }
       }
       Rule::Group {
         rule: group_rule, ..
       } => {
         let name = to_pascal_case(group_rule.name.ident);
-        if let Some(fields) = group_entry_to_fields(&group_rule.entry)? {
-          defs.push(RustTypeDef::Struct { name, fields });
+        let doc = comments.docs_for(group_rule.name.span.2);
+        if let Some(fields) = group_entry_to_fields(&group_rule.entry, comments)? {
+          defs.push(RustTypeDef::Struct { name, fields, doc });
         }
       }
     }
@@ -191,16 +310,19 @@ fn collect_type_defs(cddl: &CDDL<'_>) -> Result<Vec<RustTypeDef>, CodegenError> 
 fn merge_type_rules_to_enum(
   name: &str,
   rules: &[&TypeRule<'_>],
+  comments: &CommentMap,
+  doc: Vec<String>,
 ) -> Result<RustTypeDef, CodegenError> {
   let mut variants = Vec::new();
   for rule in rules {
     for tc in &rule.value.type_choices {
-      variants.push(type_choice_to_variant(tc)?);
+      variants.push(type_choice_to_variant(tc, comments)?);
     }
   }
   Ok(RustTypeDef::Enum {
     name: name.to_string(),
     variants,
+    doc,
   })
 }
 
@@ -222,7 +344,7 @@ fn apply_recursive_boxing(defs: &mut [RustTypeDef]) {
   let mut edges: Vec<Vec<usize>> = vec![Vec::new(); names.len()];
   for def in defs.iter() {
     match def {
-      RustTypeDef::Struct { name, fields } => {
+      RustTypeDef::Struct { name, fields, .. } => {
         let Some(&src_idx) = index_by_name.get(name) else {
           continue;
         };
@@ -232,7 +354,7 @@ fn apply_recursive_boxing(defs: &mut [RustTypeDef]) {
           }
         }
       }
-      RustTypeDef::TypeAlias { name, target } => {
+      RustTypeDef::TypeAlias { name, target, .. } => {
         let Some(&src_idx) = index_by_name.get(name) else {
           continue;
         };
@@ -240,7 +362,7 @@ fn apply_recursive_boxing(defs: &mut [RustTypeDef]) {
           edges[src_idx].push(dst_idx);
         }
       }
-      RustTypeDef::Enum { name, variants } => {
+      RustTypeDef::Enum { name, variants, .. } => {
         let Some(&src_idx) = index_by_name.get(name) else {
           continue;
         };
@@ -271,7 +393,7 @@ fn apply_recursive_boxing(defs: &mut [RustTypeDef]) {
   }
 
   for def in defs.iter_mut() {
-    let RustTypeDef::Struct { name, fields } = def else {
+    let RustTypeDef::Struct { name, fields, .. } = def else {
       continue;
     };
     let Some(&src_idx) = index_by_name.get(name) else {
@@ -352,42 +474,47 @@ fn compute_scc_ids(edges: &[Vec<usize>]) -> Vec<usize> {
   scc_ids
 }
 
-fn type_rule_to_rust_def(rule: &TypeRule<'_>) -> Result<Option<RustTypeDef>, CodegenError> {
+fn type_rule_to_rust_def(
+  rule: &TypeRule<'_>,
+  comments: &CommentMap,
+  doc: Vec<String>,
+) -> Result<Option<RustTypeDef>, CodegenError> {
   let name = to_pascal_case(rule.name.ident);
   let ty = &rule.value;
 
   if ty.type_choices.len() > 1 {
-    return Ok(Some(type_choices_to_enum(&name, ty)?));
+    return Ok(Some(type_choices_to_enum(&name, ty, comments, doc)?));
   }
 
   if let Some(tc) = ty.type_choices.first() {
     let type1 = &tc.type1;
     match &type1.type2 {
       Type2::Map { group, .. } => {
-        let fields = group_to_fields(group)?;
-        Ok(Some(RustTypeDef::Struct { name, fields }))
+        let fields = group_to_fields(group, comments)?;
+        Ok(Some(RustTypeDef::Struct { name, fields, doc }))
       }
       Type2::Array { group, .. } => {
         let rust_type = array_group_to_type(group)?;
         Ok(Some(RustTypeDef::TypeAlias {
           name,
           target: rust_type,
+          doc,
         }))
       }
       Type2::Typename { ident, .. } => {
         let target = cddl_ident_to_rust_type(ident.ident);
-        Ok(Some(RustTypeDef::TypeAlias { name, target }))
+        Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
       }
       Type2::ParenthesizedType { pt, .. } => {
         if pt.type_choices.len() > 1 {
-          return Ok(Some(type_choices_to_enum(&name, pt)?));
+          return Ok(Some(type_choices_to_enum(&name, pt, comments, doc)?));
         }
         let target = type_to_rust_string(pt)?;
-        Ok(Some(RustTypeDef::TypeAlias { name, target }))
+        Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
       }
       Type2::Unwrap { ident, .. } => {
         let target = to_pascal_case(ident.ident);
-        Ok(Some(RustTypeDef::TypeAlias { name, target }))
+        Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
       }
       Type2::IntValue { .. }
       | Type2::UintValue { .. }
@@ -398,19 +525,23 @@ fn type_rule_to_rust_def(rule: &TypeRule<'_>) -> Result<Option<RustTypeDef>, Cod
         // emitted as type aliases to the underlying Rust type so that other
         // rules referencing them resolve to a defined type.
         let target = type1_to_rust_string(type1)?;
-        Ok(Some(RustTypeDef::TypeAlias { name, target }))
+        Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
       }
       Type2::ChoiceFromInlineGroup { group, .. } => {
-        let variants = group_to_enum_variants(group)?;
-        Ok(Some(RustTypeDef::Enum { name, variants }))
+        let variants = group_to_enum_variants(group, comments)?;
+        Ok(Some(RustTypeDef::Enum {
+          name,
+          variants,
+          doc,
+        }))
       }
       Type2::ChoiceFromGroup { ident, .. } => {
         let target = to_pascal_case(ident.ident);
-        Ok(Some(RustTypeDef::TypeAlias { name, target }))
+        Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
       }
       Type2::TaggedData { t, .. } => {
         let target = type_to_rust_string(t)?;
-        Ok(Some(RustTypeDef::TypeAlias { name, target }))
+        Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
       }
       _ => Ok(None),
     }
@@ -419,20 +550,30 @@ fn type_rule_to_rust_def(rule: &TypeRule<'_>) -> Result<Option<RustTypeDef>, Cod
   }
 }
 
-fn type_choices_to_enum(name: &str, ty: &Type<'_>) -> Result<RustTypeDef, CodegenError> {
+fn type_choices_to_enum(
+  name: &str,
+  ty: &Type<'_>,
+  comments: &CommentMap,
+  doc: Vec<String>,
+) -> Result<RustTypeDef, CodegenError> {
   let mut variants = Vec::new();
   for tc in &ty.type_choices {
-    let variant = type_choice_to_variant(tc)?;
+    let variant = type_choice_to_variant(tc, comments)?;
     variants.push(variant);
   }
   Ok(RustTypeDef::Enum {
     name: name.to_string(),
     variants,
+    doc,
   })
 }
 
-fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, CodegenError> {
+fn type_choice_to_variant(
+  tc: &TypeChoice<'_>,
+  comments: &CommentMap,
+) -> Result<RustEnumVariant, CodegenError> {
   let type1 = &tc.type1;
+  let doc = comments.docs_for(type1.span.2);
   match &type1.type2 {
     Type2::Typename { ident, .. } => {
       let ident_str = ident.ident;
@@ -445,12 +586,14 @@ fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, Codege
       Ok(RustEnumVariant {
         name: variant_name,
         inner_type: inner,
+        doc,
         rename: None,
       })
     }
     Type2::TextValue { value, .. } => Ok(RustEnumVariant {
       name: to_pascal_case(value),
       inner_type: None,
+      doc,
       rename: Some(value.to_string()),
     }),
     Type2::IntValue { value, .. } => {
@@ -462,21 +605,24 @@ fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, Codege
       Ok(RustEnumVariant {
         name: variant_name,
         inner_type: None,
+        doc,
         rename: None,
       })
     }
     Type2::UintValue { value, .. } => Ok(RustEnumVariant {
       name: format!("N{}", value),
       inner_type: None,
+      doc,
       rename: None,
     }),
     Type2::FloatValue { value, .. } => Ok(RustEnumVariant {
       name: format!("F{}", value.to_string().replace(['.', '-'], "_")),
       inner_type: None,
+      doc,
       rename: None,
     }),
     Type2::Map { group, .. } => {
-      let fields = group_to_fields(group)?;
+      let fields = group_to_fields(group, comments)?;
       let variant_name = if fields.is_empty() {
         "Empty".to_string()
       } else {
@@ -489,12 +635,14 @@ fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, Codege
       Ok(RustEnumVariant {
         name: variant_name,
         inner_type: None,
+        doc,
         rename: None,
       })
     }
     Type2::Array { .. } => Ok(RustEnumVariant {
       name: "Array".to_string(),
       inner_type: Some("Vec<()>".to_string()),
+      doc,
       rename: None,
     }),
     Type2::ParenthesizedType { pt, .. } => {
@@ -503,40 +651,51 @@ fn type_choice_to_variant(tc: &TypeChoice<'_>) -> Result<RustEnumVariant, Codege
       Ok(RustEnumVariant {
         name: variant_name,
         inner_type: Some(rust_type),
+        doc,
         rename: None,
       })
     }
     _ => Ok(RustEnumVariant {
       name: "Unknown".to_string(),
       inner_type: None,
+      doc,
       rename: None,
     }),
   }
 }
 
-fn group_to_fields(group: &Group<'_>) -> Result<Vec<RustField>, CodegenError> {
+fn group_to_fields(
+  group: &Group<'_>,
+  comments: &CommentMap,
+) -> Result<Vec<RustField>, CodegenError> {
   let mut fields = Vec::new();
   for gc in &group.group_choices {
-    let gc_fields = group_choice_to_fields(gc)?;
+    let gc_fields = group_choice_to_fields(gc, comments)?;
     fields.extend(gc_fields);
   }
   Ok(fields)
 }
 
-fn group_choice_to_fields(gc: &GroupChoice<'_>) -> Result<Vec<RustField>, CodegenError> {
+fn group_choice_to_fields(
+  gc: &GroupChoice<'_>,
+  comments: &CommentMap,
+) -> Result<Vec<RustField>, CodegenError> {
   let mut fields = Vec::new();
   for (entry, _optional_comma) in &gc.group_entries {
-    if let Some(mut entry_fields) = group_entry_to_fields(entry)? {
+    if let Some(mut entry_fields) = group_entry_to_fields(entry, comments)? {
       fields.append(&mut entry_fields);
     }
   }
   Ok(fields)
 }
 
-fn group_entry_to_fields(entry: &GroupEntry<'_>) -> Result<Option<Vec<RustField>>, CodegenError> {
+fn group_entry_to_fields(
+  entry: &GroupEntry<'_>,
+  comments: &CommentMap,
+) -> Result<Option<Vec<RustField>>, CodegenError> {
   match entry {
     GroupEntry::ValueMemberKey { ge, .. } => {
-      if let Some(field) = value_member_key_to_field(ge)? {
+      if let Some(field) = value_member_key_to_field(ge, comments)? {
         Ok(Some(vec![field]))
       } else {
         Ok(None)
@@ -551,11 +710,13 @@ fn group_entry_to_fields(entry: &GroupEntry<'_>) -> Result<Option<Vec<RustField>
         .as_ref()
         .map(|o| matches!(o.occur, Occur::Optional { .. }))
         .unwrap_or(false);
+      let doc = comments.docs_for(ge.name.span.2);
       Ok(Some(vec![RustField {
         name: field_name,
         original_name: ident.to_string(),
         rust_type,
         is_optional,
+        doc,
         is_boxed: false,
       }]))
     }
@@ -564,7 +725,7 @@ fn group_entry_to_fields(entry: &GroupEntry<'_>) -> Result<Option<Vec<RustField>
         .as_ref()
         .map(|o| matches!(o.occur, Occur::Optional { .. }))
         .unwrap_or(false);
-      let mut fields = group_to_fields(group)?;
+      let mut fields = group_to_fields(group, comments)?;
       if is_optional {
         for f in &mut fields {
           f.is_optional = true;
@@ -577,7 +738,9 @@ fn group_entry_to_fields(entry: &GroupEntry<'_>) -> Result<Option<Vec<RustField>
 
 fn value_member_key_to_field(
   vmke: &ValueMemberKeyEntry<'_>,
+  comments: &CommentMap,
 ) -> Result<Option<RustField>, CodegenError> {
+  let doc = comments.docs_for(vmke_line(vmke));
   let (field_name, original_name) = match &vmke.member_key {
     Some(MemberKey::Bareword { ident, .. }) => {
       (to_snake_case(ident.ident), ident.ident.to_string())
@@ -596,6 +759,7 @@ fn value_member_key_to_field(
         original_name: "entries".to_string(),
         rust_type,
         is_optional: false,
+        doc,
         is_boxed: false,
       }));
     }
@@ -606,6 +770,7 @@ fn value_member_key_to_field(
         original_name: "value".to_string(),
         rust_type,
         is_optional: false,
+        doc,
         is_boxed: false,
       }));
     }
@@ -637,8 +802,20 @@ fn value_member_key_to_field(
     original_name,
     rust_type: final_type,
     is_optional,
+    doc,
     is_boxed: false,
   }))
+}
+
+/// Determine the 1-based source line for a value member key entry, preferring
+/// the member key identifier/value and falling back to the entry type.
+fn vmke_line(vmke: &ValueMemberKeyEntry<'_>) -> usize {
+  match &vmke.member_key {
+    Some(MemberKey::Bareword { ident, .. }) => ident.span.2,
+    Some(MemberKey::Value { span, .. }) => span.2,
+    Some(MemberKey::Type1 { span, .. }) => span.2,
+    _ => vmke.entry_type.span.2,
+  }
 }
 
 fn is_vec_occurrence(occur: &Occur) -> bool {
@@ -765,20 +942,27 @@ fn is_null_type(type2: &Type2<'_>) -> bool {
   matches!(type2, Type2::Typename { ident, .. } if ident.ident == "null" || ident.ident == "nil")
 }
 
-fn group_to_enum_variants(group: &Group<'_>) -> Result<Vec<RustEnumVariant>, CodegenError> {
+fn group_to_enum_variants(
+  group: &Group<'_>,
+  comments: &CommentMap,
+) -> Result<Vec<RustEnumVariant>, CodegenError> {
   let mut variants = Vec::new();
   for gc in &group.group_choices {
     for (entry, _) in &gc.group_entries {
-      let variant = group_entry_to_variant(entry)?;
+      let variant = group_entry_to_variant(entry, comments)?;
       variants.push(variant);
     }
   }
   Ok(variants)
 }
 
-fn group_entry_to_variant(entry: &GroupEntry<'_>) -> Result<RustEnumVariant, CodegenError> {
+fn group_entry_to_variant(
+  entry: &GroupEntry<'_>,
+  comments: &CommentMap,
+) -> Result<RustEnumVariant, CodegenError> {
   match entry {
     GroupEntry::ValueMemberKey { ge, .. } => {
+      let doc = comments.docs_for(vmke_line(ge));
       let variant_name = match &ge.member_key {
         Some(MemberKey::Bareword { ident, .. }) => to_pascal_case(ident.ident),
         Some(MemberKey::Value { value, .. }) => {
@@ -791,10 +975,12 @@ fn group_entry_to_variant(entry: &GroupEntry<'_>) -> Result<RustEnumVariant, Cod
       Ok(RustEnumVariant {
         name: variant_name,
         inner_type: Some(inner),
+        doc,
         rename: None,
       })
     }
     GroupEntry::TypeGroupname { ge, .. } => {
+      let doc = comments.docs_for(ge.name.span.2);
       let variant_name = to_pascal_case(ge.name.ident);
       let inner = cddl_ident_to_rust_type(ge.name.ident);
       Ok(RustEnumVariant {
@@ -804,12 +990,14 @@ fn group_entry_to_variant(entry: &GroupEntry<'_>) -> Result<RustEnumVariant, Cod
         } else {
           Some(variant_name)
         },
+        doc,
         rename: None,
       })
     }
     GroupEntry::InlineGroup { .. } => Ok(RustEnumVariant {
       name: "Group".to_string(),
       inner_type: None,
+      doc: Vec::new(),
       rename: None,
     }),
   }
@@ -897,14 +1085,18 @@ fn render_type_defs(defs: &[RustTypeDef]) -> Result<String, CodegenError> {
       output.push('\n');
     }
     match def {
-      RustTypeDef::Struct { name, fields } => {
-        render_struct(&mut output, name, fields)?;
+      RustTypeDef::Struct { name, fields, doc } => {
+        render_struct(&mut output, name, fields, doc)?;
       }
-      RustTypeDef::TypeAlias { name, target } => {
-        render_type_alias(&mut output, name, target)?;
+      RustTypeDef::TypeAlias { name, target, doc } => {
+        render_type_alias(&mut output, name, target, doc)?;
       }
-      RustTypeDef::Enum { name, variants } => {
-        render_enum(&mut output, name, variants)?;
+      RustTypeDef::Enum {
+        name,
+        variants,
+        doc,
+      } => {
+        render_enum(&mut output, name, variants, doc)?;
       }
     }
   }
@@ -912,17 +1104,33 @@ fn render_type_defs(defs: &[RustTypeDef]) -> Result<String, CodegenError> {
   Ok(output)
 }
 
+/// Write doc comment lines (each rendered as a Rust `///` line) with the given
+/// indentation prefix.
+fn render_doc(output: &mut String, doc: &[String], indent: &str) -> Result<(), CodegenError> {
+  for line in doc {
+    if line.is_empty() {
+      writeln!(output, "{}///", indent)?;
+    } else {
+      writeln!(output, "{}/// {}", indent, line)?;
+    }
+  }
+  Ok(())
+}
+
 fn render_struct(
   output: &mut String,
   name: &str,
   fields: &[RustField],
+  doc: &[String],
 ) -> Result<(), CodegenError> {
+  render_doc(output, doc, "")?;
   writeln!(
     output,
     "#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]"
   )?;
   writeln!(output, "pub struct {} {{", name)?;
   for field in fields {
+    render_doc(output, &field.doc, "    ")?;
     if field.name != field.original_name {
       writeln!(output, "    #[serde(rename = \"{}\")]", field.original_name)?;
     }
@@ -954,7 +1162,13 @@ fn render_struct(
   Ok(())
 }
 
-fn render_type_alias(output: &mut String, name: &str, target: &str) -> Result<(), CodegenError> {
+fn render_type_alias(
+  output: &mut String,
+  name: &str,
+  target: &str,
+  doc: &[String],
+) -> Result<(), CodegenError> {
+  render_doc(output, doc, "")?;
   writeln!(output, "pub type {} = {};", name, target)?;
   Ok(())
 }
@@ -963,7 +1177,9 @@ fn render_enum(
   output: &mut String,
   name: &str,
   variants: &[RustEnumVariant],
+  doc: &[String],
 ) -> Result<(), CodegenError> {
+  render_doc(output, doc, "")?;
   writeln!(
     output,
     "#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]"
@@ -971,6 +1187,7 @@ fn render_enum(
   writeln!(output, "#[serde(untagged)]")?;
   writeln!(output, "pub enum {} {{", name)?;
   for variant in variants {
+    render_doc(output, &variant.doc, "    ")?;
     if let Some(rename) = &variant.rename {
       writeln!(output, "    #[serde(rename = \"{}\")]", rename)?;
     }
@@ -1113,7 +1330,7 @@ mod tests {
 
   fn gen(input: &str) -> String {
     let cddl = cddl_from_str(input, true).unwrap();
-    generate_all_types(&cddl).unwrap()
+    generate_all_types(&cddl, input).unwrap()
   }
 
   #[test]
@@ -1224,7 +1441,16 @@ mod tests {
       true,
     )
     .unwrap();
-    let result = generate_single_type(&cddl, "Person", None).unwrap();
+    let result = generate_single_type(
+      &cddl,
+      "Person",
+      None,
+      r#"
+      address = { street: tstr, city: tstr }
+      person = { name: tstr, home: address }
+    "#,
+    )
+    .unwrap();
     assert!(result.contains("pub struct Person"));
     assert!(!result.contains("pub struct Address"));
   }
@@ -1238,7 +1464,15 @@ mod tests {
       true,
     )
     .unwrap();
-    let result = generate_single_type(&cddl, "Address", Some("Addr")).unwrap();
+    let result = generate_single_type(
+      &cddl,
+      "Address",
+      Some("Addr"),
+      r#"
+      address = { street: tstr, city: tstr }
+    "#,
+    )
+    .unwrap();
     assert!(result.contains("pub struct Addr"));
     assert!(!result.contains("pub struct Address"));
   }
@@ -1318,6 +1552,98 @@ mod tests {
     "#,
     );
     assert!(result.contains("pub struct ExclusionRangeMap"));
+  }
+
+  #[test]
+  fn test_leading_comment_becomes_struct_doc() {
+    let result = gen(
+      r#"; A person record.
+person = {
+  name: tstr,
+}
+"#,
+    );
+    assert!(result.contains("/// A person record."));
+    // The doc comment precedes the derive attribute and struct.
+    let doc_idx = result.find("/// A person record.").unwrap();
+    let struct_idx = result.find("pub struct Person").unwrap();
+    assert!(doc_idx < struct_idx);
+  }
+
+  #[test]
+  fn test_multiline_leading_comments_preserved() {
+    let result = gen(
+      r#"; First line.
+; Second line.
+person = {
+  name: tstr,
+}
+"#,
+    );
+    assert!(result.contains("/// First line."));
+    assert!(result.contains("/// Second line."));
+  }
+
+  #[test]
+  fn test_field_leading_and_trailing_comments() {
+    let result = gen(
+      r#"person = {
+  ; The person's name.
+  name: tstr,
+  age: uint, ; Age in years.
+}
+"#,
+    );
+    assert!(result.contains("/// The person's name."));
+    assert!(result.contains("/// Age in years."));
+  }
+
+  #[test]
+  fn test_type_alias_doc_comment() {
+    let result = gen(
+      r#"; A numeric score.
+score = uint
+"#,
+    );
+    assert!(result.contains("/// A numeric score."));
+    let doc_idx = result.find("/// A numeric score.").unwrap();
+    let alias_idx = result.find("pub type Score").unwrap();
+    assert!(doc_idx < alias_idx);
+  }
+
+  #[test]
+  fn test_enum_doc_comment() {
+    let result = gen(
+      r#"; Status of an entity.
+status = "active" / "inactive"
+"#,
+    );
+    assert!(result.contains("/// Status of an entity."));
+    let doc_idx = result.find("/// Status of an entity.").unwrap();
+    let enum_idx = result.find("pub enum Status").unwrap();
+    assert!(doc_idx < enum_idx);
+  }
+
+  #[test]
+  fn test_semicolon_in_string_not_treated_as_comment() {
+    let result = gen(
+      r#"record = {
+  sep: "a;b",
+}
+"#,
+    );
+    // No spurious doc comment should be generated from the ';' inside the string.
+    assert!(!result.contains("///"));
+    assert!(result.contains("pub sep: String,"));
+  }
+
+  #[test]
+  fn test_trailing_rule_comment_becomes_doc() {
+    let result = gen(
+      r#"score = uint ; The score value.
+"#,
+    );
+    assert!(result.contains("/// The score value."));
   }
 
   #[test]

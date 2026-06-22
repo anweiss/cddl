@@ -1,0 +1,14 @@
+; A person in the system.
+; Captures basic identity information.
+person = {
+  ; The person's full name.
+  name: tstr,
+  age: uint, ; Age in completed years.
+  ? email: tstr,
+}
+
+; The numeric score for an entity.
+score = uint
+
+; The status of an entity.
+status = "active" / "inactive" / "pending"
