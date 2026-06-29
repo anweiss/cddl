@@ -72,6 +72,65 @@ pub(crate) struct RustEnumVariant {
   pub rename: Option<String>,
 }
 
+/// Clean a slice of raw comment texts (each the substring following `;`) into
+/// trimmed documentation lines, dropping bare newline markers.
+fn clean_comment_lines(raw: &[&str]) -> Vec<String> {
+  raw
+    .iter()
+    .filter(|c| **c != "\n")
+    .map(|c| c.trim().to_string())
+    .filter(|c| !c.is_empty())
+    .collect()
+}
+
+/// Doc comment lines attached directly to a rule in the AST (the contiguous
+/// `; ...` block immediately above it), as populated by the parser.
+fn ast_rule_doc(rule: &Rule<'_>) -> Vec<String> {
+  rule
+    .comments_before_rule()
+    .map(|c| clean_comment_lines(&c.0))
+    .unwrap_or_default()
+}
+
+/// Doc comment lines attached directly to a group entry in the AST: its leading
+/// comment block followed by any trailing same-line comment.
+fn ast_entry_doc(entry: &GroupEntry<'_>) -> Vec<String> {
+  let (leading, trailing) = match entry {
+    GroupEntry::ValueMemberKey {
+      leading_comments,
+      trailing_comments,
+      ..
+    }
+    | GroupEntry::TypeGroupname {
+      leading_comments,
+      trailing_comments,
+      ..
+    } => (leading_comments, trailing_comments),
+    GroupEntry::InlineGroup { .. } => return Vec::new(),
+  };
+
+  let mut docs = Vec::new();
+  if let Some(c) = leading {
+    docs.extend(clean_comment_lines(&c.0));
+  }
+  if let Some(c) = trailing {
+    docs.extend(clean_comment_lines(&c.0));
+  }
+  docs
+}
+
+/// Prefer the rule's AST-attached doc comments; fall back to recovering them
+/// from the raw source via the line-indexed `CommentMap` when the AST carries
+/// none (e.g. a build configuration without `ast-comments`).
+fn ast_or_map_rule_doc(rule: &Rule<'_>, line: usize, comments: &CommentMap) -> Vec<String> {
+  let ast = ast_rule_doc(rule);
+  if ast.is_empty() {
+    comments.docs_for(line)
+  } else {
+    ast
+  }
+}
+
 /// Doc comments extracted from CDDL source, indexed by 1-based source line.
 ///
 /// CDDL comments (`; ...`) that appear on their own line immediately above a
@@ -275,7 +334,7 @@ fn collect_type_defs(
           // Merge all of their type choices into a single enum, emitting it
           // once at the position of the first alternate.
           if merged.insert(name.clone()) {
-            let doc = comments.docs_for(type_rule.name.span.2);
+            let doc = ast_or_map_rule_doc(rule, type_rule.name.span.2, comments);
             defs.push(merge_type_rules_to_enum(
               &name,
               alternates.unwrap(),
@@ -284,7 +343,7 @@ fn collect_type_defs(
             )?);
           }
         } else {
-          let doc = comments.docs_for(type_rule.name.span.2);
+          let doc = ast_or_map_rule_doc(rule, type_rule.name.span.2, comments);
           if let Some(def) = type_rule_to_rust_def(type_rule, comments, doc)? {
             defs.push(def);
           }
@@ -294,7 +353,7 @@ fn collect_type_defs(
         rule: group_rule, ..
       } => {
         let name = to_pascal_case(group_rule.name.ident);
-        let doc = comments.docs_for(group_rule.name.span.2);
+        let doc = ast_or_map_rule_doc(rule, group_rule.name.span.2, comments);
         if let Some(fields) = group_entry_to_fields(&group_rule.entry, comments)? {
           defs.push(RustTypeDef::Struct { name, fields, doc });
         }
@@ -695,7 +754,11 @@ fn group_entry_to_fields(
 ) -> Result<Option<Vec<RustField>>, CodegenError> {
   match entry {
     GroupEntry::ValueMemberKey { ge, .. } => {
-      if let Some(field) = value_member_key_to_field(ge, comments)? {
+      if let Some(mut field) = value_member_key_to_field(ge, comments)? {
+        let ast_doc = ast_entry_doc(entry);
+        if !ast_doc.is_empty() {
+          field.doc = ast_doc;
+        }
         Ok(Some(vec![field]))
       } else {
         Ok(None)
@@ -710,7 +773,12 @@ fn group_entry_to_fields(
         .as_ref()
         .map(|o| matches!(o.occur, Occur::Optional { .. }))
         .unwrap_or(false);
-      let doc = comments.docs_for(ge.name.span.2);
+      let ast_doc = ast_entry_doc(entry);
+      let doc = if ast_doc.is_empty() {
+        comments.docs_for(ge.name.span.2)
+      } else {
+        ast_doc
+      };
       Ok(Some(vec![RustField {
         name: field_name,
         original_name: ident.to_string(),
@@ -1596,6 +1664,28 @@ person = {
     );
     assert!(result.contains("/// The person's name."));
     assert!(result.contains("/// Age in years."));
+  }
+
+  #[test]
+  fn test_nested_struct_field_comments_from_ast() {
+    // Comments nested inside CDDL structures are preserved via the AST, not by
+    // scanning raw source lines.
+    let result = gen(
+      r#"person = {
+  ; Mailing address.
+  address: address,
+}
+
+address = {
+  ; Street line.
+  street: tstr,
+  city: tstr, ; City name.
+}
+"#,
+    );
+    assert!(result.contains("/// Mailing address."));
+    assert!(result.contains("/// Street line."));
+    assert!(result.contains("/// City name."));
   }
 
   #[test]

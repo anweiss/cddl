@@ -316,6 +316,9 @@ pub enum Rule<'a> {
 
     #[cfg(feature = "ast-comments")]
     #[doc(hidden)]
+    comments_before_rule: Option<Comments<'a>>,
+    #[cfg(feature = "ast-comments")]
+    #[doc(hidden)]
     comments_after_rule: Option<Comments<'a>>,
   },
   /// Group expression
@@ -326,6 +329,9 @@ pub enum Rule<'a> {
     #[cfg(feature = "ast-span")]
     span: Span,
 
+    #[cfg(feature = "ast-comments")]
+    #[doc(hidden)]
+    comments_before_rule: Option<Comments<'a>>,
     #[cfg(feature = "ast-comments")]
     #[doc(hidden)]
     comments_after_rule: Option<Comments<'a>>,
@@ -391,10 +397,19 @@ impl fmt::Display for Rule<'_> {
       Rule::Type {
         rule,
         #[cfg(feature = "ast-comments")]
+        comments_before_rule,
+        #[cfg(feature = "ast-comments")]
         comments_after_rule,
         ..
       } => {
         let mut rule_str = String::new();
+
+        #[cfg(feature = "ast-comments")]
+        if let Some(comments) = comments_before_rule {
+          if comments.any_non_newline() {
+            rule_str.push_str(&comments.to_string());
+          }
+        }
 
         rule_str.push_str(&rule.to_string());
 
@@ -414,10 +429,19 @@ impl fmt::Display for Rule<'_> {
       Rule::Group {
         rule,
         #[cfg(feature = "ast-comments")]
+        comments_before_rule,
+        #[cfg(feature = "ast-comments")]
         comments_after_rule,
         ..
       } => {
         let mut rule_str = String::new();
+
+        #[cfg(feature = "ast-comments")]
+        if let Some(comments) = comments_before_rule {
+          if comments.any_non_newline() {
+            rule_str.push_str(&comments.to_string());
+          }
+        }
 
         rule_str.push_str(&rule.to_string());
 
@@ -444,6 +468,23 @@ impl Rule<'_> {
     match self {
       Rule::Type { rule, .. } => rule.name.to_string(),
       Rule::Group { rule, .. } => rule.name.to_string(),
+    }
+  }
+
+  /// Returns the comments appearing on their own line(s) immediately before a
+  /// rule, if any
+  #[cfg(feature = "ast-comments")]
+  #[doc(hidden)]
+  pub fn comments_before_rule(&self) -> Option<&Comments<'_>> {
+    match self {
+      Rule::Type {
+        comments_before_rule,
+        ..
+      }
+      | Rule::Group {
+        comments_before_rule,
+        ..
+      } => comments_before_rule.as_ref(),
     }
   }
 
@@ -2145,6 +2186,88 @@ impl<'a> GroupChoice<'a> {
 impl fmt::Display for GroupChoice<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut gc_str = String::new();
+
+    // When any entry carries its own leading or trailing doc comment (as
+    // populated by the parser from CDDL `; ...` comments), render the choice as
+    // a comment-preserving, one-entry-per-line block. This is handled up front
+    // and in isolation so the formatting heuristics below are unaffected for
+    // the (common) comment-free case.
+    #[cfg(feature = "ast-comments")]
+    {
+      let has_entry_doc_comments = self.group_entries.iter().any(|(ge, _)| {
+        matches!(ge,
+          GroupEntry::ValueMemberKey {
+            leading_comments,
+            trailing_comments,
+            ..
+          }
+          | GroupEntry::TypeGroupname {
+            leading_comments,
+            trailing_comments,
+            ..
+          } if leading_comments
+            .as_ref()
+            .map(|c| c.any_non_newline())
+            .unwrap_or(false)
+            || trailing_comments
+              .as_ref()
+              .map(|c| c.any_non_newline())
+              .unwrap_or(false))
+      });
+
+      if has_entry_doc_comments {
+        if let Some(comments) = &self.comments_before_grpchoice {
+          if comments.any_non_newline() {
+            gc_str.push_str(&comments.to_string());
+          }
+        }
+
+        for (ge, _comma) in self.group_entries.iter() {
+          if !gc_str.ends_with('\n') {
+            gc_str.push('\n');
+          }
+
+          let (leading, core, trailing) = match ge {
+            GroupEntry::ValueMemberKey {
+              ge: vmke,
+              leading_comments,
+              trailing_comments,
+              ..
+            } => (leading_comments, vmke.to_string(), trailing_comments),
+            GroupEntry::TypeGroupname {
+              ge: tge,
+              leading_comments,
+              trailing_comments,
+              ..
+            } => (leading_comments, tge.to_string(), trailing_comments),
+            other => {
+              gc_str.push_str(&other.to_string());
+              gc_str.push_str(",\n");
+              continue;
+            }
+          };
+
+          if let Some(c) = leading {
+            if c.any_non_newline() {
+              gc_str.push_str(&c.to_string());
+            }
+          }
+
+          gc_str.push_str(&core);
+          gc_str.push(',');
+
+          match trailing {
+            Some(c) if c.any_non_newline() => {
+              // `Comments` renders a trailing newline of its own.
+              let _ = write!(gc_str, " {}", c);
+            }
+            _ => gc_str.push('\n'),
+          }
+        }
+
+        return write!(f, "{}", gc_str);
+      }
+    }
 
     if self.group_entries.len() == 1 {
       let _ = write!(
