@@ -1217,6 +1217,190 @@ fn position_from_span(byte_offset: usize, input: &str) -> Position {
   }
 }
 
+/// Index of the document's comment tokens, keyed by 1-based source line.
+///
+/// `pure` holds comments that occupy a line on their own (used as "leading"
+/// documentation for the rule or entry on the following line), while `trailing`
+/// holds comments that follow code on the same line. The index is built from
+/// the grammar's real `COMMENT` tokens, so semicolons that appear inside text
+/// or byte strings are never mistaken for comments.
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+struct CommentIndex<'a> {
+  input: &'a str,
+  pure: HashMap<usize, &'a str>,
+  trailing: HashMap<usize, &'a str>,
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+impl<'a> CommentIndex<'a> {
+  fn build(pair: &Pair<'a, Rule>, input: &'a str) -> Self {
+    let mut spans = Vec::new();
+    collect_comment_spans(pair, &mut spans);
+
+    let mut pure = HashMap::new();
+    let mut trailing = HashMap::new();
+
+    for span in spans {
+      let start = span.start();
+      let end = span.end();
+      // Text following the leading ';'.
+      let text = &input[start + 1..end];
+      let line = line_of_byte(input, start);
+      let line_start = input[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+      if input[line_start..start].trim().is_empty() {
+        pure.insert(line, text);
+      } else {
+        trailing.insert(line, text);
+      }
+    }
+
+    CommentIndex {
+      input,
+      pure,
+      trailing,
+    }
+  }
+
+  /// Contiguous stand-alone comment lines immediately above `line`.
+  fn leading(&self, line: usize) -> Option<ast::Comments<'a>> {
+    let mut texts = Vec::new();
+    let mut l = line;
+    while l > 1 {
+      l -= 1;
+      match self.pure.get(&l) {
+        Some(text) => texts.push(*text),
+        None => break,
+      }
+    }
+
+    if texts.is_empty() {
+      return None;
+    }
+
+    texts.reverse();
+    Some(ast::Comments(texts))
+  }
+
+  /// A trailing comment on `line`, if present.
+  fn trailing_on(&self, line: usize) -> Option<ast::Comments<'a>> {
+    self
+      .trailing
+      .get(&line)
+      .map(|text| ast::Comments(vec![*text]))
+  }
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn line_of_byte(input: &str, byte: usize) -> usize {
+  input[..byte].bytes().filter(|&b| b == b'\n').count() + 1
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn collect_comment_spans<'a>(pair: &Pair<'a, Rule>, out: &mut Vec<PestSpan<'a>>) {
+  for inner in pair.clone().into_inner() {
+    if inner.as_rule() == Rule::COMMENT {
+      out.push(inner.as_span());
+    } else {
+      collect_comment_spans(&inner, out);
+    }
+  }
+}
+
+/// Attach indexed comments to the rules and their nested group entries.
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn attach_comments<'a>(rules: &mut [ast::Rule<'a>], idx: &CommentIndex<'a>) {
+  for rule in rules.iter_mut() {
+    match rule {
+      ast::Rule::Type {
+        rule,
+        span,
+        comments_before_rule,
+        ..
+      } => {
+        if comments_before_rule.is_none() {
+          *comments_before_rule = idx.leading(span.2);
+        }
+        attach_type(&mut rule.value, idx);
+      }
+      ast::Rule::Group {
+        rule,
+        span,
+        comments_before_rule,
+        ..
+      } => {
+        if comments_before_rule.is_none() {
+          *comments_before_rule = idx.leading(span.2);
+        }
+        attach_group_entry(&mut rule.entry, idx);
+      }
+    }
+  }
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn attach_type<'a>(ty: &mut ast::Type<'a>, idx: &CommentIndex<'a>) {
+  for tc in ty.type_choices.iter_mut() {
+    attach_type2(&mut tc.type1.type2, idx);
+  }
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn attach_type2<'a>(t2: &mut ast::Type2<'a>, idx: &CommentIndex<'a>) {
+  match t2 {
+    ast::Type2::Map { group, .. }
+    | ast::Type2::Array { group, .. }
+    | ast::Type2::ChoiceFromInlineGroup { group, .. } => attach_group(group, idx),
+    ast::Type2::ParenthesizedType { pt, .. } => attach_type(pt, idx),
+    ast::Type2::TaggedData { t, .. } => attach_type(t, idx),
+    _ => {}
+  }
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn attach_group<'a>(group: &mut ast::Group<'a>, idx: &CommentIndex<'a>) {
+  for gc in group.group_choices.iter_mut() {
+    for (entry, _comma) in gc.group_entries.iter_mut() {
+      attach_group_entry(entry, idx);
+    }
+  }
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn attach_group_entry<'a>(entry: &mut ast::GroupEntry<'a>, idx: &CommentIndex<'a>) {
+  match entry {
+    ast::GroupEntry::ValueMemberKey {
+      ge,
+      span,
+      leading_comments,
+      trailing_comments,
+    } => {
+      if leading_comments.is_none() {
+        *leading_comments = idx.leading(span.2);
+      }
+      if trailing_comments.is_none() {
+        *trailing_comments = idx.trailing_on(line_of_byte(idx.input, span.1));
+      }
+      attach_type(&mut ge.entry_type, idx);
+    }
+    ast::GroupEntry::TypeGroupname {
+      span,
+      leading_comments,
+      trailing_comments,
+      ..
+    } => {
+      if leading_comments.is_none() {
+        *leading_comments = idx.leading(span.2);
+      }
+      if trailing_comments.is_none() {
+        *trailing_comments = idx.trailing_on(line_of_byte(idx.input, span.1));
+      }
+    }
+    ast::GroupEntry::InlineGroup { group, .. } => {
+      attach_group(group, idx);
+    }
+  }
+}
+
 /// Convert Pest Pairs to CDDL AST
 fn convert_cddl<'a>(mut pairs: Pairs<'a, Rule>, input: &'a str) -> Result<ast::CDDL<'a>, Error> {
   let pair = pairs.next().ok_or_else(|| Error::PARSER {
@@ -1230,6 +1414,13 @@ fn convert_cddl<'a>(mut pairs: Pairs<'a, Rule>, input: &'a str) -> Result<ast::C
 
   let mut rules = Vec::new();
 
+  // Build an index of the document's comment tokens so they can be attached to
+  // the AST nodes they document. This uses the real `COMMENT` tokens produced
+  // by the grammar (so semicolons inside text/byte strings are never mistaken
+  // for comments) and runs as a post-pass once the rules have been built.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  let comment_index = CommentIndex::build(&pair, input);
+
   for inner_pair in pair.into_inner() {
     match inner_pair.as_rule() {
       Rule::rule => {
@@ -1239,6 +1430,9 @@ fn convert_cddl<'a>(mut pairs: Pairs<'a, Rule>, input: &'a str) -> Result<ast::C
       _ => {}
     }
   }
+
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  attach_comments(&mut rules, &comment_index);
 
   // Check for duplicate rule names (non-alternate rules)
   let mut seen_names: HashMap<String, usize> = HashMap::new();
@@ -1335,6 +1529,8 @@ fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a
         #[cfg(feature = "ast-span")]
         span,
         #[cfg(feature = "ast-comments")]
+        comments_before_rule: None,
+        #[cfg(feature = "ast-comments")]
         comments_after_rule: None,
       })
     }
@@ -1385,6 +1581,8 @@ fn convert_rule<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Rule<'a
         }),
         #[cfg(feature = "ast-span")]
         span,
+        #[cfg(feature = "ast-comments")]
+        comments_before_rule: None,
         #[cfg(feature = "ast-comments")]
         comments_after_rule: None,
       })
@@ -3168,6 +3366,83 @@ mod tests {
 
     let cddl = result.unwrap();
     assert_eq!(cddl.rules.len(), 1);
+  }
+
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_ast_comments_populated_for_rule_and_nested_entries() {
+    let input = "; A person.\n; identity info.\nperson = {\n  ; full name\n  name: tstr, ; trailing name\n  address: {\n    ; street line\n    street: tstr,\n  },\n}\n";
+    let cddl = cddl_from_pest_str(input).unwrap();
+
+    let rule = &cddl.rules[0];
+    let before = rule
+      .comments_before_rule()
+      .expect("rule should have leading comments");
+    assert_eq!(before.0, vec![" A person.", " identity info."]);
+
+    let ast::Rule::Type { rule, .. } = rule else {
+      panic!("expected type rule");
+    };
+
+    let ast::Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+      panic!("expected map");
+    };
+
+    let entries = &group.group_choices[0].group_entries;
+
+    // First entry: leading + trailing comments.
+    let ast::GroupEntry::ValueMemberKey {
+      leading_comments,
+      trailing_comments,
+      ..
+    } = &entries[0].0
+    else {
+      panic!("expected value member key");
+    };
+    assert_eq!(
+      leading_comments.as_ref().map(|c| c.0.clone()),
+      Some(vec![" full name"])
+    );
+    assert_eq!(
+      trailing_comments.as_ref().map(|c| c.0.clone()),
+      Some(vec![" trailing name"])
+    );
+
+    // Second entry is a nested map; its inner entry carries a leading comment,
+    // demonstrating comments nested inside CDDL structures are preserved in the
+    // AST.
+    let ast::GroupEntry::ValueMemberKey { ge, .. } = &entries[1].0 else {
+      panic!("expected value member key");
+    };
+    let ast::Type2::Map { group: inner, .. } = &ge.entry_type.type_choices[0].type1.type2 else {
+      panic!("expected nested map");
+    };
+    let ast::GroupEntry::ValueMemberKey {
+      leading_comments, ..
+    } = &inner.group_choices[0].group_entries[0].0
+    else {
+      panic!("expected nested value member key");
+    };
+    assert_eq!(
+      leading_comments.as_ref().map(|c| c.0.clone()),
+      Some(vec![" street line"])
+    );
+  }
+
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_ast_comments_roundtrip_reparses() {
+    // A commented map must format back into valid, re-parseable CDDL.
+    let input = "person = {\n  ; full name\n  name: tstr, ; trailing\n  age: uint,\n}\n";
+    let cddl = cddl_from_pest_str(input).unwrap();
+    let formatted = cddl.to_string();
+    assert!(
+      cddl_from_pest_str(&formatted).is_ok(),
+      "formatted output should re-parse:\n{}",
+      formatted
+    );
+    assert!(formatted.contains("; full name"));
+    assert!(formatted.contains("; trailing"));
   }
 
   #[test]
