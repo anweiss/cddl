@@ -4,8 +4,8 @@
 		"lib": [
 			"es2022"
 		],
-		"module": "commonjs",
-		"moduleResolution": "node",
+		"module": "node16",
+		"moduleResolution": "node16",
 		"sourceMap": true,
 		"strict": false,
 		"outDir": "out",
@@ -13,7 +13,10 @@
 		"skipLibCheck": true,
 		"esModuleInterop": true,
 		"allowSyntheticDefaultImports": true,
-		"ignoreDeprecations": "6.0"
+		"ignoreDeprecations": "6.0",
+		"types": [
+			"node"
+		]
 	},
 	"include": [
 		"src"
