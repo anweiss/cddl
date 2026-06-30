@@ -2656,27 +2656,17 @@ fn convert_group_entry<'a>(
   let mut generic_args = None;
   let mut inline_group = None;
   let mut is_cut = false;
-  let mut is_arrow_map = false;
 
-  // Check the full matched text to determine the entry type
-  let full_text = pair.as_str();
-  let has_member_key = pair
-    .clone()
-    .into_inner()
-    .any(|p| p.as_rule() == Rule::member_key);
+  // Arrow vs. colon is decided structurally in convert_member_key_simple from
+  // the member_key's child rule (a Rule::type1 child is the arrow form;
+  // bareword/typename/value are colon keys), never from the entry text
+  // (otherwise, a substring scan can wrongly fire inside the entry's value)
+  // Cut (^) is the one bit we must precompute here: the member_key child is
+  // visited before the Rule::cut child in the loop below, so is_cut has to be
+  // known before the member_key conversion call.
   let has_cut = pair.clone().into_inner().any(|p| p.as_rule() == Rule::cut);
-  // Determine colon vs arrow by checking for "=>" in the text
-  // We need to be careful: "=>" could appear inside a text value
-  // Use the grammar structure: arrow alternative has cut? child and comes first
-  let has_arrow = has_member_key && (has_cut || full_text.contains("=>"));
-  let has_colon = has_member_key && !has_arrow && full_text.contains(':');
-
   if has_cut {
     is_cut = true;
-  }
-
-  if has_arrow {
-    is_arrow_map = true;
   }
 
   for inner in pair.into_inner() {
@@ -2688,17 +2678,13 @@ fn convert_group_entry<'a>(
         is_cut = true;
       }
       Rule::member_key => {
-        if has_colon || has_arrow {
-          // This is a real member key
-          member_key = Some(convert_member_key_simple(
-            inner,
-            input,
-            is_arrow_map,
-            is_cut,
-            #[cfg(feature = "ast-span")]
-            span,
-          )?);
-        }
+        member_key = Some(convert_member_key_simple(
+          inner,
+          input,
+          is_cut,
+          #[cfg(feature = "ast-span")]
+          span,
+        )?);
       }
       Rule::type_expr => {
         entry_type = Some(convert_type_expr(inner, input)?);
@@ -2892,7 +2878,6 @@ fn convert_occurrence<'a>(
 fn convert_member_key_simple<'a>(
   pair: Pair<'a, Rule>,
   input: &'a str,
-  is_arrow_map: bool,
   is_cut: bool,
   span: ast::Span,
 ) -> Result<ast::MemberKey<'a>, Error> {
@@ -2900,7 +2885,8 @@ fn convert_member_key_simple<'a>(
     match inner.as_rule() {
       Rule::type1 => {
         // type1 form (RFC 8610 §3.5.1): "type1 S [\"^\" S] \"=>\"".
-        // Always an arrow-map member key; ignore is_arrow_map flag here.
+        // The grammar only produces a type1 child behind the "=>" lookahead,
+        // so this is always the arrow form.
         let t1 = convert_type1(inner, input)?;
         return Ok(ast::MemberKey::Type1 {
           t1: Box::new(t1),
@@ -2916,96 +2902,33 @@ fn convert_member_key_simple<'a>(
         });
       }
       Rule::bareword => {
-        if is_arrow_map {
-          // Convert bareword to Type1 for arrow map
-          let type1 = ast::Type1 {
-            type2: ast::Type2::Typename {
-              ident: ast::Identifier {
-                ident: inner.as_str(),
-                socket: None,
-                #[cfg(feature = "ast-span")]
-                span: pest_span_to_ast_span(&inner.as_span(), input),
-              },
-              generic_args: None,
-              #[cfg(feature = "ast-span")]
-              span: pest_span_to_ast_span(&inner.as_span(), input),
-            },
-            operator: None,
+        return Ok(ast::MemberKey::Bareword {
+          ident: ast::Identifier {
+            ident: inner.as_str(),
+            socket: None,
             #[cfg(feature = "ast-span")]
             span: pest_span_to_ast_span(&inner.as_span(), input),
-            #[cfg(feature = "ast-comments")]
-            comments_after_type: None,
-          };
-          return Ok(ast::MemberKey::Type1 {
-            t1: Box::new(type1),
-            is_cut,
-            #[cfg(feature = "ast-span")]
-            span,
-            #[cfg(feature = "ast-comments")]
-            comments_before_cut: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_cut: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_arrowmap: None,
-          });
-        } else {
-          return Ok(ast::MemberKey::Bareword {
-            ident: ast::Identifier {
-              ident: inner.as_str(),
-              socket: None,
-              #[cfg(feature = "ast-span")]
-              span: pest_span_to_ast_span(&inner.as_span(), input),
-            },
-            #[cfg(feature = "ast-span")]
-            span,
-            #[cfg(feature = "ast-comments")]
-            comments: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_colon: None,
-          });
-        }
+          },
+          #[cfg(feature = "ast-span")]
+          span,
+          #[cfg(feature = "ast-comments")]
+          comments: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_colon: None,
+        });
       }
       Rule::typename => {
         let ident = convert_identifier(inner.clone(), input, false)?;
 
-        if is_arrow_map {
-          // Convert typename to Type1 for arrow map
-          let type1 = ast::Type1 {
-            type2: ast::Type2::Typename {
-              ident: ident.clone(),
-              generic_args: None,
-              #[cfg(feature = "ast-span")]
-              span: pest_span_to_ast_span(&inner.as_span(), input),
-            },
-            operator: None,
-            #[cfg(feature = "ast-span")]
-            span: pest_span_to_ast_span(&inner.as_span(), input),
-            #[cfg(feature = "ast-comments")]
-            comments_after_type: None,
-          };
-          return Ok(ast::MemberKey::Type1 {
-            t1: Box::new(type1),
-            is_cut,
-            #[cfg(feature = "ast-span")]
-            span,
-            #[cfg(feature = "ast-comments")]
-            comments_before_cut: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_cut: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_arrowmap: None,
-          });
-        } else {
-          return Ok(ast::MemberKey::Bareword {
-            ident,
-            #[cfg(feature = "ast-span")]
-            span,
-            #[cfg(feature = "ast-comments")]
-            comments: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_colon: None,
-          });
-        }
+        return Ok(ast::MemberKey::Bareword {
+          ident,
+          #[cfg(feature = "ast-span")]
+          span,
+          #[cfg(feature = "ast-comments")]
+          comments: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_colon: None,
+        });
       }
       Rule::value => {
         let value_type2 = convert_value_to_type2(
@@ -3014,30 +2937,6 @@ fn convert_member_key_simple<'a>(
           #[cfg(feature = "ast-span")]
           span,
         )?;
-
-        if is_arrow_map {
-          // For arrow maps, wrap the value as a Type1 member key
-          let type1 = ast::Type1 {
-            type2: value_type2,
-            operator: None,
-            #[cfg(feature = "ast-span")]
-            span,
-            #[cfg(feature = "ast-comments")]
-            comments_after_type: None,
-          };
-          return Ok(ast::MemberKey::Type1 {
-            t1: Box::new(type1),
-            is_cut,
-            #[cfg(feature = "ast-span")]
-            span,
-            #[cfg(feature = "ast-comments")]
-            comments_before_cut: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_cut: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_arrowmap: None,
-          });
-        }
 
         // Extract Value from Type2 for colon member keys
         let value = match value_type2 {
@@ -3085,7 +2984,6 @@ fn convert_member_key_simple<'a>(
 fn convert_member_key_simple<'a>(
   pair: Pair<'a, Rule>,
   input: &'a str,
-  is_arrow_map: bool,
   is_cut: bool,
 ) -> Result<ast::MemberKey<'a>, Error> {
   for inner in pair.into_inner() {
@@ -3105,99 +3003,30 @@ fn convert_member_key_simple<'a>(
         });
       }
       Rule::bareword => {
-        if is_arrow_map {
-          // Convert bareword to Type1 for arrow map
-          let type1 = ast::Type1 {
-            type2: ast::Type2::Typename {
-              ident: ast::Identifier {
-                ident: inner.as_str(),
-                socket: None,
-              },
-              generic_args: None,
-            },
-            operator: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_type: None,
-          };
-          return Ok(ast::MemberKey::Type1 {
-            t1: Box::new(type1),
-            is_cut,
-            #[cfg(feature = "ast-comments")]
-            comments_before_cut: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_cut: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_arrowmap: None,
-          });
-        } else {
-          return Ok(ast::MemberKey::Bareword {
-            ident: ast::Identifier {
-              ident: inner.as_str(),
-              socket: None,
-            },
-            #[cfg(feature = "ast-comments")]
-            comments: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_colon: None,
-          });
-        }
+        return Ok(ast::MemberKey::Bareword {
+          ident: ast::Identifier {
+            ident: inner.as_str(),
+            socket: None,
+          },
+          #[cfg(feature = "ast-comments")]
+          comments: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_colon: None,
+        });
       }
       Rule::typename => {
         let ident = convert_identifier(inner.clone(), input, false)?;
 
-        if is_arrow_map {
-          // Convert typename to Type1 for arrow map
-          let type1 = ast::Type1 {
-            type2: ast::Type2::Typename {
-              ident: ident.clone(),
-              generic_args: None,
-            },
-            operator: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_type: None,
-          };
-          return Ok(ast::MemberKey::Type1 {
-            t1: Box::new(type1),
-            is_cut,
-            #[cfg(feature = "ast-comments")]
-            comments_before_cut: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_cut: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_arrowmap: None,
-          });
-        } else {
-          return Ok(ast::MemberKey::Bareword {
-            ident,
-            #[cfg(feature = "ast-comments")]
-            comments: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_colon: None,
-          });
-        }
+        return Ok(ast::MemberKey::Bareword {
+          ident,
+          #[cfg(feature = "ast-comments")]
+          comments: None,
+          #[cfg(feature = "ast-comments")]
+          comments_after_colon: None,
+        });
       }
       Rule::value => {
         let value_type2 = convert_value_to_type2(inner.clone(), input)?;
-
-        if is_arrow_map {
-          // For arrow maps, wrap the value as a Type1 member key
-          let type1 = ast::Type1 {
-            type2: value_type2,
-            operator: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_type: None,
-          };
-          return Ok(ast::MemberKey::Type1 {
-            t1: Box::new(type1),
-            is_cut,
-            #[cfg(feature = "ast-comments")]
-            comments_before_cut: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_cut: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_arrowmap: None,
-          });
-        }
 
         // Extract Value from Type2 for colon member keys
         let value = match value_type2 {
@@ -3228,123 +3057,6 @@ fn convert_member_key_simple<'a>(
   }
 
   Err(Error::PARSER {
-    msg: ErrorMsg {
-      short: "Invalid member key".to_string(),
-      extended: None,
-    },
-  })
-}
-
-/// Convert member key (original - now unused but kept for reference)
-fn _convert_member_key<'a>(
-  pair: Pair<'a, Rule>,
-  input: &'a str,
-) -> Result<ast::MemberKey<'a>, Error> {
-  #[cfg(feature = "ast-span")]
-  let span = pest_span_to_ast_span(&pair.as_span(), input);
-
-  // Member keys can be:
-  // - bareword :
-  // - typename :
-  // - value :
-  // - type1 =>
-
-  let full_str = pair.as_str();
-
-  if full_str.contains("=>") {
-    // Type1 with arrow
-    for inner in pair.into_inner() {
-      if inner.as_rule() == Rule::type1 {
-        return Ok(ast::MemberKey::Type1 {
-          t1: Box::new(convert_type1(inner, input)?),
-          is_cut: false,
-          #[cfg(feature = "ast-span")]
-          span,
-          #[cfg(feature = "ast-comments")]
-          comments_before_cut: None,
-          #[cfg(feature = "ast-comments")]
-          comments_after_cut: None,
-          #[cfg(feature = "ast-comments")]
-          comments_after_arrowmap: None,
-        });
-      }
-    }
-  } else if full_str.contains(":") {
-    // Bareword or value with colon
-    for inner in pair.into_inner() {
-      match inner.as_rule() {
-        Rule::bareword => {
-          return Ok(ast::MemberKey::Bareword {
-            ident: ast::Identifier {
-              ident: inner.as_str(),
-              socket: None,
-              #[cfg(feature = "ast-span")]
-              span: pest_span_to_ast_span(&inner.as_span(), input),
-            },
-            #[cfg(feature = "ast-span")]
-            span,
-            #[cfg(feature = "ast-comments")]
-            comments: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_colon: None,
-          });
-        }
-        Rule::typename => {
-          return Ok(ast::MemberKey::Bareword {
-            ident: convert_identifier(inner, input, false)?,
-            #[cfg(feature = "ast-span")]
-            span,
-            #[cfg(feature = "ast-comments")]
-            comments: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_colon: None,
-          });
-        }
-        Rule::value => {
-          // Convert value to Value enum
-          let value_type2 = convert_value_to_type2(
-            inner.clone(),
-            input,
-            #[cfg(feature = "ast-span")]
-            span,
-          )?;
-
-          // Extract Value from Type2
-          let value = match value_type2 {
-            ast::Type2::IntValue { value, .. } => Value::INT(value),
-            ast::Type2::UintValue { value, .. } => Value::UINT(value),
-            ast::Type2::FloatValue { value, .. } => Value::FLOAT(value),
-            ast::Type2::TextValue { value, .. } => Value::TEXT(value),
-            _ => {
-              return Err(Error::PARSER {
-                #[cfg(feature = "ast-span")]
-                position: pest_span_to_position(&inner.as_span(), input),
-                msg: ErrorMsg {
-                  short: "Invalid member key value".to_string(),
-                  extended: None,
-                },
-              });
-            }
-          };
-
-          return Ok(ast::MemberKey::Value {
-            value,
-            #[cfg(feature = "ast-span")]
-            span,
-            #[cfg(feature = "ast-comments")]
-            comments: None,
-            #[cfg(feature = "ast-comments")]
-            comments_after_colon: None,
-          });
-        }
-        _ => {}
-      }
-    }
-  }
-
-  Err(Error::PARSER {
-    #[cfg(feature = "ast-span")]
-    position: Position::default(),
     msg: ErrorMsg {
       short: "Invalid member key".to_string(),
       extended: None,
