@@ -357,4 +357,49 @@ payload = any";
       bridge_result.err()
     );
   }
+
+  #[test]
+  fn test_bareword_colon_key_not_misparsed_as_arrow() {
+    // Regression: a colon/bareword member key must stay a Bareword even when the
+    // entry's VALUE contains "=>". The arrow-vs-colon distinction is structural
+    // (which member_key alternative matched), not a substring of the entry text;
+    // an earlier heuristic scanned the whole entry for "=>" and flipped `b` to a
+    // Type1 (arrow) key whenever the value happened to contain it. RFC 8610
+    // §3.5.1: `b:` is the text key "b"; only `b =>` makes `b` a type key.
+    use cddl::ast::{GroupEntry, MemberKey, Rule as AstRule, Type2};
+
+    fn first_member_key_variant(src: &str) -> &'static str {
+      let cddl = cddl::pest_bridge::cddl_from_pest_str(src).expect("parse failed");
+      let AstRule::Type { rule, .. } = &cddl.rules[0] else {
+        panic!("expected type rule");
+      };
+      let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+        panic!("expected map");
+      };
+      let (ge, _) = &group.group_choices[0].group_entries[0];
+      let GroupEntry::ValueMemberKey { ge, .. } = ge else {
+        panic!("expected value member key");
+      };
+      match ge.member_key.as_ref().expect("member key present") {
+        MemberKey::Bareword { .. } => "Bareword",
+        MemberKey::Type1 { .. } => "Type1",
+        MemberKey::Value { .. } => "Value",
+        MemberKey::NonMemberKey { .. } => "NonMemberKey",
+      }
+    }
+
+    // The bug: "=>" inside the value must not change the key's form.
+    assert_eq!(first_member_key_variant(r#"foo = { b: "=>" }"#), "Bareword");
+    assert_eq!(
+      first_member_key_variant("foo = { b: { * uint => uint } }"),
+      "Bareword"
+    );
+    // Plain colon keys.
+    assert_eq!(first_member_key_variant("foo = { b: uint }"), "Bareword");
+    assert_eq!(first_member_key_variant("foo = { 1: uint }"), "Value");
+    // Genuine arrow keys (any type1) must remain Type1 — cut (^) included.
+    assert_eq!(first_member_key_variant("foo = { b => uint }"), "Type1");
+    assert_eq!(first_member_key_variant("foo = { 1 => uint }"), "Type1");
+    assert_eq!(first_member_key_variant("foo = { b ^ => uint }"), "Type1");
+  }
 }
