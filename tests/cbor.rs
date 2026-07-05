@@ -130,6 +130,28 @@ fn validate_cbor_integer() {
 }
 
 #[test]
+fn validate_cbor_uint_control_ops() {
+  // ensure control ops over uint targets aren't skipped
+  const INT_8: &[u8] = b"\x08";
+  const INT_255: &[u8] = b"\x18\xff";
+  const INT_256: &[u8] = b"\x19\x01\x00";
+  for (cddl_input, accept, reject) in [
+    ("thing = uint .le 23", cbor::INT_23, cbor::INT_24),
+    ("thing = uint .lt 24", cbor::INT_23, cbor::INT_24),
+    ("thing = uint .gt 23", cbor::INT_24, cbor::INT_23),
+    ("thing = uint .ge 24", cbor::INT_24, cbor::INT_23),
+    ("thing = uint .eq 23", cbor::INT_23, cbor::INT_24),
+    ("thing = uint .ne 23", cbor::INT_24, cbor::INT_23),
+    ("thing = uint .size 1", INT_255, INT_256),
+    ("thing = uint .bits 3", INT_8, cbor::INT_23),
+  ] {
+    validate_cbor_from_slice(cddl_input, accept, None).unwrap();
+    validate_cbor_from_slice(cddl_input, reject, None).unwrap_err();
+    validate_cbor_from_slice(cddl_input, cbor::NINT_1000, None).unwrap_err();
+  }
+}
+
+#[test]
 fn validate_cbor_textstring() {
   let cddl_input = r#"thing = tstr"#;
   validate_cbor_from_slice(cddl_input, cbor::TEXT_EMPTY, None).unwrap();
