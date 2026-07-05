@@ -11,7 +11,6 @@ use crate::{
 
 use std::{
   borrow::Cow,
-  collections::HashMap,
   convert::TryFrom,
   fmt::{self, Write},
 };
@@ -169,9 +168,6 @@ pub struct JSONValidator<'a> {
   validated_keys: Option<Vec<String>>,
   // Collect map entry values that have yet to be validated
   values_to_validate: Option<Vec<Value>>,
-  // Collect invalid array item errors where the key is the index of the invalid
-  // array item
-  array_errors: Option<HashMap<usize, Vec<ValidationError>>>,
 }
 
 impl<'a> JSONValidator<'a> {
@@ -187,7 +183,6 @@ impl<'a> JSONValidator<'a> {
       cut_value: None,
       validated_keys: None,
       values_to_validate: None,
-      array_errors: None,
     }
   }
 
@@ -203,7 +198,6 @@ impl<'a> JSONValidator<'a> {
       cut_value: None,
       validated_keys: None,
       values_to_validate: None,
-      array_errors: None,
     }
   }
 
@@ -219,7 +213,6 @@ impl<'a> JSONValidator<'a> {
       cut_value: None,
       validated_keys: None,
       values_to_validate: None,
-      array_errors: None,
     }
   }
 
@@ -235,151 +228,20 @@ impl<'a> JSONValidator<'a> {
       cut_value: None,
       validated_keys: None,
       values_to_validate: None,
-      array_errors: None,
     }
   }
 
   fn validate_array_items(&mut self, token: &ArrayItemToken) -> visitor::Result<Error> {
-    if let Value::Array(a) = &self.json {
+    // Arrays are matched against array-shaped types by the sequence matcher
+    // (seq_match_group); reaching this point means an array value is being
+    // validated against a non-array type
+    if let Value::Array(_) = &self.json {
       // Member keys are annotation only in an array context
       if self.state.is_member_key {
         return Ok(());
       }
 
-      match validate_array_occurrence(
-        self.state.occurrence.as_ref(),
-        self.state.entry_counts.as_ref().map(|ec| &ec[..]),
-        a,
-      ) {
-        Ok((iter_items, allow_empty_array)) => {
-          if iter_items {
-            for (idx, v) in a.iter().enumerate() {
-              if let Some(indices) = &self.state.valid_array_items {
-                if self.state.is_multi_type_choice && indices.contains(&idx) {
-                  continue;
-                }
-              }
-
-              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-              let mut jv = JSONValidator::new(
-                self.state.cddl,
-                v.clone(),
-                self.state.enabled_features.clone(),
-              );
-              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-              let mut jv =
-                JSONValidator::new(self.state.cddl, v.clone(), self.state.enabled_features);
-              #[cfg(not(feature = "additional-controls"))]
-              let mut jv = JSONValidator::new(self.state.cddl, v.clone());
-
-              jv.state.generic_rules = self.state.generic_rules.clone();
-              jv.state.eval_generic_rule = self.state.eval_generic_rule;
-              jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-              jv.state.ctrl = self.state.ctrl;
-              let _ = write!(
-                jv.state.data_location,
-                "{}/{}",
-                self.state.data_location, idx
-              );
-
-              match token {
-                ArrayItemToken::Value(value) => jv.visit_value(value)?,
-                ArrayItemToken::Range(lower, upper, is_inclusive) => {
-                  jv.visit_range(lower, upper, *is_inclusive)?
-                }
-                ArrayItemToken::Group(group) => jv.visit_group(group)?,
-                ArrayItemToken::Identifier(ident) => jv.visit_identifier(ident)?,
-                ArrayItemToken::TaggedData(tag_data) => {
-                  // Handle tagged data
-                  jv.add_error(format!(
-                    "Tagged data not supported in arrays: {:?}",
-                    tag_data
-                  ))
-                }
-              }
-
-              if self.state.is_multi_type_choice && jv.errors.is_empty() {
-                if let Some(indices) = &mut self.state.valid_array_items {
-                  indices.push(idx);
-                } else {
-                  self.state.valid_array_items = Some(vec![idx]);
-                }
-                continue;
-              }
-
-              if let Some(errors) = &mut self.array_errors {
-                if let Some(error) = errors.get_mut(&idx) {
-                  error.append(&mut jv.errors);
-                } else {
-                  errors.insert(idx, jv.errors);
-                }
-              } else {
-                let mut errors = HashMap::new();
-                errors.insert(idx, jv.errors);
-                self.array_errors = Some(errors)
-              }
-            }
-          } else if let Some(idx) = self.state.group_entry_idx {
-            if let Some(v) = a.get(idx) {
-              #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-              let mut jv = JSONValidator::new(
-                self.state.cddl,
-                v.clone(),
-                self.state.enabled_features.clone(),
-              );
-              #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-              let mut jv =
-                JSONValidator::new(self.state.cddl, v.clone(), self.state.enabled_features);
-              #[cfg(not(feature = "additional-controls"))]
-              let mut jv = JSONValidator::new(self.state.cddl, v.clone());
-
-              jv.state.generic_rules = self.state.generic_rules.clone();
-              jv.state.eval_generic_rule = self.state.eval_generic_rule;
-              jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-              jv.state.ctrl = self.state.ctrl;
-              let _ = write!(
-                jv.state.data_location,
-                "{}/{}",
-                self.state.data_location, idx
-              );
-
-              match token {
-                ArrayItemToken::Value(value) => jv.visit_value(value)?,
-                ArrayItemToken::Range(lower, upper, is_inclusive) => {
-                  jv.visit_range(lower, upper, *is_inclusive)?
-                }
-
-                ArrayItemToken::Identifier(ident) => jv.visit_identifier(ident)?,
-                ArrayItemToken::TaggedData(tag_data) => {
-                  // Handle tagged data
-                  jv.add_error(format!(
-                    "Tagged data not supported in arrays: {:?}",
-                    tag_data
-                  ))
-                }
-                // Special nested array handling - using Group variant instead
-                // as Array variant doesn't exist
-                ArrayItemToken::Group(group) if v.is_array() => {
-                  // Special handling for nested arrays
-                  jv.visit_group(group)?;
-                }
-                ArrayItemToken::Group(group) => jv.visit_group(group)?,
-              }
-
-              self.errors.append(&mut jv.errors);
-            } else if !allow_empty_array {
-              self.add_error(token.error_msg(Some(idx)));
-            }
-          } else if !self.state.is_multi_type_choice {
-            self.add_error(format!("{}, got {}", token.error_msg(None), self.json));
-          }
-        }
-        Err(errors) => {
-          for e in errors.into_iter() {
-            self.add_error(e);
-          }
-        }
-      }
+      self.add_error(format!("{}, got {}", token.error_msg(None), self.json));
     }
 
     Ok(())
@@ -593,6 +455,412 @@ impl<'a> JSONValidator<'a> {
     }
     None
   }
+
+  // ---------------------------------------------------------------------
+  // Array sequence matcher (RFC 8610 Appendix A PEG semantics).
+  //
+  // Mirror of the matcher in src/validator/cbor.rs; see the comments there.
+  // Matching a group against an array is sequence matching over the array's
+  // elements with a cursor:
+  // - a leaf entry consumes exactly one element
+  // - a group (inline, group-rule reference or unwrap) matches a subsequence,
+  // - an occurrence indicator greedily quantifies its entry (no backtracking out of a repetition)
+  // - "//" is prioritized choice that locks in the first successful alternative.
+  // Leaf checks delegate to the existing
+  // single-value machinery via a child validator.
+  //
+  // All matcher functions return
+  // - Ok(Some(new_cursor)) on a match
+  // - Ok(None) on a (silent, speculative) mismatch
+  // - Err only for fatal errors that abort validation entirely.
+  // ---------------------------------------------------------------------
+
+  /// Match a group against elems[cursor..]:
+  /// prioritized choice over the group's choices
+  fn seq_match_group(
+    &mut self,
+    group: &Group<'a>,
+    elems: &[Value],
+    cursor: usize,
+    ctx: &mut ArraySeqCtx<'a, ValidationError>,
+  ) -> std::result::Result<Option<usize>, Error> {
+    for gc in group.group_choices.iter() {
+      if let Some(end) = self.seq_match_group_choice(gc, elems, cursor, ctx)? {
+        return Ok(Some(end));
+      }
+    }
+
+    Ok(None)
+  }
+
+  /// Match a single group choice:
+  /// fold its entries over the cursor from left to right
+  fn seq_match_group_choice(
+    &mut self,
+    gc: &GroupChoice<'a>,
+    elems: &[Value],
+    cursor: usize,
+    ctx: &mut ArraySeqCtx<'a, ValidationError>,
+  ) -> std::result::Result<Option<usize>, Error> {
+    let mut cur = cursor;
+    for (entry, _) in gc.group_entries.iter() {
+      match self.seq_match_entry(entry, elems, cur, ctx)? {
+        Some(next) => cur = next,
+        None => return Ok(None),
+      }
+    }
+
+    Ok(Some(cur))
+  }
+
+  /// Match a group entry, applying its occurrence indicator: greedily match
+  /// up to the upper bound of iterations, where a failed iteration rewinds
+  /// only itself, then require the lower bound
+  fn seq_match_entry(
+    &mut self,
+    entry: &GroupEntry<'a>,
+    elems: &[Value],
+    cursor: usize,
+    ctx: &mut ArraySeqCtx<'a, ValidationError>,
+  ) -> std::result::Result<Option<usize>, Error> {
+    let occur = match entry {
+      GroupEntry::ValueMemberKey { ge, .. } => ge.occur.as_ref().map(|o| o.occur),
+      GroupEntry::TypeGroupname { ge, .. } => ge.occur.as_ref().map(|o| o.occur),
+      GroupEntry::InlineGroup { occur, .. } => occur.as_ref().map(|o| o.occur),
+    };
+
+    let (min, max) = match occur {
+      None => (1, Some(1)),
+      Some(Occur::Optional { .. }) => (0, Some(1)),
+      Some(Occur::ZeroOrMore { .. }) => (0, None),
+      Some(Occur::OneOrMore { .. }) => (1, None),
+      Some(Occur::Exact { lower, upper, .. }) => (lower.unwrap_or(0), upper),
+    };
+
+    let mut cur = cursor;
+    let mut count = 0usize;
+    while max.is_none_or(|m| count < m) {
+      match self.seq_match_entry_once(entry, elems, cur, ctx)? {
+        Some(next) => {
+          count += 1;
+          if next == cur {
+            // Zero-width iteration: no further progress is possible, and any
+            // remaining minimum is trivially satisfiable by more zero-width
+            // matches. Stop to guarantee termination (e.g. [* ()]).
+            count = count.max(min);
+            break;
+          }
+          cur = next;
+        }
+        None => break,
+      }
+    }
+
+    if count >= min {
+      Ok(Some(cur))
+    } else {
+      Ok(None)
+    }
+  }
+
+  /// Match a single iteration of a group entry, ignoring its occurrence
+  /// indicator.
+  ///
+  /// Subsequences (inline groups, group-rule references, unwraps
+  /// of array/map rules) recurse into the matcher;
+  ///
+  /// everything else is a leaf that consumes exactly one element
+  /// validated with the single-value machinery.
+  fn seq_match_entry_once(
+    &mut self,
+    entry: &GroupEntry<'a>,
+    elems: &[Value],
+    cursor: usize,
+    ctx: &mut ArraySeqCtx<'a, ValidationError>,
+  ) -> std::result::Result<Option<usize>, Error> {
+    match entry {
+      GroupEntry::InlineGroup { group, .. } => self.seq_match_group(group, elems, cursor, ctx),
+      GroupEntry::TypeGroupname { ge, .. } => {
+        let grule = group_rule_from_ident(self.state.cddl, &ge.name);
+        let alternates = group_choice_alternates_from_ident(self.state.cddl, &ge.name);
+        if grule.is_some() || !alternates.is_empty() {
+          return self.seq_match_group_ref(ge, grule, &alternates, elems, cursor, ctx);
+        }
+
+        // Leaf: validate one element against the named type
+        self.seq_match_leaf(elems, cursor, ctx, |jv| {
+          if let Some(ga) = &ge.generic_args {
+            if let Some(rule) = rule_from_ident(jv.state.cddl, &ge.name) {
+              if let Some(gr) = jv
+                .state
+                .generic_rules
+                .iter_mut()
+                .find(|gr| gr.name == ge.name.ident)
+              {
+                for arg in ga.args.iter() {
+                  gr.args.push((*arg.arg).clone());
+                }
+              } else if let Some(params) = generic_params_from_rule(rule) {
+                jv.state.generic_rules.push(GenericRule {
+                  name: ge.name.ident,
+                  params,
+                  args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                });
+              }
+
+              jv.state.eval_generic_rule = Some(ge.name.ident);
+              return jv.visit_rule(rule);
+            }
+          }
+
+          // Type socket with no main rule definition: its "/=" alternates
+          // are the only choices (visit_identifier cannot resolve these)
+          if rule_from_ident(jv.state.cddl, &ge.name).is_none() {
+            let alternates = type_choice_alternates_from_ident(jv.state.cddl, &ge.name);
+            if !alternates.is_empty() {
+              jv.state.is_multi_type_choice = true;
+              for t in alternates {
+                let error_count = jv.errors.len();
+                jv.visit_type(t)?;
+                if jv.errors.len() == error_count {
+                  jv.errors.clear();
+                  break;
+                }
+              }
+              return Ok(());
+            }
+          }
+
+          jv.visit_identifier(&ge.name)
+        })
+      }
+      GroupEntry::ValueMemberKey { ge, .. } => {
+        // RFC 8610 3.7: an unwrapped array/map rule contributes the
+        // referenced rule's group as a subsequence, not as a single element
+        // (a member key, being annotation-only in an array context, does not
+        // change this)
+        if ge.entry_type.type_choices.len() == 1 {
+          let tc = &ge.entry_type.type_choices[0];
+          if tc.type1.operator.is_none() {
+            if let Type2::Unwrap {
+              ident,
+              generic_args,
+              ..
+            } = &tc.type1.type2
+            {
+              if let Some(rule) = unwrap_rule_from_ident(self.state.cddl, ident) {
+                if let Rule::Type { rule: trule, .. } = rule {
+                  if trule
+                    .value
+                    .type_choices
+                    .iter()
+                    .any(|tc| matches!(tc.type1.type2, Type2::Array { .. } | Type2::Map { .. }))
+                  {
+                    return self.seq_match_unwrap(
+                      ident,
+                      generic_args.as_ref(),
+                      rule,
+                      elems,
+                      cursor,
+                      ctx,
+                    );
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Leaf: member keys are annotation-only in an array context;
+        // validate one element against the entry type
+        self.seq_match_leaf(elems, cursor, ctx, |jv| jv.visit_type(&ge.entry_type))
+      }
+    }
+  }
+
+  /// Match a group-rule reference (possibly generic, possibly with "//="
+  /// alternates) as a subsequence
+  fn seq_match_group_ref(
+    &mut self,
+    ge: &TypeGroupnameEntry<'a>,
+    grule: Option<&'a GroupRule<'a>>,
+    alternates: &[&'a GroupEntry<'a>],
+    elems: &[Value],
+    cursor: usize,
+    ctx: &mut ArraySeqCtx<'a, ValidationError>,
+  ) -> std::result::Result<Option<usize>, Error> {
+    let key = (ge.name.ident, cursor);
+    if ctx.active_group_refs.contains(&key) {
+      // Recursive group reference without progress cannot match
+      return Ok(None);
+    }
+    ctx.active_group_refs.push(key);
+
+    // Snapshot generic state so args registered for this (possibly failing,
+    // speculative) descent don't leak into sibling alternatives or later
+    // iterations
+    let prev_eval = self.state.eval_generic_rule;
+    let prev_generic_rules = ge
+      .generic_args
+      .as_ref()
+      .map(|_| self.state.generic_rules.clone());
+    if let Some(ga) = &ge.generic_args {
+      if let Some(rule) = rule_from_ident(self.state.cddl, &ge.name) {
+        if let Some(gr) = self
+          .state
+          .generic_rules
+          .iter_mut()
+          .find(|gr| gr.name == ge.name.ident)
+        {
+          for arg in ga.args.iter() {
+            gr.args.push((*arg.arg).clone());
+          }
+        } else if let Some(params) = generic_params_from_rule(rule) {
+          self.state.generic_rules.push(GenericRule {
+            name: ge.name.ident,
+            params,
+            args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+          });
+        }
+
+        self.state.eval_generic_rule = Some(ge.name.ident);
+      }
+    }
+
+    let mut result = None;
+    if let Some(grule) = grule {
+      result = self.seq_match_entry(&grule.entry, elems, cursor, ctx)?;
+    }
+    if result.is_none() {
+      for alt in alternates {
+        result = self.seq_match_entry(alt, elems, cursor, ctx)?;
+        if result.is_some() {
+          break;
+        }
+      }
+    }
+
+    self.state.eval_generic_rule = prev_eval;
+    if let Some(prev) = prev_generic_rules {
+      self.state.generic_rules = prev;
+    }
+    ctx.active_group_refs.pop();
+
+    Ok(result)
+  }
+
+  /// Match an unwrapped rule (~rule, RFC 8610 3.7) as a subsequence: the
+  /// group inside the referenced array/map rule is matched in place
+  fn seq_match_unwrap(
+    &mut self,
+    ident: &Identifier<'a>,
+    generic_args: Option<&GenericArgs<'a>>,
+    rule: &'a Rule<'a>,
+    elems: &[Value],
+    cursor: usize,
+    ctx: &mut ArraySeqCtx<'a, ValidationError>,
+  ) -> std::result::Result<Option<usize>, Error> {
+    // Guard against recursive unwrap references that would loop without
+    // consuming elements (e.g. a = [~b], b = [~b])
+    let key = (ident.ident, cursor);
+    if ctx.active_group_refs.contains(&key) {
+      return Ok(None);
+    }
+    ctx.active_group_refs.push(key);
+
+    // Snapshot generic state so args registered for this (possibly failing,
+    // speculative) descent don't leak into sibling alternatives or later
+    // iterations
+    let prev_eval = self.state.eval_generic_rule;
+    let prev_generic_rules = generic_args.map(|_| self.state.generic_rules.clone());
+    if let Some(ga) = generic_args {
+      if let Some(gr) = self
+        .state
+        .generic_rules
+        .iter_mut()
+        .find(|gr| gr.name == ident.ident)
+      {
+        for arg in ga.args.iter() {
+          gr.args.push((*arg.arg).clone());
+        }
+      } else if let Some(params) = generic_params_from_rule(rule) {
+        self.state.generic_rules.push(GenericRule {
+          name: ident.ident,
+          params,
+          args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+        });
+      }
+
+      self.state.eval_generic_rule = Some(ident.ident);
+    }
+
+    let mut result = None;
+    if let Rule::Type { rule: trule, .. } = rule {
+      for tc in trule.value.type_choices.iter() {
+        if let Type2::Array { group, .. } | Type2::Map { group, .. } = &tc.type1.type2 {
+          result = self.seq_match_group(group, elems, cursor, ctx)?;
+          if result.is_some() {
+            break;
+          }
+        }
+      }
+    }
+
+    self.state.eval_generic_rule = prev_eval;
+    if let Some(prev) = prev_generic_rules {
+      self.state.generic_rules = prev;
+    }
+    ctx.active_group_refs.pop();
+
+    Ok(result)
+  }
+
+  /// Validate elems[cursor] against a leaf entry by spawning a child
+  /// validator on the element value. Failures are silent (speculative):
+  /// the child's errors are recorded in the context for later reporting
+  /// but never bubble into self.errors here.
+  fn seq_match_leaf<F>(
+    &mut self,
+    elems: &[Value],
+    cursor: usize,
+    ctx: &mut ArraySeqCtx<'a, ValidationError>,
+    f: F,
+  ) -> std::result::Result<Option<usize>, Error>
+  where
+    F: FnOnce(&mut JSONValidator<'a>) -> visitor::Result<Error>,
+  {
+    let value = match elems.get(cursor) {
+      Some(v) => v.clone(),
+      // Ran out of elements
+      None => return Ok(None),
+    };
+
+    #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+    let mut jv = JSONValidator::new(self.state.cddl, value, self.state.enabled_features.clone());
+    #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+    let mut jv = JSONValidator::new(self.state.cddl, value, self.state.enabled_features);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut jv = JSONValidator::new(self.state.cddl, value);
+
+    jv.state.generic_rules = self.state.generic_rules.clone();
+    jv.state.eval_generic_rule = self.state.eval_generic_rule;
+    jv.state.visited_rules = self.state.visited_rules.clone();
+    jv.state.ctrl = self.state.ctrl;
+    let _ = write!(
+      jv.state.data_location,
+      "{}/{}",
+      self.state.data_location, cursor
+    );
+
+    f(&mut jv)?;
+
+    if jv.errors.is_empty() {
+      Ok(Some(cursor + 1))
+    } else {
+      ctx.note_failure(cursor, jv.errors);
+      Ok(None)
+    }
+  }
 }
 
 impl<'a> Validator<'a, '_, Error> for JSONValidator<'a> {
@@ -736,50 +1004,6 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
   }
 
   fn visit_type(&mut self, t: &Type<'a>) -> visitor::Result<Error> {
-    // Special case for nested array in literal position
-    if let Value::Array(outer_array) = &self.json {
-      if let Some(idx) = self.state.group_entry_idx {
-        // We're processing a specific array item
-        if let Some(item) = outer_array.get(idx) {
-          if item.is_array() {
-            // This is a nested array, check if we're supposed to validate against an array type
-            for tc in t.type_choices.iter() {
-              if let Type2::Array { .. } = &tc.type1.type2 {
-                #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-                let mut jv = JSONValidator::new(
-                  self.state.cddl,
-                  item.clone(),
-                  self.state.enabled_features.clone(),
-                );
-                #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-                let mut jv =
-                  JSONValidator::new(self.state.cddl, item.clone(), self.state.enabled_features);
-                #[cfg(not(feature = "additional-controls"))]
-                let mut jv = JSONValidator::new(self.state.cddl, item.clone());
-
-                jv.state.generic_rules = self.state.generic_rules.clone();
-                jv.state.eval_generic_rule = self.state.eval_generic_rule;
-                jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-
-                let _ = write!(
-                  jv.state.data_location,
-                  "{}/{}",
-                  self.state.data_location, idx
-                );
-
-                // Visit the type choice with the inner array value
-                jv.visit_type_choice(tc)?;
-
-                self.errors.append(&mut jv.errors);
-                return Ok(());
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // Regular type processing
     if t.type_choices.len() > 1 {
       self.state.is_multi_type_choice = true;
     }
@@ -869,8 +1093,10 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     }
 
     // If we got here and choice_validation_succeeded is true (for array case),
-    // then validation succeeded
+    // then validation succeeded; drop errors accumulated by other, failing
+    // alternatives so they don't leak into the overall result
     if choice_validation_succeeded {
+      self.errors.truncate(initial_error_count);
       return Ok(());
     }
 
@@ -971,16 +1197,8 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       return Ok(());
     }
 
-    for (idx, ge) in gc.group_entries.iter().enumerate() {
-      if let Some(current_index) = self.state.group_entry_idx.as_mut() {
-        if idx != 0 {
-          *current_index += 1;
-        }
-      } else {
-        self.state.group_entry_idx = Some(idx);
-      }
-
-      self.visit_group_entry(&ge.0)?;
+    for (ge, _) in gc.group_entries.iter() {
+      self.visit_group_entry(ge)?;
     }
 
     Ok(())
@@ -1221,11 +1439,9 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             return self.visit_type2(controller);
           }
         }
-        Type2::Array { group, .. } => {
+        Type2::Array { .. } => {
           if let Value::Array(_) = &self.json {
-            self.state.entry_counts = Some(entry_counts_from_group(self.state.cddl, group));
             self.visit_type2(controller)?;
-            self.state.entry_counts = None;
             return Ok(());
           }
         }
@@ -2044,30 +2260,34 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             return Ok(());
           }
 
-          self.state.entry_counts = Some(entry_counts_from_group(self.state.cddl, group));
-          self.visit_group(group)?;
-          self.state.entry_counts = None;
-
-          if let Some(errors) = &mut self.array_errors {
-            if let Some(indices) = &self.state.valid_array_items {
-              for idx in indices.iter() {
-                errors.remove(idx);
-              }
+          let elems = a.clone();
+          let mut ctx = ArraySeqCtx::default();
+          match self.seq_match_group(group, &elems, 0, &mut ctx)? {
+            Some(end) if end == elems.len() => (),
+            Some(end) => {
+              self.add_error(format!(
+                "array validation failed: group {} matched the first {} element(s), but the array has {} elements",
+                group,
+                end,
+                elems.len()
+              ));
             }
-
-            for error in errors.values_mut() {
-              self.errors.append(error);
+            None => {
+              if let Some((idx, errors)) = ctx.best_failure.take() {
+                self.errors.extend(errors);
+                self.add_error(format!(
+                  "array validation failed: element sequence does not match group {} (mismatch at element index {})",
+                  group, idx
+                ));
+              } else {
+                self.add_error(format!(
+                  "array validation failed: element sequence does not match group {}",
+                  group
+                ));
+              }
             }
           }
 
-          self.state.valid_array_items = None;
-          self.array_errors = None;
-
-          Ok(())
-        }
-        // Special case for nested array validation
-        _ if matches!(self.json, Value::Array(_)) => {
-          self.validate_array_items(&ArrayItemToken::Group(group))?;
           Ok(())
         }
         _ => {
@@ -2929,8 +3149,8 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
   }
 
   fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error> {
-    // FIXME: If during traversal the type being validated is supposed to be a value,
-    // this fails
+    // An array can never match a literal value; validate_array_items reports
+    // the type mismatch (unless the value is an annotation-only member key)
     if let Value::Array(_) = &self.json {
       return self.validate_array_items(&ArrayItemToken::Value(value));
     }

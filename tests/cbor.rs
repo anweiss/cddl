@@ -190,14 +190,19 @@ fn validate_cbor_homogenous_array() {
 }
 
 #[test]
-#[ignore] // FIXME: broken
 fn validate_cbor_array_groups() {
   let cddl_input = r#"thing = [int, (int, int)]"#;
   validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
-  // TODO: try splitting arrays into groups a few other ways:
-  // [(int, int, int)]
-  // [* (int)]
-  // [* (int, int)]
+
+  let cddl_input = r#"thing = [(int, int, int)]"#;
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
+
+  let cddl_input = r#"thing = [* (int)]"#;
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
+
+  // Three elements cannot be consumed by repetitions of a two-entry group
+  let cddl_input = r#"thing = [* (int, int)]"#;
+  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap_err();
 }
 
 #[test]
