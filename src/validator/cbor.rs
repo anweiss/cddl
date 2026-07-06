@@ -417,23 +417,27 @@ impl<'a> CBORValidator<'a> {
   }
 
   // Helper function to resolve a Type2 bound to a usize value
-  fn resolve_bound_to_uint(&self, bound: &Type2<'a>) -> std::result::Result<usize, String> {
+  fn resolve_range_bound(&self, bound: &Type2<'a>) -> std::result::Result<RangeBound, String> {
     match bound {
-      Type2::UintValue { value, .. } => Ok(*value),
+      Type2::UintValue { value, .. } => Ok(RangeBound::Uint(*value)),
+      Type2::IntValue { value, .. } => Ok(RangeBound::Int(*value)),
+      Type2::FloatValue { value, .. } => Ok(RangeBound::Float(*value)),
       Type2::Typename { ident, .. } => {
         // Look up the identifier in the CDDL rules
         for rule in self.state.cddl.rules.iter() {
           if let Rule::Type { rule, .. } = rule {
             if rule.name.ident == ident.ident {
-              // Found the rule, now check if it's a simple uint value
+              // Found the rule, now check if it's a simple numeric value
               if rule.value.type_choices.len() == 1 {
-                let type_choice = &rule.value.type_choices[0];
-                if let Type2::UintValue { value, .. } = &type_choice.type1.type2 {
-                  return Ok(*value);
+                match &rule.value.type_choices[0].type1.type2 {
+                  Type2::UintValue { value, .. } => return Ok(RangeBound::Uint(*value)),
+                  Type2::IntValue { value, .. } => return Ok(RangeBound::Int(*value)),
+                  Type2::FloatValue { value, .. } => return Ok(RangeBound::Float(*value)),
+                  _ => {}
                 }
               }
               return Err(format!(
-                "Type name '{}' does not resolve to a simple uint value",
+                "Type name '{}' does not resolve to a simple numeric value",
                 ident.ident
               ));
             }
@@ -444,9 +448,21 @@ impl<'a> CBORValidator<'a> {
           ident.ident
         ))
       }
-      _ => Err(format!("Expected uint value or type name, got {}", bound)),
+      _ => Err(format!(
+        "Expected numeric value or type name, got {}",
+        bound
+      )),
     }
   }
+}
+
+// Resolved range endpoint. RFC 8610 §2.2.2.1: ranges are defined between two
+// integer values or between two floating-point values; mixing is not defined.
+#[derive(Copy, Clone)]
+enum RangeBound {
+  Uint(usize),
+  Int(isize),
+  Float(f64),
 }
 
 impl<'a, T: std::fmt::Debug + 'static> Validator<'a, '_, cbor::Error<T>> for CBORValidator<'a>
@@ -828,99 +844,146 @@ where
       return self.validate_array_items(&ArrayItemToken::Range(lower, upper, is_inclusive));
     }
 
-    // Resolve the bounds to uint values
-    let l_result = self.resolve_bound_to_uint(lower);
-    let u_result = self.resolve_bound_to_uint(upper);
+    // Resolve the bounds to numeric values
+    let (l_bound, u_bound) = match (
+      self.resolve_range_bound(lower),
+      self.resolve_range_bound(upper),
+    ) {
+      (Ok(l), Ok(u)) => (l, u),
+      (Ok(_), Err(u_err)) => {
+        self.add_error(format!(
+          "invalid cddl range. upper value must be a numeric type. got {}. Error: {}",
+          upper, u_err
+        ));
+        return Ok(());
+      }
+      (Err(l_err), Ok(_)) => {
+        self.add_error(format!(
+          "invalid cddl range. lower value must be a numeric type. got {}. Error: {}",
+          lower, l_err
+        ));
+        return Ok(());
+      }
+      (Err(l_err), Err(u_err)) => {
+        self.add_error(format!(
+          "invalid cddl range. upper and lower values must be numeric types. got {} and {}. Error: {} and {}",
+          lower, upper, l_err, u_err
+        ));
+        return Ok(());
+      }
+    };
 
-    match (l_result, u_result) {
-      (Ok(l), Ok(u)) => {
+    // RFC 8610 §2.2.2.1: ranges are between two integers (matching integer
+    // values) or two floats (matching floating-point values)
+    let (l, u) = match (l_bound, u_bound) {
+      (RangeBound::Float(l), RangeBound::Float(u)) => {
         match &self.cbor {
-          Value::Bytes(b) => {
-            let len = b.len();
-            if is_inclusive {
-              if len < l || len > u {
-                self.add_error(format!(
-                  "expected uint to be in range {} <= value <= {}, got Bytes({:?})",
-                  l, u, b
-                ));
-              }
-            } else if len < l || len >= u {
+          Value::Float(f) => {
+            // accept-form check so NaN (unordered) never matches
+            let in_window = l <= *f && if is_inclusive { *f <= u } else { *f < u };
+            if !in_window {
               self.add_error(format!(
-                "expected uint to be in range {} <= value < {}, got Bytes({:?})",
-                l, u, b
-              ));
-            }
-          }
-          Value::Text(s) => match self.state.ctrl {
-            Some(ControlOperator::SIZE) => {
-              let len = s.len();
-              let s = s.clone();
-              if is_inclusive {
-                if s.len() < l || s.len() > u {
-                  self.add_error(format!(
-                    "expected \"{}\" string length to be in the range {} <= value <= {}, got {}",
-                    s, l, u, len
-                  ));
-                }
-
-                return Ok(());
-              } else if s.len() < l || s.len() >= u {
-                self.add_error(format!(
-                  "expected \"{}\" string length to be in the range {} <= value < {}, got {}",
-                  s, l, u, len
-                ));
-                return Ok(());
-              }
-            }
-            _ => {
-              self.add_error("string value cannot be validated against a range without the .size control operator".to_string());
-              return Ok(());
-            }
-          },
-          Value::Integer(i) => {
-            if is_inclusive {
-              if i128::from(*i) < l as i128 || i128::from(*i) > u as i128 {
-                self.add_error(format!(
-                  "expected integer to be in range {} <= value <= {}, got {:?}",
-                  l, u, i
-                ));
-              }
-            } else if i128::from(*i) < l as i128 || i128::from(*i) >= u as i128 {
-              self.add_error(format!(
-                "expected integer to be in range {} <= value < {}, got {:?}",
-                l, u, i
+                "expected float to be in range {} <= value {} {}, got {:?}",
+                l,
+                if is_inclusive { "<=" } else { "<" },
+                u,
+                self.cbor
               ));
             }
           }
           _ => {
             self.add_error(format!(
-              "expected value to be in range {} {} value {} {}, got {:?}",
+              "expected float to be in range {} <= value {} {}, got {:?}",
               l,
-              if is_inclusive { "<=" } else { "<" },
               if is_inclusive { "<=" } else { "<" },
               u,
               self.cbor
             ));
           }
         }
+        return Ok(());
       }
-      (Ok(_), Err(u_err)) => {
+      (RangeBound::Float(_), _) | (_, RangeBound::Float(_)) => {
         self.add_error(format!(
-          "invalid cddl range. upper value must be a uint type. got {}. Error: {}",
-          upper, u_err
+          "invalid cddl range. mixed integer and floating-point endpoints are not defined. got {} and {}",
+          lower, upper
         ));
+        return Ok(());
       }
-      (Err(l_err), Ok(_)) => {
-        self.add_error(format!(
-          "invalid cddl range. lower value must be a uint type. got {}. Error: {}",
-          lower, l_err
-        ));
+      (RangeBound::Uint(l), RangeBound::Uint(u)) => (l as i128, u as i128),
+      (RangeBound::Uint(l), RangeBound::Int(u)) => (l as i128, u as i128),
+      (RangeBound::Int(l), RangeBound::Uint(u)) => (l as i128, u as i128),
+      (RangeBound::Int(l), RangeBound::Int(u)) => (l as i128, u as i128),
+    };
+
+    match &self.cbor {
+      Value::Bytes(b) => {
+        let len = b.len() as i128;
+        if is_inclusive {
+          if len < l || len > u {
+            self.add_error(format!(
+              "expected uint to be in range {} <= value <= {}, got Bytes({:?})",
+              l, u, b
+            ));
+          }
+        } else if len < l || len >= u {
+          self.add_error(format!(
+            "expected uint to be in range {} <= value < {}, got Bytes({:?})",
+            l, u, b
+          ));
+        }
       }
-      (Err(l_err), Err(u_err)) => {
-        let err_msg = format!("{} and {}", l_err, u_err);
+      Value::Text(s) => match self.state.ctrl {
+        Some(ControlOperator::SIZE) => {
+          let len = s.len() as i128;
+          if is_inclusive {
+            if len < l || len > u {
+              self.add_error(format!(
+                "expected \"{}\" string length to be in the range {} <= value <= {}, got {}",
+                s, l, u, len
+              ));
+            }
+
+            return Ok(());
+          } else if len < l || len >= u {
+            self.add_error(format!(
+              "expected \"{}\" string length to be in the range {} <= value < {}, got {}",
+              s, l, u, len
+            ));
+            return Ok(());
+          }
+        }
+        _ => {
+          self.add_error(
+            "string value cannot be validated against a range without the .size control operator"
+              .to_string(),
+          );
+          return Ok(());
+        }
+      },
+      Value::Integer(i) => {
+        if is_inclusive {
+          if i128::from(*i) < l || i128::from(*i) > u {
+            self.add_error(format!(
+              "expected integer to be in range {} <= value <= {}, got {:?}",
+              l, u, i
+            ));
+          }
+        } else if i128::from(*i) < l || i128::from(*i) >= u {
+          self.add_error(format!(
+            "expected integer to be in range {} <= value < {}, got {:?}",
+            l, u, i
+          ));
+        }
+      }
+      _ => {
         self.add_error(format!(
-          "invalid cddl range. upper and lower values must be uint types. got {} and {}. Error: {}",
-          lower, upper, err_msg
+          "expected value to be in range {} {} value {} {}, got {:?}",
+          l,
+          if is_inclusive { "<=" } else { "<" },
+          if is_inclusive { "<=" } else { "<" },
+          u,
+          self.cbor
         ));
       }
     }
