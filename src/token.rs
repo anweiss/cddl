@@ -450,7 +450,6 @@ impl fmt::Display for RangeValue<'_> {
 }
 
 /// Literal value
-// TODO: support hexfloat and exponent
 #[cfg_attr(target_arch = "wasm32", derive(Serialize, Deserialize))]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value<'a> {

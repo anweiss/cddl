@@ -263,10 +263,43 @@ value = { number | text_value | bytes_value }
 // Examples: 42, -10, 3.14, 1.5e10, 0x1.5p10
 number = { hexfloat | float_value | int_value | uint_value }
 
-uint_value = @{ DIGIT+ }
-int_value = @{ "-" ~ DIGIT+ }
-float_value = @{ "-"? ~ DIGIT+ ~ "." ~ DIGIT+ ~ (^"e" ~ ("+" | "-")? ~ DIGIT+)? }
-hexfloat = @{ "-"? ~ "0x" ~ ASCII_HEX_DIGIT+ ~ ("." ~ ASCII_HEX_DIGIT+)? ~ ("p" ~ ("+" | "-")? ~ DIGIT+)? }
+// RFC 8610 Appendix B: uint = DIGIT1 *DIGIT / "0x" 1*HEXDIG / "0b" 1*BINDIG / "0"
+// (unchanged in RFC 9682 Appendix A, whose head-number = uint also makes these
+// radix forms valid in #6.<n>/#7.<n> tag and simple-value head positions).
+// Radix alternatives must come first: a decimal alternative would otherwise
+// consume the "0" of "0x10" and leave "x10" behind. Decimal literals must not
+// have leading zeros (DIGIT1 *DIGIT / "0"). Prefixes and digits are case
+// insensitive (RFC 8610 Section 3.1).
+//
+// Known re-tokenization quirk: because group entries need no separating
+// whitespace, an atomic number rule that stops early leaves the remainder to
+// parse as further entries. In group contexts "0x" parses as `0 x`, "042" as
+// `0 42`, and "01*02 t" as `0 (1*0) 2 t`. This is derivable under the RFC's own
+// ABNF, so it is accepted; at top level such inputs fail (nothing can consume
+// the remainder). Rejecting them would need a `"0" ~ !DIGIT`-style lookahead,
+// i.e. deliberately stricter than RFC 8610.
+uint_value = @{ ^"0x" ~ ASCII_HEX_DIGIT+ | ^"0b" ~ ASCII_BIN_DIGIT+ | ASCII_NONZERO_DIGIT ~ DIGIT* | "0" }
+int_value = @{ "-" ~ (^"0x" ~ ASCII_HEX_DIGIT+ | ^"0b" ~ ASCII_BIN_DIGIT+ | ASCII_NONZERO_DIGIT ~ DIGIT* | "0") }
+// RFC 8610 Appendix B: number = hexfloat / (int ["." fraction] ["e" exponent]),
+// so the fraction is optional when an exponent is present (e.g. 1e5). At least
+// one of fraction/exponent is required — a plain int must fall through to
+// int_value/uint_value. The mantissa is an int, so like uint_value it must not
+// have leading zeros; fraction and exponent are 1*DIGIT and may (e.g. 1.05e05).
+// The mantissa is deliberately decimal-only: the unordered ABNF (unchanged in
+// RFC 9682 Appendix A's collected grammar) literally also derives radix-int
+// mantissas (0b1e2, 0b1.5, 0x1.8 as 0x1 + ".8"), but that reading has no defined
+// semantics and makes hexfloat ambiguous. The only radix float form is hexfloat.
+// Spec question filed upstream: https://github.com/cbor-wg/cddl/issues/33
+float_value = @{
+  "-"? ~ (ASCII_NONZERO_DIGIT ~ DIGIT* | "0")
+    ~ (
+      "." ~ DIGIT+ ~ (^"e" ~ ("+" | "-")? ~ DIGIT+)?
+      | ^"e" ~ ("+" | "-")? ~ DIGIT+
+    )
+}
+// RFC 8610 Appendix B: hexfloat = ["-"] "0x" 1*HEXDIG ["." 1*HEXDIG] "p" exponent
+// The "p" exponent is REQUIRED — a plain hex integer must fall through to uint_value.
+hexfloat = @{ "-"? ~ ^"0x" ~ ASCII_HEX_DIGIT+ ~ ("." ~ ASCII_HEX_DIGIT+)? ~ ^"p" ~ ("+" | "-")? ~ DIGIT+ }
 
 // =============================================================================
 // TEXT VALUES (STRINGS)

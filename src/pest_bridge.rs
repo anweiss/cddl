@@ -59,6 +59,35 @@ use std::collections::HashMap;
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
 
+/// Parse a CDDL uint literal as u64, including the RFC 8610 radix forms
+/// ("0x" 1*HEXDIG / "0b" 1*BINDIG). Prefixes and digits are case insensitive
+/// (RFC 8610 Section 3.1); `from_str_radix` already accepts mixed-case hex
+/// digits, so only the prefix needs a case-insensitive match.
+fn parse_u64_lit(s: &str) -> Option<u64> {
+  match s.as_bytes() {
+    [b'0', b'x' | b'X', ..] => u64::from_str_radix(&s[2..], 16).ok(),
+    [b'0', b'b' | b'B', ..] => u64::from_str_radix(&s[2..], 2).ok(),
+    _ => s.parse().ok(),
+  }
+}
+
+/// Parse a CDDL uint literal into usize (the AST's uint representation).
+fn parse_uint_lit(s: &str) -> Option<usize> {
+  use core::convert::TryFrom;
+  parse_u64_lit(s).and_then(|v| usize::try_from(v).ok())
+}
+
+/// Parse a CDDL int literal (["-"] uint), radix forms included.
+fn parse_int_lit(s: &str) -> Option<isize> {
+  use core::convert::TryFrom;
+  if let Some(rest) = s.strip_prefix('-') {
+    let magnitude = i128::from(parse_u64_lit(rest)?);
+    isize::try_from(-magnitude).ok()
+  } else {
+    parse_u64_lit(s).and_then(|v| isize::try_from(v).ok())
+  }
+}
+
 /// Convert a Pest error to the existing parser error format with enhanced messages
 #[allow(unused_variables)]
 pub fn convert_pest_error(error: pest::error::Error<Rule>, input: &str) -> Error {
@@ -2230,7 +2259,7 @@ fn convert_number_to_type2<'a>(
   for inner in pair.into_inner() {
     match inner.as_rule() {
       Rule::uint_value => {
-        let val = inner.as_str().parse::<usize>().map_err(|_| Error::PARSER {
+        let val = parse_uint_lit(inner.as_str()).ok_or_else(|| Error::PARSER {
           position: pest_span_to_position(&inner.as_span(), input),
           msg: ErrorMsg {
             short: "Invalid unsigned integer".to_string(),
@@ -2240,7 +2269,7 @@ fn convert_number_to_type2<'a>(
         return Ok(ast::Type2::UintValue { value: val, span });
       }
       Rule::int_value => {
-        let val = inner.as_str().parse::<isize>().map_err(|_| Error::PARSER {
+        let val = parse_int_lit(inner.as_str()).ok_or_else(|| Error::PARSER {
           position: pest_span_to_position(&inner.as_span(), input),
           msg: ErrorMsg {
             short: "Invalid integer".to_string(),
@@ -2262,13 +2291,15 @@ fn convert_number_to_type2<'a>(
       Rule::hexfloat => {
         #[cfg(feature = "std")]
         {
-          let val = hexf_parse::parse_hexf64(inner.as_str(), false).map_err(|_| Error::PARSER {
-            position: pest_span_to_position(&inner.as_span(), input),
-            msg: ErrorMsg {
-              short: "Invalid hexfloat".to_string(),
-              extended: None,
+          let val = hexf_parse::parse_hexf64(&inner.as_str().to_ascii_lowercase(), false).map_err(
+            |_| Error::PARSER {
+              position: pest_span_to_position(&inner.as_span(), input),
+              msg: ErrorMsg {
+                short: "Invalid hexfloat".to_string(),
+                extended: None,
+              },
             },
-          })?;
+          )?;
           return Ok(ast::Type2::FloatValue { value: val, span });
         }
         #[cfg(not(feature = "std"))]
@@ -2300,7 +2331,7 @@ fn convert_number_to_type2<'a>(
   for inner in pair.into_inner() {
     match inner.as_rule() {
       Rule::uint_value => {
-        let val = inner.as_str().parse::<usize>().map_err(|_| Error::PARSER {
+        let val = parse_uint_lit(inner.as_str()).ok_or_else(|| Error::PARSER {
           msg: ErrorMsg {
             short: "Invalid unsigned integer".to_string(),
             extended: None,
@@ -2309,7 +2340,7 @@ fn convert_number_to_type2<'a>(
         return Ok(ast::Type2::UintValue { value: val });
       }
       Rule::int_value => {
-        let val = inner.as_str().parse::<isize>().map_err(|_| Error::PARSER {
+        let val = parse_int_lit(inner.as_str()).ok_or_else(|| Error::PARSER {
           msg: ErrorMsg {
             short: "Invalid integer".to_string(),
             extended: None,
@@ -2329,12 +2360,14 @@ fn convert_number_to_type2<'a>(
       Rule::hexfloat => {
         #[cfg(feature = "std")]
         {
-          let val = hexf_parse::parse_hexf64(inner.as_str(), false).map_err(|_| Error::PARSER {
-            msg: ErrorMsg {
-              short: "Invalid hexfloat".to_string(),
-              extended: None,
+          let val = hexf_parse::parse_hexf64(&inner.as_str().to_ascii_lowercase(), false).map_err(
+            |_| Error::PARSER {
+              msg: ErrorMsg {
+                short: "Invalid hexfloat".to_string(),
+                extended: None,
+              },
             },
-          })?;
+          )?;
           return Ok(ast::Type2::FloatValue { value: val });
         }
         #[cfg(not(feature = "std"))]
@@ -2519,7 +2552,14 @@ fn convert_tag_expr<'a>(pair: Pair<'a, Rule>, input: &'a str) -> Result<ast::Typ
         for tv in inner.into_inner() {
           match tv.as_rule() {
             Rule::uint_value => {
-              let val = tv.as_str().parse::<u64>().unwrap_or(0);
+              let val = parse_u64_lit(tv.as_str()).ok_or_else(|| Error::PARSER {
+                #[cfg(feature = "ast-span")]
+                position: pest_span_to_position(&tv.as_span(), input),
+                msg: ErrorMsg {
+                  short: format!("Tag number out of range: {}", tv.as_str()),
+                  extended: None,
+                },
+              })?;
               tag_constraint = Some(TagConstraint::Literal(val));
             }
             Rule::type_expr => {
@@ -2824,12 +2864,23 @@ fn convert_occurrence<'a>(
         // Parse the occurrence range
         let occur_str = inner.as_str();
 
+        let parse_bound = |bound: &str| -> Result<usize, Error> {
+          parse_uint_lit(bound).ok_or_else(|| Error::PARSER {
+            #[cfg(feature = "ast-span")]
+            position: pest_span_to_position(&inner.as_span(), input),
+            msg: ErrorMsg {
+              short: format!("Occurrence bound out of range: {}", bound),
+              extended: None,
+            },
+          })
+        };
+
         // Check if this is a simple "n*" pattern (n or more)
         if occur_str.ends_with('*') && !occur_str.contains("**") {
           let trimmed = occur_str.trim_end_matches('*').trim();
-          if !trimmed.is_empty() && trimmed.parse::<usize>().is_ok() {
+          if !trimmed.is_empty() {
             // This is "n*" meaning "n or more"
-            let lower = Some(trimmed.parse::<usize>().unwrap());
+            let lower = Some(parse_bound(trimmed)?);
             return Ok(ast::Occurrence {
               occur: ast::Occur::Exact {
                 lower,
@@ -2847,14 +2898,14 @@ fn convert_occurrence<'a>(
         // Handle range patterns "n*m" or "*m" or "n*"
         let parts: Vec<&str> = occur_str.split('*').collect();
 
-        let lower = if !parts[0].is_empty() {
-          Some(parts[0].trim().parse::<usize>().unwrap_or(0))
+        let lower = if !parts[0].trim().is_empty() {
+          Some(parse_bound(parts[0].trim())?)
         } else {
           None
         };
 
         let upper = if parts.len() > 1 && !parts[1].trim().is_empty() {
-          Some(parts[1].trim().parse::<usize>().unwrap_or(0))
+          Some(parse_bound(parts[1].trim())?)
         } else {
           None
         };
