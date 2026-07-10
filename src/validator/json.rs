@@ -2010,12 +2010,16 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
           self.visit_group(group)?;
 
+          // A key is unexpected unless some group entry consumed it
+          // (validated_keys of None is an empty consumed set)
           if self.values_to_validate.is_none() {
             for k in o.into_iter() {
-              if let Some(keys) = &self.validated_keys {
-                if !keys.contains(&k) {
-                  self.add_error(format!("unexpected key {:?}", k));
-                }
+              if !self
+                .validated_keys
+                .as_ref()
+                .is_some_and(|keys| keys.contains(&k))
+              {
+                self.add_error(format!("unexpected key {:?}", k));
               }
             }
           }
@@ -2557,6 +2561,28 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       Value::Object(o) => match &self.state.occurrence {
         #[cfg(feature = "ast-span")]
         Some(Occur::Optional { .. }) | None => {
+          // A type-domain string key (e.g. `tstr => v`) matches any object
+          // entry, since JSON object keys are always strings. `?` permits the
+          // entry to be absent (RFC 8610 §3.2), so a find-miss is only an
+          // error for an occurrence-less entry
+          if self.state.is_member_key && is_ident_string_data_type(self.state.cddl, ident) {
+            if let Some((k, v)) = o.iter().next() {
+              self
+                .validated_keys
+                .get_or_insert(vec![k.clone()])
+                .push(k.clone());
+              self.object_value = Some(v.clone());
+              let _ = write!(self.state.data_location, "/{}", k);
+            } else if let Some(Occur::Optional { .. }) = self.state.occurrence.take() {
+              // absent optional entry: skip value validation for this entry
+              self.state.advance_to_next_entry = true;
+            } else {
+              self.add_error(format!("object requires entry key of type {}", ident));
+            }
+
+            return Ok(());
+          }
+
           if token::lookup_ident(ident.ident)
             .in_standard_prelude()
             .is_some()
@@ -2572,6 +2598,24 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         }
         #[cfg(not(feature = "ast-span"))]
         Some(Occur::Optional {}) | None => {
+          if self.state.is_member_key && is_ident_string_data_type(self.state.cddl, ident) {
+            if let Some((k, v)) = o.iter().next() {
+              self
+                .validated_keys
+                .get_or_insert(vec![k.clone()])
+                .push(k.clone());
+              self.object_value = Some(v.clone());
+              self.state.data_location.push_str(&format!("/{}", k));
+            } else if let Some(Occur::Optional { .. }) = self.state.occurrence.take() {
+              // absent optional entry: skip value validation for this entry
+              self.state.advance_to_next_entry = true;
+            } else {
+              self.add_error(format!("object requires entry key of type {}", ident));
+            }
+
+            return Ok(());
+          }
+
           if token::lookup_ident(ident.ident)
             .in_standard_prelude()
             .is_some()
@@ -2863,6 +2907,15 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         jv.visit_rule(rule)?;
 
         self.errors.append(&mut jv.errors);
+
+        // The child validated the same object in the same group context, so
+        // keys it consumed count toward this validator's unexpected-key check
+        if let Some(keys) = jv.validated_keys {
+          self
+            .validated_keys
+            .get_or_insert_with(Vec::new)
+            .extend(keys);
+        }
 
         return Ok(());
       }
