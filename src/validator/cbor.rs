@@ -3172,6 +3172,15 @@ where
         Ok(())
       }
       Value::Tag(tag, value) => {
+        if is_ident_bignum_data_type(self.state.cddl, ident) {
+          if !(ident_accepts_bignum_tag(self.state.cddl, ident, *tag)
+            && matches!(value.as_ref(), Value::Bytes(_)))
+          {
+            self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
+          }
+          return Ok(());
+        }
+
         match *tag {
           0 => {
             if is_ident_tdate_data_type(self.state.cddl, ident) {
@@ -3307,6 +3316,23 @@ where
               return Ok(());
             }
 
+            if is_ident_bignum_data_type(self.state.cddl, ident) && !self.validating_value {
+              if let Some((k, v)) = m
+                .iter()
+                .find(|(k, _)| is_bignum_value(self.state.cddl, ident, k))
+              {
+                self
+                  .validated_keys
+                  .get_or_insert(vec![k.clone()])
+                  .push(k.clone());
+                self.object_value = Some(v.clone());
+                let _ = write!(self.state.data_location, "/{:?}", v);
+              } else {
+                self.add_error(format!("map requires entry key of type {}", ident));
+              }
+              return Ok(());
+            }
+
             if token::lookup_ident(ident.ident)
               .in_standard_prelude()
               .is_some()
@@ -3395,6 +3421,23 @@ where
 
             if is_ident_float_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
+                self
+                  .validated_keys
+                  .get_or_insert(vec![k.clone()])
+                  .push(k.clone());
+                self.object_value = Some(v.clone());
+                self.state.data_location.push_str(&format!("/{}", value));
+              } else {
+                self.add_error(format!("map requires entry key of type {}", ident));
+              }
+              return Ok(());
+            }
+
+            if is_ident_bignum_data_type(self.state.cddl, ident) && !self.validating_value {
+              if let Some((k, v)) = m
+                .iter()
+                .find(|(k, _)| is_bignum_value(self.state.cddl, ident, k))
+              {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
@@ -3579,6 +3622,34 @@ where
                       None
                     }
                   } else if matches!(k, Value::Float(_)) {
+                    Some(v.clone())
+                  } else {
+                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    None
+                  }
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+            }
+
+            if is_ident_bignum_data_type(self.state.cddl, ident) {
+              let mut errors = Vec::new();
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| {
+                  if let Some(keys) = &self.validated_keys {
+                    if !keys.contains(k) {
+                      if is_bignum_value(self.state.cddl, ident, k) {
+                        Some(v.clone())
+                      } else {
+                        errors.push(format!("key of type {} required, got {:?}", ident, k));
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else if is_bignum_value(self.state.cddl, ident, k) {
                     Some(v.clone())
                   } else {
                     errors.push(format!("key of type {} required, got {:?}", ident, k));
@@ -3796,6 +3867,25 @@ where
 
             if is_ident_float_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
+                self
+                  .validated_keys
+                  .get_or_insert(vec![k.clone()])
+                  .push(k.clone());
+                self.object_value = Some(v.clone());
+                let _ = write!(self.state.data_location, "/{:?}", v);
+              } else if (!matches!(occur, Occur::ZeroOrMore { .. }) && m.is_empty())
+                || (matches!(occur, Occur::ZeroOrMore { .. }) && !m.is_empty())
+              {
+                self.add_error(format!("map requires entry key of type {}", ident));
+              }
+              return Ok(());
+            }
+
+            if is_ident_bignum_data_type(self.state.cddl, ident) && !self.validating_value {
+              if let Some((k, v)) = m
+                .iter()
+                .find(|(k, _)| is_bignum_value(self.state.cddl, ident, k))
+              {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
@@ -4628,6 +4718,12 @@ where
 
     Ok(())
   }
+}
+
+/// Is `v` a tagged byte string accepted by the bignum type `ident`?
+fn is_bignum_value(cddl: &CDDL, ident: &Identifier, v: &Value) -> bool {
+  matches!(v, Value::Tag(tag, inner)
+    if ident_accepts_bignum_tag(cddl, ident, *tag) && matches!(inner.as_ref(), Value::Bytes(_)))
 }
 
 /// Converts a CDDL value type to our custom CBOR Value

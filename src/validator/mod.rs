@@ -1027,6 +1027,34 @@ pub fn is_ident_integer_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
+/// Does the given identifier denote a bignum data type that accepts CBOR tag
+/// `tag`? Per the RFC 8610 prelude: `biguint = #6.2(bstr)`,
+/// `bignint = #6.3(bstr)` and `bigint = biguint / bignint`.
+pub fn ident_accepts_bignum_tag(cddl: &CDDL, ident: &Identifier, tag: u64) -> bool {
+  match lookup_ident(ident.ident) {
+    Token::BIGUINT => return tag == 2,
+    Token::BIGNINT => return tag == 3,
+    Token::BIGINT => return tag == 2 || tag == 3,
+    _ => (),
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        ident_accepts_bignum_tag(cddl, ident, tag)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
+/// Is the given identifier associated with a bignum data type
+pub fn is_ident_bignum_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  ident_accepts_bignum_tag(cddl, ident, 2) || ident_accepts_bignum_tag(cddl, ident, 3)
+}
+
 /// Is the given identifier associated with a float data type
 pub fn is_ident_float_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   if let Token::FLOAT
