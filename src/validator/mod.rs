@@ -1034,7 +1034,8 @@ pub fn is_ident_float_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   | Token::FLOAT1632
   | Token::FLOAT32
   | Token::FLOAT3264
-  | Token::FLOAT64 = lookup_ident(ident.ident)
+  | Token::FLOAT64
+  | Token::NUMBER = lookup_ident(ident.ident)
   {
     return true;
   }

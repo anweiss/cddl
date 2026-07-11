@@ -3232,6 +3232,26 @@ mod tests {
   use super::*;
   use indoc::indoc;
 
+  #[test]
+  fn validate_number_accepts_float_and_int() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = cddl_from_str("x = number", true).unwrap();
+
+    for json in ["2.5", "5"] {
+      let json = serde_json::from_str::<serde_json::Value>(json)?;
+      #[cfg(feature = "additional-controls")]
+      let mut jv = JSONValidator::new(&cddl, json.clone(), None);
+      #[cfg(not(feature = "additional-controls"))]
+      let mut jv = JSONValidator::new(&cddl, json.clone());
+      assert!(
+        jv.validate().is_ok(),
+        "number should accept {}",
+        json
+      );
+    }
+
+    Ok(())
+  }
+
   #[cfg(feature = "additional-controls")]
   #[test]
   fn validate_plus() -> std::result::Result<(), Box<dyn std::error::Error>> {

@@ -1017,6 +1017,17 @@ where
         #[cfg(not(feature = "freezer"))]
         return Ok(());
       } else if is_ident_integer_data_type(self.state.cddl, target_ident)
+        && is_ident_float_data_type(self.state.cddl, target_ident)
+      {
+        // e.g. number = int / float, which admits both
+        if !matches!(self.cbor, Value::Integer(_) | Value::Float(_)) {
+          self.add_error(format!(
+            "expected type {}, got {:?}",
+            target_ident, self.cbor
+          ));
+          return Ok(());
+        }
+      } else if is_ident_integer_data_type(self.state.cddl, target_ident)
         && !matches!(self.cbor, Value::Integer(_))
       {
         self.add_error(format!("expected type int, got {:?}", self.cbor));
@@ -3562,7 +3573,11 @@ where
               self.values_to_validate = Some(values_to_validate);
             }
 
-            if is_ident_float_data_type(self.state.cddl, ident) {
+            // number matches the integer block above; without this guard it
+            // would also match here and overwrite the collected values
+            if is_ident_float_data_type(self.state.cddl, ident)
+              && !is_ident_integer_data_type(self.state.cddl, ident)
+            {
               let mut errors = Vec::new();
               let values_to_validate = m
                 .iter()
@@ -5033,6 +5048,30 @@ mod tests {
     let cddl = cddl_from_str("start = any", true).unwrap();
     let cv = CBORValidator::new(&cddl, cbor, None);
     assert_eq!(cv.extract_cbor(), Value::Float(1.23));
+  }
+
+  #[test]
+  fn validate_number_accepts_float_and_int() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    for (cddl, cbor) in [
+      ("x = number", Value::Float(2.0)),
+      ("x = number", Value::Integer(5.into())),
+      ("x = number .eq 5", Value::Integer(5.into())),
+      ("x = number .ge 1.0", Value::Float(2.5)),
+    ] {
+      let cddl_ast = cddl_from_str(cddl, true)?;
+      #[cfg(feature = "additional-controls")]
+      let mut cv = CBORValidator::new(&cddl_ast, cbor.clone(), None);
+      #[cfg(not(feature = "additional-controls"))]
+      let mut cv = CBORValidator::new(&cddl_ast, cbor.clone());
+      assert!(
+        cv.validate().is_ok(),
+        "{} should accept {:?}",
+        cddl,
+        cbor
+      );
+    }
+
+    Ok(())
   }
 
   #[test]
