@@ -2505,10 +2505,15 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
               ));
             }
           }
-        } else if (is_ident_integer_data_type(self.state.cddl, ident) && n.is_i64())
-          || (is_ident_float_data_type(self.state.cddl, ident) && n.is_f64())
-        {
-          return Ok(());
+        } else if let Some(kind) = ident_numeric_kind(self.state.cddl, ident) {
+          let matches_kind = match kind {
+            NumericKind::Int => n.is_i64(),
+            NumericKind::Float => n.is_f64(),
+            NumericKind::Both => n.is_i64() || n.is_f64(),
+          };
+          if matches_kind {
+            return Ok(());
+          }
         }
 
         self.add_error(format!("expected type {}, got {}", ident, self.json));
@@ -3233,7 +3238,8 @@ mod tests {
   use indoc::indoc;
 
   #[test]
-  fn validate_number_accepts_float_and_int() -> std::result::Result<(), Box<dyn std::error::Error>> {
+  fn validate_number_accepts_float_and_int() -> std::result::Result<(), Box<dyn std::error::Error>>
+  {
     let cddl = cddl_from_str("x = number", true).unwrap();
 
     for json in ["2.5", "5"] {
@@ -3242,11 +3248,7 @@ mod tests {
       let mut jv = JSONValidator::new(&cddl, json.clone(), None);
       #[cfg(not(feature = "additional-controls"))]
       let mut jv = JSONValidator::new(&cddl, json.clone());
-      assert!(
-        jv.validate().is_ok(),
-        "number should accept {}",
-        json
-      );
+      assert!(jv.validate().is_ok(), "number should accept {}", json);
     }
 
     Ok(())

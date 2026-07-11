@@ -1007,7 +1007,49 @@ pub fn is_ident_nint_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
+/// Numbers are defined as `number = int / float`
+/// Therefore, this enum represents which type (or both) is allowed in a given position
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum NumericKind {
+  /// Only integer values (e.g. `int`, `uint`, `nint`)
+  Int,
+  /// Only float values (e.g. `float`, `float16` .. `float64`)
+  Float,
+  /// Both integer and float values (e.g. `number = int / float`)
+  Both,
+}
+
+impl NumericKind {
+  /// Does this kind admit integer values?
+  pub fn admits_int(self) -> bool {
+    matches!(self, NumericKind::Int | NumericKind::Both)
+  }
+
+  /// Does this kind admit float values?
+  pub fn admits_float(self) -> bool {
+    matches!(self, NumericKind::Float | NumericKind::Both)
+  }
+}
+
+/// Classify the given identifier's numeric kind
+/// or `None` if it is not associated with an int/float numeric data type
+pub fn ident_numeric_kind(cddl: &CDDL, ident: &Identifier) -> Option<NumericKind> {
+  #[allow(deprecated)]
+  match (
+    is_ident_integer_data_type(cddl, ident),
+    is_ident_float_data_type(cddl, ident),
+  ) {
+    (true, true) => Some(NumericKind::Both),
+    (true, false) => Some(NumericKind::Int),
+    (false, true) => Some(NumericKind::Float),
+    (false, false) => None,
+  }
+}
+
 /// Is the given identifier associated with an integer data type
+#[deprecated(
+  note = "not mutually exclusive with is_ident_float_data_type (`number` matches both); use ident_numeric_kind and handle NumericKind::Both"
+)]
 pub fn is_ident_integer_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   if let Token::INT | Token::INTEGER | Token::NINT | Token::UINT | Token::NUMBER | Token::UNSIGNED =
     lookup_ident(ident.ident)
@@ -1028,6 +1070,9 @@ pub fn is_ident_integer_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
 }
 
 /// Is the given identifier associated with a float data type
+#[deprecated(
+  note = "not mutually exclusive with is_ident_integer_data_type (`number` matches both); use ident_numeric_kind and handle NumericKind::Both"
+)]
 pub fn is_ident_float_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   if let Token::FLOAT
   | Token::FLOAT16
@@ -1489,5 +1534,40 @@ mod tests {
     documents
       .iter()
       .all(|doc| cddl_schema.validate_json(doc.as_bytes(), None).is_ok());
+  }
+
+  #[test]
+  fn numeric_kind_classification() {
+    let cddl = cddl_from_str(
+      r#"
+  a = int
+  b = float32
+  c = number
+  d = int / float
+  e = a / b
+  f = tstr
+  "#,
+      true,
+    )
+    .unwrap();
+
+    let kind_of = |name: &str| {
+      let rule_ident = cddl
+        .rules
+        .iter()
+        .find_map(|r| match r {
+          Rule::Type { rule, .. } if rule.name.ident == name => Some(&rule.name),
+          _ => None,
+        })
+        .unwrap();
+      ident_numeric_kind(&cddl, rule_ident)
+    };
+
+    assert_eq!(kind_of("a"), Some(NumericKind::Int));
+    assert_eq!(kind_of("b"), Some(NumericKind::Float));
+    assert_eq!(kind_of("c"), Some(NumericKind::Both));
+    assert_eq!(kind_of("d"), Some(NumericKind::Both));
+    assert_eq!(kind_of("e"), Some(NumericKind::Both));
+    assert_eq!(kind_of("f"), None);
   }
 }
