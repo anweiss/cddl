@@ -3068,7 +3068,13 @@ where
     }
 
     if is_ident_any_type(self.state.cddl, ident) {
-      return Ok(());
+      // As a member key, `any` must consume map entries rather than
+      // short-circuit, otherwise `* any => any` leaves the remaining keys
+      // unvalidated and the closed-map check rejects them. Fall through to
+      // the map handling below
+      if !(self.state.is_member_key && matches!(&self.cbor, Value::Map(_))) {
+        return Ok(());
+      }
     }
 
     // Special case for array values - check if we're in an array context and this
@@ -3229,6 +3235,27 @@ where
         match &self.state.occurrence {
           #[cfg(feature = "ast-span")]
           Some(Occur::Optional { .. }) | None => {
+            // An `any`-keyed entry matches any map entry; consume the first
+            // not-yet-validated one
+            if is_ident_any_type(self.state.cddl, ident) && !self.validating_value {
+              if let Some((k, v)) = m.iter().find(|(k, _)| {
+                !self
+                  .validated_keys
+                  .as_ref()
+                  .is_some_and(|keys| keys.contains(k))
+              }) {
+                self
+                  .validated_keys
+                  .get_or_insert(vec![k.clone()])
+                  .push(k.clone());
+                self.object_value = Some(v.clone());
+                let _ = write!(self.state.data_location, "/{:?}", v);
+              } else if !entry_optional {
+                self.add_error(format!("map requires entry key of type {}", ident));
+              }
+              return Ok(());
+            }
+
             if is_ident_string_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Text(_))) {
                 self
@@ -3328,6 +3355,27 @@ where
           }
           #[cfg(not(feature = "ast-span"))]
           Some(Occur::Optional {}) | None => {
+            // An `any`-keyed entry matches any map entry; consume the first
+            // not-yet-validated one
+            if is_ident_any_type(self.state.cddl, ident) && !self.validating_value {
+              if let Some((k, v)) = m.iter().find(|(k, _)| {
+                !self
+                  .validated_keys
+                  .as_ref()
+                  .is_some_and(|keys| keys.contains(k))
+              }) {
+                self
+                  .validated_keys
+                  .get_or_insert(vec![k.clone()])
+                  .push(k.clone());
+                self.object_value = Some(v.clone());
+                self.state.data_location.push_str(&format!("/{:?}", v));
+              } else if !entry_optional {
+                self.add_error(format!("map requires entry key of type {}", ident));
+              }
+              return Ok(());
+            }
+
             if is_ident_string_data_type(self.state.cddl, ident) && !self.validating_value {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Text(_))) {
                 self
@@ -3428,6 +3476,20 @@ where
           }
           Some(occur) => {
             let mut errors = Vec::new();
+
+            // An `any`-keyed table (e.g. `* any => v`) matches entries of any
+            // key type, so all not-yet-validated values are candidates
+            if is_ident_any_type(self.state.cddl, ident) {
+              let values_to_validate = m
+                .iter()
+                .filter_map(|(k, v)| match &self.validated_keys {
+                  Some(keys) if keys.contains(k) => None,
+                  _ => Some(v.clone()),
+                })
+                .collect::<Vec<_>>();
+
+              self.values_to_validate = Some(values_to_validate);
+            }
 
             if is_ident_string_data_type(self.state.cddl, ident) {
               let values_to_validate = m
@@ -3717,6 +3779,13 @@ where
 
                 return Ok(());
               }
+            }
+
+            // `any` keys have already collected their values above; nothing
+            // further to match, and the prelude fall-through below must not
+            // reject them
+            if is_ident_any_type(self.state.cddl, ident) {
+              return Ok(());
             }
 
             if is_ident_string_data_type(self.state.cddl, ident) && !self.validating_value {

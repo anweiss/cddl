@@ -692,3 +692,54 @@ fn validate_map_unexpected_entries_rejected() -> Result<(), Box<dyn Error>> {
 
   Ok(())
 }
+
+/// Regression: `* any => any` (the RFC 8610 extension-point idiom) must
+/// permit unknown extra entries instead of rejecting them as unexpected keys
+#[test]
+fn validate_map_any_key_permits_extra_entries() -> Result<(), Box<dyn Error>> {
+  let empty_map = b"\xa0";
+  let k1 = b"\xa1\x61\x6b\x01"; // {"k": 1}
+  let k1_z9 = b"\xa2\x61\x6b\x01\x61\x7a\x09"; // {"k": 1, "z": 9}
+  let k1_ztext = b"\xa2\x61\x6b\x01\x61\x7a\x61\x61"; // {"k": 1, "z": "a"}
+  let int_keyed = b"\xa2\x01\x02\x03\x04"; // {1: 2, 3: 4}
+
+  // the openness idiom, with and without other members, in both member orders
+  validate_cbor_from_slice(r#"m = { k: uint, * any => any }"#, k1, None)?;
+  validate_cbor_from_slice(r#"m = { k: uint, * any => any }"#, k1_z9, None)?;
+  validate_cbor_from_slice(r#"m = { * any => any, k: uint }"#, k1_z9, None)?;
+  // colon shortcut form
+  validate_cbor_from_slice(r#"m = { k: uint, * any: any }"#, k1_z9, None)?;
+  validate_cbor_from_slice(r#"m = { * any => any }"#, empty_map, None)?;
+  // `any` keys are not limited to text keys
+  validate_cbor_from_slice(r#"m = { * any => any }"#, int_keyed, None)?;
+  // `+` still requires at least one entry
+  assert!(validate_cbor_from_slice(r#"m = { + any => any }"#, empty_map, None).is_err());
+  validate_cbor_from_slice(r#"m = { + any => any }"#, k1, None)?;
+  // an `any` key does not excuse a value-type mismatch
+  assert!(validate_cbor_from_slice(r#"m = { k: uint, * any => uint }"#, k1_ztext, None).is_err());
+  // a map without the extension member stays closed
+  assert!(validate_cbor_from_slice(r#"m = { k: uint }"#, k1_z9, None).is_err());
+
+  Ok(())
+}
+
+/// A wrong value type under a cut-carrying key (`k: uint` — the colon
+/// shortcut implies a cut, RFC 8610 §3.5.4) must NOT be rescued by a
+/// `* any => any` extension member, and the error must name the value-type
+/// mismatch rather than anything about the `any` branch
+#[test]
+fn validate_map_any_key_does_not_rescue_cut_value_mismatch() {
+  let k_wrong_z = b"\xa2\x61\x6b\x61\x73\x61\x7a\x09"; // {"k": "s", "z": 9}
+  for schema in [
+    r#"m = { k: uint, * any => any }"#,
+    r#"m = { k: uint, any => any }"#,
+  ] {
+    let err = validate_cbor_from_slice(schema, k_wrong_z, None)
+      .unwrap_err()
+      .to_string();
+    assert!(
+      err.contains(r#"expected type uint, got Text("s")"#),
+      "schema {schema}: expected a value-type error for k, got: {err}"
+    );
+  }
+}
