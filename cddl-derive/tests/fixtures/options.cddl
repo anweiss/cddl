@@ -1,0 +1,15 @@
+; Fixture for cddl-derive configuration options.
+; See https://github.com/anweiss/cddl/issues/641
+
+; A label that a consumer may want to replace with a parsed newtype.
+label = tstr
+
+; A claim carrying an opaque payload.
+claim = {
+  title: tstr,
+  payload: any,
+  name: label,
+}
+
+; A closed set of assertion kinds.
+kind = "created" / "opened" / "placed"
