@@ -1217,82 +1217,263 @@ fn position_from_span(byte_offset: usize, input: &str) -> Position {
   }
 }
 
-/// Index of the document's comment tokens, keyed by 1-based source line.
-///
-/// `pure` holds comments that occupy a line on their own (used as "leading"
-/// documentation for the rule or entry on the following line), while `trailing`
-/// holds comments that follow code on the same line. The index is built from
-/// the grammar's real `COMMENT` tokens, so semicolons that appear inside text
-/// or byte strings are never mistaken for comments.
+/// One comment-anchor slot: a tight source position plus which AST field it writes.
 #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
-struct CommentIndex<'a> {
-  input: &'a str,
-  pure: HashMap<usize, &'a str>,
-  trailing: HashMap<usize, &'a str>,
+#[derive(Debug, Clone, Copy)]
+struct Anchor {
+  pos: AnchorPos,
+  kind: SlotKind,
 }
 
 #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
-impl<'a> CommentIndex<'a> {
-  fn build(pair: &Pair<'a, Rule>, input: &'a str) -> Self {
-    let mut spans = Vec::new();
-    collect_comment_spans(pair, &mut spans);
+impl SlotKind {
+  fn is_leading(self) -> bool {
+    matches!(
+      self,
+      SlotKind::RuleLeading
+        | SlotKind::ChoiceLeading
+        | SlotKind::GrpChoiceLeading
+        | SlotKind::EntryLeading
+    )
+  }
+  fn is_trailing(self) -> bool {
+    matches!(self, SlotKind::ChoiceTrailing | SlotKind::EntryTrailing)
+  }
+}
 
-    let mut pure = HashMap::new();
-    let mut trailing = HashMap::new();
+/// Tight `(lo, close_hi)` extents of every bracketed container (array / map /
+/// inline group), used only by the leading-branch enclosing guard in `merge`.
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn collect_container_extents<'a>(rules: &[ast::Rule<'a>]) -> Vec<(usize, usize)> {
+  let mut out = Vec::new();
+  for rule in rules {
+    match rule {
+      ast::Rule::Type { rule, .. } => extents_in_type(&rule.value, &mut out),
+      ast::Rule::Group { rule, .. } => extents_in_group_entry(&rule.entry, &mut out),
+    }
+  }
+  out
+}
 
-    for span in spans {
-      let start = span.start();
-      let end = span.end();
-      // Text following the leading ';'.
-      let text = &input[start + 1..end];
-      let line = line_of_byte(input, start);
-      let line_start = input[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
-      if input[line_start..start].trim().is_empty() {
-        pure.insert(line, text);
-      } else {
-        trailing.insert(line, text);
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn extents_in_type<'a>(ty: &ast::Type<'a>, out: &mut Vec<(usize, usize)>) {
+  for tc in &ty.type_choices {
+    extents_in_type2(&tc.type1.type2, out);
+    if let Some(op) = &tc.type1.operator {
+      extents_in_type2(&op.type2, out);
+    }
+  }
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn extents_in_type2<'a>(t2: &ast::Type2<'a>, out: &mut Vec<(usize, usize)>) {
+  match t2 {
+    ast::Type2::Map { group, span, .. }
+    | ast::Type2::Array { group, span, .. }
+    | ast::Type2::ChoiceFromInlineGroup { group, span, .. } => {
+      out.push((span.0, span.1));
+      extents_in_group(group, out);
+    }
+    ast::Type2::ParenthesizedType { pt, .. } => extents_in_type(pt, out),
+    ast::Type2::TaggedData { t, .. } => extents_in_type(t, out),
+    _ => {}
+  }
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn extents_in_group<'a>(group: &ast::Group<'a>, out: &mut Vec<(usize, usize)>) {
+  for gc in &group.group_choices {
+    for (entry, _comma) in &gc.group_entries {
+      extents_in_group_entry(entry, out);
+    }
+  }
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn extents_in_group_entry<'a>(entry: &ast::GroupEntry<'a>, out: &mut Vec<(usize, usize)>) {
+  match entry {
+    ast::GroupEntry::ValueMemberKey { ge, .. } => extents_in_type(&ge.entry_type, out),
+    ast::GroupEntry::InlineGroup { group, span, .. } => {
+      out.push((span.0, span.1));
+      extents_in_group(group, out);
+    }
+    ast::GroupEntry::TypeGroupname { .. } => {}
+  }
+}
+
+/// Bind each comment to exactly one anchor by source position (the rustfmt /
+/// prettier trivia-merge model). Returns `(assigned, orphans)`: `assigned[i]` holds
+/// the comment texts for `anchors[i]`; `orphans` are comments that bind nowhere and
+/// are dropped by the caller (never a panic at the public entry).
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn merge<'a>(
+  comments: &[CommentTok<'a>],
+  anchors: &[Anchor],
+  containers: &[(usize, usize)],
+) -> (Vec<Vec<&'a str>>, Vec<CommentTok<'a>>) {
+  let mut assigned: Vec<Vec<&'a str>> = vec![Vec::new(); anchors.len()];
+  let mut orphans: Vec<CommentTok<'a>> = Vec::new();
+
+  // Lines carrying a stand-alone (pure) comment — for the leading-contiguity test.
+  let pure_lines: std::collections::HashSet<usize> =
+    comments.iter().filter(|c| c.pure).map(|c| c.line).collect();
+
+  for c in comments {
+    // Step 1 — trailing: nearest same-line preceding tight token; on an equal-`hi`
+    // tie the outermost (smallest `lo`) wins; on a *full* (hi, lo) tie — a bare
+    // value/typename member whose span equals its inner type1 — the entry wins.
+    if !c.pure {
+      let prev = anchors
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.kind.is_trailing() && a.pos.hi <= c.lo && a.pos.line_hi == c.line)
+        .max_by(|(_, a), (_, b)| {
+          a.pos
+            .hi
+            .cmp(&b.pos.hi)
+            .then_with(|| b.pos.lo.cmp(&a.pos.lo))
+            .then_with(|| {
+              (a.kind == SlotKind::EntryTrailing).cmp(&(b.kind == SlotKind::EntryTrailing))
+            })
+        });
+      if let Some((i, _)) = prev {
+        assigned[i].push(c.text);
+        continue;
       }
     }
 
-    CommentIndex {
-      input,
-      pure,
-      trailing,
-    }
-  }
+    // Step 2 — leading: first following leading anchor (emission order), subject to
+    // the enclosing-container guard and the upward-contiguity rule.
+    let next = anchors
+      .iter()
+      .enumerate()
+      .find(|(_, a)| a.kind.is_leading() && a.pos.lo > c.hi);
 
-  /// Contiguous stand-alone comment lines immediately above `line`.
-  fn leading(&self, line: usize) -> Option<ast::Comments<'a>> {
-    let mut texts = Vec::new();
-    let mut l = line;
-    while l > 1 {
-      l -= 1;
-      match self.pure.get(&l) {
-        Some(text) => texts.push(*text),
-        None => break,
+    if let Some((i, a)) = next {
+      // Innermost enclosing container = the one with the greatest `lo`. Among nested
+      // containers all enclosing the comment, the innermost has the smallest `hi`,
+      // so `max(hi)` would wrongly pick the outermost and let a comment leak past
+      // its own bracket.
+      let enclosing_close = containers
+        .iter()
+        .filter(|(lo, hi)| *lo < c.lo && c.lo < *hi)
+        .max_by_key(|(lo, _)| *lo)
+        .map(|(_, hi)| *hi);
+      let escapes_container = enclosing_close.map_or(false, |close| close < a.pos.lo);
+
+      // Contiguity: the comment must lie in the unbroken run of pure-comment lines
+      // immediately above the anchor (parity with the old line-bucket `leading`);
+      // otherwise it is silently dropped (a blank/code line breaks the run).
+      let contiguous = (c.line + 1..a.pos.line_hi).all(|l| pure_lines.contains(&l));
+
+      if escapes_container {
+        orphans.push(*c);
+      } else if contiguous {
+        assigned[i].push(c.text);
       }
+    } else {
+      orphans.push(*c);
     }
-
-    if texts.is_empty() {
-      return None;
-    }
-
-    texts.reverse();
-    Some(ast::Comments(texts))
   }
 
-  /// A trailing comment on `line`, if present.
-  fn trailing_on(&self, line: usize) -> Option<ast::Comments<'a>> {
-    self
-      .trailing
-      .get(&line)
-      .map(|text| ast::Comments(vec![*text]))
-  }
+  (assigned, orphans)
 }
 
 #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
 fn line_of_byte(input: &str, byte: usize) -> usize {
   input[..byte].bytes().filter(|&b| b == b'\n').count() + 1
+}
+
+/// Tight `Span` of a `Type2` — its own span, tight for value/container forms (a
+/// leaf ends at its token; a container ends at its closing bracket). The basis for
+/// deriving a node's rightmost real token, since the enclosing `Type1` /
+/// `GroupEntry` spans are *greedy*. The `match` is wildcard-free so a new `Type2`
+/// variant is a compile error here rather than a silent misbind.
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn type2_span(t2: &ast::Type2) -> ast::Span {
+  match t2 {
+    // These three grammar alternatives end in an optional `generic_args?`
+    // (`typename`, `~typename`, `&groupname` — cddl.pest). When the
+    // optional is absent, pest folds trailing whitespace+comment+newline into the
+    // pair span, so its stored end is GREEDY (lands on the next line). Derive a
+    // tight end from the inner identifier / generic args, whose token spans ARE
+    // tight — mirroring `entry_tight_end`'s TypeGroupname handling.
+    ast::Type2::Typename {
+      ident,
+      generic_args,
+      span,
+      ..
+    }
+    | ast::Type2::Unwrap {
+      ident,
+      generic_args,
+      span,
+      ..
+    }
+    | ast::Type2::ChoiceFromGroup {
+      ident,
+      generic_args,
+      span,
+      ..
+    } => {
+      let end = generic_args
+        .as_ref()
+        .map(|g| g.span.1)
+        .unwrap_or(ident.span.1);
+      (span.0, end, span.2)
+    }
+    ast::Type2::IntValue { span, .. }
+    | ast::Type2::UintValue { span, .. }
+    | ast::Type2::FloatValue { span, .. }
+    | ast::Type2::TextValue { span, .. }
+    | ast::Type2::UTF8ByteString { span, .. }
+    | ast::Type2::B16ByteString { span, .. }
+    | ast::Type2::B64ByteString { span, .. }
+    | ast::Type2::ParenthesizedType { span, .. }
+    | ast::Type2::Map { span, .. }
+    | ast::Type2::Array { span, .. }
+    | ast::Type2::ChoiceFromInlineGroup { span, .. }
+    | ast::Type2::TaggedData { span, .. }
+    // DataMajorType (`#6.5`) and Any (`#`) can also carry a greedy span but have no
+    // inner token to recover a tight end from; rare as a hint target, deferred.
+    | ast::Type2::DataMajorType { span, .. }
+    | ast::Type2::Any { span, .. } => *span,
+  }
+}
+
+/// Byte offset just past a `Type1`'s rightmost real token. With a range/control
+/// operator the controller `type2` is rightmost (`uint .size 4` -> past `4`);
+/// otherwise the base `type2`.
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn type1_tight_end(t1: &ast::Type1) -> usize {
+  match &t1.operator {
+    Some(op) => type2_span(&op.type2).1,
+    None => type2_span(&t1.type2).1,
+  }
+}
+
+/// Byte offset just past a `GroupEntry`'s rightmost real token — tight, not the
+/// greedy `GroupEntry` span which runs forward to the following comma/bracket.
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn entry_tight_end(e: &ast::GroupEntry) -> usize {
+  match e {
+    // `entry_type` is the entry's rightmost element (occurrence + member key
+    // precede it). An empty `type_choices` only arises from a defaulted `Type` when
+    // `entry_type` is absent, unreachable for valid CDDL; fall back to the entry's
+    // own (greedy) end so this never panics.
+    ast::GroupEntry::ValueMemberKey { ge, span, .. } => ge
+      .entry_type
+      .type_choices
+      .last()
+      .map(|tc| type1_tight_end(&tc.type1))
+      .unwrap_or(span.1),
+    ast::GroupEntry::TypeGroupname { ge, .. } => ge
+      .generic_args
+      .as_ref()
+      .map(|g| g.span.1)
+      .unwrap_or_else(|| ge.name.span.1),
+    ast::GroupEntry::InlineGroup { span, .. } => span.1,
+  }
 }
 
 #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
@@ -1306,67 +1487,222 @@ fn collect_comment_spans<'a>(pair: &Pair<'a, Rule>, out: &mut Vec<PestSpan<'a>>)
   }
 }
 
-/// Attach indexed comments to the rules and their nested group entries.
+// --- Source-order trivia merge: data model + collection ---
+
+/// A source-ordered comment token. `lo` is the `;`; `hi` is the end of the comment
+/// text; `pure` means the comment stands alone on its line (leading), otherwise it
+/// trails code on the line.
 #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
-fn attach_comments<'a>(rules: &mut [ast::Rule<'a>], idx: &CommentIndex<'a>) {
+#[derive(Debug, Clone, Copy)]
+struct CommentTok<'a> {
+  lo: usize,
+  hi: usize,
+  line: usize,
+  pure: bool,
+  text: &'a str,
+}
+
+/// Tight source position of an anchor slot. `hi`/`line_hi` are the slot's tight
+/// rightmost byte and its line; for leading slots `hi == lo`.
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+#[derive(Debug, Clone, Copy)]
+struct AnchorPos {
+  lo: usize,
+  hi: usize,
+  line_hi: usize,
+}
+
+/// Which AST comment field an anchor writes.
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SlotKind {
+  RuleLeading,      // Rule::*.comments_before_rule
+  ChoiceLeading,    // TypeChoice.comments_before_type   (idx > 0 only)
+  ChoiceTrailing,   // TypeChoice.comments_after_type
+  GrpChoiceLeading, // GroupChoice.comments_before_grpchoice  (multi-choice groups only)
+  EntryLeading,     // GroupEntry.leading_comments
+  EntryTrailing,    // GroupEntry.trailing_comments
+}
+
+/// Document comment tokens in source order, each tagged leading (`pure`) or
+/// trailing. Reuses `collect_comment_spans` (so semicolons inside text/byte strings
+/// are never mistaken for comments) and the same alone-on-line test.
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn collect_comment_toks<'a>(pair: &Pair<'a, Rule>, input: &'a str) -> Vec<CommentTok<'a>> {
+  let mut spans = Vec::new();
+  collect_comment_spans(pair, &mut spans);
+
+  let toks: Vec<CommentTok> = spans
+    .into_iter()
+    .map(|span| {
+      let lo = span.start();
+      let hi = span.end();
+      let line = line_of_byte(input, lo);
+      let line_start = input[..lo].rfind('\n').map(|i| i + 1).unwrap_or(0);
+      let pure = input[line_start..lo].trim().is_empty();
+      CommentTok {
+        lo,
+        hi,
+        line,
+        pure,
+        text: &input[lo + 1..hi], // strip the leading ';'
+      }
+    })
+    .collect();
+
+  debug_assert!(
+    toks.windows(2).all(|w| w[0].lo <= w[1].lo),
+    "comment tokens must be source-ordered"
+  );
+  toks
+}
+
+/// Walk the built AST once, invoking `cb` for every comment-anchor slot in source
+/// order with the slot's tight `AnchorPos`, its `SlotKind`, and an `&mut` to the
+/// slot's comment field. Collect and apply both drive this one traversal, so their
+/// orderings cannot diverge.
+///
+/// INVARIANT: callers must not change any structural field (Vec lengths, enum
+/// variants) between the two passes — only `Option<Comments>` fields may change.
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn visit_anchor_slots<'a>(
+  rules: &mut [ast::Rule<'a>],
+  input: &str,
+  mut cb: impl FnMut(AnchorPos, SlotKind, &mut Option<ast::Comments<'a>>),
+) {
   for rule in rules.iter_mut() {
-    match rule {
-      ast::Rule::Type {
-        rule,
-        span,
+    visit_rule(rule, input, &mut cb);
+  }
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn leading_pos(input: &str, lo: usize) -> AnchorPos {
+  AnchorPos {
+    lo,
+    hi: lo,
+    line_hi: line_of_byte(input, lo),
+  }
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn trailing_pos(input: &str, lo: usize, hi: usize) -> AnchorPos {
+  AnchorPos {
+    lo,
+    hi,
+    line_hi: line_of_byte(input, hi),
+  }
+}
+
+#[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+fn visit_rule<'a>(
+  rule: &mut ast::Rule<'a>,
+  input: &str,
+  cb: &mut dyn FnMut(AnchorPos, SlotKind, &mut Option<ast::Comments<'a>>),
+) {
+  match rule {
+    ast::Rule::Type {
+      rule,
+      span,
+      comments_before_rule,
+      ..
+    } => {
+      cb(
+        leading_pos(input, span.0),
+        SlotKind::RuleLeading,
         comments_before_rule,
-        ..
-      } => {
-        if comments_before_rule.is_none() {
-          *comments_before_rule = idx.leading(span.2);
-        }
-        attach_type(&mut rule.value, idx);
-      }
-      ast::Rule::Group {
-        rule,
-        span,
+      );
+      visit_type(&mut rule.value, input, &mut *cb);
+    }
+    ast::Rule::Group {
+      rule,
+      span,
+      comments_before_rule,
+      ..
+    } => {
+      cb(
+        leading_pos(input, span.0),
+        SlotKind::RuleLeading,
         comments_before_rule,
-        ..
-      } => {
-        if comments_before_rule.is_none() {
-          *comments_before_rule = idx.leading(span.2);
-        }
-        attach_group_entry(&mut rule.entry, idx);
-      }
+      );
+      visit_group_entry(&mut rule.entry, input, &mut *cb);
     }
   }
 }
 
 #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
-fn attach_type<'a>(ty: &mut ast::Type<'a>, idx: &CommentIndex<'a>) {
-  for tc in ty.type_choices.iter_mut() {
-    attach_type2(&mut tc.type1.type2, idx);
+fn visit_type<'a>(
+  ty: &mut ast::Type<'a>,
+  input: &str,
+  cb: &mut dyn FnMut(AnchorPos, SlotKind, &mut Option<ast::Comments<'a>>),
+) {
+  for (i, tc) in ty.type_choices.iter_mut().enumerate() {
+    let lo = tc.type1.span.0;
+    let tight = type1_tight_end(&tc.type1);
+    if i > 0 {
+      cb(
+        leading_pos(input, lo),
+        SlotKind::ChoiceLeading,
+        &mut tc.comments_before_type,
+      );
+    }
+    cb(
+      trailing_pos(input, lo, tight),
+      SlotKind::ChoiceTrailing,
+      &mut tc.comments_after_type,
+    );
+    visit_type2(&mut tc.type1.type2, input, &mut *cb);
+    if let Some(op) = &mut tc.type1.operator {
+      visit_type2(&mut op.type2, input, &mut *cb);
+    }
   }
 }
 
 #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
-fn attach_type2<'a>(t2: &mut ast::Type2<'a>, idx: &CommentIndex<'a>) {
+fn visit_type2<'a>(
+  t2: &mut ast::Type2<'a>,
+  input: &str,
+  cb: &mut dyn FnMut(AnchorPos, SlotKind, &mut Option<ast::Comments<'a>>),
+) {
   match t2 {
     ast::Type2::Map { group, .. }
     | ast::Type2::Array { group, .. }
-    | ast::Type2::ChoiceFromInlineGroup { group, .. } => attach_group(group, idx),
-    ast::Type2::ParenthesizedType { pt, .. } => attach_type(pt, idx),
-    ast::Type2::TaggedData { t, .. } => attach_type(t, idx),
+    | ast::Type2::ChoiceFromInlineGroup { group, .. } => visit_group(group, input, cb),
+    ast::Type2::ParenthesizedType { pt, .. } => visit_type(pt, input, cb),
+    ast::Type2::TaggedData { t, .. } => visit_type(t, input, cb),
     _ => {}
   }
 }
 
 #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
-fn attach_group<'a>(group: &mut ast::Group<'a>, idx: &CommentIndex<'a>) {
+fn visit_group<'a>(
+  group: &mut ast::Group<'a>,
+  input: &str,
+  cb: &mut dyn FnMut(AnchorPos, SlotKind, &mut Option<ast::Comments<'a>>),
+) {
+  // GrpChoiceLeading only for true `//` alternatives; for a single-choice group a
+  // before-first-entry comment belongs to the first entry's leading slot.
+  let multi = group.group_choices.len() > 1;
   for gc in group.group_choices.iter_mut() {
+    if multi {
+      cb(
+        leading_pos(input, gc.span.0),
+        SlotKind::GrpChoiceLeading,
+        &mut gc.comments_before_grpchoice,
+      );
+    }
     for (entry, _comma) in gc.group_entries.iter_mut() {
-      attach_group_entry(entry, idx);
+      visit_group_entry(entry, input, &mut *cb);
     }
   }
 }
 
 #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
-fn attach_group_entry<'a>(entry: &mut ast::GroupEntry<'a>, idx: &CommentIndex<'a>) {
+fn visit_group_entry<'a>(
+  entry: &mut ast::GroupEntry<'a>,
+  input: &str,
+  cb: &mut dyn FnMut(AnchorPos, SlotKind, &mut Option<ast::Comments<'a>>),
+) {
+  let tight = entry_tight_end(entry);
   match entry {
     ast::GroupEntry::ValueMemberKey {
       ge,
@@ -1374,13 +1710,18 @@ fn attach_group_entry<'a>(entry: &mut ast::GroupEntry<'a>, idx: &CommentIndex<'a
       leading_comments,
       trailing_comments,
     } => {
-      if leading_comments.is_none() {
-        *leading_comments = idx.leading(span.2);
-      }
-      if trailing_comments.is_none() {
-        *trailing_comments = idx.trailing_on(line_of_byte(idx.input, span.1));
-      }
-      attach_type(&mut ge.entry_type, idx);
+      let lo = span.0;
+      cb(
+        leading_pos(input, lo),
+        SlotKind::EntryLeading,
+        leading_comments,
+      );
+      cb(
+        trailing_pos(input, lo, tight),
+        SlotKind::EntryTrailing,
+        trailing_comments,
+      );
+      visit_type(&mut ge.entry_type, input, &mut *cb);
     }
     ast::GroupEntry::TypeGroupname {
       span,
@@ -1388,15 +1729,20 @@ fn attach_group_entry<'a>(entry: &mut ast::GroupEntry<'a>, idx: &CommentIndex<'a
       trailing_comments,
       ..
     } => {
-      if leading_comments.is_none() {
-        *leading_comments = idx.leading(span.2);
-      }
-      if trailing_comments.is_none() {
-        *trailing_comments = idx.trailing_on(line_of_byte(idx.input, span.1));
-      }
+      let lo = span.0;
+      cb(
+        leading_pos(input, lo),
+        SlotKind::EntryLeading,
+        leading_comments,
+      );
+      cb(
+        trailing_pos(input, lo, tight),
+        SlotKind::EntryTrailing,
+        trailing_comments,
+      );
     }
     ast::GroupEntry::InlineGroup { group, .. } => {
-      attach_group(group, idx);
+      visit_group(group, input, &mut *cb);
     }
   }
 }
@@ -1414,12 +1760,12 @@ fn convert_cddl<'a>(mut pairs: Pairs<'a, Rule>, input: &'a str) -> Result<ast::C
 
   let mut rules = Vec::new();
 
-  // Build an index of the document's comment tokens so they can be attached to
-  // the AST nodes they document. This uses the real `COMMENT` tokens produced
-  // by the grammar (so semicolons inside text/byte strings are never mistaken
-  // for comments) and runs as a post-pass once the rules have been built.
+  // Collect the document's comment tokens (real `COMMENT` pairs, so semicolons in
+  // text/byte strings are never mistaken for comments) before the pair tree is
+  // consumed; they are bound to AST nodes by a source-order merge once the rules
+  // are built (see `merge`).
   #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
-  let comment_index = CommentIndex::build(&pair, input);
+  let comment_toks = collect_comment_toks(&pair, input);
 
   for inner_pair in pair.into_inner() {
     match inner_pair.as_rule() {
@@ -1431,8 +1777,26 @@ fn convert_cddl<'a>(mut pairs: Pairs<'a, Rule>, input: &'a str) -> Result<ast::C
     }
   }
 
+  // Bind comments to AST nodes: collect anchors in source order, merge each
+  // comment to exactly one anchor by position, then apply via the same traversal
+  // (one definition of order, so the two passes cannot desync). Orphans — comments
+  // in unsupported positions — are dropped, never panicked on.
   #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
-  attach_comments(&mut rules, &comment_index);
+  {
+    let mut anchors: Vec<Anchor> = Vec::new();
+    visit_anchor_slots(&mut rules, input, |pos, kind, _slot| {
+      anchors.push(Anchor { pos, kind })
+    });
+    let containers = collect_container_extents(&rules);
+    let (assigned, _orphans) = merge(&comment_toks, &anchors, &containers);
+    let mut ai = 0usize;
+    visit_anchor_slots(&mut rules, input, |_pos, _kind, slot| {
+      if !assigned[ai].is_empty() {
+        *slot = Some(ast::Comments(assigned[ai].clone()));
+      }
+      ai += 1;
+    });
+  }
 
   // Check for duplicate rule names (non-alternate rules)
   let mut seen_names: HashMap<String, usize> = HashMap::new();
@@ -3358,6 +3722,561 @@ mod tests {
   #[cfg(not(target_arch = "wasm32"))]
   use crate::cddl_from_str;
 
+  // Tight-extent helpers: leaf/container spans are tight, while the enclosing
+  // Type1/GroupEntry spans are greedy (they run to the next token's start).
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_tight_extent_helpers() {
+    fn first_type<'a>(cddl: &'a ast::CDDL<'a>) -> &'a ast::Type<'a> {
+      match &cddl.rules[0] {
+        ast::Rule::Type { rule, .. } => &rule.value,
+        _ => panic!("first rule is not a type rule"),
+      }
+    }
+    fn first_entry<'a>(ty: &'a ast::Type<'a>) -> &'a ast::GroupEntry<'a> {
+      match &ty.type_choices[0].type1.type2 {
+        ast::Type2::Array { group, .. } | ast::Type2::Map { group, .. } => {
+          &group.group_choices[0].group_entries[0].0
+        }
+        _ => panic!("first type choice is not an array or map"),
+      }
+    }
+
+    let input = "a = 0\n";
+    let cddl = cddl_from_pest_str(input).unwrap();
+    let end = type2_span(&first_type(&cddl).type_choices[0].type1.type2).1;
+    assert!(input[..end].ends_with('0'), "leaf end {:?}", &input[..end]);
+
+    let input = "a = [0, bytes]\n";
+    let cddl = cddl_from_pest_str(input).unwrap();
+    let end = type2_span(&first_type(&cddl).type_choices[0].type1.type2).1;
+    assert!(input[..end].ends_with(']'), "array end {:?}", &input[..end]);
+
+    let input = "a = uint .size 4\n";
+    let cddl = cddl_from_pest_str(input).unwrap();
+    let end = type1_tight_end(&first_type(&cddl).type_choices[0].type1);
+    assert!(input[..end].ends_with('4'), "ctlop end {:?}", &input[..end]);
+
+    // tight at `bytes`, stopping before the trailing space (not greedy to the comma)
+    let input = "a = [bytes , int]\n";
+    let cddl = cddl_from_pest_str(input).unwrap();
+    let tight = entry_tight_end(first_entry(first_type(&cddl)));
+    assert!(
+      input[..tight].ends_with("bytes"),
+      "tgn end {:?}",
+      &input[..tight]
+    );
+    assert!(
+      input[tight..].starts_with(' '),
+      "tight end should stop before trailing trivia, got {:?}",
+      &input[tight..]
+    );
+
+    let input = "a = {x: int, y: int}\n";
+    let cddl = cddl_from_pest_str(input).unwrap();
+    let tight = entry_tight_end(first_entry(first_type(&cddl)));
+    assert!(
+      input[..tight].ends_with("int"),
+      "vmk end {:?}",
+      &input[..tight]
+    );
+  }
+
+  // collect_comment_toks tags stand-alone comments `pure` and trailing ones not;
+  // anchor collection emits GrpChoiceLeading only for genuine multi-`//` groups.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_collect_comment_toks_and_anchors() {
+    let input = r#"multi = [
+  ; @name A
+  x: int //
+  ; @name B
+  y: int
+]
+single = {
+  z: int ; @name C
+}
+"#;
+    let pair = CddlParser::parse(Rule::cddl, input)
+      .unwrap()
+      .next()
+      .unwrap();
+    let toks = collect_comment_toks(&pair, input);
+    assert_eq!(
+      toks.len(),
+      3,
+      "texts: {:?}",
+      toks.iter().map(|t| t.text).collect::<Vec<_>>()
+    );
+    let pure: Vec<&str> = toks.iter().filter(|t| t.pure).map(|t| t.text).collect();
+    assert_eq!(pure, vec![" @name A", " @name B"]);
+    assert!(
+      toks.windows(2).all(|w| w[0].lo < w[1].lo),
+      "comment tokens must be source-ordered"
+    );
+
+    // Exactly two GrpChoiceLeading anchors — one per choice of the multi-`//` group;
+    // the single-choice `single` map emits none.
+    let mut cddl = cddl_from_pest_str(input).unwrap();
+    let mut grp_count = 0usize;
+    visit_anchor_slots(&mut cddl.rules, input, |_, kind, _| {
+      if kind == SlotKind::GrpChoiceLeading {
+        grp_count += 1;
+      }
+    });
+    assert_eq!(grp_count, 2, "GrpChoiceLeading only for multi-`//` groups");
+  }
+
+  // ---- shared helpers for the comment-merge tests ----
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  fn find_type<'a>(cddl: &'a ast::CDDL<'a>, name: &str) -> &'a ast::Type<'a> {
+    cddl
+      .rules
+      .iter()
+      .find_map(|r| match r {
+        ast::Rule::Type { rule, .. } if rule.name.ident == name => Some(&rule.value),
+        _ => None,
+      })
+      .unwrap_or_else(|| panic!("type rule `{}` not found", name))
+  }
+
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  fn array_or_map_group<'a>(ty: &'a ast::Type<'a>) -> &'a ast::Group<'a> {
+    match &ty.type_choices[0].type1.type2 {
+      ast::Type2::Array { group, .. } | ast::Type2::Map { group, .. } => group,
+      _ => panic!("first type choice is not an array or map"),
+    }
+  }
+
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  fn comment_first<'a>(c: &'a Option<ast::Comments<'a>>) -> Option<&'a str> {
+    c.as_ref().and_then(|c| c.0.first().copied())
+  }
+
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  fn entry_trailing<'a>(g: &'a ast::Group<'a>, ci: usize, ei: usize) -> Option<&'a str> {
+    match &g.group_choices[ci].group_entries[ei].0 {
+      ast::GroupEntry::ValueMemberKey {
+        trailing_comments, ..
+      }
+      | ast::GroupEntry::TypeGroupname {
+        trailing_comments, ..
+      } => comment_first(trailing_comments),
+      _ => panic!("unexpected group entry kind"),
+    }
+  }
+
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  fn rule_leading<'a>(cddl: &'a ast::CDDL<'a>, name: &str) -> Option<&'a str> {
+    cddl
+      .rules
+      .iter()
+      .find_map(|r| match r {
+        ast::Rule::Type {
+          rule,
+          comments_before_rule,
+          ..
+        } if rule.name.ident == name => Some(comments_before_rule),
+        ast::Rule::Group {
+          rule,
+          comments_before_rule,
+          ..
+        } if rule.name.ident == name => Some(comments_before_rule),
+        _ => None,
+      })
+      .and_then(|c| comment_first(c))
+  }
+
+  // Drive the merge directly (the public API discards orphans).
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  fn run_merge<'a>(input: &'a str) -> (Vec<Vec<&'a str>>, Vec<CommentTok<'a>>) {
+    let pair = CddlParser::parse(Rule::cddl, input)
+      .unwrap()
+      .next()
+      .unwrap();
+    let toks = collect_comment_toks(&pair, input);
+    let mut cddl = cddl_from_pest_str(input).unwrap();
+    let mut anchors: Vec<Anchor> = Vec::new();
+    visit_anchor_slots(&mut cddl.rules, input, |pos, kind, _slot| {
+      anchors.push(Anchor { pos, kind })
+    });
+    let containers = collect_container_extents(&cddl.rules);
+    merge(&toks, &anchors, &containers)
+  }
+
+  // Write only TypeChoice.comments_after_type, never Type1's (so each hint emits once).
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_no_double_emit_on_type_choice_trailing() {
+    let input = r#"
+my_enum = 0 ; @name ValA
+        / 1 ; @name ValB
+        / 2 ; @name ValC
+"#;
+    let cddl = cddl_from_pest_str(input).unwrap();
+    let my_enum = find_type(&cddl, "my_enum");
+    for (i, want) in [" @name ValA", " @name ValB", " @name ValC"]
+      .iter()
+      .enumerate()
+    {
+      let tc = &my_enum.type_choices[i];
+      assert_eq!(comment_first(&tc.comments_after_type), Some(*want));
+      assert!(
+        tc.type1.comments_after_type.is_none(),
+        "Type1.comments_after_type must stay None"
+      );
+    }
+    let s = cddl.to_string();
+    for hint in ["@name ValA", "@name ValB", "@name ValC"] {
+      assert_eq!(s.matches(hint).count(), 1, "{} count in {:?}", hint, s);
+    }
+  }
+
+  // Trailing comment after an operator-bearing type1 (`uint .size 4`).
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_operator_bearing_trailing() {
+    let cddl = cddl_from_pest_str("m = uint .size 4 ; @name n\n").unwrap();
+    assert_eq!(
+      comment_first(&find_type(&cddl, "m").type_choices[0].comments_after_type),
+      Some(" @name n")
+    );
+  }
+
+  // A comment before the first alternative is rule-level, not choice-level.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_first_choice_leading_is_rule_level() {
+    let cddl = cddl_from_pest_str(
+      r#"
+; doc
+foo = 0 / 1
+"#,
+    )
+    .unwrap();
+    assert_eq!(rule_leading(&cddl, "foo"), Some(" doc"));
+    assert!(find_type(&cddl, "foo").type_choices[0]
+      .comments_before_type
+      .is_none());
+  }
+
+  // a leading comment before a NON-first type-choice alternative
+  // populates that choice's `comments_before_type` (ChoiceLeading, emitted for i>0).
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_leading_comment_on_nonfirst_type_choice() {
+    let cddl = cddl_from_pest_str(
+      r#"
+t = int
+  ; doc
+  / text
+"#,
+    )
+    .unwrap();
+    let t = find_type(&cddl, "t");
+    assert_eq!(
+      comment_first(&t.type_choices[1].comments_before_type),
+      Some(" doc")
+    );
+    assert!(t.type_choices[0].comments_before_type.is_none());
+  }
+
+  // Stacked leading comments accumulate; a blank line breaks the run (drop).
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_leading_accumulation_and_blank_line_break() {
+    let cddl = cddl_from_pest_str(
+      r#"
+; first
+; second
+foo = 0
+"#,
+    )
+    .unwrap();
+    let lead = cddl.rules.iter().find_map(|r| match r {
+      ast::Rule::Type {
+        rule,
+        comments_before_rule,
+        ..
+      } if rule.name.ident == "foo" => Some(comments_before_rule.as_ref()),
+      _ => None,
+    });
+    assert_eq!(
+      lead.flatten().map(|c| c.0.clone()),
+      Some(vec![" first", " second"])
+    );
+    let cddl2 = cddl_from_pest_str(
+      r#"
+; orphan
+
+bar = 0
+"#,
+    )
+    .unwrap();
+    assert_eq!(rule_leading(&cddl2, "bar"), None);
+  }
+
+  // Consume-once: a hint after `]` binds the array choice, not the inner entries.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_no_duplication_array_choice_trailing() {
+    let cddl = cddl_from_pest_str("block = [0, bytes] ; @name w\n").unwrap();
+    let block = find_type(&cddl, "block");
+    assert_eq!(
+      comment_first(&block.type_choices[0].comments_after_type),
+      Some(" @name w")
+    );
+    let g = array_or_map_group(block);
+    assert_eq!(entry_trailing(g, 0, 0), None);
+    assert_eq!(entry_trailing(g, 0, 1), None);
+  }
+
+  // Round-trip preserves trailing hints (3-choice form, one alt per line).
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_round_trip_trailing_hints() {
+    let input = r#"
+my_enum = 0 ; @name ValA
+        / 1 ; @name ValB
+        / 2 ; @name ValC
+"#;
+    let cddl = cddl_from_pest_str(input).unwrap();
+    let emitted = cddl.to_string();
+    let reparsed = cddl_from_pest_str(&emitted).unwrap();
+    let my_enum = find_type(&reparsed, "my_enum");
+    for (i, want) in [" @name ValA", " @name ValB", " @name ValC"]
+      .iter()
+      .enumerate()
+    {
+      assert_eq!(
+        comment_first(&my_enum.type_choices[i].comments_after_type),
+        Some(*want),
+        "lost choice {} in {:?}",
+        i,
+        emitted
+      );
+    }
+  }
+
+  // Tie-break: a control-op entry binds the ENTRY trailing slot, not the inner type-choice.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_entry_trailing_tiebreak() {
+    let cddl = cddl_from_pest_str(
+      r#"
+m = {
+  x: uint .size 4 ; @name n
+}
+"#,
+    )
+    .unwrap();
+    let g = array_or_map_group(find_type(&cddl, "m"));
+    assert_eq!(entry_trailing(g, 0, 0), Some(" @name n"));
+    match &g.group_choices[0].group_entries[0].0 {
+      ast::GroupEntry::ValueMemberKey { ge, .. } => {
+        assert!(ge.entry_type.type_choices[0].comments_after_type.is_none());
+      }
+      _ => panic!("expected ValueMemberKey"),
+    }
+  }
+
+  // Enclosing guard: a pure comment after the last entry before `]` does not
+  // leak forward onto the next rule's leading slot.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_enclosing_guard_no_forward_leak() {
+    let input = r#"
+a = [ int
+  ; dangling
+]
+b = 0
+"#;
+    let cddl = cddl_from_pest_str(input).unwrap();
+    assert_eq!(rule_leading(&cddl, "b"), None);
+    let (_assigned, orphans) = run_merge(input);
+    assert!(orphans.iter().any(|o| o.text == " dangling"));
+  }
+
+  // entry_tight_end on an inline `( ... )` group is tight at `)`.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_inline_group_tight_end() {
+    let cddl = cddl_from_pest_str("a = [ (int, text), bytes ]\n").unwrap();
+    let g = array_or_map_group(find_type(&cddl, "a"));
+    let entry = &g.group_choices[0].group_entries[0].0;
+    assert!(
+      matches!(entry, ast::GroupEntry::InlineGroup { .. }),
+      "expected inline group entry"
+    );
+    let input = "a = [ (int, text), bytes ]\n";
+    let end = entry_tight_end(entry);
+    assert!(
+      input[..end].ends_with(')'),
+      "inline group end {:?}",
+      &input[..end]
+    );
+  }
+
+  // Group-choice discriminator: single-choice -> entry leading; multi-choice -> grpchoice.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_single_vs_multi_group_choice_leading() {
+    let single = cddl_from_pest_str(
+      r#"
+g = {
+  ; @name First
+  a: int, b: int
+}
+"#,
+    )
+    .unwrap();
+    let g = array_or_map_group(find_type(&single, "g"));
+    assert!(g.group_choices[0].comments_before_grpchoice.is_none());
+    match &g.group_choices[0].group_entries[0].0 {
+      ast::GroupEntry::ValueMemberKey {
+        leading_comments, ..
+      } => {
+        assert_eq!(comment_first(leading_comments), Some(" @name First"))
+      }
+      _ => panic!("expected ValueMemberKey"),
+    }
+    let multi = cddl_from_pest_str(
+      r#"
+h = [
+  ; @name X
+  tag: int //
+  b: int
+]
+"#,
+    )
+    .unwrap();
+    let hg = array_or_map_group(find_type(&multi, "h"));
+    assert_eq!(
+      comment_first(&hg.group_choices[0].comments_before_grpchoice),
+      Some(" @name X")
+    );
+    match &hg.group_choices[0].group_entries[0].0 {
+      ast::GroupEntry::ValueMemberKey {
+        leading_comments, ..
+      } => assert!(leading_comments.is_none()),
+      _ => panic!("expected ValueMemberKey"),
+    }
+  }
+
+  // Orphans never panic at the public boundary; a normal parse has none.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_orphan_non_panic() {
+    let weird = r#"
+x = {
+  foo ; c
+  : int
+}
+"#;
+    assert!(cddl_from_pest_str(weird).is_ok(), "must not panic/error");
+    let (_assigned, orphans) = run_merge(weird);
+    assert!(!orphans.is_empty(), "the stray comment should orphan");
+    let (_assigned2, orphans2) = run_merge("y = 0 ; @name k\n");
+    assert!(orphans2.is_empty(), "unexpected orphans: {:?}", orphans2);
+  }
+
+  // a trailing hint on a BARE value/typename member binds to the
+  // entry's `trailing_comments`, not the inner type-choice's `comments_after_type`.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_bare_value_member_trailing() {
+    let cddl = cddl_from_pest_str(
+      r#"
+suits = [
+  0, ; @name hearts
+  1 ; @name spades
+]
+"#,
+    )
+    .unwrap();
+    let g = array_or_map_group(find_type(&cddl, "suits"));
+    assert_eq!(entry_trailing(g, 0, 0), Some(" @name hearts"));
+    assert_eq!(entry_trailing(g, 0, 1), Some(" @name spades"));
+    for ei in 0..2 {
+      if let ast::GroupEntry::ValueMemberKey { ge, .. } = &g.group_choices[0].group_entries[ei].0 {
+        assert!(
+          ge.entry_type.type_choices[0].comments_after_type.is_none(),
+          "inner choice must not claim the hint"
+        );
+      }
+    }
+  }
+
+  // the enclosing guard uses the INNERMOST container, so a
+  // comment dangling inside an inner array does not leak onto a sibling outer entry.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_enclosing_guard_innermost_container() {
+    let input = r#"
+x = [
+  a: [ int
+  ; @name X
+  ], b: int
+]
+y = 0
+"#;
+    let cddl = cddl_from_pest_str(input).unwrap();
+    let g = array_or_map_group(find_type(&cddl, "x"));
+    for (ge, _) in &g.group_choices[0].group_entries {
+      if let ast::GroupEntry::ValueMemberKey {
+        leading_comments, ..
+      } = ge
+      {
+        assert!(
+          leading_comments.is_none(),
+          "comment leaked onto an outer-array entry"
+        );
+      }
+    }
+    let (_assigned, orphans) = run_merge(input);
+    assert!(
+      orphans.iter().any(|o| o.text == " @name X"),
+      "escaping comment should orphan"
+    );
+  }
+
+  // Trailing hints on bare-typename type-choice alternatives (`t = foo / bar`):
+  // each alternative keeps its own hint. The Type2::Typename span is greedy, so
+  // without keying off the tight identifier the hints would swap between choices.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_trailing_comment_on_typename_type_choice() {
+    let input = r#"
+t = foo ; @name a
+  / bar ; @name b
+foo = int
+bar = int
+"#;
+    let cddl = cddl_from_pest_str(input).unwrap();
+    let t = find_type(&cddl, "t");
+    assert_eq!(choice_trailing(t, 0), Some(" @name a"));
+    assert_eq!(choice_trailing(t, 1), Some(" @name b"));
+    assert_eq!(rule_leading(&cddl, "foo"), None);
+    assert_eq!(rule_leading(&cddl, "bar"), None);
+  }
+
+  // A trailing hint on a single bare-typename type (a type alias) binds to that
+  // type and does not leak forward onto the following rule's leading comment.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_trailing_comment_on_typename_no_forward_leak() {
+    let input = r#"
+device = phone ; @name Phone
+phone = 0
+"#;
+    let cddl = cddl_from_pest_str(input).unwrap();
+    assert_eq!(
+      choice_trailing(find_type(&cddl, "device"), 0),
+      Some(" @name Phone")
+    );
+    assert_eq!(rule_leading(&cddl, "phone"), None);
+  }
+
   #[test]
   fn test_basic_type_rule() {
     let input = "myrule = int\n";
@@ -3457,6 +4376,107 @@ mod tests {
     let input = "value = int / text / bool\n";
     let result = cddl_from_pest_str(input);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+  }
+
+  // Per-construct tests that every `; @name X` hint is retrievable from the AST node
+  // it documents. Each uses a minimal self-contained fixture (real Cardano patterns).
+
+  // Trailing comment on the type-choice alternative at `idx`.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  fn choice_trailing<'a>(ty: &'a ast::Type<'a>, idx: usize) -> Option<&'a str> {
+    comment_first(&ty.type_choices[idx].comments_after_type)
+  }
+
+  // Construct: trailing hints on scalar type-choice alternatives.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_trailing_comment_on_scalar_type_choice() {
+    let cddl = cddl_from_pest_str(
+      r#"my_enum = 0 ; @name first
+        / 1 ; @name second
+        / 2 ; @name third
+"#,
+    )
+    .unwrap();
+    let my_enum = find_type(&cddl, "my_enum");
+    assert_eq!(choice_trailing(my_enum, 0), Some(" @name first"));
+    assert_eq!(choice_trailing(my_enum, 1), Some(" @name second"));
+    assert_eq!(choice_trailing(my_enum, 2), Some(" @name third"));
+  }
+
+  // Construct: trailing hints on array-valued type-choice alternatives (after `]`).
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_trailing_comment_on_array_type_choice() {
+    let cddl = cddl_from_pest_str(
+      r#"my_choice = [0, bytes] ; @name first
+            / [1, bytes] ; @name second
+"#,
+    )
+    .unwrap();
+    let my_choice = find_type(&cddl, "my_choice");
+    assert_eq!(choice_trailing(my_choice, 0), Some(" @name first"));
+    assert_eq!(choice_trailing(my_choice, 1), Some(" @name second"));
+  }
+
+  // Construct: trailing hints on map entries (occurrence + member key + trailing comma).
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_trailing_comment_on_map_entry() {
+    let cddl = cddl_from_pest_str(
+      r#"my_map = {
+  ? 0 : int, ; @name first
+  ? 2 : tstr, ; @name second
+}
+"#,
+    )
+    .unwrap();
+    let my_map = array_or_map_group(find_type(&cddl, "my_map"));
+    assert_eq!(entry_trailing(my_map, 0, 0), Some(" @name first"));
+    assert_eq!(entry_trailing(my_map, 0, 1), Some(" @name second"));
+  }
+
+  // Construct: trailing hints on bare-typename (TypeGroupname) array entries in
+  // leading-comma layout — each entry's greedy span runs to the next line's comma,
+  // so the trailing comment must key off the tight identifier end.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_trailing_comment_on_array_entry() {
+    let cddl = cddl_from_pest_str(
+      r#"my_array = [ bytes ; @name first
+             , bytes ; @name second
+             ]
+"#,
+    )
+    .unwrap();
+    let my_array = array_or_map_group(find_type(&cddl, "my_array"));
+    assert_eq!(entry_trailing(my_array, 0, 0), Some(" @name first"));
+    assert_eq!(entry_trailing(my_array, 0, 1), Some(" @name second"));
+  }
+
+  // Construct: leading hints before group choices / `//` alternatives.
+  #[cfg(all(feature = "ast-comments", feature = "ast-span"))]
+  #[test]
+  fn test_leading_comment_on_group_choice() {
+    let cddl = cddl_from_pest_str(
+      r#"my_group = [
+  ; @name first
+  x: 0, int //
+  ; @name second
+  y: 1
+]
+"#,
+    )
+    .unwrap();
+    let my_group = array_or_map_group(find_type(&cddl, "my_group"));
+    assert_eq!(
+      comment_first(&my_group.group_choices[0].comments_before_grpchoice),
+      Some(" @name first")
+    );
+    assert_eq!(
+      comment_first(&my_group.group_choices[1].comments_before_grpchoice),
+      Some(" @name second")
+    );
   }
 
   #[test]
