@@ -1,0 +1,19 @@
+; Regression fixture for https://github.com/anweiss/cddl/issues/640
+; A map may contain more than one wildcard entry. Each one needs a distinct
+; generated field name.
+
+mixed = {
+  * tstr => int,
+  * int => tstr,
+}
+
+triple = {
+  * tstr => int,
+  * int => tstr,
+  * bool => int,
+}
+
+named-and-wildcard = {
+  id: tstr,
+  * int => tstr,
+}

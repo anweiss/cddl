@@ -4,6 +4,7 @@ use cddl::ast::{
   Group, GroupChoice, GroupEntry, MemberKey, Occur, Rule, Type, Type1, Type2, TypeChoice, TypeRule,
   ValueMemberKeyEntry, CDDL,
 };
+use std::collections::BTreeMap;
 use std::fmt::Write;
 
 /// Errors that can occur during code generation.
@@ -29,6 +30,48 @@ impl From<std::fmt::Error> for CodegenError {
     CodegenError::FmtError(e)
   }
 }
+
+/// Caller-supplied configuration for code generation.
+///
+/// Every field is opt-in; the default is the behaviour that existed before
+/// these options were introduced. See
+/// <https://github.com/anweiss/cddl/issues/641>.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct CodegenOptions {
+  /// Rust type to generate for CDDL `any`. Defaults to `serde_json::Value`.
+  ///
+  /// Set this to `ciborium::Value` for a CBOR-first schema. Individual fields
+  /// can still be overridden through `substitutions`.
+  pub any_type: Option<String>,
+  /// Emit `#[non_exhaustive]` on generated structs and enums, so that adding a
+  /// field or variant later is not a breaking change for downstream crates.
+  pub non_exhaustive: bool,
+  /// Append an `Other(String)` catch-all variant to generated enums, so that a
+  /// value added to the schema later deserializes instead of failing.
+  pub other_variant: bool,
+  /// Replace generated types with hand-written Rust types.
+  ///
+  /// A key is either a CDDL rule name (`"label"`), which replaces every
+  /// reference to that rule and suppresses its definition, or a
+  /// rule-qualified field name (`"manifest.data"`), which replaces just that
+  /// field.
+  pub substitutions: BTreeMap<String, String>,
+}
+
+impl CodegenOptions {
+  /// The Rust type to use for CDDL `any`.
+  fn any_type(&self) -> &str {
+    self.any_type.as_deref().unwrap_or(DEFAULT_ANY_TYPE)
+  }
+
+  /// Whether any option would change the generated output.
+  fn is_default(&self) -> bool {
+    *self == Self::default()
+  }
+}
+
+/// The Rust type CDDL `any` maps to unless overridden.
+pub(crate) const DEFAULT_ANY_TYPE: &str = "serde_json::Value";
 
 /// A generated Rust type definition.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +102,74 @@ pub(crate) struct RustField {
   pub is_optional: bool,
   pub doc: Vec<String>,
   pub is_boxed: bool,
+  /// The CBOR tag this field's CDDL type carries, if any (see
+  /// https://github.com/anweiss/cddl/issues/639).
+  pub tag: Option<TaggedPrelude>,
+}
+
+/// A CDDL prelude type that is defined as a CBOR tag wrapping a simpler value.
+///
+/// RFC 8610 Appendix D defines these as `#6.N(...)`. The generated Rust type is
+/// the *inner* type, with a serde helper that applies the tag on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TaggedPrelude {
+  /// The CDDL identifier, e.g. `tdate`.
+  pub ident: &'static str,
+  /// The CBOR tag number, e.g. 0 for `tdate`.
+  pub tag: u64,
+  /// The Rust type the tag wraps, e.g. `String`.
+  pub inner: &'static str,
+}
+
+/// The prelude types that are CBOR tags, and the tag each one carries.
+///
+/// | CDDL | Definition | Tag |
+/// |---|---|---|
+/// | `tdate` | `#6.0(tstr)` | 0 |
+/// | `time` | `#6.1(number)` | 1 |
+/// | `uri` | `#6.32(tstr)` | 32 |
+/// | `b64url` | `#6.33(tstr)` | 33 |
+/// | `b64legacy` | `#6.34(tstr)` | 34 |
+/// | `regexp` | `#6.35(tstr)` | 35 |
+const TAGGED_PRELUDE_TYPES: &[TaggedPrelude] = &[
+  TaggedPrelude {
+    ident: "tdate",
+    tag: 0,
+    inner: "String",
+  },
+  TaggedPrelude {
+    ident: "time",
+    tag: 1,
+    inner: "i64",
+  },
+  TaggedPrelude {
+    ident: "uri",
+    tag: 32,
+    inner: "String",
+  },
+  TaggedPrelude {
+    ident: "b64url",
+    tag: 33,
+    inner: "String",
+  },
+  TaggedPrelude {
+    ident: "b64legacy",
+    tag: 34,
+    inner: "String",
+  },
+  TaggedPrelude {
+    ident: "regexp",
+    tag: 35,
+    inner: "String",
+  },
+];
+
+/// Look up the CBOR tag for a CDDL prelude identifier.
+pub(crate) fn tagged_prelude(ident: &str) -> Option<TaggedPrelude> {
+  TAGGED_PRELUDE_TYPES
+    .iter()
+    .copied()
+    .find(|t| t.ident == ident)
 }
 
 /// A variant within a generated Rust enum.
@@ -225,11 +336,126 @@ fn split_comment(line: &str) -> (&str, Option<&str>) {
   (line, None)
 }
 
+/// Apply caller-supplied options to the collected type definitions.
+///
+/// This runs after the CDDL has been lowered to `RustTypeDef`s so that the
+/// conversion itself stays option-free: everything here is a rewrite of the
+/// already-generated Rust type strings.
+fn apply_options(defs: &mut Vec<RustTypeDef>, opts: &CodegenOptions) {
+  if opts.is_default() {
+    return;
+  }
+
+  // Rule-level substitutions replace every reference to a rule, so the rule's
+  // own definition is dropped.
+  let rule_subs: BTreeMap<String, String> = opts
+    .substitutions
+    .iter()
+    .filter(|(k, _)| !k.contains('.'))
+    .map(|(k, v)| (to_pascal_case(k), v.clone()))
+    .collect();
+
+  if !rule_subs.is_empty() {
+    defs.retain(|d| {
+      let name = match d {
+        RustTypeDef::Struct { name, .. }
+        | RustTypeDef::TypeAlias { name, .. }
+        | RustTypeDef::Enum { name, .. } => name,
+      };
+      !rule_subs.contains_key(name)
+    });
+  }
+
+  let any_type = opts.any_type();
+
+  for def in defs.iter_mut() {
+    match def {
+      RustTypeDef::Struct { name, fields, .. } => {
+        for field in fields.iter_mut() {
+          let key = format!("{}.{}", to_cddl_lookup_name(name), field.original_name);
+          if let Some(sub) = opts.substitutions.get(&key) {
+            // An explicit substitution replaces the type outright, so any CBOR
+            // tag inferred from the original prelude type no longer applies.
+            field.rust_type.clone_from(sub);
+            field.tag = None;
+            continue;
+          }
+
+          rewrite_type(&mut field.rust_type, &rule_subs, any_type);
+        }
+      }
+      RustTypeDef::TypeAlias { target, .. } => {
+        rewrite_type(target, &rule_subs, any_type);
+      }
+      RustTypeDef::Enum { variants, .. } => {
+        for variant in variants.iter_mut() {
+          if let Some(inner) = variant.inner_type.as_mut() {
+            rewrite_type(inner, &rule_subs, any_type);
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Rewrite a generated Rust type string in place, applying rule substitutions
+/// and the configured `any` type.
+///
+/// Types are matched on identifier boundaries so that a substitution for rule
+/// `Label` does not also rewrite `LabelSet`, and so that substitutions apply
+/// inside containers such as `Vec<Label>` and `Option<Label>`.
+fn rewrite_type(ty: &mut String, rule_subs: &BTreeMap<String, String>, any_type: &str) {
+  if rule_subs.is_empty() && any_type == DEFAULT_ANY_TYPE {
+    return;
+  }
+
+  let mut out = String::with_capacity(ty.len());
+  let mut token = String::new();
+
+  let flush = |token: &mut String, out: &mut String| {
+    if token.is_empty() {
+      return;
+    }
+    if token == DEFAULT_ANY_TYPE {
+      out.push_str(any_type);
+    } else if let Some(sub) = rule_subs.get(token.as_str()) {
+      out.push_str(sub);
+    } else {
+      out.push_str(token);
+    }
+    token.clear();
+  };
+
+  for c in ty.chars() {
+    if c.is_alphanumeric() || c == '_' || c == ':' {
+      token.push(c);
+    } else {
+      flush(&mut token, &mut out);
+      out.push(c);
+    }
+  }
+  flush(&mut token, &mut out);
+
+  *ty = out;
+}
+
+/// Convert a generated Rust type name back to the CDDL-style name used as a
+/// substitution key, so that callers can write `"manifest.data"` rather than
+/// having to know the PascalCase name codegen chose.
+fn to_cddl_lookup_name(rust_name: &str) -> String {
+  pascal_to_cddl_name(rust_name)
+}
+
 /// Generate Rust source code for all rules in a parsed CDDL AST.
-pub(crate) fn generate_all_types(cddl: &CDDL<'_>, source: &str) -> Result<String, CodegenError> {
+pub(crate) fn generate_all_types(
+  cddl: &CDDL<'_>,
+  source: &str,
+  opts: &CodegenOptions,
+) -> Result<String, CodegenError> {
   let comments = CommentMap::new(source);
-  let type_defs = collect_type_defs(cddl, &comments)?;
-  render_type_defs(&type_defs)
+  let mut type_defs = collect_type_defs(cddl, &comments)?;
+  apply_options(&mut type_defs, opts);
+  render_type_defs(&type_defs, opts)
 }
 
 /// Generate Rust source code for a single named rule in a parsed CDDL AST.
@@ -242,9 +468,11 @@ pub(crate) fn generate_single_type(
   rule_name: &str,
   output_name: Option<&str>,
   source: &str,
+  opts: &CodegenOptions,
 ) -> Result<String, CodegenError> {
   let comments = CommentMap::new(source);
-  let type_defs = collect_type_defs(cddl, &comments)?;
+  let mut type_defs = collect_type_defs(cddl, &comments)?;
+  apply_options(&mut type_defs, opts);
   let matching = type_defs
     .into_iter()
     .find(|d| match d {
@@ -263,7 +491,12 @@ pub(crate) fn generate_single_type(
   match &matching {
     RustTypeDef::Struct { name, fields, doc } => {
       let emit_name = output_name.unwrap_or(name);
-      render_struct(&mut output, emit_name, fields, doc)?;
+      // Scope the helper module to this type, so several single-type macro
+      // invocations can coexist in one file without colliding.
+      let tag_mod = format!("{}_{}", TAG_HELPER_MOD, to_snake_case(emit_name));
+      let tags = collect_tags(std::slice::from_ref(&matching));
+      render_tag_helpers(&mut output, &tag_mod, &tags)?;
+      render_struct(&mut output, emit_name, fields, doc, &tag_mod, opts)?;
     }
     RustTypeDef::TypeAlias { name, target, doc } => {
       let emit_name = output_name.unwrap_or(name);
@@ -275,7 +508,7 @@ pub(crate) fn generate_single_type(
       doc,
     } => {
       let emit_name = output_name.unwrap_or(name);
-      render_enum(&mut output, emit_name, variants, doc)?;
+      render_enum(&mut output, emit_name, variants, doc, opts)?;
     }
   }
   Ok(output)
@@ -732,7 +965,40 @@ fn group_to_fields(
     let gc_fields = group_choice_to_fields(gc, comments)?;
     fields.extend(gc_fields);
   }
+  deduplicate_field_names(&mut fields);
   Ok(fields)
+}
+
+/// Give every field in a struct a unique name.
+///
+/// Wildcard entries (`* tstr => int`) have no key to name themselves after, so
+/// they are all emitted as `entries`. A map may legitimately contain more than
+/// one of them (`{ * tstr => int, * int => tstr }`), which would otherwise emit
+/// the same field twice and fail to compile with "field `entries` specified
+/// more than once". Repeats get a `_1`, `_2`, ... suffix.
+///
+/// When a field's `original_name` matches the name being replaced, the field is
+/// synthetic (there is no corresponding CDDL key) and the `original_name` is
+/// renamed alongside it, so that no misleading `#[serde(rename = "entries")]`
+/// is emitted for the second and subsequent fields.
+///
+/// See https://github.com/anweiss/cddl/issues/640
+fn deduplicate_field_names(fields: &mut [RustField]) {
+  let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+  for field in fields.iter_mut() {
+    let base = field.name.clone();
+    let count = seen.entry(base.clone()).or_insert(0);
+    *count += 1;
+
+    if *count > 1 {
+      let unique = format!("{}_{}", base, *count - 1);
+      if field.original_name == base {
+        field.original_name = unique.clone();
+      }
+      field.name = unique;
+    }
+  }
 }
 
 fn group_choice_to_fields(
@@ -786,6 +1052,7 @@ fn group_entry_to_fields(
         is_optional,
         doc,
         is_boxed: false,
+        tag: tagged_prelude(ident),
       }]))
     }
     GroupEntry::InlineGroup { group, occur, .. } => {
@@ -829,6 +1096,7 @@ fn value_member_key_to_field(
         is_optional: false,
         doc,
         is_boxed: false,
+        tag: None,
       }));
     }
     None => {
@@ -840,6 +1108,7 @@ fn value_member_key_to_field(
         is_optional: false,
         doc,
         is_boxed: false,
+        tag: type_tagged_prelude(&vmke.entry_type),
       }));
     }
     _ => return Ok(None),
@@ -872,7 +1141,29 @@ fn value_member_key_to_field(
     is_optional,
     doc,
     is_boxed: false,
+    // Only an unwrapped occurrence carries the tag directly; `* tdate` becomes
+    // Vec<String> and is handled as a follow-up.
+    tag: if is_vec {
+      None
+    } else {
+      type_tagged_prelude(&vmke.entry_type)
+    },
   }))
+}
+
+/// If a CDDL type is exactly one of the tagged prelude identifiers, return it.
+///
+/// Only a bare, single-choice reference is matched. Type choices and types
+/// nested inside containers keep their untagged representation.
+fn type_tagged_prelude(t: &Type<'_>) -> Option<TaggedPrelude> {
+  if t.type_choices.len() != 1 {
+    return None;
+  }
+
+  match &t.type_choices[0].type1.type2 {
+    Type2::Typename { ident, .. } => tagged_prelude(ident.ident),
+    _ => None,
+  }
 }
 
 /// Determine the 1-based source line for a value member key entry, preferring
@@ -1145,8 +1436,160 @@ fn is_prelude_type(ident: &str) -> bool {
   )
 }
 
-fn render_type_defs(defs: &[RustTypeDef]) -> Result<String, CodegenError> {
+/// Name of the module holding the CBOR tag serde helpers for a whole file.
+const TAG_HELPER_MOD: &str = "__cddl_tag_helpers";
+
+/// Emit serde helper modules for each CBOR tag used by the generated types.
+///
+/// CDDL prelude types such as `tdate` and `uri` are CBOR tags wrapping a
+/// simpler value (RFC 8610 Appendix D). The generated struct keeps the inner
+/// Rust type (`String`), and these helpers apply the tag on the wire.
+///
+/// The helpers are format-aware: CBOR (and any other non-human-readable
+/// format) gets the tag, while human-readable formats such as JSON keep the
+/// bare value, so the same type round-trips through both. Deserialization
+/// accepts an untagged value as well as a tagged one.
+///
+/// See https://github.com/anweiss/cddl/issues/639
+fn render_tag_helpers(
+  output: &mut String,
+  mod_name: &str,
+  tags: &[TaggedPrelude],
+) -> Result<(), CodegenError> {
+  if tags.is_empty() {
+    return Ok(());
+  }
+
+  writeln!(output, "#[doc(hidden)]")?;
+  writeln!(output, "#[allow(non_snake_case, unused_imports)]")?;
+  writeln!(output, "pub mod {} {{", mod_name)?;
+
+  for t in tags {
+    let TaggedPrelude { ident, tag, inner } = *t;
+    let module = ident.replace('-', "_");
+
+    writeln!(
+      output,
+      "    /// serde helper for CDDL `{}` (CBOR tag {}).",
+      ident, tag
+    )?;
+    writeln!(output, "    pub mod {} {{", module)?;
+    writeln!(
+      output,
+      "        use serde::{{Deserialize, Deserializer, Serialize, Serializer}};"
+    )?;
+    writeln!(output)?;
+    writeln!(
+      output,
+      "        pub fn serialize<S: Serializer>(v: &{}, s: S) -> Result<S::Ok, S::Error> {{",
+      inner
+    )?;
+    writeln!(output, "            if s.is_human_readable() {{")?;
+    writeln!(output, "                v.serialize(s)")?;
+    writeln!(output, "            }} else {{")?;
+    writeln!(
+      output,
+      "                ciborium::tag::Required::<&{}, {}>(v).serialize(s)",
+      inner, tag
+    )?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }}")?;
+    writeln!(output)?;
+    writeln!(
+      output,
+      "        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<{}, D::Error> {{",
+      inner
+    )?;
+    writeln!(output, "            if d.is_human_readable() {{")?;
+    writeln!(output, "                {}::deserialize(d)", inner)?;
+    writeln!(output, "            }} else {{")?;
+    writeln!(
+      output,
+      "                Ok(ciborium::tag::Accepted::<{}, {}>::deserialize(d)?.0)",
+      inner, tag
+    )?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }}")?;
+    writeln!(output, "    }}")?;
+    writeln!(output)?;
+
+    writeln!(
+      output,
+      "    /// serde helper for an optional CDDL `{}`.",
+      ident
+    )?;
+    writeln!(output, "    pub mod {}_opt {{", module)?;
+    writeln!(
+      output,
+      "        use serde::{{Deserialize, Deserializer, Serializer}};"
+    )?;
+    writeln!(output)?;
+    writeln!(
+      output,
+      "        pub fn serialize<S: Serializer>(v: &Option<{}>, s: S) -> Result<S::Ok, S::Error> {{",
+      inner
+    )?;
+    writeln!(output, "            match v {{")?;
+    writeln!(output, "                Some(v) => {{")?;
+    writeln!(output, "                    if s.is_human_readable() {{")?;
+    writeln!(output, "                        s.serialize_some(v)")?;
+    writeln!(output, "                    }} else {{")?;
+    writeln!(
+      output,
+      "                        s.serialize_some(&ciborium::tag::Required::<&{}, {}>(v))",
+      inner, tag
+    )?;
+    writeln!(output, "                    }}")?;
+    writeln!(output, "                }}")?;
+    writeln!(output, "                None => s.serialize_none(),")?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }}")?;
+    writeln!(output)?;
+    writeln!(output, "        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<{}>, D::Error> {{", inner)?;
+    writeln!(output, "            if d.is_human_readable() {{")?;
+    writeln!(
+      output,
+      "                Option::<{}>::deserialize(d)",
+      inner
+    )?;
+    writeln!(output, "            }} else {{")?;
+    writeln!(
+      output,
+      "                Ok(Option::<ciborium::tag::Accepted<{}, {}>>::deserialize(d)?.map(|a| a.0))",
+      inner, tag
+    )?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }}")?;
+    writeln!(output, "    }}")?;
+  }
+
+  writeln!(output, "}}")?;
+  writeln!(output)?;
+  Ok(())
+}
+
+/// Collect the distinct CBOR tags referenced by a set of generated types.
+fn collect_tags(defs: &[RustTypeDef]) -> Vec<TaggedPrelude> {
+  let mut tags: Vec<TaggedPrelude> = Vec::new();
+  for def in defs {
+    if let RustTypeDef::Struct { fields, .. } = def {
+      for field in fields {
+        if let Some(t) = field.tag {
+          if !tags.iter().any(|existing| existing.ident == t.ident) {
+            tags.push(t);
+          }
+        }
+      }
+    }
+  }
+  tags
+}
+
+fn render_type_defs(defs: &[RustTypeDef], opts: &CodegenOptions) -> Result<String, CodegenError> {
   let mut output = String::new();
+
+  let tags = collect_tags(defs);
+  render_tag_helpers(&mut output, TAG_HELPER_MOD, &tags)?;
 
   for (idx, def) in defs.iter().enumerate() {
     if idx > 0 {
@@ -1154,7 +1597,7 @@ fn render_type_defs(defs: &[RustTypeDef]) -> Result<String, CodegenError> {
     }
     match def {
       RustTypeDef::Struct { name, fields, doc } => {
-        render_struct(&mut output, name, fields, doc)?;
+        render_struct(&mut output, name, fields, doc, TAG_HELPER_MOD, opts)?;
       }
       RustTypeDef::TypeAlias { name, target, doc } => {
         render_type_alias(&mut output, name, target, doc)?;
@@ -1164,7 +1607,7 @@ fn render_type_defs(defs: &[RustTypeDef]) -> Result<String, CodegenError> {
         variants,
         doc,
       } => {
-        render_enum(&mut output, name, variants, doc)?;
+        render_enum(&mut output, name, variants, doc, opts)?;
       }
     }
   }
@@ -1185,20 +1628,149 @@ fn render_doc(output: &mut String, doc: &[String], indent: &str) -> Result<(), C
   Ok(())
 }
 
+/// Build a `serde_with` conversion spec for a generated field type, or `None`
+/// when the type contains no byte strings.
+///
+/// CDDL `bstr` / `bytes` map to `Vec<u8>`, which serde encodes as an *array of
+/// integers* rather than a CBOR byte string (major type 2). Annotating the
+/// field with `#[serde_as(as = "serde_with::Bytes")]` restores the correct
+/// encoding without changing the public type of the field.
+///
+/// The spec mirrors the shape of the Rust type, replacing each `Vec<u8>` with
+/// `serde_with::Bytes` and every other position with `_`, so byte strings
+/// nested inside containers are handled too:
+///
+/// | Rust type | Spec |
+/// |---|---|
+/// | `Vec<u8>` | `serde_with::Bytes` |
+/// | `Vec<Vec<u8>>` | `Vec<serde_with::Bytes>` |
+/// | `std::collections::HashMap<String, Vec<u8>>` | `std::collections::HashMap<_, serde_with::Bytes>` |
+/// | `String` | `None` |
+///
+/// See https://github.com/anweiss/cddl/issues/638
+fn serde_as_spec(rust_type: &str) -> Option<String> {
+  let rust_type = rust_type.trim();
+
+  if rust_type == "Vec<u8>" {
+    return Some("serde_with::Bytes".to_string());
+  }
+
+  let open = rust_type.find('<')?;
+  if !rust_type.ends_with('>') {
+    return None;
+  }
+
+  let base = &rust_type[..open];
+  let args = split_generic_args(&rust_type[open + 1..rust_type.len() - 1]);
+
+  let specs = args
+    .iter()
+    .map(|arg| serde_as_spec(arg))
+    .collect::<Vec<_>>();
+
+  if specs.iter().all(Option::is_none) {
+    return None;
+  }
+
+  let rendered = specs
+    .into_iter()
+    .map(|spec| spec.unwrap_or_else(|| "_".to_string()))
+    .collect::<Vec<_>>()
+    .join(", ");
+
+  Some(format!("{}<{}>", base, rendered))
+}
+
+/// Split the inside of a generic argument list on top-level commas, ignoring
+/// commas nested inside further generic arguments.
+fn split_generic_args(args: &str) -> Vec<String> {
+  let mut out = Vec::new();
+  let mut depth = 0usize;
+  let mut current = String::new();
+
+  for c in args.chars() {
+    match c {
+      '<' => {
+        depth += 1;
+        current.push(c);
+      }
+      '>' => {
+        depth = depth.saturating_sub(1);
+        current.push(c);
+      }
+      ',' if depth == 0 => {
+        out.push(current.trim().to_string());
+        current.clear();
+      }
+      _ => current.push(c),
+    }
+  }
+
+  if !current.trim().is_empty() {
+    out.push(current.trim().to_string());
+  }
+
+  out
+}
+
 fn render_struct(
   output: &mut String,
   name: &str,
   fields: &[RustField],
   doc: &[String],
+  tag_mod: &str,
+  opts: &CodegenOptions,
 ) -> Result<(), CodegenError> {
   render_doc(output, doc, "")?;
+
+  // Byte-string fields need serde_with to encode as CBOR major type 2 rather
+  // than as an array of integers. The attribute must precede the derive.
+  let field_specs = fields
+    .iter()
+    .map(|field| serde_as_spec(&field.rust_type))
+    .collect::<Vec<_>>();
+
+  if field_specs.iter().any(Option::is_some) {
+    writeln!(output, "#[serde_with::serde_as]")?;
+  }
+
   writeln!(
     output,
     "#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]"
   )?;
+  if opts.non_exhaustive {
+    writeln!(output, "#[non_exhaustive]")?;
+  }
   writeln!(output, "pub struct {} {{", name)?;
-  for field in fields {
+  for (field, spec) in fields.iter().zip(field_specs) {
     render_doc(output, &field.doc, "    ")?;
+    if let Some(spec) = spec {
+      let spec = if field.is_boxed {
+        format!("Box<{}>", spec)
+      } else {
+        spec
+      };
+      let spec = if field.is_optional {
+        format!("Option<{}>", spec)
+      } else {
+        spec
+      };
+      writeln!(output, "    #[serde_as(as = \"{}\")]", spec)?;
+    }
+    if let Some(t) = field.tag {
+      let module = t.ident.replace('-', "_");
+      if field.is_optional {
+        // serde drops the implicit Option default once a custom
+        // deserializer is attached, so an absent key would otherwise fail.
+        writeln!(
+          output,
+          "    #[serde(default, with = \"{}::{}_opt\")]",
+          tag_mod, module
+        )?;
+      } else {
+        writeln!(output, "    #[serde(with = \"{}::{}\")]", tag_mod, module)?;
+      }
+    }
     if field.name != field.original_name {
       writeln!(output, "    #[serde(rename = \"{}\")]", field.original_name)?;
     }
@@ -1246,13 +1818,30 @@ fn render_enum(
   name: &str,
   variants: &[RustEnumVariant],
   doc: &[String],
+  opts: &CodegenOptions,
 ) -> Result<(), CodegenError> {
+  // An enum whose variants are all string literals (`a = "x" / "y"`) is a
+  // closed set of strings on the wire. serde's untagged representation cannot
+  // express that -- it deserializes a unit variant from `null` only -- so such
+  // enums get a string-based representation instead.
+  let string_enum = !variants.is_empty()
+    && variants
+      .iter()
+      .all(|v| v.inner_type.is_none() && v.rename.is_some());
+
+  if string_enum {
+    return render_string_enum(output, name, variants, doc, opts);
+  }
+
   render_doc(output, doc, "")?;
   writeln!(
     output,
     "#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]"
   )?;
   writeln!(output, "#[serde(untagged)]")?;
+  if opts.non_exhaustive {
+    writeln!(output, "#[non_exhaustive]")?;
+  }
   writeln!(output, "pub enum {} {{", name)?;
   for variant in variants {
     render_doc(output, &variant.doc, "    ")?;
@@ -1265,7 +1854,123 @@ fn render_enum(
       writeln!(output, "    {},", variant.name)?;
     }
   }
+  if opts.other_variant && !variants.iter().any(|v| v.name == "Other") {
+    render_other_variant_doc(output)?;
+    writeln!(output, "    Other(String),")?;
+  }
   writeln!(output, "}}")?;
+  Ok(())
+}
+
+/// Render an enum whose variants are all string literals.
+///
+/// serde is implemented by hand rather than derived, because neither the
+/// default nor the untagged representation round-trips a bare string through a
+/// unit variant, and because `other_variant` needs a catch-all that serde has
+/// no attribute for outside internally-tagged enums.
+fn render_string_enum(
+  output: &mut String,
+  name: &str,
+  variants: &[RustEnumVariant],
+  doc: &[String],
+  opts: &CodegenOptions,
+) -> Result<(), CodegenError> {
+  render_doc(output, doc, "")?;
+  writeln!(output, "#[derive(Clone, Debug, PartialEq, Eq)]")?;
+  if opts.non_exhaustive {
+    writeln!(output, "#[non_exhaustive]")?;
+  }
+  writeln!(output, "pub enum {} {{", name)?;
+  for variant in variants {
+    render_doc(output, &variant.doc, "    ")?;
+    writeln!(output, "    {},", variant.name)?;
+  }
+  if opts.other_variant {
+    render_other_variant_doc(output)?;
+    writeln!(output, "    Other(String),")?;
+  }
+  writeln!(output, "}}")?;
+  writeln!(output)?;
+
+  writeln!(output, "impl {} {{", name)?;
+  writeln!(output, "    /// The string this value is represented by.")?;
+  writeln!(output, "    pub fn as_str(&self) -> &str {{")?;
+  writeln!(output, "        match self {{")?;
+  for variant in variants {
+    let text = variant.rename.as_deref().unwrap_or(&variant.name);
+    writeln!(output, "            Self::{} => {:?},", variant.name, text)?;
+  }
+  if opts.other_variant {
+    writeln!(output, "            Self::Other(v) => v.as_str(),")?;
+  }
+  writeln!(output, "        }}")?;
+  writeln!(output, "    }}")?;
+  writeln!(output, "}}")?;
+  writeln!(output)?;
+
+  writeln!(output, "impl serde::Serialize for {} {{", name)?;
+  writeln!(
+    output,
+    "    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {{"
+  )?;
+  writeln!(output, "        s.serialize_str(self.as_str())")?;
+  writeln!(output, "    }}")?;
+  writeln!(output, "}}")?;
+  writeln!(output)?;
+
+  writeln!(output, "impl<'de> serde::Deserialize<'de> for {} {{", name)?;
+  writeln!(
+    output,
+    "    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {{"
+  )?;
+  writeln!(
+    output,
+    "        let s = <String as serde::Deserialize>::deserialize(d)?;"
+  )?;
+  writeln!(output, "        Ok(match s.as_str() {{")?;
+  for variant in variants {
+    let text = variant.rename.as_deref().unwrap_or(&variant.name);
+    writeln!(output, "            {:?} => Self::{},", text, variant.name)?;
+  }
+  if opts.other_variant {
+    writeln!(output, "            _ => Self::Other(s),")?;
+  } else {
+    let expected = variants
+      .iter()
+      .map(|v| v.rename.as_deref().unwrap_or(&v.name))
+      .collect::<Vec<_>>()
+      .join(", ");
+    writeln!(output, "            other => {{")?;
+    writeln!(
+      output,
+      "                return Err(serde::de::Error::custom(format!("
+    )?;
+    writeln!(
+      output,
+      "                    \"unknown {} {{:?}}, expected one of: {}\", other",
+      name, expected
+    )?;
+    writeln!(output, "                )));")?;
+    writeln!(output, "            }}")?;
+  }
+  writeln!(output, "        }})")?;
+  writeln!(output, "    }}")?;
+  writeln!(output, "}}")?;
+  Ok(())
+}
+
+/// Documentation for the generated `Other` catch-all variant.
+fn render_other_variant_doc(output: &mut String) -> Result<(), CodegenError> {
+  writeln!(
+    output,
+    "    /// A value not present in the CDDL definition."
+  )?;
+  writeln!(output, "    ///")?;
+  writeln!(
+    output,
+    "    /// Lets a value added to the schema later deserialize instead of"
+  )?;
+  writeln!(output, "    /// failing.")?;
   Ok(())
 }
 
@@ -1398,7 +2103,7 @@ mod tests {
 
   fn gen(input: &str) -> String {
     let cddl = cddl_from_str(input, true).unwrap();
-    generate_all_types(&cddl, input).unwrap()
+    generate_all_types(&cddl, input, &CodegenOptions::default()).unwrap()
   }
 
   #[test]
@@ -1464,16 +2169,130 @@ mod tests {
     assert!(result.contains("Tstr(String)"));
   }
 
+  /// An enum of string literals is a closed set of strings on the wire.
+  ///
+  /// serde's untagged representation cannot express that -- it deserializes a
+  /// unit variant from `null` only -- so these enums get hand-written impls
+  /// that read and write a bare string.
   #[test]
-  fn test_string_literal_choices_serde_rename() {
+  fn test_string_literal_choices_serialize_as_strings() {
     let result = gen(r#"action = "created" / "updated" / "deleted""#);
     assert!(result.contains("pub enum Action"));
-    assert!(result.contains("#[serde(rename = \"created\")]"));
     assert!(result.contains("Created,"));
-    assert!(result.contains("#[serde(rename = \"updated\")]"));
     assert!(result.contains("Updated,"));
-    assert!(result.contains("#[serde(rename = \"deleted\")]"));
     assert!(result.contains("Deleted,"));
+
+    assert!(!result.contains("#[serde(untagged)]"));
+    assert!(result.contains("impl serde::Serialize for Action"));
+    assert!(result.contains("impl<'de> serde::Deserialize<'de> for Action"));
+    assert!(result.contains("Self::Created => \"created\","));
+    assert!(result.contains("\"created\" => Self::Created,"));
+  }
+
+  /// A choice that mixes string literals with other types still needs the
+  /// untagged representation.
+  #[test]
+  fn test_mixed_choices_stay_untagged() {
+    let result = gen(r#"action = "created" / int"#);
+    assert!(result.contains("#[serde(untagged)]"));
+    assert!(result.contains("#[serde(rename = \"created\")]"));
+  }
+
+  #[test]
+  fn test_non_exhaustive_option() {
+    let cddl = cddl_from_str(r#"person = { name: tstr }"#, true).unwrap();
+    let opts = CodegenOptions {
+      non_exhaustive: true,
+      ..Default::default()
+    };
+    let result = generate_all_types(&cddl, r#"person = { name: tstr }"#, &opts).unwrap();
+    assert!(result.contains("#[non_exhaustive]"));
+    assert!(result.contains("pub struct Person"));
+  }
+
+  #[test]
+  fn test_any_type_option() {
+    let src = r#"claim = { payload: any }"#;
+    let cddl = cddl_from_str(src, true).unwrap();
+    let opts = CodegenOptions {
+      any_type: Some("ciborium::Value".to_string()),
+      ..Default::default()
+    };
+    let result = generate_all_types(&cddl, src, &opts).unwrap();
+    assert!(result.contains("ciborium::Value"));
+    assert!(!result.contains("serde_json::Value"));
+  }
+
+  /// A rule-level substitution replaces references to the rule and drops its
+  /// own definition.
+  #[test]
+  fn test_rule_substitution() {
+    let src = r#"
+      label = tstr
+      claim = { name: label }
+    "#;
+    let cddl = cddl_from_str(src, true).unwrap();
+    let mut substitutions = BTreeMap::new();
+    substitutions.insert("label".to_string(), "crate::Label".to_string());
+    let opts = CodegenOptions {
+      substitutions,
+      ..Default::default()
+    };
+    let result = generate_all_types(&cddl, src, &opts).unwrap();
+    assert!(result.contains("pub name: crate::Label"));
+    assert!(!result.contains("pub type Label"));
+  }
+
+  /// A field-level substitution names the rule and the field, and leaves other
+  /// fields of the same type alone.
+  #[test]
+  fn test_field_substitution() {
+    let src = r#"claim = { a: tstr, b: tstr }"#;
+    let cddl = cddl_from_str(src, true).unwrap();
+    let mut substitutions = BTreeMap::new();
+    substitutions.insert("claim.a".to_string(), "crate::Special".to_string());
+    let opts = CodegenOptions {
+      substitutions,
+      ..Default::default()
+    };
+    let result = generate_all_types(&cddl, src, &opts).unwrap();
+    assert!(result.contains("pub a: crate::Special"));
+    assert!(result.contains("pub b: String"));
+  }
+
+  /// Substitution matches whole identifiers, so a rule named `Label` does not
+  /// also rewrite `LabelSet`.
+  #[test]
+  fn test_substitution_matches_whole_identifiers() {
+    let src = r#"
+      label = tstr
+      label-set = [* label]
+      claim = { a: label, b: label-set }
+    "#;
+    let cddl = cddl_from_str(src, true).unwrap();
+    let mut substitutions = BTreeMap::new();
+    substitutions.insert("label".to_string(), "crate::Label".to_string());
+    let opts = CodegenOptions {
+      substitutions,
+      ..Default::default()
+    };
+    let result = generate_all_types(&cddl, src, &opts).unwrap();
+    assert!(result.contains("pub a: crate::Label"));
+    assert!(result.contains("pub b: LabelSet"));
+    assert!(result.contains("Vec<crate::Label>"));
+  }
+
+  #[test]
+  fn test_other_variant_option() {
+    let src = r#"action = "created" / "updated""#;
+    let cddl = cddl_from_str(src, true).unwrap();
+    let opts = CodegenOptions {
+      other_variant: true,
+      ..Default::default()
+    };
+    let result = generate_all_types(&cddl, src, &opts).unwrap();
+    assert!(result.contains("Other(String),"));
+    assert!(result.contains("_ => Self::Other(s),"));
   }
 
   #[test]
@@ -1517,6 +2336,7 @@ mod tests {
       address = { street: tstr, city: tstr }
       person = { name: tstr, home: address }
     "#,
+      &CodegenOptions::default(),
     )
     .unwrap();
     assert!(result.contains("pub struct Person"));
@@ -1539,6 +2359,7 @@ mod tests {
       r#"
       address = { street: tstr, city: tstr }
     "#,
+      &CodegenOptions::default(),
     )
     .unwrap();
     assert!(result.contains("pub struct Addr"));

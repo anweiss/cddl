@@ -1388,7 +1388,7 @@ fn merge<'a>(
         .filter(|(lo, hi)| *lo < c.lo && c.lo < *hi)
         .max_by_key(|(lo, _)| *lo)
         .map(|(_, hi)| *hi);
-      let escapes_container = enclosing_close.map_or(false, |close| close < a.pos.lo);
+      let escapes_container = enclosing_close.is_some_and(|close| close < a.pos.lo);
 
       // Contiguity: the comment must lie in the unbroken run of pure-comment lines
       // immediately above the anchor (parity with the old line-bucket `leading`);

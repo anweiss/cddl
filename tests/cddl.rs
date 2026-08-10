@@ -202,7 +202,9 @@ fn validate_json_any_key_does_not_rescue_cut_value_mismatch() {
       .to_string();
     assert!(
       err.contains(r#"/k: expected type uint, got "s""#),
-      "schema {schema}: expected a value-type error for k, got: {err}"
+      "schema {}: expected a value-type error for k, got: {}",
+      schema,
+      err
     );
   }
 }

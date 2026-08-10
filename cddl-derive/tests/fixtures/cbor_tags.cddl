@@ -1,0 +1,17 @@
+; Regression fixture for https://github.com/anweiss/cddl/issues/639
+; tdate and uri are CBOR tags wrapping a text string, not bare text strings.
+
+tdate-record = {
+  value: tdate,
+}
+
+uri-record = {
+  value: uri,
+}
+
+tagged-record = {
+  created: tdate,
+  link: uri,
+  epoch: time,
+  ? optional-link: uri,
+}

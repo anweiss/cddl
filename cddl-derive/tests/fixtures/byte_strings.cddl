@@ -1,0 +1,17 @@
+; Regression fixture for https://github.com/anweiss/cddl/issues/638
+; bstr must encode as a CBOR byte string (major type 2), not as an array of
+; integers, including when nested inside containers.
+
+record = {
+  payload: bstr,
+  label: tstr,
+}
+
+optional-record = {
+  ? payload: bstr,
+}
+
+nested-record = {
+  chunks: [* bstr],
+  table: { * tstr => bstr },
+}
