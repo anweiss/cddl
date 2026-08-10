@@ -143,3 +143,68 @@ fn validate_json_unexpected_entries_rejected() {
   validate_json_from_str(r#"m = { ? k: uint }"#, r#"{"a": 1}"#, None).unwrap_err();
   validate_json_from_str(r#"m = { ? k: uint }"#, r#"{"k": 1, "a": 2}"#, None).unwrap_err();
 }
+
+/// Regression: `* any => any` (the RFC 8610 extension-point idiom) must
+/// permit unknown extra entries instead of rejecting them as unexpected keys
+#[test]
+fn validate_json_any_key_permits_extra_entries() {
+  // the openness idiom, with and without other members, in both member orders
+  validate_json_from_str(r#"m = { k: uint, * any => any }"#, r#"{"k": 1}"#, None).unwrap();
+  validate_json_from_str(
+    r#"m = { k: uint, * any => any }"#,
+    r#"{"k": 1, "z": 9}"#,
+    None,
+  )
+  .unwrap();
+  validate_json_from_str(
+    r#"m = { * any => any, k: uint }"#,
+    r#"{"k": 1, "z": 9}"#,
+    None,
+  )
+  .unwrap();
+  // colon shortcut form
+  validate_json_from_str(
+    r#"m = { k: uint, * any: any }"#,
+    r#"{"k": 1, "z": 9}"#,
+    None,
+  )
+  .unwrap();
+  validate_json_from_str(r#"m = { * any => any }"#, r#"{}"#, None).unwrap();
+  validate_json_from_str(r#"m = { * any => any }"#, r#"{"z": 9}"#, None).unwrap();
+  // `+` still requires at least one entry
+  validate_json_from_str(r#"m = { + any => any }"#, r#"{}"#, None).unwrap_err();
+  validate_json_from_str(r#"m = { + any => any }"#, r#"{"z": 9}"#, None).unwrap();
+  // an occurrence-less `any` key consumes an entry
+  validate_json_from_str(r#"m = { any => any }"#, r#"{"z": 9}"#, None).unwrap();
+  // an `any` key does not excuse a value-type mismatch
+  validate_json_from_str(
+    r#"m = { k: uint, * any => uint }"#,
+    r#"{"k": 1, "z": "s"}"#,
+    None,
+  )
+  .unwrap_err();
+  // a map without the extension member stays closed
+  validate_json_from_str(r#"m = { k: uint }"#, r#"{"k": 1, "z": 9}"#, None).unwrap_err();
+}
+
+/// A wrong value type under a cut-carrying key (`k: uint` — the colon
+/// shortcut implies a cut, RFC 8610 §3.5.4) must NOT be rescued by a
+/// `* any => any` extension member, and the error must name the value-type
+/// mismatch rather than anything about the `any` branch
+#[test]
+fn validate_json_any_key_does_not_rescue_cut_value_mismatch() {
+  for schema in [
+    r#"m = { k: uint, * any => any }"#,
+    r#"m = { k: uint, any => any }"#,
+  ] {
+    let err = validate_json_from_str(schema, r#"{"k": "s", "z": 9}"#, None)
+      .unwrap_err()
+      .to_string();
+    assert!(
+      err.contains(r#"/k: expected type uint, got "s""#),
+      "schema {}: expected a value-type error for k, got: {}",
+      schema,
+      err
+    );
+  }
+}

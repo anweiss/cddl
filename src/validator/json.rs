@@ -2667,7 +2667,13 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     }
 
     if is_ident_any_type(self.state.cddl, ident) {
-      return Ok(());
+      // As a member key, `any` must consume object entries rather than
+      // short-circuit, otherwise `* any => any` leaves the remaining keys
+      // unvalidated and the closed-map check rejects them. Fall through to
+      // the object handling below
+      if !(self.state.is_member_key && matches!(&self.json, Value::Object(_))) {
+        return Ok(());
+      }
     }
 
     // Special case for array values - check if we're in an array context and this
@@ -2787,11 +2793,21 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         #[cfg(feature = "ast-span")]
         Some(Occur::Optional { .. }) | None => {
           // A type-domain string key (e.g. `tstr => v`) matches any object
-          // entry, since JSON object keys are always strings. `?` permits the
-          // entry to be absent (RFC 8610 §3.2), so a find-miss is only an
-          // error for an occurrence-less entry
-          if self.state.is_member_key && is_ident_string_data_type(self.state.cddl, ident) {
-            if let Some((k, v)) = o.iter().next() {
+          // entry, since JSON object keys are always strings. An `any` key
+          // likewise matches any entry; it consumes the first
+          // not-yet-validated one. `?` permits the entry to be absent
+          // (RFC 8610 §3.2), so a find-miss is only an error for an
+          // occurrence-less entry
+          if self.state.is_member_key
+            && (is_ident_string_data_type(self.state.cddl, ident)
+              || is_ident_any_type(self.state.cddl, ident))
+          {
+            if let Some((k, v)) = o.iter().find(|(k, _)| {
+              !self
+                .validated_keys
+                .as_ref()
+                .is_some_and(|keys| keys.contains(*k))
+            }) {
               self
                 .validated_keys
                 .get_or_insert(vec![k.clone()])
@@ -2823,8 +2839,16 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         }
         #[cfg(not(feature = "ast-span"))]
         Some(Occur::Optional {}) | None => {
-          if self.state.is_member_key && is_ident_string_data_type(self.state.cddl, ident) {
-            if let Some((k, v)) = o.iter().next() {
+          if self.state.is_member_key
+            && (is_ident_string_data_type(self.state.cddl, ident)
+              || is_ident_any_type(self.state.cddl, ident))
+          {
+            if let Some((k, v)) = o.iter().find(|(k, _)| {
+              !self
+                .validated_keys
+                .as_ref()
+                .is_some_and(|keys| keys.contains(*k))
+            }) {
               self
                 .validated_keys
                 .get_or_insert(vec![k.clone()])
@@ -2855,7 +2879,9 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
           self.visit_value(&token::Value::TEXT(ident.ident.into()))
         }
         Some(occur) => {
-          if is_ident_string_data_type(self.state.cddl, ident) {
+          if is_ident_string_data_type(self.state.cddl, ident)
+            || is_ident_any_type(self.state.cddl, ident)
+          {
             let values_to_validate = o
               .iter()
               .filter_map(|(k, v)| match &self.validated_keys {
