@@ -121,7 +121,7 @@
 //! or using Docker:
 //!
 //! ```sh
-//! docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.10.2 validate --cddl reputon.cddl --stdin < reputon.json
+//! docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.10.7 validate --cddl reputon.cddl --stdin < reputon.json
 //! ```
 //!
 //! ## Website
@@ -171,7 +171,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cddl = "0.10.2"
+//! cddl = "0.10.7"
 //! ```
 //!
 //! ### Feature flags
