@@ -1,5 +1,6 @@
 #![cfg(feature = "std")]
 #![cfg(not(feature = "lsp"))]
+#![cfg(not(target_arch = "wasm32"))]
 
 use cddl::{
   ast::{GroupEntry, MemberKey, Rule, Type2},
