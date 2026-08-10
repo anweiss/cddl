@@ -113,7 +113,7 @@ cat reputon.cbor | cddl validate --cddl reputon.cddl --stdin
 or using Docker:
 
 ```sh
-docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.10.4 validate --cddl reputon.cddl --stdin < reputon.json
+docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.10.7 validate --cddl reputon.cddl --stdin < reputon.json
 ```
 
 ## Website
