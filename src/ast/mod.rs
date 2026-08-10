@@ -2805,6 +2805,27 @@ impl fmt::Display for TypeGroupnameEntry<'_> {
 ///           / bareword S ":"
 ///           / value S ":"
 /// ```
+///
+/// # Which variant a literal key produces
+///
+/// A literal key written in the *arrow* form (`0 => uint`) produces
+/// [`MemberKey::Type1`], not [`MemberKey::Value`]. Only the *colon* form
+/// (`0: uint`) produces [`MemberKey::Value`]. This mirrors the grammar above:
+/// the arrow production takes a `type1`, and the colon production takes a
+/// `value`.
+///
+/// The distinction is load-bearing rather than cosmetic:
+///
+/// * `MemberKey::Value` has no `is_cut` field, so it cannot represent the cut
+///   indicator in `0 ^ => uint`.
+/// * `MemberKey::Value` renders with a trailing `:`, so collapsing the arrow
+///   form into it would rewrite `0 => uint` as `0: uint` and break source
+///   round-tripping.
+///
+/// Match on both variants when you only care about the key's value and not the
+/// syntax it was written in.
+///
+/// See <https://github.com/anweiss/cddl/issues/619>.
 #[cfg_attr(target_arch = "wasm32", derive(Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum MemberKey<'a> {

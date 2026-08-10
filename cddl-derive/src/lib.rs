@@ -41,6 +41,28 @@
 //! types and fields. A comment (or several consecutive comment lines) directly
 //! above a rule or field becomes its leading documentation, and a comment
 //! trailing a definition on the same line is appended after it.
+//!
+//! # Required dependencies of generated code
+//!
+//! Generated types always depend on `serde`. Some CDDL constructs pull in
+//! additional crates, and only when the schema actually uses them:
+//!
+//! | CDDL construct | Generated as | Extra dependency |
+//! |---|---|---|
+//! | `bstr` / `bytes` | `Vec<u8>` annotated with `#[serde_as(as = "serde_with::Bytes")]` | `serde_with` (feature `macros`) |
+//! | `tdate`, `time`, `uri`, `b64url`, `b64legacy`, `regexp` | the inner type plus a CBOR tag serde helper | `ciborium` |
+//! | `any` | `serde_json::Value` | `serde_json` |
+//!
+//! `bstr` needs `serde_with` because serde encodes a bare `Vec<u8>` as an array
+//! of integers rather than as a CBOR byte string (major type 2). See
+//! <https://github.com/anweiss/cddl/issues/638>.
+//!
+//! The tagged prelude types are CBOR tags wrapping a simpler value (RFC 8610
+//! Appendix D). The generated struct keeps the inner Rust type and applies the
+//! tag through a serde helper. The helper is format-aware: CBOR gets the tag,
+//! while human-readable formats such as JSON keep the bare value, so the same
+//! type round-trips through both. Deserialization accepts tagged and untagged
+//! input alike. See <https://github.com/anweiss/cddl/issues/639>.
 
 extern crate proc_macro;
 

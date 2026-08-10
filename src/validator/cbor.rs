@@ -2666,16 +2666,17 @@ where
           self.visit_group(group)?;
 
           // A key is unexpected unless some group entry consumed it
-          // (validated_keys of None is an empty consumed set)
-          if self.values_to_validate.is_none() {
-            for k in m.into_iter() {
-              if !self
-                .validated_keys
-                .as_ref()
-                .is_some_and(|keys| keys.contains(&k))
-              {
-                self.add_error(format!("unexpected key {:?}", k));
-              }
+          // (validated_keys of None is an empty consumed set). This runs after
+          // the whole group has been visited so that a key rejected by one
+          // entry can still be claimed by a later one, which is what makes
+          // wildcard entry order irrelevant.
+          for k in m.into_iter() {
+            if !self
+              .validated_keys
+              .as_ref()
+              .is_some_and(|keys| keys.contains(&k))
+            {
+              self.add_error(format!("unexpected key {:?}", k));
             }
           }
 
@@ -3755,210 +3756,235 @@ where
             self.visit_value(&token::Value::TEXT(ident.ident.into()))
           }
           Some(occur) => {
-            let mut errors = Vec::new();
-
             if is_ident_string_data_type(self.state.cddl, ident) {
+              let mut matched_keys = Vec::new();
               let values_to_validate = m
                 .iter()
                 .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Text(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Text(_)) {
+                  if self
+                    .validated_keys
+                    .as_ref()
+                    .is_some_and(|keys| keys.contains(k))
+                  {
+                    return None;
+                  }
+
+                  if matches!(k, Value::Text(_)) {
+                    matched_keys.push(k.clone());
                     Some(v.clone())
                   } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    // Not this entry's key type. Leave the key for another group entry to
+                    // consume; keys that no entry consumes are reported by the map-level
+                    // unexpected-key check once the whole group has been visited.
                     None
                   }
                 })
                 .collect::<Vec<_>>();
+
+              self
+                .validated_keys
+                .get_or_insert_with(Vec::new)
+                .extend(matched_keys);
 
               self.values_to_validate = Some(values_to_validate);
             }
 
             if is_ident_integer_data_type(self.state.cddl, ident) {
-              let mut errors = Vec::new();
+              let mut matched_keys = Vec::new();
               let values_to_validate = m
                 .iter()
                 .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Integer(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Integer(_)) {
+                  if self
+                    .validated_keys
+                    .as_ref()
+                    .is_some_and(|keys| keys.contains(k))
+                  {
+                    return None;
+                  }
+
+                  if matches!(k, Value::Integer(_)) {
+                    matched_keys.push(k.clone());
                     Some(v.clone())
                   } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    // Not this entry's key type. Leave the key for another group entry to
+                    // consume; keys that no entry consumes are reported by the map-level
+                    // unexpected-key check once the whole group has been visited.
                     None
                   }
                 })
                 .collect::<Vec<_>>();
+
+              self
+                .validated_keys
+                .get_or_insert_with(Vec::new)
+                .extend(matched_keys);
 
               self.values_to_validate = Some(values_to_validate);
             }
 
             if is_ident_bool_data_type(self.state.cddl, ident) {
-              let mut errors = Vec::new();
+              let mut matched_keys = Vec::new();
               let values_to_validate = m
                 .iter()
                 .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Bool(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Bool(_)) {
+                  if self
+                    .validated_keys
+                    .as_ref()
+                    .is_some_and(|keys| keys.contains(k))
+                  {
+                    return None;
+                  }
+
+                  if matches!(k, Value::Bool(_)) {
+                    matched_keys.push(k.clone());
                     Some(v.clone())
                   } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    // Not this entry's key type. Leave the key for another group entry to
+                    // consume; keys that no entry consumes are reported by the map-level
+                    // unexpected-key check once the whole group has been visited.
                     None
                   }
                 })
                 .collect::<Vec<_>>();
+
+              self
+                .validated_keys
+                .get_or_insert_with(Vec::new)
+                .extend(matched_keys);
 
               self.values_to_validate = Some(values_to_validate);
             }
 
             if is_ident_byte_string_data_type(self.state.cddl, ident) {
-              let mut errors = Vec::new();
+              let mut matched_keys = Vec::new();
               let values_to_validate = m
                 .iter()
                 .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Bytes(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Bytes(_)) {
+                  if self
+                    .validated_keys
+                    .as_ref()
+                    .is_some_and(|keys| keys.contains(k))
+                  {
+                    return None;
+                  }
+
+                  if matches!(k, Value::Bytes(_)) {
+                    matched_keys.push(k.clone());
                     Some(v.clone())
                   } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    // Not this entry's key type. Leave the key for another group entry to
+                    // consume; keys that no entry consumes are reported by the map-level
+                    // unexpected-key check once the whole group has been visited.
                     None
                   }
                 })
                 .collect::<Vec<_>>();
+
+              self
+                .validated_keys
+                .get_or_insert_with(Vec::new)
+                .extend(matched_keys);
 
               self.values_to_validate = Some(values_to_validate);
             }
 
             if is_ident_null_data_type(self.state.cddl, ident) {
-              let mut errors = Vec::new();
+              let mut matched_keys = Vec::new();
               let values_to_validate = m
                 .iter()
                 .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Null) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Null) {
+                  if self
+                    .validated_keys
+                    .as_ref()
+                    .is_some_and(|keys| keys.contains(k))
+                  {
+                    return None;
+                  }
+
+                  if matches!(k, Value::Null) {
+                    matched_keys.push(k.clone());
                     Some(v.clone())
                   } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    // Not this entry's key type. Leave the key for another group entry to
+                    // consume; keys that no entry consumes are reported by the map-level
+                    // unexpected-key check once the whole group has been visited.
                     None
                   }
                 })
                 .collect::<Vec<_>>();
+
+              self
+                .validated_keys
+                .get_or_insert_with(Vec::new)
+                .extend(matched_keys);
 
               self.values_to_validate = Some(values_to_validate);
             }
 
             if is_ident_float_data_type(self.state.cddl, ident) {
-              let mut errors = Vec::new();
+              let mut matched_keys = Vec::new();
               let values_to_validate = m
                 .iter()
                 .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if matches!(k, Value::Float(_)) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if matches!(k, Value::Float(_)) {
+                  if self
+                    .validated_keys
+                    .as_ref()
+                    .is_some_and(|keys| keys.contains(k))
+                  {
+                    return None;
+                  }
+
+                  if matches!(k, Value::Float(_)) {
+                    matched_keys.push(k.clone());
                     Some(v.clone())
                   } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    // Not this entry's key type. Leave the key for another group entry to
+                    // consume; keys that no entry consumes are reported by the map-level
+                    // unexpected-key check once the whole group has been visited.
                     None
                   }
                 })
                 .collect::<Vec<_>>();
+
+              self
+                .validated_keys
+                .get_or_insert_with(Vec::new)
+                .extend(matched_keys);
 
               self.values_to_validate = Some(values_to_validate);
             }
 
             if is_ident_bignum_data_type(self.state.cddl, ident) {
-              let mut errors = Vec::new();
+              let mut matched_keys = Vec::new();
               let values_to_validate = m
                 .iter()
                 .filter_map(|(k, v)| {
-                  if let Some(keys) = &self.validated_keys {
-                    if !keys.contains(k) {
-                      if is_bignum_value(self.state.cddl, ident, k) {
-                        Some(v.clone())
-                      } else {
-                        errors.push(format!("key of type {} required, got {:?}", ident, k));
-                        None
-                      }
-                    } else {
-                      None
-                    }
-                  } else if is_bignum_value(self.state.cddl, ident, k) {
+                  if self
+                    .validated_keys
+                    .as_ref()
+                    .is_some_and(|keys| keys.contains(k))
+                  {
+                    return None;
+                  }
+
+                  if is_bignum_value(self.state.cddl, ident, k) {
+                    matched_keys.push(k.clone());
                     Some(v.clone())
                   } else {
-                    errors.push(format!("key of type {} required, got {:?}", ident, k));
+                    // Not this entry's key type. Leave the key for another group entry to
+                    // consume; keys that no entry consumes are reported by the map-level
+                    // unexpected-key check once the whole group has been visited.
                     None
                   }
                 })
                 .collect::<Vec<_>>();
 
+              self
+                .validated_keys
+                .get_or_insert_with(Vec::new)
+                .extend(matched_keys);
+
               self.values_to_validate = Some(values_to_validate);
-            }
-
-            // If key validation error occurs, return early before checking occurrences
-            if !errors.is_empty() {
-              for e in errors.into_iter() {
-                self.add_error(e);
-              }
-
-              return Ok(());
             }
 
             #[cfg(feature = "ast-span")]

@@ -59,6 +59,74 @@ pub(crate) struct RustField {
   pub is_optional: bool,
   pub doc: Vec<String>,
   pub is_boxed: bool,
+  /// The CBOR tag this field's CDDL type carries, if any (see
+  /// https://github.com/anweiss/cddl/issues/639).
+  pub tag: Option<TaggedPrelude>,
+}
+
+/// A CDDL prelude type that is defined as a CBOR tag wrapping a simpler value.
+///
+/// RFC 8610 Appendix D defines these as `#6.N(...)`. The generated Rust type is
+/// the *inner* type, with a serde helper that applies the tag on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TaggedPrelude {
+  /// The CDDL identifier, e.g. `tdate`.
+  pub ident: &'static str,
+  /// The CBOR tag number, e.g. 0 for `tdate`.
+  pub tag: u64,
+  /// The Rust type the tag wraps, e.g. `String`.
+  pub inner: &'static str,
+}
+
+/// The prelude types that are CBOR tags, and the tag each one carries.
+///
+/// | CDDL | Definition | Tag |
+/// |---|---|---|
+/// | `tdate` | `#6.0(tstr)` | 0 |
+/// | `time` | `#6.1(number)` | 1 |
+/// | `uri` | `#6.32(tstr)` | 32 |
+/// | `b64url` | `#6.33(tstr)` | 33 |
+/// | `b64legacy` | `#6.34(tstr)` | 34 |
+/// | `regexp` | `#6.35(tstr)` | 35 |
+const TAGGED_PRELUDE_TYPES: &[TaggedPrelude] = &[
+  TaggedPrelude {
+    ident: "tdate",
+    tag: 0,
+    inner: "String",
+  },
+  TaggedPrelude {
+    ident: "time",
+    tag: 1,
+    inner: "i64",
+  },
+  TaggedPrelude {
+    ident: "uri",
+    tag: 32,
+    inner: "String",
+  },
+  TaggedPrelude {
+    ident: "b64url",
+    tag: 33,
+    inner: "String",
+  },
+  TaggedPrelude {
+    ident: "b64legacy",
+    tag: 34,
+    inner: "String",
+  },
+  TaggedPrelude {
+    ident: "regexp",
+    tag: 35,
+    inner: "String",
+  },
+];
+
+/// Look up the CBOR tag for a CDDL prelude identifier.
+pub(crate) fn tagged_prelude(ident: &str) -> Option<TaggedPrelude> {
+  TAGGED_PRELUDE_TYPES
+    .iter()
+    .copied()
+    .find(|t| t.ident == ident)
 }
 
 /// A variant within a generated Rust enum.
@@ -263,7 +331,12 @@ pub(crate) fn generate_single_type(
   match &matching {
     RustTypeDef::Struct { name, fields, doc } => {
       let emit_name = output_name.unwrap_or(name);
-      render_struct(&mut output, emit_name, fields, doc)?;
+      // Scope the helper module to this type, so several single-type macro
+      // invocations can coexist in one file without colliding.
+      let tag_mod = format!("{}_{}", TAG_HELPER_MOD, to_snake_case(emit_name));
+      let tags = collect_tags(std::slice::from_ref(&matching));
+      render_tag_helpers(&mut output, &tag_mod, &tags)?;
+      render_struct(&mut output, emit_name, fields, doc, &tag_mod)?;
     }
     RustTypeDef::TypeAlias { name, target, doc } => {
       let emit_name = output_name.unwrap_or(name);
@@ -732,7 +805,40 @@ fn group_to_fields(
     let gc_fields = group_choice_to_fields(gc, comments)?;
     fields.extend(gc_fields);
   }
+  deduplicate_field_names(&mut fields);
   Ok(fields)
+}
+
+/// Give every field in a struct a unique name.
+///
+/// Wildcard entries (`* tstr => int`) have no key to name themselves after, so
+/// they are all emitted as `entries`. A map may legitimately contain more than
+/// one of them (`{ * tstr => int, * int => tstr }`), which would otherwise emit
+/// the same field twice and fail to compile with "field `entries` specified
+/// more than once". Repeats get a `_1`, `_2`, ... suffix.
+///
+/// When a field's `original_name` matches the name being replaced, the field is
+/// synthetic (there is no corresponding CDDL key) and the `original_name` is
+/// renamed alongside it, so that no misleading `#[serde(rename = "entries")]`
+/// is emitted for the second and subsequent fields.
+///
+/// See https://github.com/anweiss/cddl/issues/640
+fn deduplicate_field_names(fields: &mut [RustField]) {
+  let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+  for field in fields.iter_mut() {
+    let base = field.name.clone();
+    let count = seen.entry(base.clone()).or_insert(0);
+    *count += 1;
+
+    if *count > 1 {
+      let unique = format!("{}_{}", base, *count - 1);
+      if field.original_name == base {
+        field.original_name = unique.clone();
+      }
+      field.name = unique;
+    }
+  }
 }
 
 fn group_choice_to_fields(
@@ -786,6 +892,7 @@ fn group_entry_to_fields(
         is_optional,
         doc,
         is_boxed: false,
+        tag: tagged_prelude(ident),
       }]))
     }
     GroupEntry::InlineGroup { group, occur, .. } => {
@@ -829,6 +936,7 @@ fn value_member_key_to_field(
         is_optional: false,
         doc,
         is_boxed: false,
+        tag: None,
       }));
     }
     None => {
@@ -840,6 +948,7 @@ fn value_member_key_to_field(
         is_optional: false,
         doc,
         is_boxed: false,
+        tag: type_tagged_prelude(&vmke.entry_type),
       }));
     }
     _ => return Ok(None),
@@ -872,7 +981,29 @@ fn value_member_key_to_field(
     is_optional,
     doc,
     is_boxed: false,
+    // Only an unwrapped occurrence carries the tag directly; `* tdate` becomes
+    // Vec<String> and is handled as a follow-up.
+    tag: if is_vec {
+      None
+    } else {
+      type_tagged_prelude(&vmke.entry_type)
+    },
   }))
+}
+
+/// If a CDDL type is exactly one of the tagged prelude identifiers, return it.
+///
+/// Only a bare, single-choice reference is matched. Type choices and types
+/// nested inside containers keep their untagged representation.
+fn type_tagged_prelude(t: &Type<'_>) -> Option<TaggedPrelude> {
+  if t.type_choices.len() != 1 {
+    return None;
+  }
+
+  match &t.type_choices[0].type1.type2 {
+    Type2::Typename { ident, .. } => tagged_prelude(ident.ident),
+    _ => None,
+  }
 }
 
 /// Determine the 1-based source line for a value member key entry, preferring
@@ -1145,8 +1276,160 @@ fn is_prelude_type(ident: &str) -> bool {
   )
 }
 
+/// Name of the module holding the CBOR tag serde helpers for a whole file.
+const TAG_HELPER_MOD: &str = "__cddl_tag_helpers";
+
+/// Emit serde helper modules for each CBOR tag used by the generated types.
+///
+/// CDDL prelude types such as `tdate` and `uri` are CBOR tags wrapping a
+/// simpler value (RFC 8610 Appendix D). The generated struct keeps the inner
+/// Rust type (`String`), and these helpers apply the tag on the wire.
+///
+/// The helpers are format-aware: CBOR (and any other non-human-readable
+/// format) gets the tag, while human-readable formats such as JSON keep the
+/// bare value, so the same type round-trips through both. Deserialization
+/// accepts an untagged value as well as a tagged one.
+///
+/// See https://github.com/anweiss/cddl/issues/639
+fn render_tag_helpers(
+  output: &mut String,
+  mod_name: &str,
+  tags: &[TaggedPrelude],
+) -> Result<(), CodegenError> {
+  if tags.is_empty() {
+    return Ok(());
+  }
+
+  writeln!(output, "#[doc(hidden)]")?;
+  writeln!(output, "#[allow(non_snake_case, unused_imports)]")?;
+  writeln!(output, "pub mod {} {{", mod_name)?;
+
+  for t in tags {
+    let TaggedPrelude { ident, tag, inner } = *t;
+    let module = ident.replace('-', "_");
+
+    writeln!(
+      output,
+      "    /// serde helper for CDDL `{}` (CBOR tag {}).",
+      ident, tag
+    )?;
+    writeln!(output, "    pub mod {} {{", module)?;
+    writeln!(
+      output,
+      "        use serde::{{Deserialize, Deserializer, Serialize, Serializer}};"
+    )?;
+    writeln!(output)?;
+    writeln!(
+      output,
+      "        pub fn serialize<S: Serializer>(v: &{}, s: S) -> Result<S::Ok, S::Error> {{",
+      inner
+    )?;
+    writeln!(output, "            if s.is_human_readable() {{")?;
+    writeln!(output, "                v.serialize(s)")?;
+    writeln!(output, "            }} else {{")?;
+    writeln!(
+      output,
+      "                ciborium::tag::Required::<&{}, {}>(v).serialize(s)",
+      inner, tag
+    )?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }}")?;
+    writeln!(output)?;
+    writeln!(
+      output,
+      "        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<{}, D::Error> {{",
+      inner
+    )?;
+    writeln!(output, "            if d.is_human_readable() {{")?;
+    writeln!(output, "                {}::deserialize(d)", inner)?;
+    writeln!(output, "            }} else {{")?;
+    writeln!(
+      output,
+      "                Ok(ciborium::tag::Accepted::<{}, {}>::deserialize(d)?.0)",
+      inner, tag
+    )?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }}")?;
+    writeln!(output, "    }}")?;
+    writeln!(output)?;
+
+    writeln!(
+      output,
+      "    /// serde helper for an optional CDDL `{}`.",
+      ident
+    )?;
+    writeln!(output, "    pub mod {}_opt {{", module)?;
+    writeln!(
+      output,
+      "        use serde::{{Deserialize, Deserializer, Serializer}};"
+    )?;
+    writeln!(output)?;
+    writeln!(
+      output,
+      "        pub fn serialize<S: Serializer>(v: &Option<{}>, s: S) -> Result<S::Ok, S::Error> {{",
+      inner
+    )?;
+    writeln!(output, "            match v {{")?;
+    writeln!(output, "                Some(v) => {{")?;
+    writeln!(output, "                    if s.is_human_readable() {{")?;
+    writeln!(output, "                        s.serialize_some(v)")?;
+    writeln!(output, "                    }} else {{")?;
+    writeln!(
+      output,
+      "                        s.serialize_some(&ciborium::tag::Required::<&{}, {}>(v))",
+      inner, tag
+    )?;
+    writeln!(output, "                    }}")?;
+    writeln!(output, "                }}")?;
+    writeln!(output, "                None => s.serialize_none(),")?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }}")?;
+    writeln!(output)?;
+    writeln!(output, "        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<{}>, D::Error> {{", inner)?;
+    writeln!(output, "            if d.is_human_readable() {{")?;
+    writeln!(
+      output,
+      "                Option::<{}>::deserialize(d)",
+      inner
+    )?;
+    writeln!(output, "            }} else {{")?;
+    writeln!(
+      output,
+      "                Ok(Option::<ciborium::tag::Accepted<{}, {}>>::deserialize(d)?.map(|a| a.0))",
+      inner, tag
+    )?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }}")?;
+    writeln!(output, "    }}")?;
+  }
+
+  writeln!(output, "}}")?;
+  writeln!(output)?;
+  Ok(())
+}
+
+/// Collect the distinct CBOR tags referenced by a set of generated types.
+fn collect_tags(defs: &[RustTypeDef]) -> Vec<TaggedPrelude> {
+  let mut tags: Vec<TaggedPrelude> = Vec::new();
+  for def in defs {
+    if let RustTypeDef::Struct { fields, .. } = def {
+      for field in fields {
+        if let Some(t) = field.tag {
+          if !tags.iter().any(|existing| existing.ident == t.ident) {
+            tags.push(t);
+          }
+        }
+      }
+    }
+  }
+  tags
+}
+
 fn render_type_defs(defs: &[RustTypeDef]) -> Result<String, CodegenError> {
   let mut output = String::new();
+
+  let tags = collect_tags(defs);
+  render_tag_helpers(&mut output, TAG_HELPER_MOD, &tags)?;
 
   for (idx, def) in defs.iter().enumerate() {
     if idx > 0 {
@@ -1154,7 +1437,7 @@ fn render_type_defs(defs: &[RustTypeDef]) -> Result<String, CodegenError> {
     }
     match def {
       RustTypeDef::Struct { name, fields, doc } => {
-        render_struct(&mut output, name, fields, doc)?;
+        render_struct(&mut output, name, fields, doc, TAG_HELPER_MOD)?;
       }
       RustTypeDef::TypeAlias { name, target, doc } => {
         render_type_alias(&mut output, name, target, doc)?;
@@ -1185,20 +1468,145 @@ fn render_doc(output: &mut String, doc: &[String], indent: &str) -> Result<(), C
   Ok(())
 }
 
+/// Build a `serde_with` conversion spec for a generated field type, or `None`
+/// when the type contains no byte strings.
+///
+/// CDDL `bstr` / `bytes` map to `Vec<u8>`, which serde encodes as an *array of
+/// integers* rather than a CBOR byte string (major type 2). Annotating the
+/// field with `#[serde_as(as = "serde_with::Bytes")]` restores the correct
+/// encoding without changing the public type of the field.
+///
+/// The spec mirrors the shape of the Rust type, replacing each `Vec<u8>` with
+/// `serde_with::Bytes` and every other position with `_`, so byte strings
+/// nested inside containers are handled too:
+///
+/// | Rust type | Spec |
+/// |---|---|
+/// | `Vec<u8>` | `serde_with::Bytes` |
+/// | `Vec<Vec<u8>>` | `Vec<serde_with::Bytes>` |
+/// | `std::collections::HashMap<String, Vec<u8>>` | `std::collections::HashMap<_, serde_with::Bytes>` |
+/// | `String` | `None` |
+///
+/// See https://github.com/anweiss/cddl/issues/638
+fn serde_as_spec(rust_type: &str) -> Option<String> {
+  let rust_type = rust_type.trim();
+
+  if rust_type == "Vec<u8>" {
+    return Some("serde_with::Bytes".to_string());
+  }
+
+  let open = rust_type.find('<')?;
+  if !rust_type.ends_with('>') {
+    return None;
+  }
+
+  let base = &rust_type[..open];
+  let args = split_generic_args(&rust_type[open + 1..rust_type.len() - 1]);
+
+  let specs = args
+    .iter()
+    .map(|arg| serde_as_spec(arg))
+    .collect::<Vec<_>>();
+
+  if specs.iter().all(Option::is_none) {
+    return None;
+  }
+
+  let rendered = specs
+    .into_iter()
+    .map(|spec| spec.unwrap_or_else(|| "_".to_string()))
+    .collect::<Vec<_>>()
+    .join(", ");
+
+  Some(format!("{}<{}>", base, rendered))
+}
+
+/// Split the inside of a generic argument list on top-level commas, ignoring
+/// commas nested inside further generic arguments.
+fn split_generic_args(args: &str) -> Vec<String> {
+  let mut out = Vec::new();
+  let mut depth = 0usize;
+  let mut current = String::new();
+
+  for c in args.chars() {
+    match c {
+      '<' => {
+        depth += 1;
+        current.push(c);
+      }
+      '>' => {
+        depth = depth.saturating_sub(1);
+        current.push(c);
+      }
+      ',' if depth == 0 => {
+        out.push(current.trim().to_string());
+        current.clear();
+      }
+      _ => current.push(c),
+    }
+  }
+
+  if !current.trim().is_empty() {
+    out.push(current.trim().to_string());
+  }
+
+  out
+}
+
 fn render_struct(
   output: &mut String,
   name: &str,
   fields: &[RustField],
   doc: &[String],
+  tag_mod: &str,
 ) -> Result<(), CodegenError> {
   render_doc(output, doc, "")?;
+
+  // Byte-string fields need serde_with to encode as CBOR major type 2 rather
+  // than as an array of integers. The attribute must precede the derive.
+  let field_specs = fields
+    .iter()
+    .map(|field| serde_as_spec(&field.rust_type))
+    .collect::<Vec<_>>();
+
+  if field_specs.iter().any(Option::is_some) {
+    writeln!(output, "#[serde_with::serde_as]")?;
+  }
+
   writeln!(
     output,
     "#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]"
   )?;
   writeln!(output, "pub struct {} {{", name)?;
-  for field in fields {
+  for (field, spec) in fields.iter().zip(field_specs) {
     render_doc(output, &field.doc, "    ")?;
+    if let Some(spec) = spec {
+      let spec = if field.is_boxed {
+        format!("Box<{}>", spec)
+      } else {
+        spec
+      };
+      let spec = if field.is_optional {
+        format!("Option<{}>", spec)
+      } else {
+        spec
+      };
+      writeln!(output, "    #[serde_as(as = \"{}\")]", spec)?;
+    }
+    if let Some(t) = field.tag {
+      let module = t.ident.replace('-', "_");
+      if field.is_optional {
+        // serde drops the implicit Option default once a custom
+        // deserializer is attached, so an absent key would otherwise fail.
+        writeln!(
+          output,
+          "    #[serde(default, with = \"{}::{}_opt\")]",
+          tag_mod, module
+        )?;
+      } else {
+        writeln!(output, "    #[serde(with = \"{}::{}\")]", tag_mod, module)?;
+      }
+    }
     if field.name != field.original_name {
       writeln!(output, "    #[serde(rename = \"{}\")]", field.original_name)?;
     }
