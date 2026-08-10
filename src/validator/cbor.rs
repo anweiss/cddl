@@ -999,23 +999,15 @@ where
         self.add_error(format!("expected type bstr, got {:?}", self.cbor));
         return Ok(());
       } else if is_ident_uint_data_type(self.state.cddl, target_ident) {
-        // For uint, we need to check that it's an integer and it's non-negative
-        if !matches!(self.cbor, Value::Integer(_)) {
-          self.add_error(format!("expected type uint, got {:?}", self.cbor));
-          return Ok(());
-        } else if let Value::Integer(i) = &self.cbor {
-          if i128::from(*i) < 0 {
+        // For uint, we need to check that it's an integer and it's non-negative,
+        // then fall through so the control operator is enforced
+        match &self.cbor {
+          Value::Integer(i) if i128::from(*i) >= 0 => {}
+          _ => {
             self.add_error(format!("expected type uint, got {:?}", self.cbor));
             return Ok(());
           }
         }
-        // For bitfield, fall through to the match ctrl block
-        #[cfg(feature = "freezer")]
-        if ctrl != ControlOperator::BITFIELD {
-          return Ok(());
-        }
-        #[cfg(not(feature = "freezer"))]
-        return Ok(());
       } else if is_ident_integer_data_type(self.state.cddl, target_ident)
         && !matches!(self.cbor, Value::Integer(_))
       {
