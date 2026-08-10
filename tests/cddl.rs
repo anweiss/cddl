@@ -116,3 +116,30 @@ hex_test = bstr .hex "test"
     );
   }
 }
+
+/// Regression: type-domain string keys (`tstr => v`) in objects were rejected
+/// even when present, and `?`-marked ones rejected the spec-valid empty object
+#[test]
+fn validate_json_optional_type_domain_object_key() {
+  // `?` permits the entry to be absent (RFC 8610 §3.2)
+  validate_json_from_str(r#"m = { ? tstr => uint }"#, r#"{}"#, None).unwrap();
+  // present entry validates
+  validate_json_from_str(r#"m = { ? tstr => uint }"#, r#"{"a": 1}"#, None).unwrap();
+  validate_json_from_str(r#"m = { tstr => uint }"#, r#"{"a": 1}"#, None).unwrap();
+  // present entry with a bad value type still fails
+  validate_json_from_str(r#"m = { ? tstr => uint }"#, r#"{"a": "b"}"#, None).unwrap_err();
+  // an occurrence-less entry still requires a match
+  validate_json_from_str(r#"m = { tstr => uint }"#, r#"{}"#, None).unwrap_err();
+  // a bare string type against an object still fails (not treated as a key)
+  validate_json_from_str(r#"m = tstr"#, r#"{"a": 1}"#, None).unwrap_err();
+}
+
+/// Regression: an object entry unmatched by any group member must be rejected
+/// as an unexpected key, even when no group member consumed any key at all
+#[test]
+fn validate_json_unexpected_entries_rejected() {
+  validate_json_from_str(r#"m = { ? k: uint }"#, r#"{}"#, None).unwrap();
+  validate_json_from_str(r#"m = { ? k: uint }"#, r#"{"k": 1}"#, None).unwrap();
+  validate_json_from_str(r#"m = { ? k: uint }"#, r#"{"a": 1}"#, None).unwrap_err();
+  validate_json_from_str(r#"m = { ? k: uint }"#, r#"{"k": 1, "a": 2}"#, None).unwrap_err();
+}

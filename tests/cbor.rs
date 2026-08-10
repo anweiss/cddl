@@ -666,3 +666,56 @@ fn validate_decfrac_and_bigfloat() -> Result<(), Box<dyn Error>> {
 
   Ok(())
 }
+
+#[test]
+fn validate_optional_type_domain_map_entry_absent() -> Result<(), Box<dyn Error>> {
+  // `?` permits the entry to be absent (RFC 8610 §3.2), so the empty map is
+  // valid against a map whose sole entry is a `?`-marked type-domain entry
+  let empty_map = b"\xa0";
+  let one_entry = b"\xa1\x61\x61\x01"; // {"a": 1}
+
+  validate_cbor_from_slice(r#"m = { ? tstr => uint }"#, empty_map, None)?;
+  // present entry still validates
+  validate_cbor_from_slice(r#"m = { ? tstr => uint }"#, one_entry, None)?;
+  // present entry with a bad value type still fails
+  let bad_value = b"\xa1\x61\x61\x61\x62"; // {"a": "b"}
+  assert!(validate_cbor_from_slice(r#"m = { ? tstr => uint }"#, bad_value, None).is_err());
+
+  // other key types take the same code path
+  validate_cbor_from_slice(r#"m = { ? int => uint }"#, empty_map, None)?;
+  validate_cbor_from_slice(r#"m = { ? bool => uint }"#, empty_map, None)?;
+  validate_cbor_from_slice(r#"m = { ? bytes => uint }"#, empty_map, None)?;
+
+  // an occurrence-less entry must still require a match
+  assert!(validate_cbor_from_slice(r#"m = { tstr => uint }"#, empty_map, None).is_err());
+
+  // absent optional entry alongside other entries that do consume the keys
+  let int_entry = b"\xa1\x01\x02"; // {1: 2}
+  let text_and_int = b"\xa2\x61\x61\x01\x01\x02"; // {"a": 1, 1: 2}
+  validate_cbor_from_slice(r#"m = { ? tstr => uint, int => int }"#, int_entry, None)?;
+  validate_cbor_from_slice(r#"m = { ? tstr => uint, ? int => int }"#, int_entry, None)?;
+  validate_cbor_from_slice(r#"m = { ? tstr => uint, int => int }"#, text_and_int, None)?;
+  validate_cbor_from_slice(r#"m = { ? tstr => uint, ? int => int }"#, empty_map, None)?;
+
+  Ok(())
+}
+
+#[test]
+fn validate_map_unexpected_entries_rejected() -> Result<(), Box<dyn Error>> {
+  // A map entry unmatched by any group member is an unexpected key, including
+  // when the group's only member is `?`-marked and absent
+  let empty_map = b"\xa0";
+  let k1 = b"\xa1\x61\x6b\x01"; // {"k": 1}
+  let a1 = b"\xa1\x61\x61\x01"; // {"a": 1}
+  let k1_a2 = b"\xa2\x61\x6b\x01\x61\x61\x02"; // {"k": 1, "a": 2}
+  let int_entry = b"\xa1\x01\x02"; // {1: 2}
+
+  validate_cbor_from_slice(r#"m = { ? k: uint }"#, empty_map, None)?;
+  validate_cbor_from_slice(r#"m = { ? k: uint }"#, k1, None)?;
+  assert!(validate_cbor_from_slice(r#"m = { ? k: uint }"#, a1, None).is_err());
+  assert!(validate_cbor_from_slice(r#"m = { ? k: uint }"#, k1_a2, None).is_err());
+  // absent optional type-domain entry does not excuse a key of another domain
+  assert!(validate_cbor_from_slice(r#"m = { ? tstr => uint }"#, int_entry, None).is_err());
+
+  Ok(())
+}

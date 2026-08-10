@@ -2665,13 +2665,16 @@ where
 
           self.visit_group(group)?;
 
-          // If extra map entries are detected, return validation error
+          // A key is unexpected unless some group entry consumed it
+          // (validated_keys of None is an empty consumed set)
           if self.values_to_validate.is_none() {
             for k in m.into_iter() {
-              if let Some(keys) = &self.validated_keys {
-                if !keys.contains(&k) {
-                  self.add_error(format!("unexpected key {:?}", k));
-                }
+              if !self
+                .validated_keys
+                .as_ref()
+                .is_some_and(|keys| keys.contains(&k))
+              {
+                self.add_error(format!("unexpected key {:?}", k));
               }
             }
           }
@@ -3514,6 +3517,9 @@ where
       }
       Value::Array(_) => self.validate_array_items(&ArrayItemToken::Identifier(ident)),
       Value::Map(m) => {
+        // `?` permits the entry to be absent (RFC 8610 §3.2), so a failure to
+        // find a matching entry key is not an error for an optional entry
+        let entry_optional = matches!(&self.state.occurrence, Some(Occur::Optional { .. }));
         match &self.state.occurrence {
           #[cfg(feature = "ast-span")]
           Some(Occur::Optional { .. }) | None => {
@@ -3525,7 +3531,7 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.state.data_location, "/{:?}", v);
-              } else {
+              } else if !entry_optional {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
@@ -3539,7 +3545,7 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.state.data_location, "/{:?}", v);
-              } else {
+              } else if !entry_optional {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
@@ -3553,7 +3559,7 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.state.data_location, "/{:?}", v);
-              } else {
+              } else if !entry_optional {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
@@ -3567,7 +3573,7 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.state.data_location, "/{:?}", v);
-              } else {
+              } else if !entry_optional {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
@@ -3581,7 +3587,7 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.state.data_location, "/{:?}", v);
-              } else {
+              } else if !entry_optional {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
@@ -3595,7 +3601,7 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 let _ = write!(self.state.data_location, "/{:?}", v);
-              } else {
+              } else if !entry_optional {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
@@ -3641,7 +3647,7 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 self.state.data_location.push_str(&format!("/{}", value));
-              } else {
+              } else if !entry_optional {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
 
@@ -3656,7 +3662,7 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 self.state.data_location.push_str(&format!("/{}", value));
-              } else {
+              } else if !entry_optional {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
@@ -3670,7 +3676,7 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 self.state.data_location.push_str(&format!("/{}", value));
-              } else {
+              } else if !entry_optional {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
@@ -3684,7 +3690,7 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 self.state.data_location.push_str(&format!("/{}", value));
-              } else {
+              } else if !entry_optional {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
@@ -3698,7 +3704,7 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 self.state.data_location.push_str(&format!("/{}", value));
-              } else {
+              } else if !entry_optional {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
@@ -3712,7 +3718,7 @@ where
                   .push(k.clone());
                 self.object_value = Some(v.clone());
                 self.state.data_location.push_str(&format!("/{}", value));
-              } else {
+              } else if !entry_optional {
                 self.add_error(format!("map requires entry key of type {}", ident));
               }
               return Ok(());
@@ -4347,6 +4353,15 @@ where
         cv.visit_rule(rule)?;
 
         self.errors.append(&mut cv.errors);
+
+        // The child validated the same map in the same group context, so keys
+        // it consumed count toward this validator's unexpected-key check
+        if let Some(keys) = cv.validated_keys {
+          self
+            .validated_keys
+            .get_or_insert_with(Vec::new)
+            .extend(keys);
+        }
 
         return Ok(());
       }
