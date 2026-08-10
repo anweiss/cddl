@@ -329,6 +329,22 @@ fn validate_cbor_map() {
 }
 
 #[test]
+fn validate_cbor_map_float_key() {
+  // Regression test: float-typed map keys used to match null keys instead
+  // of floats in the find-based key-matching paths.
+  const MAP_FLOAT_KEY: &[u8] = b"\xa1\xf9\x3e\x00\x01"; // {1.5: 1}
+  const MAP_NULL_KEY: &[u8] = b"\xa1\xf6\x01"; // {null: 1}
+
+  let cddl_input = r#"m = { float => uint }"#;
+  validate_cbor_from_slice(cddl_input, MAP_FLOAT_KEY, None).unwrap();
+  validate_cbor_from_slice(cddl_input, MAP_NULL_KEY, None).unwrap_err();
+
+  let cddl_input = r#"m = { ? float => uint }"#;
+  validate_cbor_from_slice(cddl_input, MAP_FLOAT_KEY, None).unwrap();
+  validate_cbor_from_slice(cddl_input, MAP_NULL_KEY, None).unwrap_err();
+}
+
+#[test]
 fn verify_large_tag_values() -> Result<(), Box<dyn Error>> {
   let input = r#"
         thing = #6.8386104246373017956(tstr) / #6.42(tstr)

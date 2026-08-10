@@ -3594,7 +3594,7 @@ where
             }
 
             if is_ident_float_data_type(self.state.cddl, ident) && !self.validating_value {
-              if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
+              if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Float(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
@@ -3711,7 +3711,7 @@ where
             }
 
             if is_ident_float_data_type(self.state.cddl, ident) && !self.validating_value {
-              if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
+              if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Float(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
@@ -4157,7 +4157,7 @@ where
             }
 
             if is_ident_float_data_type(self.state.cddl, ident) && !self.validating_value {
-              if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Null)) {
+              if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Float(_))) {
                 self
                   .validated_keys
                   .get_or_insert(vec![k.clone()])
