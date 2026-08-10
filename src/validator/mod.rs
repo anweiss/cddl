@@ -89,9 +89,9 @@ pub struct GenericRule<'a> {
 ///    methods like `visit_identifier` and `visit_value`.
 /// 4. Implement the `Validator` trait for your entry point.
 ///
-/// The shared state handles occurrence tracking, group entry indexing,
-/// generic rule management, control operator tracking, feature flags,
-/// and recursion detection — all of which are identical across validators.
+/// The shared state handles occurrence tracking, generic rule management,
+/// control operator tracking, feature flags, and recursion detection — all
+/// of which are identical across validators.
 #[derive(Clone)]
 pub struct ValidationState<'a> {
   /// Reference to the CDDL AST being validated against
@@ -104,8 +104,6 @@ pub struct ValidationState<'a> {
   pub data_location: String,
   /// Occurrence indicator detected in current state of AST evaluation
   pub occurrence: Option<Occur>,
-  /// Current group entry index detected in current state of AST evaluation
-  pub group_entry_idx: Option<usize>,
   /// Is member key detected in current state of AST evaluation
   pub is_member_key: bool,
   /// Is a cut detected in current state of AST evaluation
@@ -132,10 +130,6 @@ pub struct ValidationState<'a> {
   pub advance_to_next_entry: bool,
   /// Is validation checking for map equality
   pub is_ctrl_map_equality: bool,
-  /// Entry counts for array/map validation
-  pub entry_counts: Option<Vec<EntryCount>>,
-  /// Collect valid array indices when entries are type choices
-  pub valid_array_items: Option<Vec<usize>>,
   /// Is colon shortcut present in member key
   pub is_colon_shortcut_present: bool,
   /// Is the current rule the root rule
@@ -170,7 +164,6 @@ impl<'a> ValidationState<'a> {
       cddl_location: String::new(),
       data_location: String::new(),
       occurrence: None,
-      group_entry_idx: None,
       is_member_key: false,
       is_cut_present: false,
       eval_generic_rule: None,
@@ -182,8 +175,6 @@ impl<'a> ValidationState<'a> {
       type_group_name_entry: None,
       advance_to_next_entry: false,
       is_ctrl_map_equality: false,
-      entry_counts: None,
-      valid_array_items: None,
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
@@ -203,7 +194,6 @@ impl<'a> ValidationState<'a> {
       cddl_location: String::new(),
       data_location: String::new(),
       occurrence: None,
-      group_entry_idx: None,
       is_member_key: false,
       is_cut_present: false,
       eval_generic_rule: None,
@@ -215,8 +205,6 @@ impl<'a> ValidationState<'a> {
       type_group_name_entry: None,
       advance_to_next_entry: false,
       is_ctrl_map_equality: false,
-      entry_counts: None,
-      valid_array_items: None,
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
@@ -233,7 +221,6 @@ impl<'a> ValidationState<'a> {
       cddl_location: String::new(),
       data_location: String::new(),
       occurrence: None,
-      group_entry_idx: None,
       is_member_key: false,
       is_cut_present: false,
       eval_generic_rule: None,
@@ -245,8 +232,6 @@ impl<'a> ValidationState<'a> {
       type_group_name_entry: None,
       advance_to_next_entry: false,
       is_ctrl_map_equality: false,
-      entry_counts: None,
-      valid_array_items: None,
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
@@ -266,7 +251,6 @@ impl<'a> ValidationState<'a> {
       cddl_location: String::new(),
       data_location: String::new(),
       occurrence: None,
-      group_entry_idx: None,
       is_member_key: false,
       is_cut_present: false,
       eval_generic_rule: None,
@@ -278,8 +262,6 @@ impl<'a> ValidationState<'a> {
       type_group_name_entry: None,
       advance_to_next_entry: false,
       is_ctrl_map_equality: false,
-      entry_counts: None,
-      valid_array_items: None,
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
@@ -1105,137 +1087,11 @@ pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
-/// Validate array length and \[non\]homogeneity based on a given optional
-/// occurrence indicator. The first bool in the returned tuple indicates whether
-/// or not a subsequent validation of the array's elements shouch be homogenous.
-/// The second bool in the returned tuple indicates whether or not an empty
-/// array is allowed during a subsequent validation of the array's elements.
-pub fn validate_array_occurrence<T>(
-  occurrence: Option<&Occur>,
-  entry_counts: Option<&[EntryCount]>,
-  values: &[T],
-) -> std::result::Result<(bool, bool), Vec<String>> {
-  let mut iter_items = false;
-  #[cfg(feature = "ast-span")]
-  let allow_empty_array = matches!(occurrence, Some(Occur::Optional { .. }));
-  #[cfg(not(feature = "ast-span"))]
-  let allow_empty_array = matches!(occurrence, Some(Occur::Optional {}));
-
-  let mut errors = Vec::new();
-
-  match occurrence {
-    #[cfg(feature = "ast-span")]
-    Some(Occur::ZeroOrMore { .. }) => iter_items = true,
-    #[cfg(not(feature = "ast-span"))]
-    Some(Occur::ZeroOrMore {}) => iter_items = true,
-    #[cfg(feature = "ast-span")]
-    Some(Occur::OneOrMore { .. }) => {
-      if values.is_empty() {
-        errors.push("array must have at least one item".to_string());
-      } else {
-        iter_items = true;
-      }
-    }
-    #[cfg(not(feature = "ast-span"))]
-    Some(Occur::OneOrMore {}) => {
-      if values.is_empty() {
-        errors.push("array must have at least one item".to_string());
-      } else {
-        iter_items = true;
-      }
-    }
-    Some(Occur::Exact { lower, upper, .. }) => {
-      if let Some(lower) = lower {
-        if let Some(upper) = upper {
-          if lower == upper && values.len() != *lower {
-            errors.push(format!("array must have exactly {} items", lower));
-          }
-          if values.len() < *lower || values.len() > *upper {
-            errors.push(format!(
-              "array must have between {} and {} items",
-              lower, upper
-            ));
-          }
-        } else if values.len() < *lower {
-          errors.push(format!("array must have at least {} items", lower));
-        }
-      } else if let Some(upper) = upper {
-        if values.len() > *upper {
-          errors.push(format!("array must have not more than {} items", upper));
-        }
-      }
-
-      iter_items = true;
-    }
-    #[cfg(feature = "ast-span")]
-    Some(Occur::Optional { .. }) => {
-      if values.len() > 1 {
-        errors.push("array must have 0 or 1 items".to_string());
-      }
-
-      iter_items = false;
-    }
-    #[cfg(not(feature = "ast-span"))]
-    Some(Occur::Optional {}) => {
-      if values.len() > 1 {
-        errors.push("array must have 0 or 1 items".to_string());
-      }
-
-      iter_items = false;
-    }
-    None => {
-      if values.is_empty() {
-        errors.push("array must have exactly one item".to_string());
-      } else {
-        iter_items = false;
-      }
-    }
-  }
-
-  if !iter_items && !allow_empty_array {
-    if let Some(entry_counts) = entry_counts {
-      let len = values.len();
-      if !validate_entry_count(entry_counts, len) {
-        // For multiple entry counts (multiple group choices), only report one error
-        // instead of errors for each mismatched count
-        if entry_counts.len() > 1 {
-          let counts: Vec<String> = entry_counts.iter().map(|ec| ec.count.to_string()).collect();
-          errors.push(format!(
-            "expected array with length matching one of [{}], got {}",
-            counts.join(", "),
-            len
-          ));
-        } else {
-          for ec in entry_counts.iter() {
-            if let Some(occur) = &ec.entry_occurrence {
-              errors.push(format!(
-                "expected array with length per occurrence {}",
-                occur,
-              ));
-            } else {
-              errors.push(format!(
-                "expected array with length {}, got {}",
-                ec.count, len
-              ));
-            }
-          }
-        }
-      }
-    }
-  }
-
-  if !errors.is_empty() {
-    return Err(errors);
-  }
-
-  Ok((iter_items, allow_empty_array))
-}
-
 /// Retrieve number of group entries from a group. This is currently only used
-/// for determining map equality/inequality and for validating the number of
-/// entries in arrays, but may be useful in other contexts. The occurrence is
-/// only captured for the second element of the CDDL array to avoid ambiguity in
-/// non-homogenous array definitions
+/// for determining map equality/inequality (the `.eq`/`.ne` control
+/// operators), but may be useful in other contexts. The occurrence is only
+/// captured for the second entry of the group choice to avoid ambiguity in
+/// non-homogenous definitions
 pub fn entry_counts_from_group<'a, 'b: 'a>(
   cddl: &'a CDDL,
   group: &'b Group<'a>,
@@ -1370,6 +1226,42 @@ pub struct EntryCount {
   pub count: u64,
   /// Optional occurrence
   pub entry_occurrence: Option<Occur>,
+}
+
+/// Shared bookkeeping for the array sequence matcher (RFC 8610 Appendix A
+/// PEG semantics), generic over the validator's error type
+pub struct ArraySeqCtx<'a, E> {
+  /// Farthest element index at which a leaf validation failed, together with
+  /// the child validator errors produced there. Used for error reporting once
+  /// the overall match fails.
+  pub best_failure: Option<(usize, Vec<E>)>,
+  /// (group rule name, cursor) pairs currently being expanded; guards against
+  /// recursive group rule references that would loop without consuming
+  /// elements
+  pub active_group_refs: Vec<(&'a str, usize)>,
+}
+
+impl<E> Default for ArraySeqCtx<'_, E> {
+  fn default() -> Self {
+    ArraySeqCtx {
+      best_failure: None,
+      active_group_refs: Vec::new(),
+    }
+  }
+}
+
+impl<E> ArraySeqCtx<'_, E> {
+  /// Record a leaf failure at the given element index, keeping only the
+  /// farthest one
+  pub fn note_failure(&mut self, idx: usize, errors: Vec<E>) {
+    if self
+      .best_failure
+      .as_ref()
+      .is_none_or(|(best, _)| idx >= *best)
+    {
+      self.best_failure = Some((idx, errors));
+    }
+  }
 }
 
 /// Regex needs to be formatted in a certain way so it can be parsed. See
