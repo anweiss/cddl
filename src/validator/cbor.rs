@@ -1299,16 +1299,22 @@ where
             return Ok(());
           }
         }
-      } else if is_ident_integer_data_type(self.state.cddl, target_ident)
-        && !matches!(self.cbor, Value::Integer(_))
-      {
-        self.add_error(format!("expected type int, got {:?}", self.cbor));
-        return Ok(());
-      } else if is_ident_float_data_type(self.state.cddl, target_ident)
-        && !matches!(self.cbor, Value::Float(_))
-      {
-        self.add_error(format!("expected type float, got {:?}", self.cbor));
-        return Ok(());
+      } else if let Some(kind) = ident_numeric_kind(self.state.cddl, target_ident) {
+        let matches_kind = match kind {
+          NumericKind::Int => matches!(self.cbor, Value::Integer(_)),
+          NumericKind::Float => matches!(self.cbor, Value::Float(_)),
+          // e.g. number = int / float, which admits both
+          NumericKind::Both => matches!(self.cbor, Value::Integer(_) | Value::Float(_)),
+        };
+        if !matches_kind {
+          let expected = match kind {
+            NumericKind::Int => "int".to_string(),
+            NumericKind::Float => "float".to_string(),
+            NumericKind::Both => target_ident.to_string(),
+          };
+          self.add_error(format!("expected type {}, got {:?}", expected, self.cbor));
+          return Ok(());
+        }
       } else if is_ident_bool_data_type(self.state.cddl, target_ident)
         && !matches!(self.cbor, Value::Bool(_))
       {
@@ -3399,7 +3405,7 @@ where
           }
 
           Ok(())
-        } else if is_ident_integer_data_type(self.state.cddl, ident) {
+        } else if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_int) {
           Ok(())
         } else if is_ident_time_data_type(self.state.cddl, ident) {
           if let chrono::LocalResult::None =
@@ -3419,7 +3425,7 @@ where
         }
       }
       Value::Float(f) => {
-        if is_ident_float_data_type(self.state.cddl, ident) {
+        if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_float) {
           Ok(())
         } else if is_ident_time_data_type(self.state.cddl, ident) {
           if let chrono::LocalResult::None = Utc.timestamp_millis_opt((*f * 1000f64) as i64) {
@@ -3538,7 +3544,9 @@ where
               return Ok(());
             }
 
-            if is_ident_integer_data_type(self.state.cddl, ident) && !self.validating_value {
+            if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_int)
+              && !self.validating_value
+            {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Integer(_))) {
                 self
                   .validated_keys
@@ -3594,7 +3602,11 @@ where
               return Ok(());
             }
 
-            if is_ident_float_data_type(self.state.cddl, ident) && !self.validating_value {
+            if matches!(
+              ident_numeric_kind(self.state.cddl, ident),
+              Some(NumericKind::Float)
+            ) && !self.validating_value
+            {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Float(_))) {
                 self
                   .validated_keys
@@ -3655,7 +3667,9 @@ where
               return Ok(());
             }
 
-            if is_ident_integer_data_type(self.state.cddl, ident) && !self.validating_value {
+            if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_int)
+              && !self.validating_value
+            {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Integer(_))) {
                 self
                   .validated_keys
@@ -3711,7 +3725,11 @@ where
               return Ok(());
             }
 
-            if is_ident_float_data_type(self.state.cddl, ident) && !self.validating_value {
+            if matches!(
+              ident_numeric_kind(self.state.cddl, ident),
+              Some(NumericKind::Float)
+            ) && !self.validating_value
+            {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Float(_))) {
                 self
                   .validated_keys
@@ -3789,7 +3807,12 @@ where
               self.values_to_validate = Some(values_to_validate);
             }
 
-            if is_ident_integer_data_type(self.state.cddl, ident) {
+            if let Some(kind) =
+              ident_numeric_kind(self.state.cddl, ident).filter(|k| k.admits_int())
+            {
+              // `number` admits both, so this block also claims float keys; the
+              // float-only block below then leaves them alone.
+              let admits_float = kind.admits_float();
               let mut matched_keys = Vec::new();
               let values_to_validate = m
                 .iter()
@@ -3802,7 +3825,9 @@ where
                     return None;
                   }
 
-                  if matches!(k, Value::Integer(_)) {
+                  if matches!(k, Value::Integer(_))
+                    || (admits_float && matches!(k, Value::Float(_)))
+                  {
                     matched_keys.push(k.clone());
                     Some(v.clone())
                   } else {
@@ -3921,7 +3946,13 @@ where
               self.values_to_validate = Some(values_to_validate);
             }
 
-            if is_ident_float_data_type(self.state.cddl, ident) {
+            // `number` is already fully handled by the integer block above; matching
+            // float-only here keeps this block from firing again and overwriting
+            // the values it collected.
+            if matches!(
+              ident_numeric_kind(self.state.cddl, ident),
+              Some(NumericKind::Float)
+            ) {
               let mut matched_keys = Vec::new();
               let values_to_validate = m
                 .iter()
@@ -4118,7 +4149,9 @@ where
               return Ok(());
             }
 
-            if is_ident_integer_data_type(self.state.cddl, ident) && !self.validating_value {
+            if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_int)
+              && !self.validating_value
+            {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Integer(_))) {
                 self
                   .validated_keys
@@ -4182,7 +4215,11 @@ where
               return Ok(());
             }
 
-            if is_ident_float_data_type(self.state.cddl, ident) && !self.validating_value {
+            if matches!(
+              ident_numeric_kind(self.state.cddl, ident),
+              Some(NumericKind::Float)
+            ) && !self.validating_value
+            {
               if let Some((k, v)) = m.iter().find(|(k, _)| matches!(k, Value::Float(_))) {
                 self
                   .validated_keys
@@ -5337,6 +5374,26 @@ mod tests {
     let cddl = cddl_from_str("start = any", true).unwrap();
     let cv = CBORValidator::new(&cddl, cbor, None);
     assert_eq!(cv.extract_cbor(), Value::Float(1.23));
+  }
+
+  #[test]
+  fn validate_number_accepts_float_and_int() -> std::result::Result<(), Box<dyn std::error::Error>>
+  {
+    for (cddl, cbor) in [
+      ("x = number", Value::Float(2.0)),
+      ("x = number", Value::Integer(5.into())),
+      ("x = number .eq 5", Value::Integer(5.into())),
+      ("x = number .ge 1.0", Value::Float(2.5)),
+    ] {
+      let cddl_ast = cddl_from_str(cddl, true)?;
+      #[cfg(feature = "additional-controls")]
+      let mut cv = CBORValidator::new(&cddl_ast, cbor.clone(), None);
+      #[cfg(not(feature = "additional-controls"))]
+      let mut cv = CBORValidator::new(&cddl_ast, cbor.clone());
+      assert!(cv.validate().is_ok(), "{} should accept {:?}", cddl, cbor);
+    }
+
+    Ok(())
   }
 
   #[test]
