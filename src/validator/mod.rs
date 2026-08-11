@@ -1028,6 +1028,46 @@ pub fn ident_numeric_kind(cddl: &CDDL, ident: &Identifier) -> Option<NumericKind
   }
 }
 
+/// Whether a floating-point value is in the value domain of an identifier.
+///
+/// RFC 8610 Section 3.3 defines the float prelude names by IEEE 754
+/// representability, independently of the width used to encode a CBOR value.
+/// All IEEE binary formats represent infinities and NaNs; finite values must
+/// round-trip exactly through the precision named by the identifier.
+pub(crate) fn ident_matches_float_value(cddl: &CDDL, ident: &Identifier, value: f64) -> bool {
+  if let Some(matches) = primitive_float_ident_matches_value(ident, value) {
+    return matches;
+  }
+
+  if matches!(lookup_ident(ident.ident), Token::NUMBER) {
+    return true;
+  }
+
+  cddl.rules.iter().any(|r| match r {
+    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
+      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
+        ident_matches_float_value(cddl, ident, value)
+      } else {
+        false
+      }
+    }),
+    _ => false,
+  })
+}
+
+/// If `ident` is a primitive float prelude name, return whether `value` is in
+/// its domain. `None` leaves non-primitive member-key forms to their existing
+/// handling; general aliased and choice member keys require separate rule
+/// resolution.
+pub(crate) fn primitive_float_ident_matches_value(ident: &Identifier, value: f64) -> Option<bool> {
+  match lookup_ident(ident.ident) {
+    Token::FLOAT16 => Some(value.is_nan() || half::f16::from_f64(value).to_f64() == value),
+    Token::FLOAT32 | Token::FLOAT1632 => Some(value.is_nan() || f64::from(value as f32) == value),
+    Token::FLOAT | Token::FLOAT64 | Token::FLOAT3264 => Some(true),
+    _ => None,
+  }
+}
+
 /// Is the given identifier associated with an integer data type
 #[deprecated(
   note = "not mutually exclusive with is_ident_float_data_type (`number` matches both); use ident_numeric_kind and handle NumericKind::Both"

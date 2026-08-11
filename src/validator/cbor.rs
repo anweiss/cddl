@@ -1737,9 +1737,17 @@ where
       } else if let Some(kind) = ident_numeric_kind(self.state.cddl, target_ident) {
         let matches_kind = match kind {
           NumericKind::Int => matches!(self.cbor, Value::Integer(_)),
-          NumericKind::Float => matches!(self.cbor, Value::Float(_)),
+          NumericKind::Float => matches!(
+            &self.cbor,
+            Value::Float(value)
+              if ident_matches_float_value(self.state.cddl, target_ident, *value)
+          ),
           // e.g. number = int / float, which admits both
-          NumericKind::Both => matches!(self.cbor, Value::Integer(_) | Value::Float(_)),
+          NumericKind::Both => match &self.cbor {
+            Value::Integer(_) => true,
+            Value::Float(value) => ident_matches_float_value(self.state.cddl, target_ident, *value),
+            _ => false,
+          },
         };
         if !matches_kind {
           let expected = match kind {
@@ -3854,7 +3862,9 @@ where
         }
       }
       Value::Float(f) => {
-        if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_float) {
+        if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_float)
+          && ident_matches_float_value(self.state.cddl, ident, *f)
+        {
           Ok(())
         } else if is_ident_time_data_type(self.state.cddl, ident) {
           if let chrono::LocalResult::None = Utc.timestamp_millis_opt((*f * 1000f64) as i64) {
@@ -4896,7 +4906,9 @@ fn numeric_ident_matches_cbor_value(cddl: &CDDL, ident: &Identifier, v: &Value) 
         true
       }
     }
-    Value::Float(_) => kind.admits_float(),
+    Value::Float(value) => {
+      kind.admits_float() && primitive_float_ident_matches_value(ident, *value).unwrap_or(true)
+    }
     _ => false,
   }
 }
