@@ -717,6 +717,402 @@ fn validate_optional_type_domain_map_entry_absent() -> Result<(), Box<dyn Error>
 }
 
 #[test]
+fn validate_single_type_domain_map_entries_do_not_reuse_consumed_keys() {
+  let name_only = b"\xa1\x64name\x63bob"; // {"name": "bob"}
+  let name_and_a = b"\xa2\x64name\x63bob\x61a\x05"; // {"name": "bob", "a": 5}
+  let name_and_bad_a = b"\xa2\x64name\x63bob\x61a\x63bad"; // {"name": "bob", "a": "bad"}
+
+  let optional = r#"m = { name: tstr, ? tstr => uint }"#;
+  validate_cbor_from_slice(optional, name_only, None).unwrap();
+  validate_cbor_from_slice(optional, name_and_a, None).unwrap();
+  validate_cbor_from_slice(optional, name_and_bad_a, None).unwrap_err();
+
+  // Occurrence-less entries use the same finder, but must still require one
+  // unconsumed matching key.
+  let required = r#"m = { name: tstr, tstr => uint }"#;
+  validate_cbor_from_slice(required, name_and_a, None).unwrap();
+  validate_cbor_from_slice(required, name_only, None).unwrap_err();
+}
+
+#[test]
+fn validate_optional_type_domain_miss_skips_composite_value() {
+  let empty_map = b"\xa0";
+  let name_only = b"\xa1\x64name\x63bob"; // {"name": "bob"}
+
+  // A missing optional member skips the entire entry. Its value type must not
+  // be evaluated against the enclosing map or a previously consumed value.
+  validate_cbor_from_slice(r#"m = { ? tstr => [uint] }"#, empty_map, None).unwrap();
+  validate_cbor_from_slice(r#"m = { ? any => [uint] }"#, empty_map, None).unwrap();
+  validate_cbor_from_slice(r#"m = { name: tstr, ? tstr => [uint] }"#, name_only, None).unwrap();
+}
+
+#[test]
+fn validate_optional_primitive_domains_do_not_reuse_consumed_keys() {
+  let cases = [
+    (
+      r#"m = { ? tstr => tstr, ? tstr => uint }"#,
+      Value::Text("k".into()),
+    ),
+    (
+      r#"m = { ? int => tstr, ? int => uint }"#,
+      Value::Integer(1.into()),
+    ),
+    (
+      r#"m = { ? bool => tstr, ? bool => uint }"#,
+      Value::Bool(true),
+    ),
+    (r#"m = { ? null => tstr, ? null => uint }"#, Value::Null),
+    (
+      r#"m = { ? bytes => tstr, ? bytes => uint }"#,
+      Value::Bytes(vec![1]),
+    ),
+    (
+      r#"m = { ? float => tstr, ? float => uint }"#,
+      Value::Float(1.5),
+    ),
+    (
+      r#"m = { ? biguint => tstr, ? biguint => uint }"#,
+      Value::Tag(2, Box::new(Value::Bytes(vec![1]))),
+    ),
+    (
+      r#"m = { ? bignint => tstr, ? bignint => uint }"#,
+      Value::Tag(3, Box::new(Value::Bytes(vec![1]))),
+    ),
+  ];
+
+  for (schema, key) in cases {
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(
+      &Value::Map(vec![(key, Value::Text("owned".into()))]),
+      &mut bytes,
+    )
+    .unwrap();
+
+    let result = validate_cbor_from_slice(schema, &bytes, None);
+    assert!(result.is_ok(), "schema {} failed: {:?}", schema, result);
+  }
+
+  // Bignum finders must treat a genuine optional miss like every other
+  // primitive domain; occurrence-less bignum entries remain required.
+  let empty_map = b"\xa0";
+  validate_cbor_from_slice(r#"m = { ? biguint => uint }"#, empty_map, None).unwrap();
+  validate_cbor_from_slice(r#"m = { ? bignint => uint }"#, empty_map, None).unwrap();
+  validate_cbor_from_slice(r#"m = { biguint => uint }"#, empty_map, None).unwrap_err();
+  validate_cbor_from_slice(r#"m = { bignint => uint }"#, empty_map, None).unwrap_err();
+}
+
+#[test]
+fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
+  let schema = r#"m = { ? tstr => tstr, ? tstr => uint }"#;
+
+  // This duplicate-key map is invalid CBOR. Even without uniform
+  // validity-boundary rejection, the second pair must remain uncovered rather
+  // than disappear behind the first claim.
+  let duplicate_text_keys = b"\xa2\x61a\x61x\x61a\x63bad";
+  let error = validate_cbor_from_slice(schema, duplicate_text_keys, None).unwrap_err();
+  assert!(error.to_string().contains("unexpected key"));
+
+  // A claim for the first text pair must not make an equivalent second pair
+  // count as consumed when the following optional member has a disjoint key
+  // domain.
+  let error = validate_cbor_from_slice(
+    r#"m = { ? tstr => tstr, ? int => uint }"#,
+    duplicate_text_keys,
+    None,
+  )
+  .unwrap_err();
+  assert!(error.to_string().contains("unexpected key"));
+
+  let error = validate_cbor_from_slice(
+    r#"m = { a: tstr, ? tstr => uint }"#,
+    duplicate_text_keys,
+    None,
+  )
+  .unwrap_err();
+  assert!(error.to_string().contains("unexpected key"));
+
+  // A literal lookup must allocate a still-unconsumed equivalent pair rather
+  // than adding a second claim for the first pair. Otherwise the final
+  // optional entry can mistake two claims for consumption of both pairs and
+  // silently hide this invalid byte-string value.
+  let duplicate_after_prior_claim = b"\xa2\x61a\x61x\x61a\x41z";
+  let error = validate_cbor_from_slice(
+    r#"m = { ? tstr => tstr, a: tstr, ? tstr => uint }"#,
+    duplicate_after_prior_claim,
+    None,
+  )
+  .unwrap_err();
+  assert!(error.to_string().contains("expected type tstr"));
+
+  // A generic child that validates the same map must propagate both claim
+  // ledgers. Otherwise the following literal reclaims the child's first pair
+  // and the final primitive member mistakes two claims for both physical
+  // pairs, reproducing the branch-worsened false accept.
+  let error = validate_cbor_from_slice(
+    "g<K, V> = (K => V)\nm = { g<tstr, tstr>, a: tstr, ? tstr => uint }",
+    duplicate_after_prior_claim,
+    None,
+  )
+  .unwrap_err();
+  assert!(error.to_string().contains("expected type tstr"));
+
+  // Once the only pair has been claimed, a later optional literal is absent.
+  // A later required literal cannot reuse that pair.
+  let one_claimed_literal = b"\xa1\x61a\x61x";
+  validate_cbor_from_slice(
+    r#"m = { ? tstr => tstr, ? a: uint }"#,
+    one_claimed_literal,
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { ? tstr => tstr, a: uint }"#,
+    one_claimed_literal,
+    None,
+  )
+  .unwrap_err();
+
+  // RFC 8949 treats +0 and -0 as equivalent map keys, so this is also an
+  // invalid duplicate-key map. The second pair must remain uncovered.
+  let equivalent_float_keys = b"\xa2\xf9\x00\x00\x61x\xf9\x80\x00\x63bad";
+  let error = validate_cbor_from_slice(
+    r#"m = { ? float => tstr, ? float => uint }"#,
+    equivalent_float_keys,
+    None,
+  )
+  .unwrap_err();
+  assert!(error.to_string().contains("unexpected key"));
+
+  // A generic child validates the same physical map. If it independently
+  // selects the parent's pair, the outward merge must count that physical
+  // index once. Otherwise the invalid second pair appears consumed.
+  let error = validate_cbor_from_slice(
+    "g<K, V> = (K => V)\nm = { ? tstr => tstr, g<tstr, tstr>, ? tstr => uint }",
+    duplicate_after_prior_claim,
+    None,
+  )
+  .unwrap_err();
+  assert!(error.to_string().contains("unexpected key"), "{}", error);
+}
+
+#[test]
+fn validate_repeating_map_entries_are_greedy() {
+  let one_text_uint = b"\xa1\x61a\x01"; // {"a": 1}
+
+  // RFC 8610 Appendix A makes occurrences greedy and possessive. The first
+  // entry consumes the only pair, so the required entry cannot match it.
+  validate_cbor_from_slice(r#"m = { * any => any, tstr => uint }"#, one_text_uint, None)
+    .unwrap_err();
+  validate_cbor_from_slice(r#"m = { tstr => uint, * any => any }"#, one_text_uint, None).unwrap();
+
+  // A positive lower bound also consumes the pair and therefore leaves no
+  // distinct pair for the required entry.
+  validate_cbor_from_slice(
+    r#"m = { + any => uint, tstr => uint }"#,
+    one_text_uint,
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { 1*1 any => uint, tstr => uint }"#,
+    one_text_uint,
+    None,
+  )
+  .unwrap_err();
+
+  // The same wildcard-first allocation remains valid when the direct member
+  // is optional.
+  validate_cbor_from_slice(
+    r#"m = { * any => any, ? tstr => uint }"#,
+    one_text_uint,
+    None,
+  )
+  .unwrap();
+}
+
+#[test]
+fn validate_single_map_entry_claims_are_transactional_across_group_choices() {
+  let one_text_value = b"\xa1\x61a\x61x"; // {"a": "x"}
+
+  // A failed alternative must not leave a claim that hides the pair from the
+  // next alternative or from final closed-map accounting.
+  let error = validate_cbor_from_slice(
+    r#"m = { tstr => uint // ? tstr => bytes }"#,
+    one_text_value,
+    None,
+  )
+  .unwrap_err();
+  assert!(error.to_string().contains("unexpected key"));
+
+  // The second alternative can validly own the pair after the first
+  // alternative fails its value validation.
+  validate_cbor_from_slice(
+    r#"m = { tstr => uint // tstr => tstr }"#,
+    one_text_value,
+    None,
+  )
+  .unwrap();
+}
+
+#[test]
+fn validate_optional_map_entries_are_greedy() {
+  let cases = [
+    (
+      r#"m = { ? tstr => any, tstr => any }"#,
+      Value::Text("a".into()),
+    ),
+    (
+      r#"m = { ? int => any, int => any }"#,
+      Value::Integer(1.into()),
+    ),
+    (r#"m = { ? bool => any, bool => any }"#, Value::Bool(true)),
+    (r#"m = { ? null => any, null => any }"#, Value::Null),
+    (
+      r#"m = { ? bytes => any, bytes => any }"#,
+      Value::Bytes(vec![1]),
+    ),
+    (r#"m = { ? float => any, float => any }"#, Value::Float(1.5)),
+    (
+      r#"m = { ? biguint => any, biguint => any }"#,
+      Value::Tag(2, Box::new(Value::Bytes(vec![1]))),
+    ),
+    (
+      r#"m = { ? bignint => any, bignint => any }"#,
+      Value::Tag(3, Box::new(Value::Bytes(vec![1]))),
+    ),
+  ];
+
+  for (schema, key) in cases {
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(
+      &Value::Map(vec![(key, Value::Integer(1.into()))]),
+      &mut bytes,
+    )
+    .unwrap();
+
+    let result = validate_cbor_from_slice(schema, &bytes, None);
+    assert!(result.is_err(), "schema {} unexpectedly matched", schema);
+  }
+
+  let text_pair = b"\xa1\x61a\x01"; // {"a": 1}
+  validate_cbor_from_slice(r#"m = { ? tstr => any, a: any }"#, text_pair, None).unwrap_err();
+  validate_cbor_from_slice(r#"m = { ? a: any, tstr => any }"#, text_pair, None).unwrap_err();
+}
+
+#[test]
+fn validate_optional_arrow_value_failure_can_fall_through() {
+  let text_value = b"\xa1\x61a\x61x"; // {"a": "x"}
+
+  // RFC 8610 §3.5.4: without a cut, failure of the optional entry's value
+  // type leaves the pair available to a later matching entry.
+  validate_cbor_from_slice(r#"m = { ? tstr => uint, tstr => tstr }"#, text_value, None).unwrap();
+
+  // The colon shortcut includes a cut. Once `a` matches, the bad `uint`
+  // value commits the failure and the later type-domain member cannot rescue
+  // the pair.
+  validate_cbor_from_slice(r#"m = { ? a: uint, tstr => tstr }"#, text_value, None).unwrap_err();
+
+  // This is RFC 8610 §3.5.4's extensible-map example. The arrow form permits
+  // the wildcard to cover a known key whose optional value type does not
+  // match; the colon form locks the pair and rejects it.
+  let extension_value = b"\xa1\x6coptional-key\x68nonsense";
+  validate_cbor_from_slice(
+    r#"m = { ? "optional-key" => int, * tstr => any }"#,
+    extension_value,
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { ? "optional-key": int, * tstr => any }"#,
+    extension_value,
+    None,
+  )
+  .unwrap_err();
+}
+
+#[test]
+fn validate_optional_single_map_entry_assignment_considers_values() {
+  let schema = r#"m = { ? tstr => any, tstr => tstr }"#;
+
+  // Both distinct keys are in the same domain. The order-stable allocation
+  // policy assigns the text-valued pair to the required member and the
+  // integer-valued pair to the optional member in either CBOR encoding.
+  let text_value_first = b"\xa2\x61a\x61x\x61b\x01";
+  let integer_value_first = b"\xa2\x61a\x01\x61b\x61x";
+
+  validate_cbor_from_slice(schema, text_value_first, None).unwrap();
+  validate_cbor_from_slice(schema, integer_value_first, None).unwrap();
+
+  // Occurrence-less direct members use the same policy. The broad first
+  // member can move to the integer-valued pair so the second member owns the
+  // text-valued pair.
+  validate_cbor_from_slice(
+    r#"m = { tstr => any, tstr => tstr }"#,
+    text_value_first,
+    None,
+  )
+  .unwrap();
+
+  // A valid allocation can require a cycle longer than one exchange:
+  // required takes pair 0, optional 1 moves to pair 1, and optional 2 moves
+  // to pair 2. A pairwise-only repair cannot find this assignment.
+  let three_way_schema = r#"m = { ? tstr => (int / bool), ? tstr => any, tstr => int }"#;
+  let three_way_assignment = b"\xa3\x61a\x01\x61b\xf5\x61c\x41\x00";
+  validate_cbor_from_slice(three_way_schema, three_way_assignment, None).unwrap();
+
+  // Generic group children allocate the same physical map. Their direct
+  // claims must retain the member schema needed by the parent assignment.
+  let generic_schema = "g<K, V> = (? K => V)\nm = { g<tstr, 1..2>, tstr => 1, * any => any }";
+  let required_value_first = b"\xa2\x61a\x01\x61b\x02";
+  let generic_value_first = b"\xa2\x61b\x02\x61a\x01";
+  validate_cbor_from_slice(generic_schema, required_value_first, None).unwrap();
+  validate_cbor_from_slice(generic_schema, generic_value_first, None).unwrap();
+
+  // Independent generic children initially select pair 0. The outward merge
+  // must relocate the second child to a compatible free pair instead of
+  // dropping its member/schema vertex as a duplicate parent claim.
+  let two_generic_schema = "g<K, V> = (? K => V)\n\
+    h<K, V> = (? K => V)\n\
+    m = { g<tstr, any>, h<tstr, any> }";
+  let two_generic_pairs = b"\xa2\x61a\x01\x61b\x02";
+  validate_cbor_from_slice(two_generic_schema, two_generic_pairs, None).unwrap();
+
+  // The colliding child need not accept the placeholder itself. Matching can
+  // move the earlier broad child to that pair and retain pair 0 for the
+  // narrower child.
+  let two_generic_swap_schema = "g<K, V> = (? K => V)\n\
+    h<K, V> = (? K => V)\n\
+    m = { g<tstr, any>, h<tstr, int> }";
+  let integer_then_bool = b"\xa2\x61a\x01\x61b\xf5";
+  validate_cbor_from_slice(two_generic_swap_schema, integer_then_bool, None).unwrap();
+
+  // Two uses of the same generic rule have distinct instantiations. The
+  // second claim must not replay with the first use's `any` argument.
+  let repeated_generic_schema = "g<K, V> = (? K => V)\n\
+    m = { g<tstr, any>, g<tstr, int> }";
+  let two_bool_values = b"\xa2\x61a\xf5\x61b\xf4";
+  validate_cbor_from_slice(repeated_generic_schema, two_bool_values, None).unwrap_err();
+
+  let repeated_identical_schema = "g<K, V> = (? K => V)\n\
+    m = { g<tstr, any>, g<tstr, any> }";
+  validate_cbor_from_slice(repeated_identical_schema, two_bool_values, None).unwrap();
+
+  let two_generic_cycle_schema = "g<K, V> = (? K => V)\n\
+    h<K, V> = (? K => V)\n\
+    m = { g<tstr, (int / bool)>, h<tstr, any>, tstr => int }";
+  validate_cbor_from_slice(two_generic_cycle_schema, three_way_assignment, None).unwrap();
+
+  // A failed assignment search is read-only. The next group alternative must
+  // start from its checkpoint and can claim both pairs with a wildcard.
+  validate_cbor_from_slice(
+    r#"m = { (? tstr => tstr, tstr => bytes) // * any => any }"#,
+    text_value_first,
+    None,
+  )
+  .unwrap();
+}
+
+#[test]
 fn validate_map_unexpected_entries_rejected() -> Result<(), Box<dyn Error>> {
   // A map entry unmatched by any group member is an unexpected key, including
   // when the group's only member is `?`-marked and absent
@@ -746,10 +1142,12 @@ fn validate_map_any_key_permits_extra_entries() -> Result<(), Box<dyn Error>> {
   let k1_ztext = b"\xa2\x61\x6b\x01\x61\x7a\x61\x61"; // {"k": 1, "z": "a"}
   let int_keyed = b"\xa2\x01\x02\x03\x04"; // {1: 2, 3: 4}
 
-  // the openness idiom, with and without other members, in both member orders
+  // Put the specific member before the extension point. RFC 8610 Appendix A
+  // makes the leading wildcard form greedy; Section 3.5.3 identifies that
+  // general-before-specific overlap as pathological.
   validate_cbor_from_slice(r#"m = { k: uint, * any => any }"#, k1, None)?;
   validate_cbor_from_slice(r#"m = { k: uint, * any => any }"#, k1_z9, None)?;
-  validate_cbor_from_slice(r#"m = { * any => any, k: uint }"#, k1_z9, None)?;
+  assert!(validate_cbor_from_slice(r#"m = { * any => any, k: uint }"#, k1_z9, None).is_err());
   // colon shortcut form
   validate_cbor_from_slice(r#"m = { k: uint, * any: any }"#, k1_z9, None)?;
   validate_cbor_from_slice(r#"m = { * any => any }"#, empty_map, None)?;
