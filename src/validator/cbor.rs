@@ -275,12 +275,12 @@ impl<'a> CBORValidator<'a> {
   /// occurrence. A missing optional entry skips its value type entirely.
   fn claim_single_map_entry(
     &mut self,
-    entry: Option<(usize, Value)>,
+    entry: Option<(usize, Value, Value)>,
     entry_optional: bool,
   ) -> bool {
-    if let Some((entry_index, value)) = entry {
+    if let Some((entry_index, key, value)) = entry {
       self.claim_single_map_key(entry_index);
-      let _ = write!(self.state.data_location, "/{:?}", value);
+      let _ = write!(self.state.data_location, "/{:?}", key);
       self.object_value = Some(value);
       true
     } else {
@@ -516,9 +516,16 @@ impl<'a> CBORValidator<'a> {
     &self,
     entries: &[(Value, Value)],
     predicate: impl Fn(&Value) -> bool,
-  ) -> Option<(usize, Value)> {
+  ) -> Option<(usize, Value, Value)> {
+    // Map-entry lookup is meaningful only while visiting a member key. An
+    // ordinary map value cannot match a primitive type by exposing a key in
+    // that primitive's domain (RFC 8610 Appendix C).
+    if !self.state.is_member_key {
+      return None;
+    }
+
     Self::find_unconsumed_map_entry(entries, &self.claimed_map_entries, predicate)
-      .map(|(entry_index, (_, value))| (entry_index, value.clone()))
+      .map(|(entry_index, (key, value))| (entry_index, key.clone(), value.clone()))
   }
 
   fn collect_unconsumed_map_entries_matching(
@@ -590,7 +597,11 @@ impl<'a> CBORValidator<'a> {
     &self,
     entries: &[(Value, Value)],
     ident: &Identifier<'a>,
-  ) -> Option<Option<(usize, Value)>> {
+  ) -> Option<Option<(usize, Value, Value)>> {
+    if !self.state.is_member_key {
+      return None;
+    }
+
     let entry = if is_ident_any_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |_| true)
     } else if is_ident_string_data_type(self.state.cddl, ident) {
@@ -4128,6 +4139,23 @@ where
         (None, None, None)
       };
 
+    if entry.member_key.is_some()
+      && map_entry_candidates.is_none()
+      && object_value.is_none()
+      && entry
+        .occur
+        .as_ref()
+        .is_some_and(|occur| matches!(occur.occur, Occur::Optional { .. }))
+    {
+      // A member-key visitor that found no available pair takes the optional
+      // entry's zero-width path. Do this before the entry value is visited so
+      // the value cannot be evaluated against the enclosing map merely to
+      // discover the miss (RFC 8610 §3.2).
+      self.state.occurrence = None;
+      self.state.advance_to_next_entry = true;
+      return Ok(());
+    }
+
     if let Some(candidates) = map_entry_candidates {
       debug_assert!(object_value.is_none());
       let max_matches = Self::repeating_member_upper_bound(entry).unwrap_or(usize::MAX);
@@ -4756,6 +4784,14 @@ where
         None
       }
       Value::Map(o) => {
+        if !self.state.is_member_key {
+          // Literal lookup is a member-key operation. Use Debug formatting
+          // here because byte-string tokens contain decoded bytes, which are
+          // not necessarily UTF-8 display text.
+          self.add_error(format!("expected {:?}, got {:?}", value, self.cbor));
+          return Ok(());
+        }
+
         if self.state.is_cut_present {
           self.cut_value = Some(Type1::from(value.clone()));
         }
@@ -4770,7 +4806,7 @@ where
         let entries = o.clone();
 
         #[cfg(feature = "ast-span")]
-        if let Some((entry_index, v)) =
+        if let Some((entry_index, _, v)) =
           self.find_single_map_entry_matching(&entries, |candidate| candidate == &k)
         {
           self.claim_single_map_key(entry_index);
@@ -4800,7 +4836,7 @@ where
         }
 
         #[cfg(not(feature = "ast-span"))]
-        if let Some((entry_index, v)) =
+        if let Some((entry_index, _, v)) =
           self.find_single_map_entry_matching(&entries, |candidate| candidate == &k)
         {
           self.claim_single_map_key(entry_index);

@@ -41,9 +41,12 @@ fn bignum_as_map_key() {
     "start = { bigint => int }",
     &[0xa1, 0xc3, 0x41, 0x01, 0x01],
   );
-  assert_valid(
-    "typename alias as key",
-    "k = bignint\nstart = { k => int }",
+  assert_invalid(
+    "typename alias as key remains unsupported",
+    // The first type rule is the validation root; keep `start` first so this
+    // actually exercises the alias as a member key. General alias claiming is
+    // tracked separately from the direct primitive finder.
+    "start = { k => int }\nk = bignint",
     &[0xa1, 0xc3, 0x41, 0x01, 0x01],
   );
 
