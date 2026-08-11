@@ -160,7 +160,7 @@ pub struct CBORValidator<'a> {
   pub state: super::ValidationState<'a>,
   cbor: Value,
   errors: Vec<ValidationError>,
-  // cbor object value hoisted from previous state of AST evaluation
+  // Direct map-member value relayed from key validation to its group entry.
   object_value: Option<Value>,
   // Str value of cut detected in current state of AST evaluation
   cut_value: Option<Type1<'a>>,
@@ -176,8 +176,10 @@ pub struct CBORValidator<'a> {
   // Isolated compatibility probes must not recursively start another map
   // assignment search when the tested pair does not match.
   probing_single_entry_assignment: bool,
-  // Collect map entry values that have yet to be validated
-  values_to_validate: Option<Vec<Value>>,
+  // Candidate batch produced while visiting one repeating map member's key.
+  // `visit_value_member_key_entry` immediately takes this relay field so the
+  // physical indices and values cannot affect a later group entry.
+  map_entry_candidates: Option<Vec<(usize, Value)>>,
   // Whether or not the validator is validating a map entry value
   validating_value: bool,
   range_upper: Option<usize>,
@@ -198,7 +200,7 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
-      values_to_validate: None,
+      map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
     }
@@ -218,7 +220,7 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
-      values_to_validate: None,
+      map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
     }
@@ -238,7 +240,7 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
-      values_to_validate: None,
+      map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
     }
@@ -258,7 +260,7 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
-      values_to_validate: None,
+      map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
     }
@@ -524,7 +526,7 @@ impl<'a> CBORValidator<'a> {
     claimed_entries: &[usize],
     max_matches: Option<usize>,
     predicate: impl Fn(&Value) -> bool,
-  ) -> (Vec<usize>, Vec<Value>) {
+  ) -> Vec<(usize, Value)> {
     entries
       .iter()
       .enumerate()
@@ -533,7 +535,7 @@ impl<'a> CBORValidator<'a> {
           .then(|| (entry_index, value.clone()))
       })
       .take(max_matches.unwrap_or(usize::MAX))
-      .unzip()
+      .collect()
   }
 
   /// Find the first unconsumed map entry for a primitive identifier used as a
@@ -4032,13 +4034,9 @@ where
               None
             };
 
-            if let Some((matched_entries, values_to_validate)) = matches {
-              self.claimed_map_entries.extend(matched_entries);
-              self.values_to_validate = Some(values_to_validate);
-            }
-
-            if let Some(values_to_validate) = &self.values_to_validate {
-              let count = values_to_validate.len();
+            if let Some(map_entry_candidates) = matches {
+              let count = map_entry_candidates.len();
+              self.map_entry_candidates = Some(map_entry_candidates);
               match occur {
                 Occur::ZeroOrMore { .. } => {}
                 Occur::OneOrMore { .. } if count == 0 => self.add_error(format!(
@@ -4110,6 +4108,14 @@ where
     &mut self,
     entry: &ValueMemberKeyEntry<'a>,
   ) -> visitor::Result<Error<T>> {
+    // These fields only relay a key visitor's result to this group entry.
+    // Clear unexpected leftovers defensively in release builds while making
+    // the entry-lifetime invariant visible during development.
+    debug_assert!(self.map_entry_candidates.is_none());
+    debug_assert!(self.object_value.is_none());
+    self.map_entry_candidates = None;
+    self.object_value = None;
+
     if let Some(occur) = &entry.occur {
       self.visit_occurrence(occur)?;
     }
@@ -4118,33 +4124,47 @@ where
     let current_location = self.state.data_location.clone();
     self.active_single_entry_claim = None;
 
-    let mut entry_claim_position = None;
-    if let Some(mk) = &entry.member_key {
-      let error_count = self.errors.len();
-      self.state.is_member_key = true;
-      self.visit_memberkey(mk)?;
-      self.state.is_member_key = false;
-      entry_claim_position = self.active_single_entry_claim.take();
+    let (entry_claim_position, map_entry_candidates, object_value) =
+      if let Some(mk) = &entry.member_key {
+        let error_count = self.errors.len();
+        self.state.is_member_key = true;
+        let member_key_result = self.visit_memberkey(mk);
+        self.state.is_member_key = false;
+        let entry_claim_position = self.active_single_entry_claim.take();
 
-      // Move to next entry if member key validation fails
-      if self.errors.len() != error_count {
-        self.state.advance_to_next_entry = true;
-        return Ok(());
-      }
-    }
+        // Consume both possible key-to-value relay paths before any exit,
+        // including a visitor error or a key/occurrence validation failure.
+        let map_entry_candidates = self.map_entry_candidates.take();
+        let object_value = self.object_value.take();
+        member_key_result?;
 
-    if let Some(values) = &self.values_to_validate {
-      for v in values.iter() {
+        if let Some(candidates) = &map_entry_candidates {
+          self
+            .claimed_map_entries
+            .extend(candidates.iter().map(|(entry_index, _)| *entry_index));
+        }
+
+        // Move to next entry if member key validation fails
+        if self.errors.len() != error_count {
+          self.state.advance_to_next_entry = true;
+          return Ok(());
+        }
+
+        (entry_claim_position, map_entry_candidates, object_value)
+      } else {
+        (None, None, None)
+      };
+
+    if let Some(candidates) = map_entry_candidates {
+      debug_assert!(object_value.is_none());
+      for (_, value) in candidates {
         #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-        let mut cv = CBORValidator::new(
-          self.state.cddl,
-          v.clone(),
-          self.state.enabled_features.clone(),
-        );
+        let mut cv =
+          CBORValidator::new(self.state.cddl, value, self.state.enabled_features.clone());
         #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-        let mut cv = CBORValidator::new(self.state.cddl, v.clone(), self.state.enabled_features);
+        let mut cv = CBORValidator::new(self.state.cddl, value, self.state.enabled_features);
         #[cfg(not(feature = "additional-controls"))]
-        let mut cv = CBORValidator::new(self.state.cddl, v.clone());
+        let mut cv = CBORValidator::new(self.state.cddl, value);
 
         cv.state.generic_rules = self.state.generic_rules.clone();
         cv.state.eval_generic_rule = self.state.eval_generic_rule;
@@ -4166,7 +4186,7 @@ where
       return Ok(());
     }
 
-    if let Some(v) = self.object_value.take() {
+    if let Some(v) = object_value {
       #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
       let mut cv = CBORValidator::new(self.state.cddl, v, self.state.enabled_features.clone());
       #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
@@ -4225,8 +4245,10 @@ where
         self.state.occurrence = None;
       }
 
-      Ok(())
-    } else if !self.state.advance_to_next_entry {
+      return Ok(());
+    }
+
+    if !self.state.advance_to_next_entry {
       self.visit_type(&entry.entry_type)
     } else {
       Ok(())

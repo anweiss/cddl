@@ -1079,6 +1079,109 @@ fn validate_repeating_map_entries_count_only_unconsumed_matches() {
 }
 
 #[test]
+fn validate_repeating_map_member_candidates_are_entry_local() {
+  let text_value = b"\xa1\x61a\x61x"; // {"a": "x"}
+  let text_and_int_values = b"\xa2\x61a\x61x\x01\x02"; // {"a": "x", 1: 2}
+
+  // A repeating member's candidate values belong only to that entry. A
+  // later optional miss must take its zero-width path instead of validating
+  // the earlier member's value again (RFC 8610 Section 3.2).
+  validate_cbor_from_slice(
+    r#"m = { * tstr => tstr, ? int => [uint] }"#,
+    text_value,
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { + tstr => tstr, ? int => [uint] }"#,
+    text_value,
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { 1*2 tstr => tstr, ? int => [uint] }"#,
+    text_value,
+    None,
+  )
+  .unwrap();
+
+  // The same cleanup is required when the following direct member is
+  // present: it must validate its own selected value.
+  validate_cbor_from_slice(
+    r#"m = { * tstr => tstr, int => uint }"#,
+    text_and_int_values,
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { + tstr => tstr, int => uint }"#,
+    text_and_int_values,
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { 1*2 tstr => tstr, int => uint }"#,
+    text_and_int_values,
+    None,
+  )
+  .unwrap();
+
+  // Candidate lifetime cleanup must not weaken the current key-first value
+  // enforcement policy; complete-pair fallthrough is separate work.
+  validate_cbor_from_slice(r#"m = { * tstr => uint }"#, text_value, None).unwrap_err();
+}
+
+#[test]
+fn validate_empty_repeating_map_member_candidate_batch_is_entry_local() {
+  let bad_text_value = b"\xa1\x61a\x63bad"; // {"a": "bad"}
+  let good_text_value = b"\xa1\x61a\x01"; // {"a": 1}
+
+  // An empty repetition batch must not suppress a following direct value.
+  // Retain both the rejecting case and its accepting control.
+  validate_cbor_from_slice(
+    r#"m = { 0*2 int => tstr, ? tstr => uint }"#,
+    bad_text_value,
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { 0*2 int => tstr, ? tstr => uint }"#,
+    good_text_value,
+    None,
+  )
+  .unwrap();
+
+  // Appendix A makes the wildcard greedy. Once it owns the pair, the
+  // optional entry is absent and must not revalidate the wildcard's value.
+  validate_cbor_from_slice(
+    r#"m = { * any => any, ? tstr => uint }"#,
+    bad_text_value,
+    None,
+  )
+  .unwrap();
+}
+
+#[test]
+fn validate_repeating_map_member_candidates_are_entry_local_across_group_choices() {
+  let text_value = b"\xa1\x61a\x61x"; // {"a": "x"}
+
+  // Entry-local cleanup also applies at group-choice boundaries, including
+  // after a failed alternative and before a following choice is attempted.
+  validate_cbor_from_slice(
+    r#"m = { (* tstr => uint // * tstr => tstr), ? int => [uint] }"#,
+    text_value,
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { * tstr => tstr, (? int => [uint] // ? int => uint) }"#,
+    text_value,
+    None,
+  )
+  .unwrap();
+}
+
+#[test]
 fn validate_repeating_map_entry_counts_cover_primitive_key_paths() {
   let cases = [
     ("any", "any", "any", Value::Text("a".into())),
