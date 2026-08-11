@@ -1269,9 +1269,11 @@ fn validate_repeating_map_member_candidates_are_entry_local_across_group_choices
   let text_value = b"\xa1\x61a\x61x"; // {"a": "x"}
 
   // Entry-local cleanup also applies at group-choice boundaries, including
-  // after a failed alternative and before a following choice is attempted.
+  // after a locally failed alternative and before a following choice is
+  // attempted. `+` makes the first arm fail its complete-pair lower bound;
+  // retry triggered only by final closed-map coverage is separate work.
   validate_cbor_from_slice(
-    r#"m = { (* tstr => uint // * tstr => tstr), ? int => [uint] }"#,
+    r#"m = { (+ tstr => uint // * tstr => tstr), ? int => [uint] }"#,
     text_value,
     None,
   )

@@ -148,7 +148,9 @@ fn validate_json_unexpected_entries_rejected() {
 /// permit unknown extra entries instead of rejecting them as unexpected keys
 #[test]
 fn validate_json_any_key_permits_extra_entries() {
-  // the openness idiom, with and without other members, in both member orders
+  // Put the specific member before the extension point. RFC 8610 Appendix A
+  // makes the leading wildcard form greedy; Section 3.5.3 identifies that
+  // general-before-specific overlap as pathological.
   validate_json_from_str(r#"m = { k: uint, * any => any }"#, r#"{"k": 1}"#, None).unwrap();
   validate_json_from_str(
     r#"m = { k: uint, * any => any }"#,
@@ -161,7 +163,7 @@ fn validate_json_any_key_permits_extra_entries() {
     r#"{"k": 1, "z": 9}"#,
     None,
   )
-  .unwrap();
+  .unwrap_err();
   // colon shortcut form
   validate_json_from_str(
     r#"m = { k: uint, * any: any }"#,
