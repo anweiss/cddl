@@ -1013,6 +1013,87 @@ impl NumericKind {
   }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum IntegerDomain {
+  Unsigned,
+  Negative,
+  EitherSign,
+}
+
+impl IntegerDomain {
+  fn union(self, other: Self) -> Self {
+    match (self, other) {
+      (Self::Unsigned, Self::Unsigned) => Self::Unsigned,
+      (Self::Negative, Self::Negative) => Self::Negative,
+      _ => Self::EitherSign,
+    }
+  }
+
+  fn matches(self, value: i128) -> bool {
+    match self {
+      Self::Unsigned => !value.is_negative(),
+      Self::Negative => value.is_negative(),
+      Self::EitherSign => true,
+    }
+  }
+}
+
+/// Whether an untagged integer belongs to the value domain denoted by an
+/// identifier.
+///
+/// RFC 8610 normative Appendix D defines `uint = #0`, `nint = #1`,
+/// `int = uint / nint`, and `unsigned = uint / biguint`. Aliases and choices
+/// combine the untagged integer arms of their referenced types. Returns
+/// `None` when a rule contains `any`, literals, ranges, or other forms that
+/// cannot be represented by a sign-only domain.
+pub(crate) fn ident_matches_integer_value(
+  cddl: &CDDL,
+  ident: &Identifier,
+  value: i128,
+) -> Option<bool> {
+  fn domain(cddl: &CDDL, ident: &Identifier) -> Option<IntegerDomain> {
+    let primitive = match lookup_ident(ident.ident) {
+      Token::UINT | Token::UNSIGNED => Some(IntegerDomain::Unsigned),
+      Token::NINT => Some(IntegerDomain::Negative),
+      Token::INT | Token::INTEGER | Token::NUMBER => Some(IntegerDomain::EitherSign),
+      _ => None,
+    };
+
+    if primitive.is_some() {
+      return primitive;
+    }
+
+    let mut combined: Option<IntegerDomain> = None;
+    for type_choice in cddl.rules.iter().filter_map(|r| match r {
+      Rule::Type { rule, .. } if rule.name == *ident => Some(&rule.value),
+      _ => None,
+    }) {
+      for choice in type_choice.type_choices.iter() {
+        let Type2::Typename { ident, .. } = &choice.type1.type2 else {
+          // A sign-only predicate cannot faithfully classify literals,
+          // ranges, or other composite forms. Their existing full type-choice
+          // validation remains authoritative.
+          return None;
+        };
+        if let Some(choice_domain) = domain(cddl, ident) {
+          combined = Some(match combined {
+            Some(domain) => domain.union(choice_domain),
+            None => choice_domain,
+          });
+        } else if is_ident_any_type(cddl, ident) {
+          // `any` includes integers of either sign, but treating it as merely
+          // an integer domain would overstate what this predicate validates.
+          return None;
+        }
+      }
+    }
+
+    combined
+  }
+
+  domain(cddl, ident).map(|domain| domain.matches(value))
+}
+
 /// Classify the given identifier's numeric kind
 /// or `None` if it is not associated with an int/float numeric data type
 pub fn ident_numeric_kind(cddl: &CDDL, ident: &Identifier) -> Option<NumericKind> {

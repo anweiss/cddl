@@ -1380,6 +1380,21 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       ..
     } = target
     {
+      if let Value::Number(number) = &self.json {
+        let integer = number
+          .as_i64()
+          .map(i128::from)
+          .or_else(|| number.as_u64().map(i128::from));
+        if let Some(integer) = integer {
+          if ident_numeric_kind(self.state.cddl, target_ident).is_some_and(NumericKind::admits_int)
+            && ident_matches_integer_value(self.state.cddl, target_ident, integer) == Some(false)
+          {
+            self.add_error(format!("expected type {}, got {}", target_ident, self.json));
+            return Ok(());
+          }
+        }
+      }
+
       if let Type2::Typename {
         ident: controller_ident,
         ..
@@ -2708,15 +2723,22 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         Ok(())
       }
       Value::Number(n) => {
-        if is_ident_uint_data_type(self.state.cddl, ident) && n.is_u64() {
-          return Ok(());
-        } else if is_ident_nint_data_type(self.state.cddl, ident) {
-          if let Some(n) = n.as_i64() {
-            if n.is_negative() {
+        let integer = n
+          .as_i64()
+          .map(i128::from)
+          .or_else(|| n.as_u64().map(i128::from));
+        if let Some(integer) = integer {
+          if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_int) {
+            if ident_matches_integer_value(self.state.cddl, ident, integer) == Some(true) {
               return Ok(());
             }
+
+            self.add_error(format!("expected type {}, got {}", ident, self.json));
+            return Ok(());
           }
-        } else if is_ident_time_data_type(self.state.cddl, ident) {
+        }
+
+        if is_ident_time_data_type(self.state.cddl, ident) {
           if let Some(n) = n.as_i64() {
             if let chrono::LocalResult::None = Utc.timestamp_millis_opt(n * 1000) {
               self.add_error(format!(

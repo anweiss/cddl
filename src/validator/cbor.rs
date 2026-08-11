@@ -1230,6 +1230,21 @@ where
       ..
     } = target
     {
+      if matches!(
+        &self.cbor,
+        Value::Integer(i)
+          if ident_numeric_kind(self.state.cddl, target_ident)
+            .is_some_and(NumericKind::admits_int)
+            && ident_matches_integer_value(self.state.cddl, target_ident, i128::from(*i))
+              == Some(false)
+      ) {
+        self.add_error(format!(
+          "expected type {}, got {:?}",
+          target_ident, self.cbor
+        ));
+        return Ok(());
+      }
+
       if let Type2::Typename {
         ident: controller_ident,
         ..
@@ -1289,16 +1304,13 @@ where
       {
         self.add_error(format!("expected type bstr, got {:?}", self.cbor));
         return Ok(());
-      } else if is_ident_uint_data_type(self.state.cddl, target_ident) {
-        // For uint, we need to check that it's an integer and it's non-negative,
-        // then fall through so the control operator is enforced
-        match &self.cbor {
-          Value::Integer(i) if i128::from(*i) >= 0 => {}
-          _ => {
-            self.add_error(format!("expected type uint, got {:?}", self.cbor));
-            return Ok(());
-          }
-        }
+      } else if matches!(
+        ident_numeric_kind(self.state.cddl, target_ident),
+        Some(NumericKind::Int)
+      ) && !matches!(self.cbor, Value::Integer(_))
+      {
+        self.add_error(format!("expected type int, got {:?}", self.cbor));
+        return Ok(());
       } else if let Some(kind) = ident_numeric_kind(self.state.cddl, target_ident) {
         let matches_kind = match kind {
           NumericKind::Int => matches!(self.cbor, Value::Integer(_)),
@@ -3405,13 +3417,9 @@ where
         Ok(())
       }
       Value::Integer(i) => {
-        if is_ident_uint_data_type(self.state.cddl, ident) {
-          if i128::from(*i).is_negative() {
-            self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
-          }
-
-          Ok(())
-        } else if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_int) {
+        if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_int)
+          && ident_matches_integer_value(self.state.cddl, ident, i128::from(*i)) == Some(true)
+        {
           Ok(())
         } else if is_ident_time_data_type(self.state.cddl, ident) {
           if let chrono::LocalResult::None =
