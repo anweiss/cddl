@@ -557,6 +557,23 @@ impl<'a> CBORValidator<'a> {
       .map(|(entry_index, (key, value))| (entry_index, key.clone(), value.clone()))
   }
 
+  fn collect_unconsumed_map_entries_matching(
+    entries: &[(Value, Value)],
+    claimed_keys: Option<&[Value]>,
+    max_matches: Option<usize>,
+    predicate: impl Fn(&Value) -> bool,
+  ) -> (Vec<Value>, Vec<Value>) {
+    entries
+      .iter()
+      .enumerate()
+      .filter_map(|(entry_index, (key, value))| {
+        (predicate(key) && Self::is_unconsumed_map_entry(entries, entry_index, claimed_keys))
+          .then(|| (key.clone(), value.clone()))
+      })
+      .take(max_matches.unwrap_or(usize::MAX))
+      .unzip()
+  }
+
   /// Find the first unconsumed map entry for a primitive identifier used as a
   /// non-repeating member key. The outer option indicates whether the
   /// identifier is one of the key domains handled by this fast path.
@@ -3976,390 +3993,132 @@ where
             self.visit_value(&token::Value::TEXT(ident.ident.into()))
           }
           Some(occur) => {
-            // An `any`-keyed table (e.g. `* any => v`) matches entries of any
-            // key type, so every not-yet-validated value is a candidate.
-            if is_ident_any_type(self.state.cddl, ident) {
-              let mut matched_keys = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if self
-                    .validated_keys
-                    .as_ref()
-                    .is_some_and(|keys| keys.contains(k))
-                  {
-                    return None;
-                  }
-
-                  matched_keys.push(k.clone());
-                  Some(v.clone())
-                })
-                .collect::<Vec<_>>();
-
-              self
-                .validated_keys
-                .get_or_insert_with(Vec::new)
-                .extend(matched_keys);
-
-              self.values_to_validate = Some(values_to_validate);
-            }
-
-            if is_ident_string_data_type(self.state.cddl, ident) {
-              let mut matched_keys = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if self
-                    .validated_keys
-                    .as_ref()
-                    .is_some_and(|keys| keys.contains(k))
-                  {
-                    return None;
-                  }
-
-                  if matches!(k, Value::Text(_)) {
-                    matched_keys.push(k.clone());
-                    Some(v.clone())
-                  } else {
-                    // Not this entry's key type. Leave the key for another group entry to
-                    // consume; keys that no entry consumes are reported by the map-level
-                    // unexpected-key check once the whole group has been visited.
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self
-                .validated_keys
-                .get_or_insert_with(Vec::new)
-                .extend(matched_keys);
-
-              self.values_to_validate = Some(values_to_validate);
-            }
-
-            if let Some(kind) =
+            // Repeating primitive-key entries greedily claim unconsumed pairs
+            // in their key domain, up to any upper bound. The occurrence
+            // bounds apply to those matches, not to the enclosing map's size.
+            let claimed_keys = self.validated_keys.as_deref();
+            let max_matches = match occur {
+              Occur::Exact { upper, .. } => *upper,
+              _ => None,
+            };
+            let matches = if is_ident_any_type(self.state.cddl, ident) {
+              Some(Self::collect_unconsumed_map_entries_matching(
+                m,
+                claimed_keys,
+                max_matches,
+                |_| true,
+              ))
+            } else if is_ident_string_data_type(self.state.cddl, ident) {
+              Some(Self::collect_unconsumed_map_entries_matching(
+                m,
+                claimed_keys,
+                max_matches,
+                |key| matches!(key, Value::Text(_)),
+              ))
+            } else if let Some(kind) =
               ident_numeric_kind(self.state.cddl, ident).filter(|k| k.admits_int())
             {
               // `number` admits both, so this block also claims float keys; the
-              // float-only block below then leaves them alone.
+              // float-only branch below is reserved for float-only types.
               let admits_float = kind.admits_float();
-              let mut matched_keys = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if self
-                    .validated_keys
-                    .as_ref()
-                    .is_some_and(|keys| keys.contains(k))
-                  {
-                    return None;
-                  }
-
-                  if matches!(k, Value::Integer(_))
-                    || (admits_float && matches!(k, Value::Float(_)))
-                  {
-                    matched_keys.push(k.clone());
-                    Some(v.clone())
-                  } else {
-                    // Not this entry's key type. Leave the key for another group entry to
-                    // consume; keys that no entry consumes are reported by the map-level
-                    // unexpected-key check once the whole group has been visited.
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self
-                .validated_keys
-                .get_or_insert_with(Vec::new)
-                .extend(matched_keys);
-
-              self.values_to_validate = Some(values_to_validate);
-            }
-
-            if is_ident_bool_data_type(self.state.cddl, ident) {
-              let mut matched_keys = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if self
-                    .validated_keys
-                    .as_ref()
-                    .is_some_and(|keys| keys.contains(k))
-                  {
-                    return None;
-                  }
-
-                  if matches!(k, Value::Bool(_)) {
-                    matched_keys.push(k.clone());
-                    Some(v.clone())
-                  } else {
-                    // Not this entry's key type. Leave the key for another group entry to
-                    // consume; keys that no entry consumes are reported by the map-level
-                    // unexpected-key check once the whole group has been visited.
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self
-                .validated_keys
-                .get_or_insert_with(Vec::new)
-                .extend(matched_keys);
-
-              self.values_to_validate = Some(values_to_validate);
-            }
-
-            if is_ident_byte_string_data_type(self.state.cddl, ident) {
-              let mut matched_keys = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if self
-                    .validated_keys
-                    .as_ref()
-                    .is_some_and(|keys| keys.contains(k))
-                  {
-                    return None;
-                  }
-
-                  if matches!(k, Value::Bytes(_)) {
-                    matched_keys.push(k.clone());
-                    Some(v.clone())
-                  } else {
-                    // Not this entry's key type. Leave the key for another group entry to
-                    // consume; keys that no entry consumes are reported by the map-level
-                    // unexpected-key check once the whole group has been visited.
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self
-                .validated_keys
-                .get_or_insert_with(Vec::new)
-                .extend(matched_keys);
-
-              self.values_to_validate = Some(values_to_validate);
-            }
-
-            if is_ident_null_data_type(self.state.cddl, ident) {
-              let mut matched_keys = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if self
-                    .validated_keys
-                    .as_ref()
-                    .is_some_and(|keys| keys.contains(k))
-                  {
-                    return None;
-                  }
-
-                  if matches!(k, Value::Null) {
-                    matched_keys.push(k.clone());
-                    Some(v.clone())
-                  } else {
-                    // Not this entry's key type. Leave the key for another group entry to
-                    // consume; keys that no entry consumes are reported by the map-level
-                    // unexpected-key check once the whole group has been visited.
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self
-                .validated_keys
-                .get_or_insert_with(Vec::new)
-                .extend(matched_keys);
-
-              self.values_to_validate = Some(values_to_validate);
-            }
-
-            // `number` is already fully handled by the integer block above; matching
-            // float-only here keeps this block from firing again and overwriting
-            // the values it collected.
-            if matches!(
+              Some(Self::collect_unconsumed_map_entries_matching(
+                m,
+                claimed_keys,
+                max_matches,
+                |key| {
+                  matches!(key, Value::Integer(_))
+                    || (admits_float && matches!(key, Value::Float(_)))
+                },
+              ))
+            } else if is_ident_bool_data_type(self.state.cddl, ident) {
+              Some(Self::collect_unconsumed_map_entries_matching(
+                m,
+                claimed_keys,
+                max_matches,
+                |key| matches!(key, Value::Bool(_)),
+              ))
+            } else if is_ident_byte_string_data_type(self.state.cddl, ident) {
+              Some(Self::collect_unconsumed_map_entries_matching(
+                m,
+                claimed_keys,
+                max_matches,
+                |key| matches!(key, Value::Bytes(_)),
+              ))
+            } else if is_ident_null_data_type(self.state.cddl, ident) {
+              Some(Self::collect_unconsumed_map_entries_matching(
+                m,
+                claimed_keys,
+                max_matches,
+                |key| matches!(key, Value::Null),
+              ))
+            } else if matches!(
               ident_numeric_kind(self.state.cddl, ident),
               Some(NumericKind::Float)
             ) {
-              let mut matched_keys = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if self
-                    .validated_keys
-                    .as_ref()
-                    .is_some_and(|keys| keys.contains(k))
-                  {
-                    return None;
-                  }
+              Some(Self::collect_unconsumed_map_entries_matching(
+                m,
+                claimed_keys,
+                max_matches,
+                |key| matches!(key, Value::Float(_)),
+              ))
+            } else if is_ident_bignum_data_type(self.state.cddl, ident) {
+              let cddl = self.state.cddl;
+              Some(Self::collect_unconsumed_map_entries_matching(
+                m,
+                claimed_keys,
+                max_matches,
+                |key| is_bignum_value(cddl, ident, key),
+              ))
+            } else {
+              None
+            };
 
-                  if matches!(k, Value::Float(_)) {
-                    matched_keys.push(k.clone());
-                    Some(v.clone())
-                  } else {
-                    // Not this entry's key type. Leave the key for another group entry to
-                    // consume; keys that no entry consumes are reported by the map-level
-                    // unexpected-key check once the whole group has been visited.
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
+            if let Some((matched_keys, values_to_validate)) = matches {
               self
                 .validated_keys
                 .get_or_insert_with(Vec::new)
                 .extend(matched_keys);
-
               self.values_to_validate = Some(values_to_validate);
             }
 
-            if is_ident_bignum_data_type(self.state.cddl, ident) {
-              let mut matched_keys = Vec::new();
-              let values_to_validate = m
-                .iter()
-                .filter_map(|(k, v)| {
-                  if self
-                    .validated_keys
-                    .as_ref()
-                    .is_some_and(|keys| keys.contains(k))
+            if let Some(values_to_validate) = &self.values_to_validate {
+              let count = values_to_validate.len();
+              match occur {
+                Occur::ZeroOrMore { .. } => {}
+                Occur::OneOrMore { .. } if count == 0 => self.add_error(format!(
+                  "object must contain at least one entry with key type {}",
+                  ident
+                )),
+                Occur::OneOrMore { .. } => {}
+                Occur::Exact { lower, upper, .. } => {
+                  if lower.is_some_and(|lower| count < lower)
+                    || upper.is_some_and(|upper| count > upper)
                   {
-                    return None;
-                  }
-
-                  if is_bignum_value(self.state.cddl, ident, k) {
-                    matched_keys.push(k.clone());
-                    Some(v.clone())
-                  } else {
-                    // Not this entry's key type. Leave the key for another group entry to
-                    // consume; keys that no entry consumes are reported by the map-level
-                    // unexpected-key check once the whole group has been visited.
-                    None
-                  }
-                })
-                .collect::<Vec<_>>();
-
-              self
-                .validated_keys
-                .get_or_insert_with(Vec::new)
-                .extend(matched_keys);
-
-              self.values_to_validate = Some(values_to_validate);
-            }
-
-            #[cfg(feature = "ast-span")]
-            if let Occur::ZeroOrMore { .. } | Occur::OneOrMore { .. } = occur {
-              if let Occur::OneOrMore { .. } = occur {
-                if m.is_empty() {
-                  self.add_error(format!(
-                    "map cannot be empty, one or more entries with key type {} required",
-                    ident
-                  ));
-                  return Ok(());
-                }
-              }
-            } else if let Occur::Exact { lower, upper, .. } = occur {
-              if let Some(values_to_validate) = &self.values_to_validate {
-                if let Some(lower) = lower {
-                  if let Some(upper) = upper {
-                    if values_to_validate.len() < *lower || values_to_validate.len() > *upper {
-                      if lower == upper {
-                        self.add_error(format!(
-                          "object must contain exactly {} entries of key of type {}",
-                          lower, ident,
-                        ));
-                      } else {
-                        self.add_error(format!(
-                          "object must contain between {} and {} entries of key of type {}",
-                          lower, upper, ident,
-                        ));
-                      }
-
-                      return Ok(());
+                    match (lower, upper) {
+                      (Some(lower), Some(upper)) if lower == upper => self.add_error(format!(
+                        "object must contain exactly {} entries with key type {}",
+                        lower, ident,
+                      )),
+                      (Some(lower), Some(upper)) => self.add_error(format!(
+                        "object must contain between {} and {} entries with key type {}",
+                        lower, upper, ident,
+                      )),
+                      (Some(lower), None) => self.add_error(format!(
+                        "object must contain at least {} entries with key type {}",
+                        lower, ident,
+                      )),
+                      (None, Some(upper)) => self.add_error(format!(
+                        "object must contain no more than {} entries with key type {}",
+                        upper, ident,
+                      )),
+                      (None, None) => {}
                     }
                   }
-
-                  if values_to_validate.len() < *lower {
-                    self.add_error(format!(
-                      "object must contain at least {} entries of key of type {}",
-                      lower, ident,
-                    ));
-
-                    return Ok(());
-                  }
                 }
-
-                if let Some(upper) = upper {
-                  if values_to_validate.len() > *upper {
-                    self.add_error(format!(
-                      "object must contain no more than {} entries of key of type {}",
-                      upper, ident,
-                    ));
-
-                    return Ok(());
-                  }
-                }
-
-                return Ok(());
+                Occur::Optional { .. } => {}
               }
-            }
 
-            #[cfg(not(feature = "ast-span"))]
-            if let Occur::ZeroOrMore {} | Occur::OneOrMore {} = occur {
-              if let Occur::OneOrMore {} = occur {
-                if m.is_empty() {
-                  self.add_error(format!(
-                    "object cannot be empty, one or more entries with key type {} required",
-                    ident
-                  ));
-                  return Ok(());
-                }
-              }
-            } else if let Occur::Exact { lower, upper } = occur {
-              if let Some(values_to_validate) = &self.values_to_validate {
-                if let Some(lower) = lower {
-                  if let Some(upper) = upper {
-                    if values_to_validate.len() < *lower || values_to_validate.len() > *upper {
-                      if lower == upper {
-                        self.add_error(format!(
-                          "object must contain exactly {} entries of key of type {}",
-                          lower, ident,
-                        ));
-                      } else {
-                        self.add_error(format!(
-                          "object must contain between {} and {} entries of key of type {}",
-                          lower, upper, ident,
-                        ));
-                      }
-
-                      return Ok(());
-                    }
-                  }
-
-                  if values_to_validate.len() < *lower {
-                    self.add_error(format!(
-                      "object must contain at least {} entries of key of type {}",
-                      lower, ident,
-                    ));
-
-                    return Ok(());
-                  }
-                }
-
-                if let Some(upper) = upper {
-                  if values_to_validate.len() > *upper {
-                    self.add_error(format!(
-                      "object must contain no more than {} entries of key of type {}",
-                      upper, ident,
-                    ));
-
-                    return Ok(());
-                  }
-                }
-
-                return Ok(());
-              }
+              return Ok(());
             }
 
             // `any` keys have already collected their values above; nothing

@@ -931,6 +931,126 @@ fn validate_repeating_map_entries_are_greedy() {
 }
 
 #[test]
+fn validate_repeating_map_entries_count_only_unconsumed_matches() {
+  let a_only = b"\xa1\x61a\x01"; // {"a": 1}
+  let int_only = b"\xa1\x01\x01"; // {1: 1}
+  let int_and_bytes = b"\xa2\x01\x01\x41\xaa\x05"; // {1: 1, h'aa': 5}
+  let a_b = b"\xa2\x61a\x01\x61b\x02";
+  let a_b_c = b"\xa3\x61a\x01\x61b\x02\x61c\x03";
+  let a_b_c_d = b"\xa4\x61a\x01\x61b\x02\x61c\x03\x61d\x04";
+  let a_b_c_d_e = b"\xa5\x61a\x01\x61b\x02\x61c\x03\x61d\x04\x61e\x05";
+
+  // The occurrence applies to this member's unconsumed matches, not to the
+  // enclosing map's total size. This matters for both same-domain keys that
+  // an earlier member consumed and disjoint keys left for a later member.
+  validate_cbor_from_slice(r#"m = { a: uint, * tstr => uint }"#, a_only, None).unwrap();
+  validate_cbor_from_slice(r#"m = { a: uint, + tstr => uint }"#, a_only, None).unwrap_err();
+  validate_cbor_from_slice(r#"m = { * tstr => uint, int => uint }"#, int_only, None).unwrap();
+  validate_cbor_from_slice(r#"m = { + tstr => uint, int => uint }"#, int_only, None).unwrap_err();
+
+  // Preserve the original mixed-map reproduction for byte-string keys. A
+  // zero-width repetition succeeds even though the map itself is nonempty;
+  // adding a matching pair still validates and `+` still requires a match.
+  validate_cbor_from_slice(r#"m = { 1: uint, * bytes => any }"#, int_only, None).unwrap();
+  validate_cbor_from_slice(r#"m = { 1: uint, * bytes => any }"#, int_and_bytes, None).unwrap();
+  validate_cbor_from_slice(r#"m = { 1: uint, + bytes => any }"#, int_only, None).unwrap_err();
+
+  // Bounded occurrences count only the pairs left after `a` is consumed.
+  let bounded = r#"m = { a: uint, 2*3 tstr => uint }"#;
+  validate_cbor_from_slice(bounded, a_b, None).unwrap_err();
+  validate_cbor_from_slice(bounded, a_b_c, None).unwrap();
+  validate_cbor_from_slice(bounded, a_b_c_d, None).unwrap();
+  validate_cbor_from_slice(bounded, a_b_c_d_e, None).unwrap_err();
+
+  validate_cbor_from_slice(r#"m = { a: uint, *2 tstr => uint }"#, a_only, None).unwrap();
+  validate_cbor_from_slice(r#"m = { a: uint, *2 tstr => uint }"#, a_b_c, None).unwrap();
+  validate_cbor_from_slice(r#"m = { a: uint, *2 tstr => uint }"#, a_b_c_d, None).unwrap_err();
+  validate_cbor_from_slice(r#"m = { a: uint, 2* tstr => uint }"#, a_b, None).unwrap_err();
+  validate_cbor_from_slice(r#"m = { a: uint, 2* tstr => uint }"#, a_b_c, None).unwrap();
+
+  // A bounded repetition stops at its upper bound. It must not claim all
+  // matching pairs and then reject before a later member can own the rest.
+  validate_cbor_from_slice(r#"m = { 1*1 tstr => uint, tstr => uint }"#, a_b, None).unwrap();
+  validate_cbor_from_slice(r#"m = { *2 tstr => uint, tstr => uint }"#, a_b_c, None).unwrap();
+  validate_cbor_from_slice(r#"m = { 2*3 tstr => uint, tstr => uint }"#, a_b_c_d, None).unwrap();
+}
+
+#[test]
+fn validate_repeating_map_entry_counts_cover_primitive_key_paths() {
+  let cases = [
+    ("any", "any", "any", Value::Text("a".into())),
+    ("tstr", "tstr", "tstr", Value::Text("a".into())),
+    ("int", "int", "int", Value::Integer(1.into())),
+    ("uint", "uint", "uint", Value::Integer(1.into())),
+    ("nint", "nint", "nint", Value::Integer((-1).into())),
+    ("number/int", "int", "number", Value::Integer(1.into())),
+    ("number/float", "float", "number", Value::Float(1.5)),
+    ("bool", "bool", "bool", Value::Bool(true)),
+    ("null", "null", "null", Value::Null),
+    ("bytes", "bytes", "bytes", Value::Bytes(vec![1])),
+    ("float", "float", "float", Value::Float(1.5)),
+    (
+      "biguint",
+      "biguint",
+      "biguint",
+      Value::Tag(2, Box::new(Value::Bytes(vec![1]))),
+    ),
+    (
+      "bignint",
+      "bignint",
+      "bignint",
+      Value::Tag(3, Box::new(Value::Bytes(vec![1]))),
+    ),
+    (
+      "bigint/tag 2",
+      "bigint",
+      "bigint",
+      Value::Tag(2, Box::new(Value::Bytes(vec![1]))),
+    ),
+    (
+      "bigint/tag 3",
+      "bigint",
+      "bigint",
+      Value::Tag(3, Box::new(Value::Bytes(vec![1]))),
+    ),
+  ];
+
+  for (case_name, consuming_key_type, repeating_key_type, key) in cases {
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(
+      &Value::Map(vec![(key, Value::Integer(1.into()))]),
+      &mut bytes,
+    )
+    .unwrap();
+
+    // The optional member greedily consumes the only pair. The following
+    // repetition therefore has width zero regardless of the enclosing map's
+    // size: `*` accepts that width and `+` rejects it.
+    let zero_or_more = format!(
+      "m = {{ ? {} => any, * {} => uint }}",
+      consuming_key_type, repeating_key_type
+    );
+    let one_or_more = format!(
+      "m = {{ ? {} => any, + {} => uint }}",
+      consuming_key_type, repeating_key_type
+    );
+    let result = validate_cbor_from_slice(&zero_or_more, &bytes, None);
+    assert!(
+      result.is_ok(),
+      "zero-or-more {} case failed: {:?}",
+      case_name,
+      result
+    );
+    let result = validate_cbor_from_slice(&one_or_more, &bytes, None);
+    assert!(
+      result.is_err(),
+      "one-or-more {} case unexpectedly matched",
+      case_name
+    );
+  }
+}
+
+#[test]
 fn validate_single_map_entry_claims_are_transactional_across_group_choices() {
   let one_text_value = b"\xa1\x61a\x61x"; // {"a": "x"}
 
