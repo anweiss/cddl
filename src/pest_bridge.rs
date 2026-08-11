@@ -352,6 +352,7 @@ fn get_friendly_rule_name(rule_type: &Rule) -> Option<String> {
     Rule::bytes_value => Some("byte string".to_string()),
     Rule::bytes_b16 => Some("base16 byte string".to_string()),
     Rule::bytes_b64 => Some("base64 byte string".to_string()),
+    Rule::bytes_utf8 => Some("unqualified byte string".to_string()),
     Rule::bytes_h_quoted => Some("hex-quoted byte string".to_string()),
     Rule::tag_expr => Some("tag expression".to_string()),
     Rule::id => Some("identifier".to_string()),
@@ -2753,17 +2754,73 @@ fn convert_number_to_type2<'a>(
   })
 }
 
-/// Decode uppercase hex (base16) bytes without requiring alloc feature
-fn hex_decode_upper(input: &[u8]) -> Result<Vec<u8>, ()> {
-  let decode_len = data_encoding::HEXUPPER
+/// Decode mixed-case hex (base16) bytes without requiring alloc feature.
+fn hex_decode(input: &[u8]) -> Result<Vec<u8>, ()> {
+  let decode_len = data_encoding::HEXLOWER_PERMISSIVE
     .decode_len(input.len())
     .map_err(|_| ())?;
   let mut output = vec![0u8; decode_len];
-  let len = data_encoding::HEXUPPER
+  let len = data_encoding::HEXLOWER_PERMISSIVE
     .decode_mut(input, &mut output)
     .map_err(|_| ())?;
   output.truncate(len);
   Ok(output)
+}
+
+/// Decode base64 bytes in either the base64 (RFC 4648 §4) or base64url
+/// (RFC 4648 §5) alphabet, as permitted by RFC 8610 §3.1. The alphabet is
+/// chosen from the alphabet-specific characters the literal actually uses and
+/// the payload is then decoded with that alphabet, so each variant is decoded
+/// as itself and a literal drawing from both variants is rejected instead of
+/// being normalized into a valid one (RFC 4648 §3.3 requires rejecting
+/// characters outside the chosen alphabet). Padding is optional because the
+/// diagnostic notation RFC 8610 §3.1 defers to (RFC 8949 §8) notates byte
+/// strings without padding; when padding is present it must be canonical.
+fn base64_decode(input: &[u8]) -> Result<Vec<u8>, &'static str> {
+  let uses_classic = input.contains(&b'+') || input.contains(&b'/');
+  let uses_url = input.contains(&b'-') || input.contains(&b'_');
+  if uses_classic && uses_url {
+    return Err("Base64 literal mixes the RFC 4648 base64 and base64url alphabets");
+  }
+
+  // The two alphabets differ only in `+/` versus `-_`, so a literal that uses
+  // neither pair decodes identically under either one.
+  let encoding = match (uses_classic, input.contains(&b'=')) {
+    (true, true) => &data_encoding::BASE64,
+    (true, false) => &data_encoding::BASE64_NOPAD,
+    (false, true) => &data_encoding::BASE64URL,
+    (false, false) => &data_encoding::BASE64URL_NOPAD,
+  };
+
+  let decode_len = encoding
+    .decode_len(input.len())
+    .map_err(|_| "Invalid base64 encoding")?;
+  let mut output = vec![0u8; decode_len];
+  let len = encoding
+    .decode_mut(input, &mut output)
+    .map_err(|_| "Invalid base64 encoding")?;
+  output.truncate(len);
+  Ok(output)
+}
+
+/// Remove whitespace and comments from the content of a prefixed byte
+/// string. RFC 8610 §3.1: "any whitespace present within the string
+/// (including comments) is ignored in the prefixed case".
+fn clean_prefixed_byte_string(content: &str) -> String {
+  let mut cleaned = String::with_capacity(content.len());
+  let mut chars = content.chars();
+  while let Some(c) = chars.next() {
+    if c == ';' {
+      for c in chars.by_ref() {
+        if c == '\n' {
+          break;
+        }
+      }
+    } else if !c.is_whitespace() {
+      cleaned.push(c);
+    }
+  }
+  cleaned
 }
 
 /// Convert bytes value to Type2
@@ -2775,11 +2832,10 @@ fn convert_bytes_value_to_type2<'a>(
 ) -> Result<ast::Type2<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
-      Rule::bytes_b64 => {
+      Rule::bytes_utf8 => {
         let bytes_str = inner.as_str();
         // Remove quotes
         let content = &bytes_str[1..bytes_str.len() - 1];
-        // Single-quoted byte strings are UTF-8 encoded text, not base64
         return Ok(ast::Type2::UTF8ByteString {
           value: Cow::Owned(content.as_bytes().to_vec()),
           span,
@@ -2789,8 +2845,8 @@ fn convert_bytes_value_to_type2<'a>(
         let bytes_str = inner.as_str();
         // Remove h' and '
         let content = &bytes_str[2..bytes_str.len() - 1];
-        let cleaned: String = content.chars().filter(|c| !c.is_whitespace()).collect();
-        let decoded = hex_decode_upper(cleaned.as_bytes()).map_err(|_| Error::PARSER {
+        let cleaned = clean_prefixed_byte_string(content);
+        let decoded = hex_decode(cleaned.as_bytes()).map_err(|_| Error::PARSER {
           position: pest_span_to_position(&inner.as_span(), input),
           msg: ErrorMsg {
             short: "Invalid base16 encoding".to_string(),
@@ -2798,6 +2854,23 @@ fn convert_bytes_value_to_type2<'a>(
           },
         })?;
         return Ok(ast::Type2::B16ByteString {
+          value: Cow::Owned(decoded),
+          span,
+        });
+      }
+      Rule::bytes_b64 => {
+        let bytes_str = inner.as_str();
+        // Remove b64' and '
+        let content = &bytes_str[4..bytes_str.len() - 1];
+        let cleaned = clean_prefixed_byte_string(content);
+        let decoded = base64_decode(cleaned.as_bytes()).map_err(|short| Error::PARSER {
+          position: pest_span_to_position(&inner.as_span(), input),
+          msg: ErrorMsg {
+            short: short.to_string(),
+            extended: None,
+          },
+        })?;
+        return Ok(ast::Type2::B64ByteString {
           value: Cow::Owned(decoded),
           span,
         });
@@ -2831,11 +2904,10 @@ fn convert_bytes_value_to_type2<'a>(
 ) -> Result<ast::Type2<'a>, Error> {
   for inner in pair.into_inner() {
     match inner.as_rule() {
-      Rule::bytes_b64 => {
+      Rule::bytes_utf8 => {
         let bytes_str = inner.as_str();
         // Remove quotes
         let content = &bytes_str[1..bytes_str.len() - 1];
-        // Single-quoted byte strings are UTF-8 encoded text, not base64
         return Ok(ast::Type2::UTF8ByteString {
           value: Cow::Owned(content.as_bytes().to_vec()),
         });
@@ -2844,14 +2916,29 @@ fn convert_bytes_value_to_type2<'a>(
         let bytes_str = inner.as_str();
         // Remove h' and '
         let content = &bytes_str[2..bytes_str.len() - 1];
-        let cleaned: String = content.chars().filter(|c| !c.is_whitespace()).collect();
-        let decoded = hex_decode_upper(cleaned.as_bytes()).map_err(|_| Error::PARSER {
+        let cleaned = clean_prefixed_byte_string(content);
+        let decoded = hex_decode(cleaned.as_bytes()).map_err(|_| Error::PARSER {
           msg: ErrorMsg {
             short: "Invalid base16 encoding".to_string(),
             extended: None,
           },
         })?;
         return Ok(ast::Type2::B16ByteString {
+          value: Cow::Owned(decoded),
+        });
+      }
+      Rule::bytes_b64 => {
+        let bytes_str = inner.as_str();
+        // Remove b64' and '
+        let content = &bytes_str[4..bytes_str.len() - 1];
+        let cleaned = clean_prefixed_byte_string(content);
+        let decoded = base64_decode(cleaned.as_bytes()).map_err(|short| Error::PARSER {
+          msg: ErrorMsg {
+            short: short.to_string(),
+            extended: None,
+          },
+        })?;
+        return Ok(ast::Type2::B64ByteString {
           value: Cow::Owned(decoded),
         });
       }

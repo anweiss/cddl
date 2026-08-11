@@ -148,7 +148,7 @@ escaped = "text with \"quotes\" and \n newline""#;
   #[test]
   fn test_byte_strings() {
     let input = r#"b16 = h'48656c6c6f'
-b64 = 'SGVsbG8='"#;
+b64 = b64'SGVsbG8='"#;
     let result = CDDLParser::parse(Rule::cddl, input);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
   }
