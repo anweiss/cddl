@@ -102,6 +102,8 @@ pub(crate) struct RustField {
   pub is_optional: bool,
   pub doc: Vec<String>,
   pub is_boxed: bool,
+  /// Whether this field is generated for a CDDL construct that has no field key.
+  pub is_synthetic: bool,
   /// The CBOR tag this field's CDDL type carries, if any (see
   /// https://github.com/anweiss/cddl/issues/639).
   pub tag: Option<TaggedPrelude>,
@@ -977,10 +979,9 @@ fn group_to_fields(
 /// the same field twice and fail to compile with "field `entries` specified
 /// more than once". Repeats get a `_1`, `_2`, ... suffix.
 ///
-/// When a field's `original_name` matches the name being replaced, the field is
-/// synthetic (there is no corresponding CDDL key) and the `original_name` is
-/// renamed alongside it, so that no misleading `#[serde(rename = "entries")]`
-/// is emitted for the second and subsequent fields.
+/// Synthetic fields have no corresponding CDDL key, so their `original_name` is
+/// renamed alongside the Rust field name. This avoids emitting a misleading
+/// `#[serde(rename = "entries")]` for the second and subsequent wildcard fields.
 ///
 /// See https://github.com/anweiss/cddl/issues/640
 fn deduplicate_field_names(fields: &mut [RustField]) {
@@ -993,7 +994,7 @@ fn deduplicate_field_names(fields: &mut [RustField]) {
 
     if *count > 1 {
       let unique = format!("{}_{}", base, *count - 1);
-      if field.original_name == base {
+      if field.is_synthetic {
         field.original_name = unique.clone();
       }
       field.name = unique;
@@ -1052,6 +1053,7 @@ fn group_entry_to_fields(
         is_optional,
         doc,
         is_boxed: false,
+        is_synthetic: false,
         tag: tagged_prelude(ident),
       }]))
     }
@@ -1096,6 +1098,7 @@ fn value_member_key_to_field(
         is_optional: false,
         doc,
         is_boxed: false,
+        is_synthetic: true,
         tag: None,
       }));
     }
@@ -1108,6 +1111,7 @@ fn value_member_key_to_field(
         is_optional: false,
         doc,
         is_boxed: false,
+        is_synthetic: true,
         tag: type_tagged_prelude(&vmke.entry_type),
       }));
     }
@@ -1141,6 +1145,7 @@ fn value_member_key_to_field(
     is_optional,
     doc,
     is_boxed: false,
+    is_synthetic: false,
     // Only an unwrapped occurrence carries the tag directly; `* tdate` becomes
     // Vec<String> and is handled as a follow-up.
     tag: if is_vec {
@@ -2377,6 +2382,38 @@ mod tests {
     );
     assert!(result.contains("#[serde(rename = \"first-name\")]"));
     assert!(result.contains("pub first_name: String,"));
+  }
+
+  #[test]
+  fn test_repeated_wildcard_fields_get_unique_synthetic_names() {
+    let result = gen(
+      r#"
+      mixed = {
+        * tstr => int,
+        * int => tstr,
+      }
+    "#,
+    );
+
+    assert!(result.contains("pub entries: std::collections::HashMap<String, i64>,"));
+    assert!(result.contains("pub entries_1: std::collections::HashMap<i64, String>,"));
+    assert!(!result.contains("#[serde(rename = \"entries\")]"));
+  }
+
+  #[test]
+  fn test_real_duplicate_field_preserves_original_name() {
+    let result = gen(
+      r#"
+      record = {
+        entries: tstr,
+        "entries": int,
+      }
+    "#,
+    );
+
+    assert!(result.contains("pub entries: String,"));
+    assert!(result.contains("#[serde(rename = \"entries\")]"));
+    assert!(result.contains("pub entries_1: i64,"));
   }
 
   #[test]
