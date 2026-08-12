@@ -524,7 +524,6 @@ impl<'a> CBORValidator<'a> {
   fn collect_unconsumed_map_entries_matching(
     entries: &[(Value, Value)],
     claimed_entries: &[usize],
-    max_matches: Option<usize>,
     predicate: impl Fn(&Value) -> bool,
   ) -> Vec<(usize, Value)> {
     entries
@@ -534,8 +533,54 @@ impl<'a> CBORValidator<'a> {
         (predicate(key) && Self::is_unconsumed_map_entry(entry_index, claimed_entries))
           .then(|| (entry_index, value.clone()))
       })
-      .take(max_matches.unwrap_or(usize::MAX))
       .collect()
+  }
+
+  fn repeating_member_upper_bound(entry: &ValueMemberKeyEntry<'a>) -> Option<usize> {
+    entry.occur.as_ref().and_then(|occurrence| {
+      if let Occur::Exact { upper, .. } = occurrence.occur {
+        upper
+      } else {
+        None
+      }
+    })
+  }
+
+  fn validate_repeating_member_count(&mut self, entry: &ValueMemberKeyEntry<'a>, count: usize) {
+    let Some(occurrence) = &entry.occur else {
+      return;
+    };
+    let member_key = entry
+      .member_key
+      .as_ref()
+      .map(ToString::to_string)
+      .unwrap_or_else(|| "member".to_string());
+
+    match occurrence.occur {
+      Occur::OneOrMore { .. } if count == 0 => self.add_error(format!(
+        "object must contain at least one entry matching {}",
+        member_key
+      )),
+      Occur::Exact {
+        lower: Some(lower),
+        upper,
+        ..
+      } if count < lower => match upper {
+        Some(upper) if lower == upper => self.add_error(format!(
+          "object must contain exactly {} entries matching {}",
+          lower, member_key
+        )),
+        Some(upper) => self.add_error(format!(
+          "object must contain between {} and {} entries matching {}",
+          lower, upper, member_key
+        )),
+        None => self.add_error(format!(
+          "object must contain at least {} entries matching {}",
+          lower, member_key
+        )),
+      },
+      _ => {}
+    }
   }
 
   /// Find the first unconsumed map entry for a primitive identifier used as a
@@ -3951,27 +3996,21 @@ where
 
             self.visit_value(&token::Value::TEXT(ident.ident.into()))
           }
-          Some(occur) => {
-            // Repeating primitive-key entries greedily claim unconsumed pairs
-            // in their key domain, up to any upper bound. The occurrence
-            // bounds apply to those matches, not to the enclosing map's size.
+          Some(_) => {
+            // Relay every unconsumed key-domain candidate to the group entry.
+            // It applies the value type provisionally and commits only
+            // complete pair matches, up to any occurrence upper bound.
             let claimed_entries = &self.claimed_map_entries;
-            let max_matches = match occur {
-              Occur::Exact { upper, .. } => *upper,
-              _ => None,
-            };
             let matches = if is_ident_any_type(self.state.cddl, ident) {
               Some(Self::collect_unconsumed_map_entries_matching(
                 m,
                 claimed_entries,
-                max_matches,
                 |_| true,
               ))
             } else if is_ident_string_data_type(self.state.cddl, ident) {
               Some(Self::collect_unconsumed_map_entries_matching(
                 m,
                 claimed_entries,
-                max_matches,
                 |key| matches!(key, Value::Text(_)),
               ))
             } else if ident_numeric_kind(self.state.cddl, ident).is_some() {
@@ -3979,28 +4018,24 @@ where
               Some(Self::collect_unconsumed_map_entries_matching(
                 m,
                 claimed_entries,
-                max_matches,
                 |key| numeric_ident_matches_cbor_value(cddl, ident, key),
               ))
             } else if is_ident_bool_data_type(self.state.cddl, ident) {
               Some(Self::collect_unconsumed_map_entries_matching(
                 m,
                 claimed_entries,
-                max_matches,
                 |key| matches!(key, Value::Bool(_)),
               ))
             } else if is_ident_byte_string_data_type(self.state.cddl, ident) {
               Some(Self::collect_unconsumed_map_entries_matching(
                 m,
                 claimed_entries,
-                max_matches,
                 |key| matches!(key, Value::Bytes(_)),
               ))
             } else if is_ident_null_data_type(self.state.cddl, ident) {
               Some(Self::collect_unconsumed_map_entries_matching(
                 m,
                 claimed_entries,
-                max_matches,
                 |key| matches!(key, Value::Null),
               ))
             } else if is_ident_bignum_data_type(self.state.cddl, ident) {
@@ -4008,7 +4043,6 @@ where
               Some(Self::collect_unconsumed_map_entries_matching(
                 m,
                 claimed_entries,
-                max_matches,
                 |key| is_bignum_value(cddl, ident, key),
               ))
             } else {
@@ -4016,43 +4050,7 @@ where
             };
 
             if let Some(map_entry_candidates) = matches {
-              let count = map_entry_candidates.len();
               self.map_entry_candidates = Some(map_entry_candidates);
-              match occur {
-                Occur::ZeroOrMore { .. } => {}
-                Occur::OneOrMore { .. } if count == 0 => self.add_error(format!(
-                  "object must contain at least one entry with key type {}",
-                  ident
-                )),
-                Occur::OneOrMore { .. } => {}
-                Occur::Exact { lower, upper, .. } => {
-                  if lower.is_some_and(|lower| count < lower)
-                    || upper.is_some_and(|upper| count > upper)
-                  {
-                    match (lower, upper) {
-                      (Some(lower), Some(upper)) if lower == upper => self.add_error(format!(
-                        "object must contain exactly {} entries with key type {}",
-                        lower, ident,
-                      )),
-                      (Some(lower), Some(upper)) => self.add_error(format!(
-                        "object must contain between {} and {} entries with key type {}",
-                        lower, upper, ident,
-                      )),
-                      (Some(lower), None) => self.add_error(format!(
-                        "object must contain at least {} entries with key type {}",
-                        lower, ident,
-                      )),
-                      (None, Some(upper)) => self.add_error(format!(
-                        "object must contain no more than {} entries with key type {}",
-                        upper, ident,
-                      )),
-                      (None, None) => {}
-                    }
-                  }
-                }
-                Occur::Optional { .. } => {}
-              }
-
               return Ok(());
             }
 
@@ -4119,12 +4117,6 @@ where
         let object_value = self.object_value.take();
         member_key_result?;
 
-        if let Some(candidates) = &map_entry_candidates {
-          self
-            .claimed_map_entries
-            .extend(candidates.iter().map(|(entry_index, _)| *entry_index));
-        }
-
         // Move to next entry if member key validation fails
         if self.errors.len() != error_count {
           self.state.advance_to_next_entry = true;
@@ -4138,17 +4130,15 @@ where
 
     if let Some(candidates) = map_entry_candidates {
       debug_assert!(object_value.is_none());
-      for (_, value) in candidates {
-        #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-        let mut cv =
-          CBORValidator::new(self.state.cddl, value, self.state.enabled_features.clone());
-        #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-        let mut cv = CBORValidator::new(self.state.cddl, value, self.state.enabled_features);
-        #[cfg(not(feature = "additional-controls"))]
-        let mut cv = CBORValidator::new(self.state.cddl, value);
+      let max_matches = Self::repeating_member_upper_bound(entry).unwrap_or(usize::MAX);
+      let mut match_count = 0;
 
-        cv.state.generic_rules = self.state.generic_rules.clone();
-        cv.state.eval_generic_rule = self.state.eval_generic_rule;
+      for (entry_index, value) in candidates {
+        if match_count == max_matches {
+          break;
+        }
+
+        let mut cv = self.new_with_recursion_state(value);
         cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
         cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
         cv.state.data_location.push_str(&self.state.data_location);
@@ -4158,12 +4148,14 @@ where
 
         self.state.data_location = current_location.clone();
 
-        self.errors.append(&mut cv.errors);
-        if entry.occur.is_some() {
-          self.state.occurrence = None;
+        if cv.errors.is_empty() {
+          self.claimed_map_entries.push(entry_index);
+          match_count += 1;
         }
       }
 
+      self.validate_repeating_member_count(entry, match_count);
+      self.state.occurrence = None;
       return Ok(());
     }
 

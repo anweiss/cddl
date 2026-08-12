@@ -166,8 +166,10 @@ pub struct JSONValidator<'a> {
   cut_value: Option<Cow<'a, str>>,
   // Collect map entry keys that have already been validated
   validated_keys: Option<Vec<String>>,
-  // Collect map entry values that have yet to be validated
-  values_to_validate: Option<Vec<Value>>,
+  // Candidate pairs produced while visiting one repeating map member's key.
+  // The group entry takes this relay immediately and commits only candidates
+  // whose values also match the member.
+  map_entry_candidates: Option<Vec<(String, Value)>>,
 }
 
 impl<'a> JSONValidator<'a> {
@@ -182,7 +184,7 @@ impl<'a> JSONValidator<'a> {
       object_value: None,
       cut_value: None,
       validated_keys: None,
-      values_to_validate: None,
+      map_entry_candidates: None,
     }
   }
 
@@ -197,7 +199,68 @@ impl<'a> JSONValidator<'a> {
       object_value: None,
       cut_value: None,
       validated_keys: None,
-      values_to_validate: None,
+      map_entry_candidates: None,
+    }
+  }
+
+  fn new_with_recursion_state(&self, json: Value) -> JSONValidator<'a> {
+    #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
+    let mut jv = JSONValidator::new(self.state.cddl, json, self.state.enabled_features.clone());
+    #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+    let mut jv = JSONValidator::new(self.state.cddl, json, self.state.enabled_features);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut jv = JSONValidator::new(self.state.cddl, json);
+
+    jv.state.generic_rules = self.state.generic_rules.clone();
+    jv.state.eval_generic_rule = self.state.eval_generic_rule;
+    jv.state.visited_rules = self.state.visited_rules.clone();
+    jv
+  }
+
+  fn repeating_member_upper_bound(entry: &ValueMemberKeyEntry<'a>) -> Option<usize> {
+    entry.occur.as_ref().and_then(|occurrence| {
+      if let Occur::Exact { upper, .. } = occurrence.occur {
+        upper
+      } else {
+        None
+      }
+    })
+  }
+
+  fn validate_repeating_member_count(&mut self, entry: &ValueMemberKeyEntry<'a>, count: usize) {
+    let Some(occurrence) = &entry.occur else {
+      return;
+    };
+    let member_key = entry
+      .member_key
+      .as_ref()
+      .map(ToString::to_string)
+      .unwrap_or_else(|| "member".to_string());
+
+    match occurrence.occur {
+      Occur::OneOrMore { .. } if count == 0 => self.add_error(format!(
+        "object must contain at least one entry matching {}",
+        member_key
+      )),
+      Occur::Exact {
+        lower: Some(lower),
+        upper,
+        ..
+      } if count < lower => match upper {
+        Some(upper) if lower == upper => self.add_error(format!(
+          "object must contain exactly {} entries matching {}",
+          lower, member_key
+        )),
+        Some(upper) => self.add_error(format!(
+          "object must contain between {} and {} entries matching {}",
+          lower, upper, member_key
+        )),
+        None => self.add_error(format!(
+          "object must contain at least {} entries matching {}",
+          lower, member_key
+        )),
+      },
+      _ => {}
     }
   }
 
@@ -212,7 +275,7 @@ impl<'a> JSONValidator<'a> {
       object_value: None,
       cut_value: None,
       validated_keys: None,
-      values_to_validate: None,
+      map_entry_candidates: None,
     }
   }
 
@@ -227,7 +290,7 @@ impl<'a> JSONValidator<'a> {
       object_value: None,
       cut_value: None,
       validated_keys: None,
-      values_to_validate: None,
+      map_entry_candidates: None,
     }
   }
 
@@ -262,10 +325,15 @@ impl<'a> JSONValidator<'a> {
         // Retrieve the value from key unless optional/zero or more, in which
         // case advance to next group entry
         #[cfg(feature = "ast-span")]
-        if let Some(v) = o.get(t.as_ref()) {
+        if let Some(v) = o.get(t.as_ref()).filter(|_| {
+          !self
+            .validated_keys
+            .as_ref()
+            .is_some_and(|keys| keys.iter().any(|key| key == t.as_ref()))
+        }) {
           self
             .validated_keys
-            .get_or_insert(vec![t.to_string()])
+            .get_or_insert_with(Vec::new)
             .push(t.to_string());
           self.object_value = Some(v.clone());
           let _ = write!(self.state.data_location, "/{}", t);
@@ -286,10 +354,15 @@ impl<'a> JSONValidator<'a> {
         // Retrieve the value from key unless optional/zero or more, in which
         // case advance to next group entry
         #[cfg(not(feature = "ast-span"))]
-        if let Some(v) = o.get(t.as_ref()) {
+        if let Some(v) = o.get(t.as_ref()).filter(|_| {
+          !self
+            .validated_keys
+            .as_ref()
+            .is_some_and(|keys| keys.iter().any(|key| key == t.as_ref()))
+        }) {
           self
             .validated_keys
-            .get_or_insert(vec![t.to_string()])
+            .get_or_insert_with(Vec::new)
             .push(t.to_string());
           self.object_value = Some(v.clone());
           self.state.data_location.push_str(&format!("/{}", t));
@@ -2226,17 +2299,15 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
           self.visit_group(group)?;
 
-          // A key is unexpected unless some group entry consumed it
-          // (validated_keys of None is an empty consumed set)
-          if self.values_to_validate.is_none() {
-            for k in o.into_iter() {
-              if !self
-                .validated_keys
-                .as_ref()
-                .is_some_and(|keys| keys.contains(&k))
-              {
-                self.add_error(format!("unexpected key {:?}", k));
-              }
+          // A key is unexpected unless some group entry consumed its complete
+          // key/value pair (validated_keys of None is an empty consumed set).
+          for k in o.into_iter() {
+            if !self
+              .validated_keys
+              .as_ref()
+              .is_some_and(|keys| keys.contains(&k))
+            {
+              self.add_error(format!("unexpected key {:?}", k));
             }
           }
 
@@ -2878,134 +2949,21 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
           self.visit_value(&token::Value::TEXT(ident.ident.into()))
         }
-        Some(occur) => {
+        Some(_) => {
           if is_ident_string_data_type(self.state.cddl, ident)
             || is_ident_any_type(self.state.cddl, ident)
           {
-            let values_to_validate = o
+            let map_entry_candidates = o
               .iter()
               .filter_map(|(k, v)| match &self.validated_keys {
-                Some(keys) if !keys.contains(k) => Some(v.clone()),
+                Some(keys) if !keys.contains(k) => Some((k.clone(), v.clone())),
                 Some(_) => None,
-                None => Some(v.clone()),
+                None => Some((k.clone(), v.clone())),
               })
               .collect::<Vec<_>>();
 
-            self.values_to_validate = Some(values_to_validate);
-          }
-
-          #[cfg(feature = "ast-span")]
-          if let Occur::ZeroOrMore { .. } | Occur::OneOrMore { .. } = occur {
-            if let Occur::OneOrMore { .. } = occur {
-              if o.is_empty() {
-                self.add_error(format!(
-                  "object cannot be empty, one or more entries with key type {} required",
-                  ident
-                ));
-                return Ok(());
-              }
-            }
-          } else if let Occur::Exact { lower, upper, .. } = occur {
-            if let Some(values_to_validate) = &self.values_to_validate {
-              if let Some(lower) = lower {
-                if let Some(upper) = upper {
-                  if values_to_validate.len() < *lower || values_to_validate.len() > *upper {
-                    if lower == upper {
-                      self.add_error(format!(
-                        "object must contain exactly {} entries of key of type {}",
-                        lower, ident,
-                      ));
-                    } else {
-                      self.add_error(format!(
-                        "object must contain between {} and {} entries of key of type {}",
-                        lower, upper, ident,
-                      ));
-                    }
-
-                    return Ok(());
-                  }
-                }
-
-                if values_to_validate.len() < *lower {
-                  self.add_error(format!(
-                    "object must contain at least {} entries of key of type {}",
-                    lower, ident,
-                  ));
-
-                  return Ok(());
-                }
-              }
-
-              if let Some(upper) = upper {
-                if values_to_validate.len() > *upper {
-                  self.add_error(format!(
-                    "object must contain no more than {} entries of key of type {}",
-                    upper, ident,
-                  ));
-
-                  return Ok(());
-                }
-              }
-
-              return Ok(());
-            }
-          }
-
-          #[cfg(not(feature = "ast-span"))]
-          if let Occur::ZeroOrMore {} | Occur::OneOrMore {} = occur {
-            if let Occur::OneOrMore {} = occur {
-              if o.is_empty() {
-                self.add_error(format!(
-                  "object cannot be empty, one or more entries with key type {} required",
-                  ident
-                ));
-                return Ok(());
-              }
-            }
-          } else if let Occur::Exact { lower, upper } = occur {
-            if let Some(values_to_validate) = &self.values_to_validate {
-              if let Some(lower) = lower {
-                if let Some(upper) = upper {
-                  if values_to_validate.len() < *lower || values_to_validate.len() > *upper {
-                    if lower == upper {
-                      self.add_error(format!(
-                        "object must contain exactly {} entries of key of type {}",
-                        lower, ident,
-                      ));
-                    } else {
-                      self.add_error(format!(
-                        "object must contain between {} and {} entries of key of type {}",
-                        lower, upper, ident,
-                      ));
-                    }
-
-                    return Ok(());
-                  }
-                }
-
-                if values_to_validate.len() < *lower {
-                  self.add_error(format!(
-                    "object must contain at least {} entries of key of type {}",
-                    lower, ident,
-                  ));
-
-                  return Ok(());
-                }
-              }
-
-              if let Some(upper) = upper {
-                if values_to_validate.len() > *upper {
-                  self.add_error(format!(
-                    "object must contain no more than {} entries of key of type {}",
-                    upper, ident,
-                  ));
-
-                  return Ok(());
-                }
-              }
-
-              return Ok(());
-            }
+            self.map_entry_candidates = Some(map_entry_candidates);
+            return Ok(());
           }
 
           Ok(())
@@ -3029,58 +2987,72 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     &mut self,
     entry: &ValueMemberKeyEntry<'a>,
   ) -> visitor::Result<Error> {
+    debug_assert!(self.map_entry_candidates.is_none());
+    debug_assert!(self.object_value.is_none());
+    self.map_entry_candidates = None;
+    self.object_value = None;
+
     if let Some(occur) = &entry.occur {
       self.visit_occurrence(occur)?;
     }
 
     let current_location = self.state.data_location.clone();
 
-    if let Some(mk) = &entry.member_key {
+    let (map_entry_candidates, object_value) = if let Some(mk) = &entry.member_key {
       let error_count = self.errors.len();
       self.state.is_member_key = true;
-      self.visit_memberkey(mk)?;
+      let member_key_result = self.visit_memberkey(mk);
       self.state.is_member_key = false;
+
+      let map_entry_candidates = self.map_entry_candidates.take();
+      let object_value = self.object_value.take();
+      member_key_result?;
 
       // Move to next entry if member key validation fails
       if self.errors.len() != error_count {
         self.state.advance_to_next_entry = true;
         return Ok(());
       }
-    }
 
-    if let Some(values) = &self.values_to_validate {
-      for v in values.iter() {
-        #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-        let mut jv = JSONValidator::new(
-          self.state.cddl,
-          v.clone(),
-          self.state.enabled_features.clone(),
-        );
-        #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-        let mut jv = JSONValidator::new(self.state.cddl, v.clone(), self.state.enabled_features);
-        #[cfg(not(feature = "additional-controls"))]
-        let mut jv = JSONValidator::new(self.state.cddl, v.clone());
+      (map_entry_candidates, object_value)
+    } else {
+      (None, None)
+    };
 
-        jv.state.generic_rules = self.state.generic_rules.clone();
-        jv.state.eval_generic_rule = self.state.eval_generic_rule;
+    if let Some(candidates) = map_entry_candidates {
+      debug_assert!(object_value.is_none());
+      let max_matches = Self::repeating_member_upper_bound(entry).unwrap_or(usize::MAX);
+      let mut match_count = 0;
+
+      for (key, value) in candidates {
+        if match_count == max_matches {
+          break;
+        }
+
+        let mut jv = self.new_with_recursion_state(value);
         jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
         jv.state.is_multi_group_choice = self.state.is_multi_group_choice;
-        jv.state.data_location.push_str(&self.state.data_location);
+        let _ = write!(
+          jv.state.data_location,
+          "{}/{}",
+          self.state.data_location, key
+        );
         jv.state.type_group_name_entry = self.state.type_group_name_entry;
         jv.visit_type(&entry.entry_type)?;
 
-        self.state.data_location = current_location.clone();
-
-        self.errors.append(&mut jv.errors);
-        if entry.occur.is_some() {
-          self.state.occurrence = None;
+        if jv.errors.is_empty() {
+          self.validated_keys.get_or_insert_with(Vec::new).push(key);
+          match_count += 1;
         }
       }
 
+      self.validate_repeating_member_count(entry, match_count);
+      self.state.data_location = current_location;
+      self.state.occurrence = None;
       return Ok(());
     }
 
-    if let Some(v) = self.object_value.take() {
+    if let Some(v) = object_value {
       #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
       let mut jv = JSONValidator::new(self.state.cddl, v, self.state.enabled_features.clone());
       #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
