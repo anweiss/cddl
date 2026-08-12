@@ -550,19 +550,17 @@ impl<'a> CBORValidator<'a> {
       self.find_single_map_entry_matching(entries, |_| true)
     } else if is_ident_string_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Text(_)))
-    } else if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_int) {
-      self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Integer(_)))
+    } else if ident_numeric_kind(self.state.cddl, ident).is_some() {
+      let cddl = self.state.cddl;
+      self.find_single_map_entry_matching(entries, |key| {
+        numeric_ident_matches_cbor_value(cddl, ident, key)
+      })
     } else if is_ident_bool_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Bool(_)))
     } else if is_ident_null_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Null))
     } else if is_ident_byte_string_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Bytes(_)))
-    } else if matches!(
-      ident_numeric_kind(self.state.cddl, ident),
-      Some(NumericKind::Float)
-    ) {
-      self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Float(_)))
     } else if is_ident_bignum_data_type(self.state.cddl, ident) {
       let cddl = self.state.cddl;
       self.find_single_map_entry_matching(entries, |key| is_bignum_value(cddl, ident, key))
@@ -3976,20 +3974,13 @@ where
                 max_matches,
                 |key| matches!(key, Value::Text(_)),
               ))
-            } else if let Some(kind) =
-              ident_numeric_kind(self.state.cddl, ident).filter(|k| k.admits_int())
-            {
-              // `number` admits both, so this block also claims float keys; the
-              // float-only branch below is reserved for float-only types.
-              let admits_float = kind.admits_float();
+            } else if ident_numeric_kind(self.state.cddl, ident).is_some() {
+              let cddl = self.state.cddl;
               Some(Self::collect_unconsumed_map_entries_matching(
                 m,
                 claimed_entries,
                 max_matches,
-                |key| {
-                  matches!(key, Value::Integer(_))
-                    || (admits_float && matches!(key, Value::Float(_)))
-                },
+                |key| numeric_ident_matches_cbor_value(cddl, ident, key),
               ))
             } else if is_ident_bool_data_type(self.state.cddl, ident) {
               Some(Self::collect_unconsumed_map_entries_matching(
@@ -4011,16 +4002,6 @@ where
                 claimed_entries,
                 max_matches,
                 |key| matches!(key, Value::Null),
-              ))
-            } else if matches!(
-              ident_numeric_kind(self.state.cddl, ident),
-              Some(NumericKind::Float)
-            ) {
-              Some(Self::collect_unconsumed_map_entries_matching(
-                m,
-                claimed_entries,
-                max_matches,
-                |key| matches!(key, Value::Float(_)),
               ))
             } else if is_ident_bignum_data_type(self.state.cddl, ident) {
               let cddl = self.state.cddl;
@@ -4860,6 +4841,35 @@ where
     self.state.occurrence = Some(o.occur);
 
     Ok(())
+  }
+}
+
+/// Whether `v` belongs to the primitive numeric domain denoted by `ident`.
+///
+/// RFC 8610 Appendix D defines `uint` as CBOR major type 0, `nint` as major
+/// type 1, `number` as `int / float`, and `unsigned` as `uint / biguint`.
+/// This predicate classifies the untagged integer/float arms only. Float
+/// precision and general tagged-union handling are separate concerns.
+fn numeric_ident_matches_cbor_value(cddl: &CDDL, ident: &Identifier, v: &Value) -> bool {
+  let Some(kind) = ident_numeric_kind(cddl, ident) else {
+    return false;
+  };
+
+  match v {
+    Value::Integer(i) if kind.admits_int() => {
+      let is_negative = i128::from(*i).is_negative();
+      if matches!(lookup_ident(ident.ident), Token::UINT | Token::UNSIGNED)
+        || is_ident_uint_data_type(cddl, ident)
+      {
+        !is_negative
+      } else if is_ident_nint_data_type(cddl, ident) {
+        is_negative
+      } else {
+        true
+      }
+    }
+    Value::Float(_) => kind.admits_float(),
+    _ => false,
   }
 }
 

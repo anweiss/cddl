@@ -1162,6 +1162,109 @@ fn validate_empty_repeating_map_member_candidate_batch_is_entry_local() {
 }
 
 #[test]
+fn validate_primitive_numeric_map_member_key_domains() {
+  fn encode_one_pair(key: Value) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(
+      &Value::Map(vec![(key, Value::Integer(1.into()))]),
+      &mut bytes,
+    )
+    .unwrap();
+    bytes
+  }
+
+  // RFC 8610 Appendix D defines uint/unsigned as major type 0, nint as
+  // major type 1, int as their union, and number as int / float.
+  let accepted = [
+    ("uint", Value::Integer(0.into())),
+    ("unsigned", Value::Integer(1.into())),
+    ("nint", Value::Integer((-1).into())),
+    ("int", Value::Integer(1.into())),
+    ("int", Value::Integer((-1).into())),
+    ("number", Value::Integer(0.into())),
+    ("number", Value::Float(1.5)),
+    ("number", Value::Float(f64::INFINITY)),
+    ("number", Value::Float(f64::NAN)),
+  ];
+  let rejected = [
+    ("uint", Value::Integer((-1).into())),
+    ("unsigned", Value::Integer((-1).into())),
+    ("nint", Value::Integer(0.into())),
+    ("nint", Value::Integer(1.into())),
+    ("int", Value::Float(1.5)),
+    ("number", Value::Bool(true)),
+  ];
+  for (key_type, key) in rejected {
+    let schema = format!("m = {{ ? {} => uint }}", key_type);
+    let result = validate_cbor_from_slice(&schema, &encode_one_pair(key), None);
+    assert!(
+      result.is_err(),
+      "single {} member accepted a key outside its domain",
+      key_type
+    );
+  }
+  for (key_type, key) in accepted {
+    let schema = format!("m = {{ ? {} => uint }}", key_type);
+    let result = validate_cbor_from_slice(&schema, &encode_one_pair(key), None);
+    assert!(
+      result.is_ok(),
+      "single {} member rejected a key in its domain: {:?}",
+      key_type,
+      result
+    );
+  }
+
+  // Repeating members use the same domains. Their wrong-sign controls keep a
+  // present, otherwise valid value from masking an over-broad key predicate.
+  for (key_type, key) in [
+    ("uint", Value::Integer(0.into())),
+    ("nint", Value::Integer((-1).into())),
+    ("number", Value::Integer((-1).into())),
+    ("number", Value::Float(1.5)),
+  ] {
+    let schema = format!("m = {{ + {} => uint }}", key_type);
+    let result = validate_cbor_from_slice(&schema, &encode_one_pair(key), None);
+    assert!(
+      result.is_ok(),
+      "repeating {} member rejected a key in its domain: {:?}",
+      key_type,
+      result
+    );
+  }
+  for (key_type, key) in [
+    ("uint", Value::Integer((-1).into())),
+    ("nint", Value::Integer(0.into())),
+  ] {
+    let schema = format!("m = {{ + {} => uint }}", key_type);
+    assert!(
+      validate_cbor_from_slice(&schema, &encode_one_pair(key), None).is_err(),
+      "repeating {} member accepted a key outside its domain",
+      key_type
+    );
+  }
+
+  // A wrong-sign key must stay unclaimed so a disjoint later member can own
+  // the complete pair in both the single and repeating claim paths.
+  let negative_key = encode_one_pair(Value::Integer((-1).into()));
+  validate_cbor_from_slice(
+    r#"m = { ? uint => any, nint => uint }"#,
+    &negative_key,
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { * uint => any, nint => uint }"#,
+    &negative_key,
+    None,
+  )
+  .unwrap();
+
+  let zero_key = encode_one_pair(Value::Integer(0.into()));
+  validate_cbor_from_slice(r#"m = { ? nint => any, uint => uint }"#, &zero_key, None).unwrap();
+  validate_cbor_from_slice(r#"m = { * nint => any, uint => uint }"#, &zero_key, None).unwrap();
+}
+
+#[test]
 fn validate_repeating_map_member_candidates_are_entry_local_across_group_choices() {
   let text_value = b"\xa1\x61a\x61x"; // {"a": "x"}
 
@@ -1190,7 +1293,7 @@ fn validate_repeating_map_entry_counts_cover_primitive_key_paths() {
     ("uint", "uint", "uint", Value::Integer(1.into())),
     ("nint", "nint", "nint", Value::Integer((-1).into())),
     ("number/int", "int", "number", Value::Integer(1.into())),
-    ("number/float", "float", "number", Value::Float(1.5)),
+    ("number/float", "number", "number", Value::Float(1.5)),
     ("bool", "bool", "bool", Value::Bool(true)),
     ("null", "null", "null", Value::Null),
     ("bytes", "bytes", "bytes", Value::Bytes(vec![1])),
