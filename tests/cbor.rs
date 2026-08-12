@@ -883,16 +883,119 @@ fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
   .unwrap_err();
   assert!(error.to_string().contains("unexpected key"));
 
-  // A generic child validates the same physical map. If it independently
-  // selects the parent's pair, the outward merge must count that physical
-  // index once. Otherwise the invalid second pair appears consumed.
+  // A generic child shares the parent's physical ledger, so it selects the
+  // second pair and exposes that pair's incompatible byte-string value.
   let error = validate_cbor_from_slice(
     "g<K, V> = (K => V)\nm = { ? tstr => tstr, g<tstr, tstr>, ? tstr => uint }",
     duplicate_after_prior_claim,
     None,
   )
   .unwrap_err();
-  assert!(error.to_string().contains("unexpected key"), "{}", error);
+  assert!(
+    error.to_string().contains("expected type tstr"),
+    "{}",
+    error
+  );
+}
+
+#[test]
+fn validate_nan_map_keys_have_physical_pair_identity() {
+  let one_nan_text = b"\xa1\xf9\x7e\x00\x61x"; // {NaN: "x"}
+
+  // RFC 8610 Appendix C matches a map by assigning its physical key/value
+  // pairs to group entries. A claimed pair remains claimed even though its
+  // IEEE NaN key is not reflexively equal in Rust. Encoding width does not
+  // affect the identity of the one physical pair.
+  let nan_encodings: &[&[u8]] = &[
+    one_nan_text,
+    b"\xa1\xfa\x7f\xc0\x00\x00\x61x",
+    b"\xa1\xfb\x7f\xf8\x00\x00\x00\x00\x00\x00\x61x",
+  ];
+  for encoded in nan_encodings {
+    validate_cbor_from_slice(r#"m = { ? float => tstr }"#, encoded, None).unwrap();
+    validate_cbor_from_slice(r#"m = { ? float => tstr, ? float => uint }"#, encoded, None).unwrap();
+  }
+
+  // Repeating entries use the same ownership ledger. The first member owns
+  // the only pair, leaving width zero for the following repetition.
+  validate_cbor_from_slice(r#"m = { * float => tstr }"#, one_nan_text, None).unwrap();
+  validate_cbor_from_slice(
+    r#"m = { ? float => tstr, * float => uint }"#,
+    one_nan_text,
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { ? float => tstr, + float => uint }"#,
+    one_nan_text,
+    None,
+  )
+  .unwrap_err();
+
+  // RFC 8949 Section 5.6.1 makes NaNs with different significands distinct
+  // map keys. These two half-precision payloads therefore form a valid map
+  // and must be counted as two physical occurrences.
+  let two_distinct_nans = b"\xa2\xf9\x7e\x00\x01\xf9\x7e\x01\x02";
+  validate_cbor_from_slice(r#"m = { 2*2 float => uint }"#, two_distinct_nans, None).unwrap();
+
+  // Ordinary reflexive float keys remain a control for the same paths.
+  let finite_float = b"\xa1\xf9\x3e\x00\x61x"; // {1.5: "x"}
+  validate_cbor_from_slice(
+    r#"m = { ? float => tstr, ? float => uint }"#,
+    finite_float,
+    None,
+  )
+  .unwrap();
+
+  // Owning the NaN pair must not hide a genuinely different, unclaimed pair
+  // from the final closed-map check.
+  let nan_and_integer = b"\xa2\xf9\x7e\x00\x61x\x01\x02";
+  let error =
+    validate_cbor_from_slice(r#"m = { ? float => tstr }"#, nan_and_integer, None).unwrap_err();
+  assert!(error.to_string().contains("unexpected key Integer"));
+}
+
+#[test]
+fn validate_nan_composite_map_keys_have_physical_pair_identity() {
+  // Value::PartialEq is also non-reflexive for a composite value containing
+  // NaN. Ownership must therefore use the outer map entry index, not recursive
+  // host-language value equality.
+  let array_key = b"\xa1\x81\xf9\x7e\x00\x61x"; // {[NaN]: "x"}
+  validate_cbor_from_slice(r#"m = { ? [float] => tstr }"#, array_key, None).unwrap();
+  validate_cbor_from_slice(
+    r#"m = { ? [float] => tstr, ? [float] => uint }"#,
+    array_key,
+    None,
+  )
+  .unwrap();
+
+  // The index ledger is local to each decoded map. It must also account for
+  // the NaN pair while validating a nested map used as the outer map's key.
+  let map_key = b"\xa1\xa1\xf9\x7e\x00\x01\x61x"; // {{NaN: 1}: "x"}
+  validate_cbor_from_slice(r#"m = { ? { float => uint } => tstr }"#, map_key, None).unwrap();
+}
+
+#[test]
+fn validate_generic_map_claims_share_parent_physical_ownership() {
+  let one_text_pair = b"\xa1\x61a\x61x"; // {"a": "x"}
+  let zero_or_more = "g<K, V> = (* K => V)\nm = { ? tstr => tstr, g<tstr, tstr> }";
+  let one_or_more = "g<K, V> = (+ K => V)\nm = { ? tstr => tstr, g<tstr, tstr> }";
+
+  // A named group has the same matching semantics as its parenthesized
+  // definition (RFC 8610 Appendix C). It must see the pair already claimed by
+  // the preceding parent member: `*` can take width zero, while `+` cannot.
+  validate_cbor_from_slice(zero_or_more, one_text_pair, None).unwrap();
+  validate_cbor_from_slice(one_or_more, one_text_pair, None).unwrap_err();
+
+  // A generic child's successful NaN claim must be transferred by physical
+  // index so the enclosing closed-map pass recognizes that exact pair.
+  let one_nan_text = b"\xa1\xf9\x7e\x00\x61x";
+  validate_cbor_from_slice(
+    "g<K, V> = (? K => V)\nm = { g<float, tstr> }",
+    one_nan_text,
+    None,
+  )
+  .unwrap();
 }
 
 #[test]
@@ -928,6 +1031,126 @@ fn validate_repeating_map_entries_are_greedy() {
     None,
   )
   .unwrap();
+}
+
+#[test]
+fn validate_repeating_map_entries_count_only_unconsumed_matches() {
+  let a_only = b"\xa1\x61a\x01"; // {"a": 1}
+  let int_only = b"\xa1\x01\x01"; // {1: 1}
+  let int_and_bytes = b"\xa2\x01\x01\x41\xaa\x05"; // {1: 1, h'aa': 5}
+  let a_b = b"\xa2\x61a\x01\x61b\x02";
+  let a_b_c = b"\xa3\x61a\x01\x61b\x02\x61c\x03";
+  let a_b_c_d = b"\xa4\x61a\x01\x61b\x02\x61c\x03\x61d\x04";
+  let a_b_c_d_e = b"\xa5\x61a\x01\x61b\x02\x61c\x03\x61d\x04\x61e\x05";
+
+  // The occurrence applies to this member's unconsumed matches, not to the
+  // enclosing map's total size. This matters for both same-domain keys that
+  // an earlier member consumed and disjoint keys left for a later member.
+  validate_cbor_from_slice(r#"m = { a: uint, * tstr => uint }"#, a_only, None).unwrap();
+  validate_cbor_from_slice(r#"m = { a: uint, + tstr => uint }"#, a_only, None).unwrap_err();
+  validate_cbor_from_slice(r#"m = { * tstr => uint, int => uint }"#, int_only, None).unwrap();
+  validate_cbor_from_slice(r#"m = { + tstr => uint, int => uint }"#, int_only, None).unwrap_err();
+
+  // Preserve the original mixed-map reproduction for byte-string keys. A
+  // zero-width repetition succeeds even though the map itself is nonempty;
+  // adding a matching pair still validates and `+` still requires a match.
+  validate_cbor_from_slice(r#"m = { 1: uint, * bytes => any }"#, int_only, None).unwrap();
+  validate_cbor_from_slice(r#"m = { 1: uint, * bytes => any }"#, int_and_bytes, None).unwrap();
+  validate_cbor_from_slice(r#"m = { 1: uint, + bytes => any }"#, int_only, None).unwrap_err();
+
+  // Bounded occurrences count only the pairs left after `a` is consumed.
+  let bounded = r#"m = { a: uint, 2*3 tstr => uint }"#;
+  validate_cbor_from_slice(bounded, a_b, None).unwrap_err();
+  validate_cbor_from_slice(bounded, a_b_c, None).unwrap();
+  validate_cbor_from_slice(bounded, a_b_c_d, None).unwrap();
+  validate_cbor_from_slice(bounded, a_b_c_d_e, None).unwrap_err();
+
+  validate_cbor_from_slice(r#"m = { a: uint, *2 tstr => uint }"#, a_only, None).unwrap();
+  validate_cbor_from_slice(r#"m = { a: uint, *2 tstr => uint }"#, a_b_c, None).unwrap();
+  validate_cbor_from_slice(r#"m = { a: uint, *2 tstr => uint }"#, a_b_c_d, None).unwrap_err();
+  validate_cbor_from_slice(r#"m = { a: uint, 2* tstr => uint }"#, a_b, None).unwrap_err();
+  validate_cbor_from_slice(r#"m = { a: uint, 2* tstr => uint }"#, a_b_c, None).unwrap();
+
+  // A bounded repetition stops at its upper bound. It must not claim all
+  // matching pairs and then reject before a later member can own the rest.
+  validate_cbor_from_slice(r#"m = { 1*1 tstr => uint, tstr => uint }"#, a_b, None).unwrap();
+  validate_cbor_from_slice(r#"m = { *2 tstr => uint, tstr => uint }"#, a_b_c, None).unwrap();
+  validate_cbor_from_slice(r#"m = { 2*3 tstr => uint, tstr => uint }"#, a_b_c_d, None).unwrap();
+}
+
+#[test]
+fn validate_repeating_map_entry_counts_cover_primitive_key_paths() {
+  let cases = [
+    ("any", "any", "any", Value::Text("a".into())),
+    ("tstr", "tstr", "tstr", Value::Text("a".into())),
+    ("int", "int", "int", Value::Integer(1.into())),
+    ("uint", "uint", "uint", Value::Integer(1.into())),
+    ("nint", "nint", "nint", Value::Integer((-1).into())),
+    ("number/int", "int", "number", Value::Integer(1.into())),
+    ("number/float", "float", "number", Value::Float(1.5)),
+    ("bool", "bool", "bool", Value::Bool(true)),
+    ("null", "null", "null", Value::Null),
+    ("bytes", "bytes", "bytes", Value::Bytes(vec![1])),
+    ("float", "float", "float", Value::Float(1.5)),
+    (
+      "biguint",
+      "biguint",
+      "biguint",
+      Value::Tag(2, Box::new(Value::Bytes(vec![1]))),
+    ),
+    (
+      "bignint",
+      "bignint",
+      "bignint",
+      Value::Tag(3, Box::new(Value::Bytes(vec![1]))),
+    ),
+    (
+      "bigint/tag 2",
+      "bigint",
+      "bigint",
+      Value::Tag(2, Box::new(Value::Bytes(vec![1]))),
+    ),
+    (
+      "bigint/tag 3",
+      "bigint",
+      "bigint",
+      Value::Tag(3, Box::new(Value::Bytes(vec![1]))),
+    ),
+  ];
+
+  for (case_name, consuming_key_type, repeating_key_type, key) in cases {
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(
+      &Value::Map(vec![(key, Value::Integer(1.into()))]),
+      &mut bytes,
+    )
+    .unwrap();
+
+    // The optional member greedily consumes the only pair. The following
+    // repetition therefore has width zero regardless of the enclosing map's
+    // size: `*` accepts that width and `+` rejects it.
+    let zero_or_more = format!(
+      "m = {{ ? {} => any, * {} => uint }}",
+      consuming_key_type, repeating_key_type
+    );
+    let one_or_more = format!(
+      "m = {{ ? {} => any, + {} => uint }}",
+      consuming_key_type, repeating_key_type
+    );
+    let result = validate_cbor_from_slice(&zero_or_more, &bytes, None);
+    assert!(
+      result.is_ok(),
+      "zero-or-more {} case failed: {:?}",
+      case_name,
+      result
+    );
+    let result = validate_cbor_from_slice(&one_or_more, &bytes, None);
+    assert!(
+      result.is_err(),
+      "one-or-more {} case unexpectedly matched",
+      case_name
+    );
+  }
 }
 
 #[test]
@@ -1101,6 +1324,17 @@ fn validate_optional_single_map_entry_assignment_considers_values() {
     h<K, V> = (? K => V)\n\
     m = { g<tstr, (int / bool)>, h<tstr, any>, tstr => int }";
   validate_cbor_from_slice(two_generic_cycle_schema, three_way_assignment, None).unwrap();
+
+  // Parent and generic children share one physical ownership ledger. Either
+  // text-key order must leave the byte-key pair for the later required member
+  // while assigning the two text pairs to the two generic children.
+  let generic_then_disjoint_schema = "g<K, V> = (? K => V)\n\
+    h<K, V> = (? K => V)\n\
+    m = { g<tstr, int>, h<tstr, int>, bytes => any }";
+  let text_byte_text = b"\xa3\x61a\x01\x41\x00\xf5\x61b\x02";
+  let text_byte_text_reversed = b"\xa3\x61b\x02\x41\x00\xf5\x61a\x01";
+  validate_cbor_from_slice(generic_then_disjoint_schema, text_byte_text, None).unwrap();
+  validate_cbor_from_slice(generic_then_disjoint_schema, text_byte_text_reversed, None).unwrap();
 
   // A failed assignment search is read-only. The next group alternative must
   // start from its checkpoint and can claim both pairs with a wildcard.
