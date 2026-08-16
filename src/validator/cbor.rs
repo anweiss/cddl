@@ -642,6 +642,105 @@ impl<'a> CBORValidator<'a> {
     cv
   }
 
+  fn isolated_type2_probe(&self) -> CBORValidator<'a> {
+    let mut probe = self.new_with_recursion_state(self.cbor.clone());
+    probe.state.is_multi_type_choice = self.state.is_multi_type_choice;
+    probe.state.is_multi_group_choice = self.state.is_multi_group_choice;
+    probe
+      .state
+      .data_location
+      .clone_from(&self.state.data_location);
+    probe.state.type_group_name_entry = self.state.type_group_name_entry;
+    probe
+  }
+
+  fn validate_composite_control<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+    ctrl: ControlOperator,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    // A control in member-key position never reaches the candidate-key
+    // machinery; the pre-probe arms were a silent no-op there, and the
+    // occurrence logic must stay in charge of the entry.
+    if self.state.is_member_key {
+      return Ok(());
+    }
+
+    // An enclosing value-comparison control keeps `state.ctrl` set while it
+    // visits its operands on this validator, so arriving here with such a
+    // control set means this composite control is an operand of that
+    // traversal, not the type of the current data item. The pre-probe arms
+    // applied the enclosing control's leaf semantics in that position:
+    // visit the controller when the data item's kind matches the target,
+    // fall through silently otherwise. The type-composition controls
+    // (RFC 8610 Section 3.8.5 `.and`/`.within` intersections and the
+    // RFC 9165 Section 4 `.feature` annotation) instead constrain the
+    // current data item with each operand type, so the aggregate probes
+    // below stay in charge there. The enclosing arms' handling of
+    // type-resolved operands is a separate tracked gap.
+    let operand_of_value_comparison = match self.state.ctrl {
+      None | Some(ControlOperator::AND) | Some(ControlOperator::WITHIN) => false,
+      #[cfg(feature = "additional-controls")]
+      Some(ControlOperator::FEATURE) => false,
+      Some(_) => true,
+    };
+    if operand_of_value_comparison {
+      match (target, &self.cbor) {
+        (Type2::Array { .. }, Value::Array(_)) | (Type2::Map { .. }, Value::Map(_)) => {
+          return self.visit_type2(controller);
+        }
+        _ => return Ok(()),
+      }
+    }
+
+    // Validate the complete target independently from the controller. A
+    // false equality predicate must never rescue a target-type failure.
+    let mut target_probe = self.isolated_type2_probe();
+    target_probe.visit_type2(target)?;
+    if !target_probe.errors.is_empty() {
+      self.errors.append(&mut target_probe.errors);
+      return Ok(());
+    }
+
+    // The controller probe owns fresh physical-index and allocation state.
+    // Its success is one aggregate predicate that `.ne` inverts exactly once.
+    let mut equality_probe = self.isolated_type2_probe();
+    equality_probe.visit_type2(controller)?;
+    let equal = equality_probe.errors.is_empty();
+
+    match ctrl {
+      ControlOperator::EQ if !equal => self.errors.append(&mut equality_probe.errors),
+      ControlOperator::NE if equal => self.add_error(format!(
+        "expected aggregate value {:?} to differ from {}",
+        self.cbor, controller
+      )),
+      // A controller that references an undefined non-socket rule is a
+      // schema error, not an unequal value; the inversion must not turn
+      // the probe's resolution failure into an accept (RFC 8610 Section
+      // 3.9 reserves the undefined-name laxity for socket names).
+      ControlOperator::NE
+        if has_unresolvable_rule_references(
+          self.state.cddl,
+          controller,
+          &bound_generic_params(&self.state),
+        ) =>
+      {
+        self.errors.append(&mut equality_probe.errors)
+      }
+      ControlOperator::DEFAULT if equal => self.add_error(format!(
+        "default aggregate value {} must be omitted",
+        controller
+      )),
+      _ => {}
+    }
+
+    Ok(())
+  }
+
   fn validate_array_items<T: std::fmt::Debug + 'static>(
     &mut self,
     token: &ArrayItemToken,
@@ -1156,36 +1255,6 @@ impl<'a> CBORValidator<'a> {
     if group.group_choices.len() > 1 {
       self.state.is_multi_group_choice = true;
     }
-
-    // Map equality/inequality validation
-    if self.state.is_ctrl_map_equality {
-      if let Some(t) = &self.state.ctrl {
-        if let Value::Map(m) = &self.cbor {
-          let entry_counts = entry_counts_from_group(self.state.cddl, group);
-          let len = m.len();
-          if let ControlOperator::EQ | ControlOperator::NE = t {
-            if !validate_entry_count(&entry_counts, len) {
-              for ec in entry_counts.iter() {
-                if let Some(occur) = &ec.entry_occurrence {
-                  self.add_error(format!(
-                    "expected array with length per occurrence {}",
-                    occur,
-                  ));
-                } else {
-                  self.add_error(format!(
-                    "expected array with length {}, got {}",
-                    ec.count, len
-                  ));
-                }
-              }
-              return Ok(());
-            }
-          }
-        }
-      }
-    }
-
-    self.state.is_ctrl_map_equality = false;
 
     let initial_error_count = self.errors.len();
     let checkpoint = self.clone();
@@ -1753,22 +1822,18 @@ where
             {
               return self.visit_type2(controller);
             }
-          }
-          Type2::Array { .. } => {
-            if let Value::Array(_) = &self.cbor {
-              self.visit_type2(controller)?;
-              return Ok(());
+
+            if is_composite_control_target(self.state.cddl, target) {
+              return self.validate_composite_control(target, ctrl, controller);
             }
           }
-          Type2::Map { .. } => {
-            if let Value::Map(_) = &self.cbor {
-              self.state.ctrl = Some(ctrl);
-              self.state.is_ctrl_map_equality = true;
-              self.visit_type2(controller)?;
-              self.state.ctrl = None;
-              self.state.is_ctrl_map_equality = false;
-              return Ok(());
-            }
+          Type2::Array { .. } | Type2::Map { .. } => {
+            return self.validate_composite_control(target, ctrl, controller);
+          }
+          Type2::ParenthesizedType { .. }
+            if is_composite_control_target(self.state.cddl, target) =>
+          {
+            return self.validate_composite_control(target, ctrl, controller);
           }
           _ => self.add_error(format!(
             "target for .eq operator must be a string, numerical, array or map data type, got {}",
@@ -1788,24 +1853,18 @@ where
               self.state.ctrl = None;
               return Ok(());
             }
-          }
-          Type2::Array { .. } => {
-            if let Value::Array(_) = &self.cbor {
-              self.state.ctrl = Some(ctrl);
-              self.visit_type2(controller)?;
-              self.state.ctrl = None;
-              return Ok(());
+
+            if is_composite_control_target(self.state.cddl, target) {
+              return self.validate_composite_control(target, ctrl, controller);
             }
           }
-          Type2::Map { .. } => {
-            if let Value::Map(_) = &self.cbor {
-              self.state.ctrl = Some(ctrl);
-              self.state.is_ctrl_map_equality = true;
-              self.visit_type2(controller)?;
-              self.state.ctrl = None;
-              self.state.is_ctrl_map_equality = false;
-              return Ok(());
-            }
+          Type2::Array { .. } | Type2::Map { .. } => {
+            return self.validate_composite_control(target, ctrl, controller);
+          }
+          Type2::ParenthesizedType { .. }
+            if is_composite_control_target(self.state.cddl, target) =>
+          {
+            return self.validate_composite_control(target, ctrl, controller);
           }
           _ => self.add_error(format!(
             "target for .ne operator must be a string, numerical, array or map data type, got {}",
@@ -1879,6 +1938,13 @@ where
         Ok(())
       }
       ControlOperator::DEFAULT => {
+        // In member-key position the scalar path below reproduces the
+        // pre-existing key-arm behavior; the member-key class has its own
+        // candidate-key route to gain and is tracked separately.
+        if is_composite_control_target(self.state.cddl, target) && !self.state.is_member_key {
+          return self.validate_composite_control(target, ctrl, controller);
+        }
+
         self.state.ctrl = Some(ctrl);
         let error_count = self.errors.len();
         self.visit_type2(target)?;

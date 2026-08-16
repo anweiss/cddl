@@ -13,8 +13,8 @@ mod control;
 
 use crate::{
   ast::{
-    Group, GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type1, Type2,
-    TypeChoice, TypeRule, CDDL,
+    GenericArgs, GenericParams, Group, GroupChoice, GroupEntry, GroupRule, Identifier, MemberKey,
+    Occur, Rule, Type, Type1, Type2, TypeChoice, TypeRule, CDDL,
   },
   token::{self, *},
   visitor::Visitor,
@@ -128,8 +128,6 @@ pub struct ValidationState<'a> {
   /// Whether or not to advance to the next group entry if member key
   /// validation fails as detected during the current state of AST evaluation
   pub advance_to_next_entry: bool,
-  /// Is validation checking for map equality
-  pub is_ctrl_map_equality: bool,
   /// Is colon shortcut present in member key
   pub is_colon_shortcut_present: bool,
   /// Is the current rule the root rule
@@ -174,7 +172,6 @@ impl<'a> ValidationState<'a> {
       is_multi_group_choice: false,
       type_group_name_entry: None,
       advance_to_next_entry: false,
-      is_ctrl_map_equality: false,
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
@@ -204,7 +201,6 @@ impl<'a> ValidationState<'a> {
       is_multi_group_choice: false,
       type_group_name_entry: None,
       advance_to_next_entry: false,
-      is_ctrl_map_equality: false,
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
@@ -231,7 +227,6 @@ impl<'a> ValidationState<'a> {
       is_multi_group_choice: false,
       type_group_name_entry: None,
       advance_to_next_entry: false,
-      is_ctrl_map_equality: false,
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
@@ -261,7 +256,6 @@ impl<'a> ValidationState<'a> {
       is_multi_group_choice: false,
       type_group_name_entry: None,
       advance_to_next_entry: false,
-      is_ctrl_map_equality: false,
       is_colon_shortcut_present: false,
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
@@ -1176,145 +1170,264 @@ pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
-/// Retrieve number of group entries from a group. This is currently only used
-/// for determining map equality/inequality (the `.eq`/`.ne` control
-/// operators), but may be useful in other contexts. The occurrence is only
-/// captured for the second entry of the group choice to avoid ambiguity in
-/// non-homogenous definitions
-pub fn entry_counts_from_group<'a, 'b: 'a>(
-  cddl: &'a CDDL,
-  group: &'b Group<'a>,
-) -> Vec<EntryCount> {
-  // Each EntryCount is associated with a group choice in the given group
-  let mut entry_counts = Vec::new();
-
-  for gc in group.group_choices.iter() {
-    let mut count = 0;
-    let mut entry_occurrence = None;
-    let mut skip_final_push = false;
-
-    for (idx, ge) in gc.group_entries.iter().enumerate() {
-      match &ge.0 {
-        GroupEntry::ValueMemberKey { ge, .. } => {
-          if idx == 1 {
-            if let Some(occur) = &ge.occur {
-              entry_occurrence = Some(occur.occur)
-            }
-          }
-
-          count += 1;
+/// Does a `.eq`/`.ne`/`.default` control target denote an array or map
+/// composite type once typename chains and parentheses are resolved? Every
+/// resolved alternative must itself be composite so that byte-string,
+/// scalar, socket, mixed-choice, and generic targets keep their
+/// pre-existing routes.
+pub fn is_composite_control_target<'a>(cddl: &'a CDDL<'a>, target: &Type2<'a>) -> bool {
+  fn type2_is_composite<'a>(
+    cddl: &'a CDDL<'a>,
+    t2: &Type2<'a>,
+    visited: &mut Vec<&'a str>,
+  ) -> bool {
+    match t2 {
+      Type2::Array { .. } | Type2::Map { .. } => true,
+      Type2::ParenthesizedType { pt, .. } => type_is_composite(cddl, pt, visited),
+      Type2::Typename {
+        ident,
+        generic_args: None,
+        ..
+      } => {
+        if visited.contains(&ident.ident) {
+          return false;
         }
-        GroupEntry::InlineGroup { group, occur, .. } => {
-          if idx == 1 {
-            if let Some(occur) = occur {
-              entry_occurrence = Some(occur.occur)
-            }
-          }
+        visited.push(ident.ident);
 
-          // For inline groups with multiple choices, we need to add the current count
-          // to each of the nested entry counts, not replace the entire list
-          let nested_entry_counts = entry_counts_from_group(cddl, group);
-          if group.group_choices.len() > 1 {
-            // Add current accumulated count to each nested choice count
-            for nested_ec in nested_entry_counts {
-              entry_counts.push(EntryCount {
-                count: count + nested_ec.count,
-                entry_occurrence: nested_ec.entry_occurrence.or(entry_occurrence),
-              });
-            }
-            // Don't add the current group choice count at the end since we've handled it here
-            skip_final_push = true;
-            break;
-          } else {
-            // Single choice case: add the nested count to current count
-            count += if let Some(ec) = nested_entry_counts.first() {
-              ec.count
-            } else {
-              0
-            };
-          }
-        }
-        GroupEntry::TypeGroupname { ge, .. } => {
-          if idx == 1 {
-            if let Some(occur) = &ge.occur {
-              entry_occurrence = Some(occur.occur)
-            }
-          }
-
-          if let Some(gr) = group_rule_from_ident(cddl, &ge.name) {
-            if let GroupEntry::InlineGroup { group, .. } = &gr.entry {
-              if group.group_choices.len() == 1 {
-                count += if let Some(ec) = entry_counts_from_group(cddl, group).first() {
-                  ec.count
-                } else {
-                  0
-                };
-              } else {
-                entry_counts.append(&mut entry_counts_from_group(cddl, group));
-              }
-            } else {
-              entry_counts.append(&mut entry_counts_from_group(cddl, &gr.entry.clone().into()));
-            }
-          } else if group_choice_alternates_from_ident(cddl, &ge.name).is_empty() {
-            count += 1;
-          } else {
-            for ge in group_choice_alternates_from_ident(cddl, &ge.name).into_iter() {
-              entry_counts.append(&mut entry_counts_from_group(cddl, &ge.clone().into()));
-            }
-          }
+        // TEMPORARY: alternate-bearing typenames keep their pre-existing
+        // fall-through. This exclusion is sequencing, not correctness:
+        // routing such targets into the probes yields correct aggregate
+        // verdicts, but the change interacts with the CBOR membership
+        // pre-gate classifiers and lands as its own reviewed row; that
+        // row owns removing this conjunct together with the pinned
+        // fall-through vectors.
+        if let Some(tr) = type_rule_from_ident(cddl, ident) {
+          tr.generic_params.is_none()
+            && type_choice_alternates_from_ident(cddl, ident).is_empty()
+            && type_is_composite(cddl, &tr.value, visited)
+        } else {
+          false
         }
       }
-    }
-
-    if !skip_final_push {
-      entry_counts.push(EntryCount {
-        count,
-        entry_occurrence,
-      });
+      _ => false,
     }
   }
 
-  entry_counts
+  fn type_is_composite<'a>(cddl: &'a CDDL<'a>, t: &Type<'a>, visited: &mut Vec<&'a str>) -> bool {
+    !t.type_choices.is_empty()
+      && t
+        .type_choices
+        .iter()
+        .all(|tc| tc.type1.operator.is_none() && type2_is_composite(cddl, &tc.type1.type2, visited))
+  }
+
+  type2_is_composite(cddl, target, &mut Vec::new())
 }
 
-/// Validate the number of entries given an array of possible valid entry counts
-pub fn validate_entry_count(valid_entry_counts: &[EntryCount], num_entries: usize) -> bool {
-  valid_entry_counts.iter().any(|ec| {
-    num_entries == ec.count as usize
-      || match ec.entry_occurrence {
-        #[cfg(feature = "ast-span")]
-        Some(Occur::ZeroOrMore { .. }) | Some(Occur::Optional { .. }) => true,
-        #[cfg(not(feature = "ast-span"))]
-        Some(Occur::ZeroOrMore {}) | Some(Occur::Optional {}) => true,
-        #[cfg(feature = "ast-span")]
-        Some(Occur::OneOrMore { .. }) if num_entries > 0 => true,
-        #[cfg(not(feature = "ast-span"))]
-        Some(Occur::OneOrMore {}) if num_entries > 0 => true,
-        Some(Occur::Exact { lower, upper, .. }) => {
-          if let Some(lower) = lower {
-            if let Some(upper) = upper {
-              num_entries >= lower && num_entries <= upper
-            } else {
-              num_entries >= lower
-            }
-          } else if let Some(upper) = upper {
-            num_entries <= upper
-          } else {
-            false
+/// Does a type reference a rule name that no rule defines? RFC 8610
+/// Section 3.9 reserves the undefined-name laxity for socket names (the
+/// `$`/`$$` convention): only those are "taken to be an empty type choice"
+/// when left undefined, so an ordinary undefined name is a schema error and
+/// a controller containing one must not satisfy an aggregate `.ne`
+/// vacuously. A generic rule's formal parameters are bound names inside
+/// that rule's body — RFC 8610 Section 3.10 scopes them "within the scope
+/// of the generic rule (as if there were a rule of the form parameter =
+/// argument)" — while the argument types at each reference site are walked
+/// like any other type. `bound_params` carries the parameter names of the
+/// generic instantiations in scope at the reference, for controls written
+/// inside a generic rule body.
+pub fn has_unresolvable_rule_references<'a>(
+  cddl: &'a CDDL<'a>,
+  t2: &Type2<'a>,
+  bound_params: &[&'a str],
+) -> bool {
+  fn generic_param_names<'a>(params: Option<&GenericParams<'a>>) -> Vec<&'a str> {
+    params
+      .map(|gp| gp.params.iter().map(|p| p.param.ident).collect())
+      .unwrap_or_default()
+  }
+
+  fn ident_unresolvable<'a>(
+    cddl: &'a CDDL<'a>,
+    ident: &Identifier<'a>,
+    visited: &mut Vec<&'a str>,
+    bound: &[&'a str],
+  ) -> bool {
+    // A formal parameter of the enclosing generic rule is bound within its
+    // scope (RFC 8610 Section 3.10), never an undefined rule reference.
+    if bound.contains(&ident.ident) {
+      return false;
+    }
+    // Prelude names and socket names always resolve.
+    if ident.socket.is_some() || !matches!(lookup_ident(ident.ident), Token::IDENT(_, None)) {
+      return false;
+    }
+    if visited.contains(&ident.ident) {
+      return false;
+    }
+    visited.push(ident.ident);
+
+    // Walk every rule carrying this name (the base rule and any `/=`
+    // alternates) with that rule's own parameters bound; parameters do not
+    // leak into other rules' bodies.
+    let mut defined = false;
+    for rule in cddl.rules.iter() {
+      match rule {
+        Rule::Type { rule, .. } if rule.name == *ident => {
+          defined = true;
+          let params = generic_param_names(rule.generic_params.as_ref());
+          if type_unresolvable(cddl, &rule.value, visited, &params) {
+            return true;
           }
         }
-        _ => false,
+        Rule::Group { rule, .. } if rule.name == *ident => {
+          defined = true;
+          let params = generic_param_names(rule.generic_params.as_ref());
+          if group_entry_unresolvable(cddl, &rule.entry, visited, &params) {
+            return true;
+          }
+        }
+        _ => {}
       }
-  })
+    }
+
+    !defined
+  }
+
+  fn generic_args_unresolvable<'a>(
+    cddl: &'a CDDL<'a>,
+    generic_args: Option<&GenericArgs<'a>>,
+    visited: &mut Vec<&'a str>,
+    bound: &[&'a str],
+  ) -> bool {
+    generic_args.is_some_and(|ga| {
+      ga.args
+        .iter()
+        .any(|arg| type1_unresolvable(cddl, &arg.arg, visited, bound))
+    })
+  }
+
+  fn type_unresolvable<'a>(
+    cddl: &'a CDDL<'a>,
+    t: &Type<'a>,
+    visited: &mut Vec<&'a str>,
+    bound: &[&'a str],
+  ) -> bool {
+    t.type_choices
+      .iter()
+      .any(|tc| type1_unresolvable(cddl, &tc.type1, visited, bound))
+  }
+
+  fn type1_unresolvable<'a>(
+    cddl: &'a CDDL<'a>,
+    t1: &Type1<'a>,
+    visited: &mut Vec<&'a str>,
+    bound: &[&'a str],
+  ) -> bool {
+    type2_unresolvable(cddl, &t1.type2, visited, bound)
+      || t1
+        .operator
+        .as_ref()
+        .is_some_and(|op| type2_unresolvable(cddl, &op.type2, visited, bound))
+  }
+
+  fn type2_unresolvable<'a>(
+    cddl: &'a CDDL<'a>,
+    t2: &Type2<'a>,
+    visited: &mut Vec<&'a str>,
+    bound: &[&'a str],
+  ) -> bool {
+    match t2 {
+      Type2::Typename {
+        ident,
+        generic_args,
+        ..
+      }
+      | Type2::Unwrap {
+        ident,
+        generic_args,
+        ..
+      }
+      | Type2::ChoiceFromGroup {
+        ident,
+        generic_args,
+        ..
+      } => {
+        ident_unresolvable(cddl, ident, visited, bound)
+          || generic_args_unresolvable(cddl, generic_args.as_ref(), visited, bound)
+      }
+      Type2::ParenthesizedType { pt, .. } => type_unresolvable(cddl, pt, visited, bound),
+      Type2::Array { group, .. }
+      | Type2::Map { group, .. }
+      | Type2::ChoiceFromInlineGroup { group, .. } => {
+        group_unresolvable(cddl, group, visited, bound)
+      }
+      Type2::TaggedData { t, .. } => type_unresolvable(cddl, t, visited, bound),
+      _ => false,
+    }
+  }
+
+  fn group_unresolvable<'a>(
+    cddl: &'a CDDL<'a>,
+    group: &Group<'a>,
+    visited: &mut Vec<&'a str>,
+    bound: &[&'a str],
+  ) -> bool {
+    group.group_choices.iter().any(|gc| {
+      gc.group_entries
+        .iter()
+        .any(|(ge, _)| group_entry_unresolvable(cddl, ge, visited, bound))
+    })
+  }
+
+  fn group_entry_unresolvable<'a>(
+    cddl: &'a CDDL<'a>,
+    ge: &GroupEntry<'a>,
+    visited: &mut Vec<&'a str>,
+    bound: &[&'a str],
+  ) -> bool {
+    match ge {
+      GroupEntry::ValueMemberKey { ge, .. } => {
+        ge.member_key
+          .as_ref()
+          .is_some_and(|mk| member_key_unresolvable(cddl, mk, visited, bound))
+          || type_unresolvable(cddl, &ge.entry_type, visited, bound)
+      }
+      GroupEntry::TypeGroupname { ge, .. } => {
+        ident_unresolvable(cddl, &ge.name, visited, bound)
+          || generic_args_unresolvable(cddl, ge.generic_args.as_ref(), visited, bound)
+      }
+      GroupEntry::InlineGroup { group, .. } => group_unresolvable(cddl, group, visited, bound),
+    }
+  }
+
+  fn member_key_unresolvable<'a>(
+    cddl: &'a CDDL<'a>,
+    mk: &MemberKey<'a>,
+    visited: &mut Vec<&'a str>,
+    bound: &[&'a str],
+  ) -> bool {
+    match mk {
+      MemberKey::Type1 { t1, .. } => type1_unresolvable(cddl, t1, visited, bound),
+      _ => false,
+    }
+  }
+
+  type2_unresolvable(cddl, t2, &mut Vec::new(), bound_params)
 }
 
-/// Entry count
-#[derive(Clone, Debug)]
-pub struct EntryCount {
-  /// Count
-  pub count: u64,
-  /// Optional occurrence
-  pub entry_occurrence: Option<Occur>,
+/// Generic parameter names bound by the instantiations currently in scope,
+/// for seeding `has_unresolvable_rule_references` when a control sits
+/// inside a generic rule body. Collecting every in-scope instantiation's
+/// parameters over-approximates RFC 8610 Section 3.10's per-rule scoping
+/// in the resolvable direction only, which leaves the equality probe's own
+/// result in charge.
+pub fn bound_generic_params<'a>(state: &ValidationState<'a>) -> Vec<&'a str> {
+  state
+    .generic_rules
+    .iter()
+    .flat_map(|gr| gr.params.iter().copied())
+    .collect()
 }
 
 /// Shared bookkeeping for the array sequence matcher (RFC 8610 Appendix A
