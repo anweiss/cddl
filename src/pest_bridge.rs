@@ -451,6 +451,21 @@ fn pest_span_to_position(span: &PestSpan, input: &str) -> Position {
   }
 }
 
+/// Convert an AST span back to a full position, recomputing the column
+#[cfg(feature = "ast-span")]
+fn position_from_ast_span(span: ast::Span, input: &str) -> Position {
+  let (start, end, line) = span;
+  let line_start = input[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+  let column = input[line_start..start].chars().count() + 1;
+
+  Position {
+    line,
+    column,
+    range: (start, end),
+    index: start,
+  }
+}
+
 /// Standard prelude names from RFC 8610 §D
 const STANDARD_PRELUDE: &[&str] = &[
   "any",
@@ -1827,19 +1842,32 @@ fn convert_cddl<'a>(mut pairs: Pairs<'a, Rule>, input: &'a str) -> Result<ast::C
     });
   }
 
-  // Check for duplicate rule names (non-alternate rules)
+  // Check for duplicate rule names (non-alternate rules). RFC 8610 Appendix C
+  // does let `/=` and `//=` create the named choice on their own ("It is not
+  // an error to extend a rule name that has not yet been defined"), but it
+  // never says whether that leaves the name "already defined" for the
+  // plain-`=` error clause. Treating a late `=` as a duplicate — rather than
+  // as a base to reorder ahead of the existing arms — is this crate's policy,
+  // chosen to match the name-based duplicate check applied to every other
+  // rule. Rules of both kinds share one namespace, so the check is keyed by
+  // name alone: a plain group rule after `t /= int` collides just like a
+  // plain type rule after `g //= (k: int)`. Pinned by
+  // tests/incremental_group_choices.rs.
   let mut seen_names: HashMap<String, usize> = HashMap::new();
+  let mut incremental_names: HashMap<String, usize> = HashMap::new();
   for (idx, rule) in rules.iter().enumerate() {
     let name = rule.name();
     let is_alternate = match rule {
       ast::Rule::Type { rule, .. } => rule.is_type_choice_alternate,
       ast::Rule::Group { rule, .. } => rule.is_group_choice_alternate,
     };
-    if !is_alternate {
-      if let Some(_prev_idx) = seen_names.get(&name) {
+    if is_alternate {
+      incremental_names.entry(name).or_insert(idx);
+    } else {
+      if seen_names.contains_key(&name) || incremental_names.contains_key(&name) {
         return Err(Error::PARSER {
           #[cfg(feature = "ast-span")]
-          position: Position::default(),
+          position: position_from_ast_span(rule.span(), input),
           msg: ErrorMsg {
             short: format!("rule \"{}\" is already defined", name),
             extended: None,
