@@ -15,6 +15,11 @@ updates:
     directory: "/cddl-lsp"
     schedule:
       interval: "weekly"
+    ignore:
+      # typescript-eslint only supports typescript <6.1.0, so major bumps of
+      # typescript break `npm install` with an ERESOLVE peer dependency conflict
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "npm"
     directory: "/cddl-lsp/client"
     schedule:
