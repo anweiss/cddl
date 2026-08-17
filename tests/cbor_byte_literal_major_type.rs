@@ -26,6 +26,12 @@ fn cbor_map(key: &[u8]) -> Vec<u8> {
   encoded
 }
 
+fn cbor_array(item: &[u8]) -> Vec<u8> {
+  let mut encoded = vec![0x81];
+  encoded.extend_from_slice(item);
+  encoded
+}
+
 fn assert_verdict(schema: &str, encoded: &[u8], accept: bool) {
   let result = validate_cbor_from_slice(schema, encoded, None);
   assert_eq!(
@@ -46,9 +52,16 @@ fn decoded_byte_literals_require_the_byte_string_major_type() {
     assert_verdict(&schema, &bytes, true);
     assert_verdict(&schema, &text, false);
   }
+}
 
-  assert_verdict("m = \"AA\"", &text, true);
-  assert_verdict("m = \"AA\"", &bytes, false);
+#[test]
+fn text_literals_reject_equal_bytes_without_panicking() {
+  // Reverse control for the major-type boundary. The rejecting row is the
+  // former absent-control unwrap panic: a text literal against CBOR bytes
+  // must return a normal mismatch, not abort the process. Kept standalone
+  // so it fails on its own on the pre-fix tree.
+  assert_verdict("m = \"AA\"", &cbor_text("AA"), true);
+  assert_verdict("m = \"AA\"", &cbor_bytes(b"AA"), false);
 }
 
 #[test]
@@ -76,6 +89,23 @@ fn decoded_byte_literal_map_keys_keep_their_major_type() {
 }
 
 #[test]
+fn decoded_byte_literal_array_elements_keep_their_major_type() {
+  let byte_item = cbor_array(&cbor_bytes(b"AA"));
+  let text_item = cbor_array(&cbor_text("AA"));
+
+  for literal in ["'AA'", "h'4141'", "b64'QUE='"] {
+    let schema = format!("m = [{literal}]");
+    assert_verdict(&schema, &byte_item, true);
+    assert_verdict(&schema, &text_item, false);
+  }
+
+  // Text-literal element controls; the rejecting row is the array route of
+  // the former absent-control unwrap panic.
+  assert_verdict("m = [\"AA\"]", &text_item, true);
+  assert_verdict("m = [\"AA\"]", &byte_item, false);
+}
+
+#[test]
 fn ne_byte_string_controllers_accept_every_text_string() {
   // RFC 8610 Section 3.8.6: "All other cases are not equal (e.g., comparing
   // a text string with a byte string)", so a text instance always satisfies
@@ -92,6 +122,19 @@ fn ne_byte_string_controllers_accept_every_text_string() {
 }
 
 #[test]
+fn ne_mixed_choice_controllers_accept_text_through_the_byte_branch() {
+  // A choice controller applies per element of the controller type (the
+  // cross-product reading of RFC 9165 Section 2), so the byte-string branch
+  // satisfies .ne for every text instance under RFC 8610 Section 3.8.6's
+  // cross-kind rule, whichever branch order is written. The all-text choice
+  // control pins the pre-existing any-branch choice semantics these rows
+  // inherit.
+  assert_verdict("m = tstr .ne (\"AA\" / 'BB')", &cbor_text("AA"), true);
+  assert_verdict("m = tstr .ne ('BB' / \"AA\")", &cbor_text("AA"), true);
+  assert_verdict("m = tstr .ne (\"AA\" / \"BB\")", &cbor_text("AA"), true);
+}
+
+#[test]
 fn eq_byte_string_controllers_match_no_text_string() {
   // The same RFC 8610 Section 3.8.6 cross-kind rule: equal bytes in a text
   // string do not satisfy .eq against a byte-string controller.
@@ -102,4 +145,17 @@ fn eq_byte_string_controllers_match_no_text_string() {
 
   assert_verdict("m = tstr .eq \"AA\"", &cbor_text("AA"), true);
   assert_verdict("m = tstr .eq \"AA\"", &cbor_text("AB"), false);
+}
+
+#[test]
+fn composite_array_eq_ne_byte_literal_elements_follow_the_cross_kind_rule() {
+  // RFC 8610 Section 3.8.6: arrays are equal only when their elements are
+  // equal pairwise, and a text element is never equal to a byte-string
+  // element, so .ne is satisfied and .eq is not regardless of the octets.
+  let text_item = cbor_array(&cbor_text("AA"));
+
+  assert_verdict("m = [\"AA\"] .ne ['BB']", &text_item, true);
+  assert_verdict("m = [\"AA\"] .ne ['AA']", &text_item, true);
+  assert_verdict("m = [tstr] .eq ['AA']", &text_item, false);
+  assert_verdict("m = [tstr] .eq [\"AA\"]", &text_item, true);
 }
