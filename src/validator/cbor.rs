@@ -3357,6 +3357,9 @@ where
       Type2::B16ByteString { value, .. } => {
         self.visit_value(&token::Value::BYTE(ByteValue::B16(value.clone())))
       }
+      Type2::B64ByteString { value, .. } => {
+        self.visit_value(&token::Value::BYTE(ByteValue::B64(value.clone())))
+      }
       Type2::ParenthesizedType { pt, .. } => self.visit_type(pt),
       Type2::Unwrap {
         ident,
@@ -3731,13 +3734,6 @@ where
       Type2::Any { .. } => Ok(()),
       #[cfg(not(feature = "ast-span"))]
       Type2::Any {} => Ok(()),
-      _ => {
-        self.add_error(format!(
-          "unsupported data type for validating cbor, got {}",
-          t2
-        ));
-        Ok(())
-      }
     }
   }
 
@@ -4707,6 +4703,17 @@ where
             }
           }
         },
+        token::Value::BYTE(bv) if self.state.ctrl.is_none() => {
+          let expected = match bv {
+            ByteValue::UTF8(value) | ByteValue::B16(value) | ByteValue::B64(value) => value,
+          };
+
+          if expected.as_ref() == b {
+            None
+          } else {
+            Some(format!("expected {}, got {:?}", bv, b))
+          }
+        }
         #[cfg(feature = "additional-controls")]
         token::Value::TEXT(t) => match &self.state.ctrl {
           Some(ControlOperator::ABNFB) => {

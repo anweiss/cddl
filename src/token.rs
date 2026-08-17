@@ -5,9 +5,6 @@ use alloc::borrow::Cow;
 #[cfg(feature = "std")]
 use std::borrow::Cow;
 
-#[cfg(not(feature = "std"))]
-use alloc::string::String;
-
 #[cfg(target_arch = "wasm32")]
 use serde::{Deserialize, Serialize};
 
@@ -512,20 +509,18 @@ impl fmt::Display for ByteValue<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       ByteValue::UTF8(b) => write!(f, "'{}'", core::str::from_utf8(b).map_err(|_| fmt::Error)?),
-      ByteValue::B16(b) => write!(
-        f,
-        "h'{}'",
-        String::from_utf8(b.to_vec())
-          .map_err(|_| fmt::Error)?
-          .replace(' ', "")
-      ),
-      ByteValue::B64(b) => write!(
-        f,
-        "b64'{}'",
-        String::from_utf8(b.to_vec())
-          .map_err(|_| fmt::Error)?
-          .replace(' ', "")
-      ),
+      ByteValue::B16(b) => {
+        f.write_str("h'")?;
+        data_encoding::HEXLOWER.encode_write(b, f)?;
+        f.write_str("'")
+      }
+      ByteValue::B64(b) => {
+        // RFC 8949 §8: byte strings are notated in the base encodings
+        // without padding
+        f.write_str("b64'")?;
+        data_encoding::BASE64URL_NOPAD.encode_write(b, f)?;
+        f.write_str("'")
+      }
     }
   }
 }

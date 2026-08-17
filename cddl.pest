@@ -322,17 +322,22 @@ escape_sequence = @{ "\\" ~ (
 // =============================================================================
 
 // Byte string values in various encodings
-// 'base64data' - base64 encoding
+// 'text' - unqualified UTF-8 bytes
 // h'hexdata' - base16 (hex) encoding
+// b64'base64-data' - base64 or base64url encoding
 // h"text" - hex-quoted form
-bytes_value = { bytes_b64 | bytes_b16 | bytes_h_quoted }
+// Prefixed content is validated semantically in the bridge so that
+// whitespace and comments inside the literal can be ignored (RFC 8610 §3.1)
+bytes_value = { bytes_b64 | bytes_b16 | bytes_h_quoted | bytes_utf8 }
 
-bytes_b64 = @{ "'" ~ BASE64_INNER ~ "'" }
+bytes_b64 = @{ "b64'" ~ BASE64_INNER ~ "'" }
 bytes_b16 = @{ "h'" ~ HEX_INNER ~ "'" }
 bytes_h_quoted = @{ "h" ~ "\"" ~ (!("\"") ~ ANY)* ~ "\"" }
+bytes_utf8 = @{ "'" ~ BYTE_STRING_INNER ~ "'" }
 
 BASE64_INNER = { (!(QUOTE) ~ ANY)* }
-HEX_INNER = { (ASCII_HEX_DIGIT | WHITESPACE)* }
+BYTE_STRING_INNER = { (!(QUOTE) ~ ANY)* }
+HEX_INNER = { (!(QUOTE) ~ ANY)* }
 
 QUOTE = _{ "'" }
 
