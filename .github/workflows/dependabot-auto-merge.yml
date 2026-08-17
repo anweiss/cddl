@@ -1,0 +1,46 @@
+name: Dependabot auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: enable auto-merge
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Auto-merge waits on the required status checks enforced by the "CDDL
+      # Core Library CI" and "VSCode Extension / LSP CI" rulesets, so a bump
+      # that breaks the build stays open instead of merging.
+      - name: Enable squash auto-merge for patch and minor updates
+        if: |
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Leave major updates for manual review
+        if: |
+          github.event.action == 'opened' &&
+          steps.metadata.outputs.update-type == 'version-update:semver-major'
+        run: gh pr comment "$PR_URL" --body "Major version update (\`$DEPENDENCY\` $PREVIOUS to $NEW) — auto-merge intentionally not enabled. Merge manually after reviewing the upstream breaking changes."
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPENDENCY: ${{ steps.metadata.outputs.dependency-names }}
+          PREVIOUS: ${{ steps.metadata.outputs.previous-version }}
+          NEW: ${{ steps.metadata.outputs.new-version }}
