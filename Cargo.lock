@@ -258,7 +258,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]
