@@ -25,13 +25,14 @@ module.exports = function withDefaults(/**@type WebpackConfig*/ extConfig) {
           exclude: /node_modules/,
           use: [
             {
-              // configure TypeScript loader:
-              // * enable sources maps for end-to-end source maps
-              loader: 'ts-loader',
+              // TypeScript 7 no longer ships a JavaScript compiler API, so
+              // transpilation is handled by esbuild. Type checking is still
+              // performed separately by `tsc -b` (see the `compile` script).
+              loader: 'esbuild-loader',
               options: {
-                compilerOptions: {
-                  sourceMap: true,
-                },
+                loader: 'ts',
+                target: 'es2022',
+                sourcemap: true,
               },
             },
           ],
