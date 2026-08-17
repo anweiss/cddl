@@ -2,7 +2,7 @@ name: Dependabot auto-merge
 
 on:
   pull_request_target:
-    types: [opened, reopened, ready_for_review]
+    types: [opened, reopened, ready_for_review, synchronize]
 
 permissions:
   contents: write
@@ -12,35 +12,50 @@ jobs:
   auto-merge:
     name: enable auto-merge
     runs-on: ubuntu-latest
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    if: |
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.draft == false
 
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Auto-merge waits on the required status checks enforced by the "CDDL
       # Core Library CI" and "VSCode Extension / LSP CI" rulesets, so a bump
       # that breaks the build stays open instead of merging.
-      - name: Enable squash auto-merge for patch and minor updates
+      #
+      # Pre-1.0 minor bumps are excluded: under both Cargo and npm range
+      # semantics a 0.x -> 0.(x+1) bump is breaking, even though Dependabot
+      # classifies it as semver-minor.
+      - name: Enable squash auto-merge for patch and compatible minor updates
         if: |
           steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-          steps.metadata.outputs.update-type == 'version-update:semver-minor'
-        run: gh pr merge --auto --squash "$PR_URL"
+          (steps.metadata.outputs.update-type == 'version-update:semver-minor' &&
+           !startsWith(steps.metadata.outputs.previous-version, '0.'))
+        run: |
+          if [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" = "true" ]; then
+            echo "Auto-merge already enabled; nothing to do."
+          else
+            gh pr merge --auto --squash "$PR_URL"
+          fi
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Leave major updates for manual review
+      - name: Leave breaking updates for manual review
         if: |
           github.event.action == 'opened' &&
-          steps.metadata.outputs.update-type == 'version-update:semver-major'
-        run: gh pr comment "$PR_URL" --body "Major version update (\`$DEPENDENCY\` $PREVIOUS to $NEW) — auto-merge intentionally not enabled. Merge manually after reviewing the upstream breaking changes."
+          (steps.metadata.outputs.update-type == 'version-update:semver-major' ||
+           (steps.metadata.outputs.update-type == 'version-update:semver-minor' &&
+            startsWith(steps.metadata.outputs.previous-version, '0.')))
+        run: gh pr comment "$PR_URL" --body "$KIND (\`$DEPENDENCY\` $PREVIOUS to $NEW) — auto-merge intentionally not enabled. Merge manually after reviewing the upstream breaking changes."
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KIND: ${{ steps.metadata.outputs.update-type == 'version-update:semver-major' && 'Major version update' || 'Pre-1.0 minor version update' }}
           DEPENDENCY: ${{ steps.metadata.outputs.dependency-names }}
           PREVIOUS: ${{ steps.metadata.outputs.previous-version }}
           NEW: ${{ steps.metadata.outputs.new-version }}
