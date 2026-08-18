@@ -940,8 +940,9 @@ function generateArray(entries, ctx, depth, visiting, env) {
       else if (entry.kind === 'group') array.push(...generateArray(entry.entries, ctx, depth + 1, visiting, env));
       else {
         // A group reference contributes its entries to the array, not a nested array.
-        const group = resolveGroupNode(entry.value, ctx, env, new Set());
-        if (group) array.push(...generateArray(group.entries, ctx, depth + 1, visiting, env));
+        const seen = new Set();
+        const resolved = resolveGroupNode(entry.value, ctx, env, seen, visiting);
+        if (resolved) array.push(...generateArray(resolved.group.entries, ctx, depth + 1, new Set([...visiting, ...seen]), resolved.env));
         else array.push(generateNode(entry.value, null, ctx, depth + 1, visiting, env, null));
       }
     }
@@ -960,16 +961,22 @@ function hasMemberEntries(entries) {
   });
 }
 
-/** Follow references to an inline group definition, or null when it is not one. */
-function resolveGroupNode(node, ctx, env, seen) {
+/** Follow references to an inline group definition with its environment, or null when it is not one. */
+function resolveGroupNode(node, ctx, env, seen, visiting) {
   if (!node) return null;
-  if (node.kind === 'group') return hasMemberEntries(node.entries) ? null : node;
-  if (node.kind !== 'ref' || node.args.length > 0) return null;
-  if (env?.has(node.name)) return resolveGroupNode(env.get(node.name), ctx, env, seen);
-  if (seen.has(node.name)) return null;
+  if (node.kind === 'group') return hasMemberEntries(node.entries) ? null : { group: node, env };
+  if (node.kind !== 'ref') return null;
+  if (env?.has(node.name)) return resolveGroupNode(env.get(node.name), ctx, env, seen, visiting);
+  if (seen.has(node.name) || visiting?.has(node.name)) return null;
   seen.add(node.name);
   const rule = ctx.model.rules.get(node.name);
-  return rule && rule.params.length === 0 ? resolveGroupNode(rule.node, ctx, env, seen) : null;
+  if (!rule) return null;
+  if (rule.params.length === 0) return resolveGroupNode(rule.node, ctx, env, seen, visiting);
+  const nextEnv = new Map(env || []);
+  rule.params.forEach((param, index) => {
+    if (node.args[index]) nextEnv.set(param, node.args[index]);
+  });
+  return resolveGroupNode(rule.node, ctx, nextEnv, seen, visiting);
 }
 
 function generateEnum(entries, ctx, depth, visiting, env) {
