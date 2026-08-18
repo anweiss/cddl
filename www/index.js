@@ -1294,8 +1294,14 @@ function layoutPlaygroundEditors() {
 
 function setInstanceKind(kind) {
   instanceKind = kind === 'cbor' ? 'cbor' : 'json';
-  if (instanceTabJson) instanceTabJson.classList.toggle('active', instanceKind === 'json');
-  if (instanceTabCbor) instanceTabCbor.classList.toggle('active', instanceKind === 'cbor');
+  if (instanceTabJson) {
+    instanceTabJson.classList.toggle('active', instanceKind === 'json');
+    instanceTabJson.setAttribute('aria-selected', String(instanceKind === 'json'));
+  }
+  if (instanceTabCbor) {
+    instanceTabCbor.classList.toggle('active', instanceKind === 'cbor');
+    instanceTabCbor.setAttribute('aria-selected', String(instanceKind === 'cbor'));
+  }
   if (instanceCborHint) {
     instanceCborHint.hidden = instanceKind !== 'cbor';
     instanceCborHint.style.display = instanceKind === 'cbor' ? '' : 'none';
