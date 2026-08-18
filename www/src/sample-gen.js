@@ -431,7 +431,7 @@ function readOccurrence(tokens) {
   const first = tokens[0];
   if (!first) return null;
   if (first.value === '?') return { consumed: 1, occurrence: { min: 0, count: 1, optional: true, raw: '?' } };
-  if (first.value === '*') return { consumed: 1, occurrence: { min: 0, count: 1, optional: false, raw: '*' } };
+  if (first.value === '*' && tokens[1]?.type !== 'number') return { consumed: 1, occurrence: { min: 0, count: 1, optional: false, raw: '*' } };
   if (first.value === '+') return { consumed: 1, occurrence: { min: 1, count: 1, optional: false, raw: '+' } };
 
   if (first.type === 'number' && tokens[1]?.value === '*' && tokens[2]?.type === 'number') {
