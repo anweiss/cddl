@@ -1,4 +1,11 @@
 import * as monaco from 'monaco-editor';
+import { validateInstance, parseCborInput, isCborSupported } from './src/instance-validation.js';
+import { buildShareUrl, readStateFromLocation, clearLocationState, copyToClipboard, isTooLargeToShare } from './src/share.js';
+import { pickFile, downloadText, attachDropZone, classifyFile, bytesToHex } from './src/file-io.js';
+import { parseRules, renderOutline, registerNavigation } from './src/outline.js';
+import { generateSample, listRootCandidates } from './src/sample-gen.js';
+import { initToasts, toast } from './src/toast.js';
+import { initShortcutsModal } from './src/shortcuts.js';
 
 // ─── CDDL Language Registration ───────────────────────────────────────────────
 
@@ -862,9 +869,24 @@ function saveContent(content) {
 // ─── DOM References ────────────────────────────────────────────────────────────
 
 let editor;
+let instanceEditor;
 let statusPill, statusText;
 let problemsPanel, problemsBadge, problemsBody, problemsEmpty;
 let cursorPosition;
+
+const INSTANCE_TEXT_CACHE_KEY = 'cddl-playground-instance-text';
+const INSTANCE_KIND_CACHE_KEY = 'cddl-playground-instance-kind';
+const INSTANCE_PANE_CACHE_KEY = 'cddl-playground-instance-open';
+const OUTLINE_PANE_CACHE_KEY = 'cddl-playground-outline-open';
+
+let instanceKind = 'json';
+let instancePane, instanceToggleBtn, instanceResult, instanceRootRule;
+let instanceTabJson, instanceTabCbor, instanceCborHint;
+let outlinePane, outlineToggleBtn, outlineFilter, outlineList;
+let outlineRules = [];
+let schemaFeatureTimer;
+let shortcutsController;
+let navigationDisposer;
 
 // ─── Problems Panel ────────────────────────────────────────────────────────────
 
@@ -878,26 +900,30 @@ function updateProblems(errors) {
   }
 
   // Badge
-  problemsBadge.textContent = count;
-  problemsBadge.classList.toggle('zero', count === 0);
+  if (problemsBadge) {
+    problemsBadge.textContent = count;
+    problemsBadge.classList.toggle('zero', count === 0);
+  }
 
   // Status pill
-  statusPill.className = 'status-pill';
+  if (statusPill) statusPill.className = 'status-pill';
   if (errorCount > 0) {
-    statusPill.classList.add('invalid');
+    if (statusPill) statusPill.classList.add('invalid');
     const parts = [];
     parts.push(`${errorCount} error${errorCount > 1 ? 's' : ''}`);
     if (warningCount > 0) parts.push(`${warningCount} warning${warningCount > 1 ? 's' : ''}`);
-    statusText.textContent = parts.join(', ');
+    if (statusText) statusText.textContent = parts.join(', ');
   } else if (warningCount > 0) {
-    statusPill.classList.add('valid');
-    statusText.textContent = `Valid \u2022 ${warningCount} warning${warningCount > 1 ? 's' : ''}`;
+    if (statusPill) statusPill.classList.add('valid');
+    if (statusText) statusText.textContent = `Valid \u2022 ${warningCount} warning${warningCount > 1 ? 's' : ''}`;
   } else {
-    statusPill.classList.add('valid');
-    statusText.textContent = 'Valid';
+    if (statusPill) statusPill.classList.add('valid');
+    if (statusText) statusText.textContent = 'Valid';
   }
 
   // Body — batch DOM writes with a document fragment
+  if (!problemsBody) return;
+
   if (count === 0) {
     problemsBody.innerHTML = '';
     problemsBody.appendChild(createEmptyState());
@@ -905,7 +931,7 @@ function updateProblems(errors) {
   }
 
   // Auto-expand when errors appear
-  problemsPanel.classList.remove('collapsed');
+  if (problemsPanel) problemsPanel.classList.remove('collapsed');
 
   const frag = document.createDocumentFragment();
   for (let i = 0; i < count; i++) {
@@ -1037,6 +1063,7 @@ let saveTimer;
 function scheduleValidation() {
   clearTimeout(validationTimer);
   validationTimer = setTimeout(runValidation, 400);
+  scheduleSchemaFeatures();
 }
 
 function scheduleSave() {
@@ -1054,14 +1081,14 @@ function runValidation() {
   if (!input.trim()) {
     updateProblems([]);
     monaco.editor.setModelMarkers(editor.getModel(), 'cddl', []);
-    statusPill.className = 'status-pill';
-    statusText.textContent = 'Ready';
+    if (statusPill) statusPill.className = 'status-pill';
+    if (statusText) statusText.textContent = 'Ready';
     return;
   }
 
   // Show checking state briefly
-  statusPill.className = 'status-pill checking';
-  statusText.textContent = 'Checking\u2026';
+  if (statusPill) statusPill.className = 'status-pill checking';
+  if (statusText) statusText.textContent = 'Checking\u2026';
 
   const result = validateCDDLText(input);
   updateProblems(result.errors);
@@ -1227,6 +1254,447 @@ function toMarker(model, err) {
   };
 }
 
+
+// ─── Instance Validation ─────────────────────────────────────────────────────
+
+function loadInstanceText(sharedState) {
+  if (sharedState) return typeof sharedState.instance === 'string' ? sharedState.instance : '';
+  try {
+    return localStorage.getItem(INSTANCE_TEXT_CACHE_KEY) || '';
+  } catch (_) {}
+  return '';
+}
+
+function loadInstanceKind(sharedState) {
+  if (sharedState?.kind === 'json' || sharedState?.kind === 'cbor') return sharedState.kind;
+  try {
+    const saved = localStorage.getItem(INSTANCE_KIND_CACHE_KEY);
+    if (saved === 'json' || saved === 'cbor') return saved;
+  } catch (_) {}
+  return 'json';
+}
+
+function saveInstanceState() {
+  try {
+    if (instanceEditor) localStorage.setItem(INSTANCE_TEXT_CACHE_KEY, instanceEditor.getValue());
+    localStorage.setItem(INSTANCE_KIND_CACHE_KEY, instanceKind);
+    if (instancePane) localStorage.setItem(INSTANCE_PANE_CACHE_KEY, String(!instancePane.classList.contains('collapsed')));
+  } catch (_) {}
+}
+
+function layoutInstanceNextFrame() {
+  if (!instanceEditor || (instancePane && instancePane.classList.contains('collapsed'))) return;
+  requestAnimationFrame(() => instanceEditor.layout());
+}
+
+function layoutPlaygroundEditors() {
+  if (editor) editor.layout();
+  if (instanceEditor && (!instancePane || !instancePane.classList.contains('collapsed'))) instanceEditor.layout();
+}
+
+function setInstanceKind(kind) {
+  instanceKind = kind === 'cbor' ? 'cbor' : 'json';
+  if (instanceTabJson) {
+    instanceTabJson.classList.toggle('active', instanceKind === 'json');
+    instanceTabJson.setAttribute('aria-selected', String(instanceKind === 'json'));
+  }
+  if (instanceTabCbor) {
+    instanceTabCbor.classList.toggle('active', instanceKind === 'cbor');
+    instanceTabCbor.setAttribute('aria-selected', String(instanceKind === 'cbor'));
+  }
+  if (instanceCborHint) {
+    instanceCborHint.hidden = instanceKind !== 'cbor';
+    instanceCborHint.style.display = instanceKind === 'cbor' ? '' : 'none';
+    if (instanceKind === 'cbor' && wasmModule && !isCborSupported(wasmModule)) {
+      instanceCborHint.textContent = 'CBOR validation is not available in this WASM build.';
+    }
+  }
+  if (instanceEditor?.getModel()) {
+    monaco.editor.setModelLanguage(instanceEditor.getModel(), instanceKind === 'json' ? 'json' : 'plaintext');
+  }
+  saveInstanceState();
+}
+
+function renderInstanceResult(result) {
+  if (!instanceResult) return;
+  instanceResult.textContent = '';
+  instanceResult.classList.remove('ok', 'fail');
+  instanceResult.classList.add(result.ok ? 'ok' : 'fail');
+
+  const title = document.createElement('div');
+  title.className = 'instance-result-title';
+  title.textContent = result.title || (result.ok ? 'Instance is valid' : 'Instance validation failed');
+  instanceResult.appendChild(title);
+
+  const list = document.createElement('div');
+  list.className = 'instance-result-list';
+  const failures = Array.isArray(result.failures) ? result.failures : [];
+  if (failures.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'instance-result-empty';
+    empty.textContent = result.ok ? 'No failures.' : (result.detail || 'Validation failed.');
+    list.appendChild(empty);
+  } else {
+    for (const failure of failures) {
+      const item = document.createElement('div');
+      item.className = 'instance-result-item';
+      item.textContent = String(failure);
+      list.appendChild(item);
+    }
+  }
+  instanceResult.appendChild(list);
+}
+
+function validateCurrentInstance() {
+  if (!editor || !instanceEditor) return;
+  const result = validateInstance({
+    wasmModule,
+    cddl: editor.getValue(),
+    kind: instanceKind,
+    text: instanceEditor.getValue(),
+    rootRule: instanceRootRule?.value || undefined,
+  });
+  renderInstanceResult(result);
+  toast(result.title, result.ok ? 'success' : 'error');
+}
+
+function toggleInstancePane(forceOpen) {
+  if (!instancePane) return;
+  const open = typeof forceOpen === 'boolean' ? forceOpen : instancePane.classList.contains('collapsed');
+  instancePane.classList.toggle('collapsed', !open);
+  if (instanceToggleBtn) instanceToggleBtn.classList.toggle('active', open);
+  saveInstanceState();
+  if (editor) editor.layout();
+  if (open) layoutInstanceNextFrame();
+}
+
+function refreshRootCandidates() {
+  if (!instanceRootRule || !editor) return;
+  const previous = instanceRootRule.value;
+  const roots = listRootCandidates(editor.getValue());
+  instanceRootRule.textContent = '';
+  for (const root of roots) {
+    const option = document.createElement('option');
+    option.value = root;
+    option.textContent = root;
+    instanceRootRule.appendChild(option);
+  }
+  if (previous && roots.includes(previous)) {
+    instanceRootRule.value = previous;
+  } else if (roots.length > 0) {
+    instanceRootRule.value = roots[0];
+  }
+}
+
+function generateCurrentSample() {
+  if (!editor || !instanceEditor) return;
+  const selectedRoot = instanceRootRule?.value || undefined;
+  const result = generateSample(editor.getValue(), selectedRoot);
+  if (result.error) {
+    toast(result.error, 'error');
+    return;
+  }
+  if (result.json !== null) {
+    setInstanceKind('json');
+    instanceEditor.setValue(result.json);
+    saveInstanceState();
+    toggleInstancePane(true);
+    if (result.jsonRepresentable === false) {
+      toast(
+        'This schema uses CBOR-only features (integer keys, byte strings, or tags) — the generated JSON is a shape reference and won\'t validate as JSON. Switch to the CBOR tab for this one.',
+        'warning',
+        7000,
+      );
+    } else if (result.constraintsSatisfied === false) {
+      toast(
+        'Some control operator constraints could not be applied — the generated sample is a shape reference and may not validate. Adjust the highlighted values manually.',
+        'warning',
+        7000,
+      );
+    } else {
+      toast('Generated sample instance', 'success');
+    }
+  }
+  if (result.warnings && result.warnings.length > 0) {
+    toast(`Generated with ${result.warnings.length} caveat(s): ${result.warnings[0]}`, 'warning');
+  }
+}
+
+function initInstanceFeature(sharedState) {
+  try {
+    instancePane = document.getElementById('instancePane');
+    instanceToggleBtn = document.getElementById('instanceToggleBtn');
+    instanceTabJson = document.getElementById('instanceTabJson');
+    instanceTabCbor = document.getElementById('instanceTabCbor');
+    instanceRootRule = document.getElementById('instanceRootRule');
+    instanceResult = document.getElementById('instanceResult');
+    instanceCborHint = document.getElementById('instanceCborHint');
+    const container = document.getElementById('instanceEditor');
+    if (!container) return;
+
+    instanceKind = loadInstanceKind(sharedState);
+    instanceEditor = monaco.editor.create(container, {
+      value: loadInstanceText(sharedState),
+      language: instanceKind === 'json' ? 'json' : 'plaintext',
+      theme: isDark ? 'cddl-dark' : 'cddl-light',
+      fontSize: 14,
+      lineHeight: 22,
+      fontFamily: "'JetBrains Mono', 'Monaco', 'Menlo', 'Consolas', monospace",
+      fontLigatures: true,
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      automaticLayout: false,
+      wordWrap: 'on',
+      wrappingIndent: 'indent',
+      lineNumbers: 'on',
+      renderLineHighlight: 'line',
+      cursorBlinking: 'smooth',
+      cursorSmoothCaretAnimation: 'on',
+      smoothScrolling: true,
+      bracketPairColorization: { enabled: true },
+      guides: { bracketPairs: 'active', indentation: true },
+      padding: { top: 12, bottom: 12 },
+      hover: { enabled: true, delay: 300, sticky: true },
+    });
+    instanceEditor.onDidChangeModelContent(saveInstanceState);
+
+    let open = false;
+    try { open = localStorage.getItem(INSTANCE_PANE_CACHE_KEY) === 'true'; } catch (_) {}
+    if (sharedState?.instance) open = true;
+    toggleInstancePane(open);
+    setInstanceKind(instanceKind);
+
+    if (instanceToggleBtn) instanceToggleBtn.addEventListener('click', () => toggleInstancePane());
+    const closeBtn = document.getElementById('instancePaneClose');
+    if (closeBtn) closeBtn.addEventListener('click', () => toggleInstancePane(false));
+    if (instanceTabJson) instanceTabJson.addEventListener('click', () => setInstanceKind('json'));
+    if (instanceTabCbor) instanceTabCbor.addEventListener('click', () => setInstanceKind('cbor'));
+    const validateBtn = document.getElementById('instanceValidateBtn');
+    if (validateBtn) validateBtn.addEventListener('click', validateCurrentInstance);
+    const genBtn = document.getElementById('instanceGenBtn');
+    if (genBtn) genBtn.addEventListener('click', generateCurrentSample);
+
+    const splitHandle = document.getElementById('instanceSplitHandle');
+    if (splitHandle && instancePane) wireHorizontalResize(splitHandle, instancePane, 'ew-resize', 260, 720, -1);
+  } catch (err) {
+    console.error('Failed to initialize instance validation:', err);
+  }
+}
+
+// ─── Outline ─────────────────────────────────────────────────────────────────
+
+function renderOutlineNow() {
+  if (!outlineList) return;
+  renderOutline(outlineList, outlineRules, {
+    filter: outlineFilter?.value || '',
+    onSelect: (rule) => {
+      jumpTo(rule.line, rule.column);
+      if (editor) editor.focus();
+    },
+  });
+}
+
+function refreshOutline() {
+  if (!editor) return;
+  outlineRules = parseRules(editor.getValue());
+  renderOutlineNow();
+}
+
+function refreshSchemaFeatures() {
+  try { refreshOutline(); } catch (err) { console.error('Failed to refresh outline:', err); }
+  try { refreshRootCandidates(); } catch (err) { console.error('Failed to refresh root rules:', err); }
+}
+
+function scheduleSchemaFeatures() {
+  clearTimeout(schemaFeatureTimer);
+  schemaFeatureTimer = setTimeout(refreshSchemaFeatures, 400);
+}
+
+function toggleOutlinePane(forceOpen) {
+  if (!outlinePane) return;
+  const open = typeof forceOpen === 'boolean' ? forceOpen : outlinePane.classList.contains('collapsed');
+  outlinePane.classList.toggle('collapsed', !open);
+  if (outlineToggleBtn) outlineToggleBtn.classList.toggle('active', open);
+  try { localStorage.setItem(OUTLINE_PANE_CACHE_KEY, String(open)); } catch (_) {}
+  if (editor) editor.layout();
+}
+
+function wireHorizontalResize(handle, pane, cursor, minWidth, maxWidth, direction) {
+  handle.addEventListener('mousedown', (e) => {
+    if (pane.classList.contains('collapsed')) return;
+    e.preventDefault();
+    handle.classList.add('active');
+    document.body.style.cursor = cursor;
+    document.body.style.userSelect = 'none';
+
+    const startX = e.clientX;
+    const startWidth = pane.offsetWidth;
+    let rafId;
+
+    function onMouseMove(ev) {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const delta = (ev.clientX - startX) * direction;
+        const newWidth = Math.max(minWidth, Math.min(startWidth + delta, maxWidth));
+        pane.style.flexBasis = newWidth + 'px';
+        layoutPlaygroundEditors();
+      });
+    }
+
+    function onMouseUp() {
+      handle.classList.remove('active');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    }
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+}
+
+function initOutlineFeature() {
+  try {
+    outlinePane = document.getElementById('outlinePane');
+    outlineToggleBtn = document.getElementById('outlineToggleBtn');
+    outlineFilter = document.getElementById('outlineFilter');
+    outlineList = document.getElementById('outlineList');
+
+    let open = true;
+    try {
+      const saved = localStorage.getItem(OUTLINE_PANE_CACHE_KEY);
+      if (saved === 'false') open = false;
+    } catch (_) {}
+    toggleOutlinePane(open);
+
+    if (outlineToggleBtn) outlineToggleBtn.addEventListener('click', () => toggleOutlinePane());
+    if (outlineFilter) outlineFilter.addEventListener('input', renderOutlineNow);
+    const resizeHandle = document.getElementById('outlineResizeHandle');
+    if (resizeHandle && outlinePane) wireHorizontalResize(resizeHandle, outlinePane, 'ew-resize', 160, 420, 1);
+    navigationDisposer = registerNavigation(monaco, () => editor?.getValue() || '');
+  } catch (err) {
+    console.error('Failed to initialize outline:', err);
+  }
+}
+
+// ─── File I/O ────────────────────────────────────────────────────────────────
+
+function setMainEditorContent(source) {
+  if (!editor) return;
+  editor.setValue(source);
+  lastInput = '';
+  runValidation();
+  refreshSchemaFeatures();
+}
+
+function routeLoadedFile(file) {
+  if (!file) return;
+  const kind = file.kind || classifyFile(file.name);
+  if (kind === 'json') {
+    if (!instanceEditor) return;
+    setInstanceKind('json');
+    instanceEditor.setValue(file.text || '');
+    toggleInstancePane(true);
+    toast(`Loaded ${file.name || 'JSON file'} into instance editor`, 'success');
+  } else if (kind === 'cbor') {
+    if (!instanceEditor) return;
+    setInstanceKind('cbor');
+    instanceEditor.setValue(file.text || bytesToHex(file.bytes));
+    toggleInstancePane(true);
+    toast(`Loaded ${file.name || 'CBOR file'} into instance editor`, 'success');
+  } else {
+    setMainEditorContent(file.text || '');
+    toast(`Loaded ${file.name || 'schema file'}`, 'success');
+  }
+}
+
+async function openFile() {
+  const file = await pickFile({ accept: '.cddl,.json,.cbor,application/json,application/cbor' });
+  if (!file) return;
+  routeLoadedFile(file);
+}
+
+function saveSchemaFile() {
+  if (!editor) return;
+  downloadText('schema.cddl', editor.getValue(), 'text/cddl;charset=utf-8');
+  toast('Downloaded schema.cddl', 'success');
+}
+
+function initFileIoFeature() {
+  try {
+    const openBtn = document.getElementById('openFileBtn');
+    const saveBtn = document.getElementById('saveFileBtn');
+    const dropOverlay = document.getElementById('dropOverlay');
+    if (openBtn) openBtn.addEventListener('click', openFile);
+    if (saveBtn) saveBtn.addEventListener('click', saveSchemaFile);
+    if (document.body) attachDropZone(document.body, dropOverlay, routeLoadedFile);
+  } catch (err) {
+    console.error('Failed to initialize file I/O:', err);
+  }
+}
+
+// ─── Share ──────────────────────────────────────────────────────────────────
+
+function currentShareState() {
+  return {
+    cddl: editor?.getValue() || '',
+    instance: instanceEditor?.getValue() || '',
+    kind: instanceKind,
+  };
+}
+
+async function sharePlayground() {
+  const state = currentShareState();
+  if (isTooLargeToShare(state)) {
+    toast('Playground state is too large to share as a URL.', 'warning');
+    return;
+  }
+  const url = buildShareUrl(state);
+  const copied = await copyToClipboard(url);
+  toast(copied ? 'Copied share link' : 'Could not copy share link', copied ? 'success' : 'error');
+}
+
+function initShareFeature() {
+  try {
+    const shareBtn = document.getElementById('shareBtn');
+    if (shareBtn) shareBtn.addEventListener('click', sharePlayground);
+  } catch (err) {
+    console.error('Failed to initialize sharing:', err);
+  }
+}
+
+// ─── Toasts + Shortcuts ──────────────────────────────────────────────────────
+
+function shortcutsModalOpen() {
+  const modal = document.getElementById('shortcutsModal');
+  return Boolean(modal && modal.classList.contains('visible'));
+}
+
+function toggleProblemsPanel() {
+  if (!problemsPanel) return;
+  problemsPanel.classList.toggle('collapsed');
+  if (!problemsPanel.classList.contains('collapsed')) layoutPlaygroundEditors();
+}
+
+function toggleExamplesMenu() {
+  const examplesWrapper = document.getElementById('examplesWrapper');
+  if (examplesWrapper) examplesWrapper.classList.toggle('open');
+}
+
+function initShortcutFeature() {
+  try {
+    shortcutsController = initShortcutsModal({
+      btn: document.getElementById('shortcutsBtn'),
+      modal: document.getElementById('shortcutsModal'),
+      closeBtn: document.getElementById('shortcutsClose'),
+      bodyEl: document.getElementById('shortcutsBody'),
+    });
+  } catch (err) {
+    console.error('Failed to initialize shortcuts:', err);
+  }
+}
+
 // ─── Initialisation ────────────────────────────────────────────────────────────
 
 function boot() {
@@ -1239,16 +1707,27 @@ function boot() {
   problemsEmpty = document.getElementById('problemsEmpty');
   cursorPosition = document.getElementById('cursorPosition');
 
+  try { initToasts(document.getElementById('toastContainer')); } catch (err) { console.error('Failed to initialize toasts:', err); }
+
+  let sharedState = null;
+  try {
+    sharedState = readStateFromLocation();
+    if (sharedState) clearLocationState();
+  } catch (err) {
+    console.error('Failed to read shared state:', err);
+  }
+
   // Ref-check toggle
   const refCheckTrack = document.getElementById('refCheckTrack');
   try {
     checkRefs = localStorage.getItem(REFS_CACHE_KEY) === 'true';
   } catch (_) {}
-  if (checkRefs) refCheckTrack.classList.add('active');
+  if (checkRefs && refCheckTrack) refCheckTrack.classList.add('active');
 
-  document.getElementById('refCheckToggle').addEventListener('click', () => {
+  const refCheckToggle = document.getElementById('refCheckToggle');
+  if (refCheckToggle) refCheckToggle.addEventListener('click', () => {
     checkRefs = !checkRefs;
-    refCheckTrack.classList.toggle('active', checkRefs);
+    if (refCheckTrack) refCheckTrack.classList.toggle('active', checkRefs);
     try { localStorage.setItem(REFS_CACHE_KEY, checkRefs); } catch (_) {}
     if (editor) { lastInput = ''; runValidation(); }
   });
@@ -1258,11 +1737,12 @@ function boot() {
   try {
     formatOnSave = localStorage.getItem(FORMAT_CACHE_KEY) === 'true';
   } catch (_) {}
-  if (formatOnSave) formatTrack.classList.add('active');
+  if (formatOnSave && formatTrack) formatTrack.classList.add('active');
 
-  document.getElementById('formatToggle').addEventListener('click', () => {
+  const formatToggle = document.getElementById('formatToggle');
+  if (formatToggle) formatToggle.addEventListener('click', () => {
     formatOnSave = !formatOnSave;
-    formatTrack.classList.toggle('active', formatOnSave);
+    if (formatTrack) formatTrack.classList.toggle('active', formatOnSave);
     try { localStorage.setItem(FORMAT_CACHE_KEY, formatOnSave); } catch (_) {}
   });
 
@@ -1287,20 +1767,20 @@ function boot() {
           lastInput = '';
           runValidation();
         }
-        examplesWrapper.classList.remove('open');
+        if (examplesWrapper) examplesWrapper.classList.remove('open');
       });
       ddFrag.appendChild(item);
     }
   }
-  examplesDropdown.appendChild(ddFrag);
+  if (examplesDropdown) examplesDropdown.appendChild(ddFrag);
 
-  examplesBtn.addEventListener('click', (e) => {
+  if (examplesBtn && examplesWrapper) examplesBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     examplesWrapper.classList.toggle('open');
   });
 
   document.addEventListener('click', (e) => {
-    if (!examplesWrapper.contains(e.target)) {
+    if (examplesWrapper && !examplesWrapper.contains(e.target)) {
       examplesWrapper.classList.remove('open');
     }
   });
@@ -1312,7 +1792,8 @@ function boot() {
   } catch (_) {}
   if (!isDark) document.body.classList.add('light');
 
-  document.getElementById('themeToggle').addEventListener('click', () => {
+  const themeToggle = document.getElementById('themeToggle');
+  if (themeToggle) themeToggle.addEventListener('click', () => {
     isDark = !isDark;
     document.body.classList.toggle('light', !isDark);
     if (editor) {
@@ -1326,7 +1807,7 @@ function boot() {
 
   // Create editor
   editor = monaco.editor.create(container, {
-    value: loadContent(),
+    value: typeof sharedState?.cddl === 'string' ? sharedState.cddl : loadContent(),
     language: 'cddl',
     theme: isDark ? 'cddl-dark' : 'cddl-light',
     fontSize: 14,
@@ -1354,17 +1835,56 @@ function boot() {
   // Expose globally for convenience
   window.editor = editor;
 
+  initInstanceFeature(sharedState);
+  initOutlineFeature();
+  initFileIoFeature();
+  initShareFeature();
+  initShortcutFeature();
+  refreshSchemaFeatures();
+  if (sharedState) toast('Loaded shared playground', 'success');
+
   // Cursor position in status bar
   editor.onDidChangeCursorPosition((e) => {
-    cursorPosition.textContent = `Ln ${e.position.lineNumber}, Col ${e.position.column}`;
+    if (cursorPosition) cursorPosition.textContent = `Ln ${e.position.lineNumber}, Col ${e.position.column}`;
   });
 
-  // Intercept Ctrl/Cmd+S globally — always prevent browser save,
-  // and format when the option is enabled.
+  // Intercept playground shortcuts globally. Keep Mod+S single-handled here.
   window.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
+    const key = e.key.toLowerCase();
+    const mod = e.ctrlKey || e.metaKey;
+
+    if (mod && !e.shiftKey && !e.altKey && key === 's') {
       e.preventDefault();
       if (formatOnSave) applyFormat();
+      return;
+    }
+
+    if (shortcutsModalOpen()) return;
+
+    if (mod && !e.shiftKey && !e.altKey && key === 'enter') {
+      e.preventDefault();
+      validateCurrentInstance();
+    } else if (mod && !e.shiftKey && !e.altKey && key === 'k') {
+      e.preventDefault();
+      toggleExamplesMenu();
+    } else if (mod && !e.shiftKey && !e.altKey && key === 'o') {
+      e.preventDefault();
+      openFile();
+    } else if (mod && e.shiftKey && !e.altKey && key === 's') {
+      e.preventDefault();
+      saveSchemaFile();
+    } else if (mod && e.shiftKey && !e.altKey && key === 'c') {
+      e.preventDefault();
+      sharePlayground();
+    } else if (mod && !e.shiftKey && !e.altKey && key === 'b') {
+      e.preventDefault();
+      toggleOutlinePane();
+    } else if (mod && !e.shiftKey && !e.altKey && key === 'i') {
+      e.preventDefault();
+      toggleInstancePane();
+    } else if (mod && !e.shiftKey && !e.altKey && key === 'j') {
+      e.preventDefault();
+      toggleProblemsPanel();
     }
   });
 
@@ -1372,19 +1892,15 @@ function boot() {
   editor.onDidChangeModelContent(scheduleValidation);
 
   // Problems panel toggle
-  document.getElementById('problemsHeader').addEventListener('click', () => {
-    problemsPanel.classList.toggle('collapsed');
-    if (!problemsPanel.classList.contains('collapsed')) {
-      editor.layout();
-    }
-  });
+  const problemsHeader = document.getElementById('problemsHeader');
+  if (problemsHeader) problemsHeader.addEventListener('click', toggleProblemsPanel);
 
   // Problems panel resize
   const resizeHandle = document.getElementById('resizeHandle');
   let resizing = false;
 
-  resizeHandle.addEventListener('mousedown', (e) => {
-    if (problemsPanel.classList.contains('collapsed')) return;
+  if (resizeHandle) resizeHandle.addEventListener('mousedown', (e) => {
+    if (problemsPanel && problemsPanel.classList.contains('collapsed')) return;
     e.preventDefault();
     resizing = true;
     resizeHandle.classList.add('active');
@@ -1392,7 +1908,7 @@ function boot() {
     document.body.style.userSelect = 'none';
 
     const startY = e.clientY;
-    const startHeight = problemsPanel.offsetHeight;
+    const startHeight = problemsPanel ? problemsPanel.offsetHeight : 0;
 
     let rafId;
     function onMouseMove(ev) {
@@ -1400,8 +1916,8 @@ function boot() {
       rafId = requestAnimationFrame(() => {
         const delta = startY - ev.clientY;
         const newHeight = Math.max(33, Math.min(startHeight + delta, window.innerHeight * 0.7));
-        problemsPanel.style.height = newHeight + 'px';
-        editor.layout();
+        if (problemsPanel) problemsPanel.style.height = newHeight + 'px';
+        layoutPlaygroundEditors();
       });
     }
 
@@ -1422,20 +1938,21 @@ function boot() {
   let resizeRaf;
   window.addEventListener('resize', () => {
     cancelAnimationFrame(resizeRaf);
-    resizeRaf = requestAnimationFrame(() => editor.layout());
+    resizeRaf = requestAnimationFrame(layoutPlaygroundEditors);
   });
 
   // Initial layout + focus so keyboard shortcuts work immediately
-  editor.layout();
+  layoutPlaygroundEditors();
   editor.focus();
 
   // Init WASM then validate
   initWasm().then((ok) => {
     if (ok) {
+      setInstanceKind(instanceKind);
       runValidation();
     } else {
-      statusPill.className = 'status-pill invalid';
-      statusText.textContent = 'WASM failed';
+      if (statusPill) statusPill.className = 'status-pill invalid';
+      if (statusText) statusText.textContent = 'WASM failed';
     }
   });
 }
@@ -1448,3 +1965,4 @@ if (document.readyState === 'loading') {
 
 // Expose jump helper globally (used by inline onclick)
 window.jumpToError = jumpTo;
+window.editor = editor;
