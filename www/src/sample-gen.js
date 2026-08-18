@@ -856,8 +856,8 @@ function stringForKey(key) {
   return 'string';
 }
 
-function generateMap(entries, ctx, depth, visiting, env) {
-  const object = {};
+function generateMap(entries, ctx, depth, visiting, env, target) {
+  const object = target || {};
   for (const entry of entries) {
     if (!entry) continue;
     if (entry.kind === 'groupChoice') {
@@ -867,7 +867,10 @@ function generateMap(entries, ctx, depth, visiting, env) {
     }
 
     if (entry.kind === 'group') {
-      mergeMembers(object, generateMap(entry.entries, ctx, depth + 1, visiting, env));
+      if (skipOptional(entry, ctx)) continue;
+      const count = repeatCount(entry.occurrence, ctx);
+      // Repeated groups generate into the same object so dynamic keys stay distinct.
+      for (let i = 0; i < count; i++) generateMap(entry.entries, ctx, depth + 1, visiting, env, object);
       continue;
     }
     if (entry.kind === 'member') {
@@ -876,7 +879,8 @@ function generateMap(entries, ctx, depth, visiting, env) {
       for (let i = 0; i < count; i++) {
         const baseKey = keyToString(entry.key, ctx, depth, visiting, env, entry.arrow);
         // A map cannot hold duplicate keys, so repeated members need distinct ones.
-        const key = i === 0 ? baseKey : distinctKey(object, baseKey, entry, ctx, i);
+        const taken = Object.prototype.hasOwnProperty.call(object, baseKey);
+        const key = i === 0 && !taken ? baseKey : distinctKey(object, baseKey, entry, ctx, i);
         const before = ctx.warnings.length;
         setMember(object, key, generateNode(entry.value, key, ctx, depth + 1, visiting, env, key));
         if (entry.occurrence.optional && ctx.warnings.length > before) {
@@ -901,7 +905,8 @@ function generateMap(entries, ctx, depth, visiting, env) {
 function distinctKey(object, baseKey, entry, ctx, index) {
   if (entry.key?.kind === 'literal') {
     ctx.constraintsSatisfied = false;
-    ctx.warnings.push(`Member "${baseKey}" repeats ${entry.occurrence.raw} times but has a literal key; a JSON object cannot hold duplicates.`);
+    const repeats = entry.occurrence.raw ? `repeats ${entry.occurrence.raw} times` : 'occurs more than once';
+    ctx.warnings.push(`Member "${baseKey}" ${repeats} but has a literal key; a JSON object cannot hold duplicates.`);
     return baseKey;
   }
   let candidate = `${baseKey}${index + 1}`;
