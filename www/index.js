@@ -1058,6 +1058,7 @@ function applyFormat() {
 let validationTimer;
 
 let lastInput = '';
+let lastValidatedInput = null;
 let saveTimer;
 
 function scheduleValidation() {
@@ -1073,12 +1074,14 @@ function scheduleSave() {
 
 function runValidation() {
   const input = editor.getValue();
-  // Skip if content hasn't changed since last validation
-  if (input === lastInput) return;
+  // Skip only when the previous run produced a real result; a "not ready" stub
+  // must not poison the cache, or it survives until the next keystroke.
+  if (input === lastValidatedInput) return;
   lastInput = input;
   scheduleSave();
 
   if (!input.trim()) {
+    lastValidatedInput = input;
     updateProblems([]);
     monaco.editor.setModelMarkers(editor.getModel(), 'cddl', []);
     if (statusPill) statusPill.className = 'status-pill';
@@ -1091,6 +1094,7 @@ function runValidation() {
   if (statusText) statusText.textContent = 'Checking\u2026';
 
   const result = validateCDDLText(input);
+  lastValidatedInput = wasmModule?.validate_cddl_from_str ? input : null;
   updateProblems(result.errors);
 
   // Update Monaco markers
@@ -1389,7 +1393,19 @@ function refreshRootCandidates() {
 function generateCurrentSample() {
   if (!editor || !instanceEditor) return;
   const selectedRoot = instanceRootRule?.value || undefined;
-  const result = generateSample(editor.getValue(), selectedRoot);
+  const schema = editor.getValue();
+
+  // Verify candidates against the real validator rather than trusting heuristics.
+  const validate = wasmModule?.validate_json_from_str
+    ? (json) => {
+      const check = validateInstance({
+        wasmModule, cddl: schema, kind: 'json', text: json, rootRule: selectedRoot,
+      });
+      return check.ok ? null : (check.failures[0] || check.title);
+    }
+    : undefined;
+
+  const result = generateSample(schema, selectedRoot, { validate });
   if (result.error) {
     toast(result.error, 'error');
     return;
@@ -1401,10 +1417,14 @@ function generateCurrentSample() {
     toggleInstancePane(true);
     if (result.jsonRepresentable === false) {
       toast(
-        'This schema uses CBOR-only features (integer keys, byte strings, or tags) — the generated JSON is a shape reference and won\'t validate as JSON. Switch to the CBOR tab for this one.',
+        'This schema uses CBOR-only features (integer keys, byte strings, or tags). The sample shows the expected structure but cannot validate as JSON — encode an equivalent CBOR document to validate it.',
         'warning',
         7000,
       );
+    } else if (result.verified) {
+      toast('Generated sample instance', 'success');
+    } else if (result.validationError) {
+      toast(`Generated a sample, but it does not validate: ${result.validationError}`, 'warning', 7000);
     } else if (result.constraintsSatisfied === false) {
       toast(
         'Some control operator constraints could not be applied — the generated sample is a shape reference and may not validate. Adjust the highlighted values manually.',
@@ -1729,7 +1749,7 @@ function boot() {
     checkRefs = !checkRefs;
     if (refCheckTrack) refCheckTrack.classList.toggle('active', checkRefs);
     try { localStorage.setItem(REFS_CACHE_KEY, checkRefs); } catch (_) {}
-    if (editor) { lastInput = ''; runValidation(); }
+    if (editor) { lastInput = ''; lastValidatedInput = null; runValidation(); }
   });
 
   // Format-on-save toggle
