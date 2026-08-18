@@ -1258,7 +1258,7 @@ function toMarker(model, err) {
 // ─── Instance Validation ─────────────────────────────────────────────────────
 
 function loadInstanceText(sharedState) {
-  if (typeof sharedState?.instance === 'string') return sharedState.instance;
+  if (sharedState) return typeof sharedState.instance === 'string' ? sharedState.instance : '';
   try {
     return localStorage.getItem(INSTANCE_TEXT_CACHE_KEY) || '';
   } catch (_) {}
