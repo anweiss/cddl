@@ -1352,6 +1352,7 @@ function validateCurrentInstance() {
     cddl: editor.getValue(),
     kind: instanceKind,
     text: instanceEditor.getValue(),
+    rootRule: instanceRootRule?.value || undefined,
   });
   renderInstanceResult(result);
   toast(result.title, result.ok ? 'success' : 'error');

@@ -73,6 +73,71 @@ export function isCborSupported(wasmModule) {
   return typeof wasmModule?.validate_cbor_from_slice === 'function';
 }
 
+const SYNTHETIC_ROOT_RULE = '__cddl_playground_root';
+const RULE_START = /^[ \t]*([A-Za-z@_$][\w@\-.$]*)[ \t]*(<[^>\n]*>)?[ \t]*(\/\/=|\/=|=)[ \t]*(.*)$/;
+
+/**
+ * Rewrite `cddl` so the validators use `rootRule` as the root rule.
+ * The WASM validators always validate against the first non-generic type rule,
+ * so a synthetic alias to the selected rule is prepended when it is not already
+ * the root.
+ * @returns {{ cddl: string, error: string|null }}
+ */
+export function applyRootRule(cddl, rootRule) {
+  const source = String(cddl ?? '');
+  const name = String(rootRule ?? '').trim();
+  if (!name) return { cddl: source, error: null };
+
+  const rules = scanRules(source);
+  const definitions = rules.filter((rule) => rule.name === name);
+  if (definitions.length === 0) return { cddl: source, error: null };
+
+  const firstTypeRule = rules.find((rule) => rule.isRootable);
+  if (firstTypeRule && firstTypeRule.name === name) return { cddl: source, error: null };
+
+  if (!definitions.some((rule) => rule.isRootable)) {
+    return {
+      cddl: source,
+      error: `"${name}" is a group or generic rule and cannot be used as a validation root. Select a non-generic type rule.`,
+    };
+  }
+
+  return { cddl: `${SYNTHETIC_ROOT_RULE} = ${name}\n\n${source}`, error: null };
+}
+
+function scanRules(source) {
+  const rules = [];
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = stripComment(rawLine);
+    const match = RULE_START.exec(line);
+    if (!match) continue;
+
+    const [, name, generics, assign, rhs] = match;
+    rules.push({
+      name,
+      // Only plain `=` assignments of a non-generic, non-group rule can be a root.
+      isRootable: assign === '=' && !generics && !rhs.trimStart().startsWith('('),
+    });
+  }
+  return rules;
+}
+
+function stripComment(line) {
+  let inString = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (inString) {
+      if (ch === '\\') i += 1;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+    } else if (ch === ';') {
+      return line.slice(0, i);
+    }
+  }
+  return line;
+}
+
 /**
  * Validate an instance document against a CDDL schema.
  * @param {object} opts
@@ -80,6 +145,7 @@ export function isCborSupported(wasmModule) {
  * @param {string} opts.cddl        the schema source
  * @param {'json'|'cbor'} opts.kind
  * @param {string} opts.text        JSON text, or hex/base64 CBOR
+ * @param {string} [opts.rootRule]  rule to validate against; defaults to the schema's first type rule
  * @returns {{ ok: boolean, title: string, detail: string, failures: string[], kind: string }}
  */
 export function validateInstance(opts) {
@@ -120,7 +186,12 @@ export function validateInstance(opts) {
       instance = parsed.bytes;
     }
 
-    invokeValidator(validate, cddl, instance);
+    const rooted = applyRootRule(cddl, opts?.rootRule);
+    if (rooted.error) {
+      return failure('Unsupported root rule', rooted.error, [rooted.error], kind);
+    }
+
+    invokeValidator(validate, rooted.cddl, instance);
     return { ok: true, title: 'Instance is valid', detail: '', failures: [], kind };
   } catch (err) {
     return normaliseValidationFailure(err, opts?.kind === 'cbor' ? 'cbor' : 'json');
