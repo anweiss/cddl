@@ -14,7 +14,7 @@ export const SHORTCUTS = Object.freeze([
   { keys: ['Mod', 'Shift', 'S'], desc: 'Download the schema', group: 'Playground' },
   { keys: ['Mod', 'Shift', 'C'], desc: 'Copy a shareable link', group: 'Playground' },
   { keys: ['?'], desc: 'Show this shortcuts help', group: 'Playground' },
-  { keys: ['Esc'], desc: 'Close the open dialog/menu', group: 'Playground' },
+  { keys: ['Esc'], desc: 'Close this shortcuts help', group: 'Playground' },
   { keys: ['Mod', 'B'], desc: 'Toggle the outline sidebar', group: 'Panels' },
   { keys: ['Mod', 'I'], desc: 'Toggle the instance pane', group: 'Panels' },
   { keys: ['Mod', 'J'], desc: 'Toggle the problems panel', group: 'Panels' },
