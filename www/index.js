@@ -1436,7 +1436,8 @@ function generateCurrentSample() {
       );
       warnedAlready = true;
     } else {
-      toast('Generated sample instance', 'success');
+      toast('Generated a sample, but it could not be verified because the validator is not ready.', 'warning', 7000);
+      warnedAlready = true;
     }
   }
   if (!warnedAlready && result.warnings && result.warnings.length > 0) {
