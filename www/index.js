@@ -1410,6 +1410,7 @@ function generateCurrentSample() {
     toast(result.error, 'error');
     return;
   }
+  let warnedAlready = false;
   if (result.json !== null) {
     setInstanceKind('json');
     instanceEditor.setValue(result.json);
@@ -1421,21 +1422,24 @@ function generateCurrentSample() {
         'warning',
         7000,
       );
+      warnedAlready = true;
     } else if (result.verified) {
       toast('Generated sample instance', 'success');
     } else if (result.validationError) {
       toast(`Generated a sample, but it does not validate: ${result.validationError}`, 'warning', 7000);
+      warnedAlready = true;
     } else if (result.constraintsSatisfied === false) {
       toast(
         'Some control operator constraints could not be applied — the generated sample is a shape reference and may not validate. Adjust the highlighted values manually.',
         'warning',
         7000,
       );
+      warnedAlready = true;
     } else {
       toast('Generated sample instance', 'success');
     }
   }
-  if (result.warnings && result.warnings.length > 0) {
+  if (!warnedAlready && result.warnings && result.warnings.length > 0) {
     toast(`Generated with ${result.warnings.length} caveat(s): ${result.warnings[0]}`, 'warning');
   }
 }
