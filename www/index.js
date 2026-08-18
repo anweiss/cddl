@@ -1405,6 +1405,12 @@ function generateCurrentSample() {
         'warning',
         7000,
       );
+    } else if (result.constraintsSatisfied === false) {
+      toast(
+        'Some control operator constraints could not be applied — the generated sample is a shape reference and may not validate. Adjust the highlighted values manually.',
+        'warning',
+        7000,
+      );
     } else {
       toast('Generated sample instance', 'success');
     }

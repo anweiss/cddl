@@ -1,5 +1,5 @@
 /**
- * @typedef {{ json: string|null, warnings: string[], error: string|null, jsonRepresentable: boolean }} SampleResult
+ * @typedef {{ json: string|null, warnings: string[], error: string|null, jsonRepresentable: boolean, constraintsSatisfied: boolean }} SampleResult
  */
 
 const MAX_DEPTH = 32;
@@ -48,25 +48,40 @@ export function generateSample(source, rootRuleName) {
   try {
     const model = parseSource(source || '');
     if (model.order.length === 0) {
-      return { json: null, warnings: [], error: 'No rules found in schema', jsonRepresentable: false };
+      return { json: null, warnings: [], error: 'No rules found in schema', jsonRepresentable: false, constraintsSatisfied: false };
     }
 
     const roots = listRootCandidates(source);
     const root = rootRuleName || roots[0] || model.order[0];
     if (!root || !model.rules.has(root)) {
       warnings.push(`Unknown root rule "${root}"; emitted null.`);
-      return { json: JSON.stringify(null, null, 2), warnings, error: null, jsonRepresentable: true };
+      return { json: JSON.stringify(null, null, 2), warnings, error: null, jsonRepresentable: true, constraintsSatisfied: true };
     }
 
-    const ctx = { model, warnings, budget: MAX_NODES, jsonRepresentable: true, nonRepReasons: new Set() };
+    const ctx = {
+      model,
+      warnings,
+      budget: MAX_NODES,
+      jsonRepresentable: true,
+      nonRepReasons: new Set(),
+      constraintsSatisfied: true,
+      unappliedControls: new Set(),
+    };
     const value = generateRef(root, [], null, ctx, 0, new Set(), new Map());
-    return { json: JSON.stringify(value, null, 2), warnings, error: null, jsonRepresentable: ctx.jsonRepresentable };
+    return {
+      json: JSON.stringify(value, null, 2),
+      warnings,
+      error: null,
+      jsonRepresentable: ctx.jsonRepresentable,
+      constraintsSatisfied: ctx.constraintsSatisfied,
+    };
   } catch (err) {
     return {
       json: null,
       warnings,
       error: err && err.message ? err.message : String(err),
       jsonRepresentable: false,
+      constraintsSatisfied: false,
     };
   }
 }
@@ -561,10 +576,7 @@ function generateNode(node, key, ctx, depth, visiting, env, label) {
       if (option !== node.options[0]) ctx.warnings.push('Skipped an earlier choice alternative with a prelude-name map key that does not validate as a JSON object key.');
       return generateNode(option, key, ctx, depth + 1, visiting, env, label);
     }
-    case 'control':
-      if (node.op === '.default') return generateNode(node.controller, key, ctx, depth + 1, visiting, env, label);
-      ctx.warnings.push(`Control operator ${node.op} was not applied; generated from the base type.`);
-      return generateNode(node.base, key, ctx, depth + 1, visiting, env, label);
+    case 'control': return generateControl(node, key, ctx, depth, visiting, env, label);
     case 'tag':
       markNotJsonRepresentable(ctx, 'CBOR tags');
       ctx.warnings.push(`CBOR tag ${node.tag || ''} was dropped for JSON output.`.trim());
@@ -581,6 +593,87 @@ function generateNode(node, key, ctx, depth, visiting, env, label) {
     default:
       ctx.warnings.push(`Unsupported construct "${node.name || node.kind}"; emitted null.`);
       return null;
+  }
+}
+
+function generateControl(node, key, ctx, depth, visiting, env, label) {
+  const base = () => generateNode(node.base, key, ctx, depth + 1, visiting, env, label);
+  const controller = () => generateNode(node.controller, key, ctx, depth + 1, visiting, env, label);
+
+  switch (node.op) {
+    case '.default':
+    case '.eq':
+      return controller();
+    case '.within':
+      return base();
+    case '.size': {
+      const size = controlNumber(node.controller);
+      const value = base();
+      if (size == null || size < 0) return markControlUnapplied(ctx, node.op, value);
+      if (typeof value === 'string') return sizedString(value, size);
+      if (typeof value === 'number') return Number.isInteger(value) ? sizedInteger(value, size) : value;
+      return markControlUnapplied(ctx, node.op, value);
+    }
+    case '.lt':
+    case '.le':
+    case '.gt':
+    case '.ge': {
+      const limit = controlNumber(node.controller);
+      const value = base();
+      if (limit == null || typeof value !== 'number') return markControlUnapplied(ctx, node.op, value);
+      return boundedNumber(value, limit, node.op);
+    }
+    case '.ne': {
+      const value = base();
+      const excluded = controller();
+      if (value !== excluded) return value;
+      if (typeof value === 'number') return value + 1;
+      if (typeof value === 'string') return `${value}x`;
+      if (typeof value === 'boolean') return !value;
+      return markControlUnapplied(ctx, node.op, value);
+    }
+    default:
+      return markControlUnapplied(ctx, node.op, base());
+  }
+}
+
+function markControlUnapplied(ctx, op, value) {
+  ctx.constraintsSatisfied = false;
+  if (!ctx.unappliedControls.has(op)) {
+    ctx.unappliedControls.add(op);
+    ctx.warnings.push(`Control operator ${op} could not be applied; the generated value may not validate.`);
+  }
+  return value;
+}
+
+/** Numeric controller value, or null when it is not a plain number or numeric range. */
+function controlNumber(node) {
+  if (!node) return null;
+  if (node.kind === 'literal' && typeof node.value === 'number') return node.value;
+  if (node.kind === 'range') return controlNumber(node.lower);
+  return null;
+}
+
+function sizedString(value, size) {
+  if (value.length === size) return value;
+  if (value.length > size) return value.slice(0, size);
+  return value.padEnd(size, 'x');
+}
+
+/** Largest-fitting placeholder for `n .size b`, where b counts bytes of the encoded integer. */
+function sizedInteger(value, size) {
+  if (size === 0) return 0;
+  const max = 2 ** (Math.min(size, 6) * 8) - 1;
+  if (value >= 0) return value <= max ? value : max;
+  return value >= -max - 1 ? value : -max - 1;
+}
+
+function boundedNumber(value, limit, op) {
+  switch (op) {
+    case '.lt': return value < limit ? value : limit - 1;
+    case '.le': return value <= limit ? value : limit;
+    case '.gt': return value > limit ? value : limit + 1;
+    default: return value >= limit ? value : limit;
   }
 }
 
