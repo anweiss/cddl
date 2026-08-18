@@ -294,21 +294,67 @@ export function renderOutline(listEl, rules, opts = {}) {
     return;
   }
 
-  for (const rule of visible) {
+  const items = [];
+  const activeIndex = visible.findIndex((rule) => rule.name === opts.activeName);
+  const tabbableIndex = activeIndex >= 0 ? activeIndex : 0;
+
+  const focusItem = (index) => {
+    const next = items[index];
+    if (!next) return;
+    for (const item of items) item.tabIndex = -1;
+    next.tabIndex = 0;
+    next.focus();
+  };
+
+  visible.forEach((rule, index) => {
     const item = document.createElement('div');
-    item.className = `outline-item${opts.activeName === rule.name ? ' active' : ''}`;
+    const isActive = opts.activeName === rule.name;
+    item.className = `outline-item${isActive ? ' active' : ''}`;
     item.dataset.line = String(rule.line);
     item.dataset.column = String(rule.column);
+    item.setAttribute('role', 'treeitem');
+    item.setAttribute('aria-level', '1');
+    item.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    item.tabIndex = index === tabbableIndex ? 0 : -1;
     item.innerHTML = `
       <span class="outline-item-kind ${escapeHtml(rule.kind)}">${escapeHtml(rule.kind)}</span>
       <span class="outline-item-name">${escapeHtml(rule.name)}${escapeHtml(rule.generic || '')}</span>
       <span class="outline-item-preview">${escapeHtml(rule.preview)}</span>
     `;
-    item.addEventListener('click', () => {
+    const select = () => {
       if (opts.onSelect) opts.onSelect(rule);
+    };
+    item.addEventListener('click', select);
+    item.addEventListener('keydown', (event) => {
+      switch (event.key) {
+        case 'Enter':
+        case ' ':
+          event.preventDefault();
+          select();
+          break;
+        case 'ArrowDown':
+          event.preventDefault();
+          focusItem(Math.min(index + 1, items.length - 1));
+          break;
+        case 'ArrowUp':
+          event.preventDefault();
+          focusItem(Math.max(index - 1, 0));
+          break;
+        case 'Home':
+          event.preventDefault();
+          focusItem(0);
+          break;
+        case 'End':
+          event.preventDefault();
+          focusItem(items.length - 1);
+          break;
+        default:
+          break;
+      }
     });
+    items.push(item);
     frag.appendChild(item);
-  }
+  });
   listEl.appendChild(frag);
 }
 
