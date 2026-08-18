@@ -974,7 +974,7 @@ function resolveGroupNode(node, ctx, env, seen, visiting) {
   if (rule.params.length === 0) return resolveGroupNode(rule.node, ctx, env, seen, visiting);
   const nextEnv = new Map(env || []);
   rule.params.forEach((param, index) => {
-    if (node.args[index]) nextEnv.set(param, node.args[index]);
+    if (node.args?.[index]) nextEnv.set(param, node.args[index]);
   });
   return resolveGroupNode(rule.node, ctx, nextEnv, seen, visiting);
 }
