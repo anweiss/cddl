@@ -300,7 +300,7 @@ export function renderOutline(listEl, rules, opts = {}) {
     item.dataset.line = String(rule.line);
     item.dataset.column = String(rule.column);
     item.innerHTML = `
-      <span class="outline-item-kind">${escapeHtml(rule.kind)}</span>
+      <span class="outline-item-kind ${escapeHtml(rule.kind)}">${escapeHtml(rule.kind)}</span>
       <span class="outline-item-name">${escapeHtml(rule.name)}${escapeHtml(rule.generic || '')}</span>
       <span class="outline-item-preview">${escapeHtml(rule.preview)}</span>
     `;
