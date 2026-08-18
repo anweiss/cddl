@@ -6,6 +6,9 @@ const MAX_DEPTH = 32;
 const MAX_NODES = 5000;
 /** Upper bound on repeated occurrences; schemas demanding more fail explicitly. */
 const MAX_REPEAT = 64;
+/** Structural limits that keep hostile shared links from freezing the tab. */
+const MAX_NESTING = 64;
+const MAX_TOKENS = 20000;
 const BUILTINS = new Set([
   'any', 'uint', 'nint', 'int', 'integer', 'unsigned', 'number', 'float', 'float16',
   'float32', 'float64', 'float16-32', 'float32-64', 'bool', 'true', 'false', 'nil',
@@ -124,8 +127,32 @@ function generateOnce(source, rootRuleName, includeOptional) {
   }
 }
 
+/**
+ * Reject pathological input before the recursive-descent parser touches it.
+ * A shared permalink is attacker-controlled, and parseExpression recurses per
+ * nesting level, so deep nesting is a cheap way to freeze the tab.
+ */
+function assertParseable(tokens) {
+  if (tokens.length > MAX_TOKENS) {
+    throw new Error(`Schema is too large to analyze (${tokens.length} tokens).`);
+  }
+
+  let depth = 0;
+  for (const token of tokens) {
+    if (['{', '[', '(', '<'].includes(token.value)) {
+      depth += 1;
+      if (depth > MAX_NESTING) {
+        throw new Error(`Schema nesting is too deep to analyze (over ${MAX_NESTING} levels).`);
+      }
+    } else if (['}', ']', ')', '>'].includes(token.value)) {
+      depth -= 1;
+    }
+  }
+}
+
 function parseSource(source) {
   const tokens = tokenize(source);
+  assertParseable(tokens);
   const rules = new Map();
   const order = [];
   let pos = 0;

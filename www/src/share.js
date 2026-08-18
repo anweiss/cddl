@@ -6,6 +6,10 @@ export const MAX_SHARE_BYTES = 32000;
 
 const SHARE_PREFIX = 's1=';
 
+function byteLength(text) {
+  return typeof text === 'string' ? new TextEncoder().encode(text).length : 0;
+}
+
 // ─── UTF-8 Base64url ─────────────────────────────────────────────────────────
 
 function bytesToBase64(bytes) {
@@ -102,12 +106,22 @@ export function decodeState(hash) {
       return null;
     }
 
+    // Enforce the size ceiling on the way in too: a link can be hand-crafted, so
+    // trusting only the encode-side check leaves the decoder unbounded.
+    if (payload.length > MAX_SHARE_BYTES) {
+      return null;
+    }
+
     const json = fromBase64Url(payload);
     if (json === null) {
       return null;
     }
 
-    return expandState(JSON.parse(json));
+    const state = expandState(JSON.parse(json));
+    if (state && byteLength(state.cddl) + byteLength(state.instance) > MAX_SHARE_BYTES) {
+      return null;
+    }
+    return state;
   } catch (err) {
     return null;
   }
