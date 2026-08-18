@@ -1529,7 +1529,7 @@ function wireHorizontalResize(handle, pane, cursor, minWidth, maxWidth, directio
       rafId = requestAnimationFrame(() => {
         const delta = (ev.clientX - startX) * direction;
         const newWidth = Math.max(minWidth, Math.min(startWidth + delta, maxWidth));
-        pane.style.width = newWidth + 'px';
+        pane.style.flexBasis = newWidth + 'px';
         layoutPlaygroundEditors();
       });
     }
