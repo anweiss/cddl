@@ -226,6 +226,11 @@ function normaliseValidationFailure(err, kind) {
   }
 
   const detail = (err instanceof Error ? err.message : String(err)).trimEnd();
+
+  if (kind === 'cbor' && isCborDecodeError(detail)) {
+    return failure('Invalid CBOR input', detail, [detail], kind);
+  }
+
   const failures = splitFailures(detail).map(formatConstraintFailure);
   const count = failures.length || 1;
   const plural = count === 1 ? '' : 's';
@@ -234,6 +239,14 @@ function normaliseValidationFailure(err, kind) {
 
 function isParserErrorLike(err) {
   return Boolean(err && typeof err === 'object' && err.position && err.msg);
+}
+
+// Decoding failures surfaced by the WASM CBOR decoder, which are reported
+// before any schema constraint is evaluated.
+const CBOR_DECODE_ERROR = /^(syntax error at offset\b|unexpected end of input\b|unexpected break\b|i\/o error:)/i;
+
+function isCborDecodeError(detail) {
+  return CBOR_DECODE_ERROR.test(String(detail ?? '').trim());
 }
 
 function formatParserError(err) {
