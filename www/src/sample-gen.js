@@ -1,9 +1,11 @@
 /**
- * @typedef {{ json: string|null, warnings: string[], error: string|null, jsonRepresentable: boolean, constraintsSatisfied: boolean }} SampleResult
+ * @typedef {{ json: string|null, warnings: string[], error: string|null, jsonRepresentable: boolean, constraintsSatisfied: boolean, verified: boolean, validationError: string|null }} SampleResult
  */
 
 const MAX_DEPTH = 32;
 const MAX_NODES = 5000;
+/** Upper bound on repeated occurrences; schemas demanding more fail explicitly. */
+const MAX_REPEAT = 64;
 const BUILTINS = new Set([
   'any', 'uint', 'nint', 'int', 'integer', 'unsigned', 'number', 'float', 'float16',
   'float32', 'float64', 'float16-32', 'float32-64', 'bool', 'true', 'false', 'nil',
@@ -19,6 +21,8 @@ export function listRootCandidates(source) {
     const model = parseSource(source || '');
     if (model.order.length === 0) return [];
 
+    // RFC 8610: the first rule in a schema is conventionally the entry point, so it
+    // outranks the "nothing references it" signal, which misfires on real-world schemas.
     const candidates = model.order.filter((name) => !name.startsWith('$'));
     const firstConcrete = candidates.find((name) => model.rules.get(name)?.params.length === 0);
     const referenced = collectReferences(model);
@@ -40,22 +44,51 @@ export function listRootCandidates(source) {
 
 /**
  * Generate a sample JSON instance for `rootRuleName` (or the best candidate when omitted).
+ *
+ * When `options.validate` is supplied it is treated as the source of truth: candidate
+ * samples are run through it and the first conforming one wins. Without it the generator
+ * can only report its own heuristics, which is why `verified` exists.
+ *
+ * @param {{ validate?: (json: string) => string|null }} [options]
+ *   `validate` returns null when the instance conforms, or the validator error otherwise.
  * @returns {SampleResult} json is pretty-printed with 2-space indent, or null on error.
  */
-export function generateSample(source, rootRuleName) {
+export function generateSample(source, rootRuleName, options = {}) {
+  const validate = typeof options.validate === 'function' ? options.validate : null;
+  let last = null;
+
+  // Optional members are a common cause of non-conformance (recursive rules, unsatisfiable
+  // controls). Try with them, then without, and let the validator pick the winner.
+  for (const includeOptional of [true, false]) {
+    const attempt = generateOnce(source, rootRuleName, includeOptional);
+    if (attempt.error || !attempt.jsonRepresentable || !validate) return attempt;
+
+    const validationError = validate(attempt.json);
+    if (!validationError) return { ...attempt, verified: true, validationError: null };
+    last = { ...attempt, verified: false, validationError };
+  }
+
+  if (last && last.validationError) {
+    last.warnings = [...last.warnings, 'Generated sample does not validate against this schema; it is a best-effort starting point.'];
+    last.constraintsSatisfied = false;
+  }
+  return last;
+}
+
+function generateOnce(source, rootRuleName, includeOptional) {
   const warnings = [];
 
   try {
     const model = parseSource(source || '');
     if (model.order.length === 0) {
-      return { json: null, warnings: [], error: 'No rules found in schema', jsonRepresentable: false, constraintsSatisfied: false };
+      return { json: null, warnings: [], error: 'No rules found in schema', jsonRepresentable: false, constraintsSatisfied: false, verified: false, validationError: null };
     }
 
     const roots = listRootCandidates(source);
     const root = rootRuleName || roots[0] || model.order[0];
     if (!root || !model.rules.has(root)) {
       warnings.push(`Unknown root rule "${root}"; emitted null.`);
-      return { json: JSON.stringify(null, null, 2), warnings, error: null, jsonRepresentable: true, constraintsSatisfied: true };
+      return { json: JSON.stringify(null, null, 2), warnings, error: null, jsonRepresentable: true, constraintsSatisfied: true, verified: false, validationError: null };
     }
 
     const ctx = {
@@ -66,6 +99,7 @@ export function generateSample(source, rootRuleName) {
       nonRepReasons: new Set(),
       constraintsSatisfied: true,
       unappliedControls: new Set(),
+      includeOptional,
     };
     const value = generateRef(root, [], null, ctx, 0, new Set(), new Map());
     return {
@@ -74,6 +108,8 @@ export function generateSample(source, rootRuleName) {
       error: null,
       jsonRepresentable: ctx.jsonRepresentable,
       constraintsSatisfied: ctx.constraintsSatisfied,
+      verified: false,
+      validationError: null,
     };
   } catch (err) {
     return {
@@ -82,6 +118,8 @@ export function generateSample(source, rootRuleName) {
       error: err && err.message ? err.message : String(err),
       jsonRepresentable: false,
       constraintsSatisfied: false,
+      verified: false,
+      validationError: null,
     };
   }
 }
@@ -304,6 +342,8 @@ function parseExpression(tokens) {
   if (isWrapped(trimmed, '(', ')')) {
     const inner = trimmed.slice(1, -1);
     if (findTopLevelOp(inner, [':', '=>']) >= 0) return { kind: 'map', entries: parseGroup(inner) };
+    // `( int, tstr )` is a group of entries, not a parenthesized single type.
+    if (splitTopLevel(inner, ',').length > 1) return { kind: 'group', entries: parseGroup(inner) };
     return parseExpression(inner);
   }
   if (isWrapped(trimmed, '{', '}')) return { kind: 'map', entries: parseGroup(trimmed.slice(1, -1)) };
@@ -417,7 +457,7 @@ function parseGroupEntry(tokens) {
   tokens = trimTokens(tokens);
   if (tokens.length === 0) return null;
 
-  let occurrence = { min: 1, count: 1, optional: false, raw: '' };
+  let occurrence = { min: 1, max: 1, count: 1, optional: false, raw: '' };
   const occ = readOccurrence(tokens);
   if (occ) {
     occurrence = occ.occurrence;
@@ -445,32 +485,66 @@ function parseGroupEntry(tokens) {
 function readOccurrence(tokens) {
   const first = tokens[0];
   if (!first) return null;
-  if (first.value === '?') return { consumed: 1, occurrence: { min: 0, count: 1, optional: true, raw: '?' } };
-  if (first.value === '*' && tokens[1]?.type !== 'number') return { consumed: 1, occurrence: { min: 0, count: 1, optional: false, raw: '*' } };
-  if (first.value === '+') return { consumed: 1, occurrence: { min: 1, count: 1, optional: false, raw: '+' } };
+  if (first.value === '?') return { consumed: 1, occurrence: makeOccurrence(0, 1, '?', true) };
+  if (first.value === '*' && tokens[1]?.type !== 'number') return { consumed: 1, occurrence: makeOccurrence(0, Infinity, '*') };
+  if (first.value === '+') return { consumed: 1, occurrence: makeOccurrence(1, Infinity, '+') };
 
   if (first.type === 'number' && tokens[1]?.value === '*' && tokens[2]?.type === 'number') {
     return {
       consumed: 3,
-      occurrence: { min: numberFromToken(first), count: Math.max(1, numberFromToken(first)), optional: false, raw: `${first.raw}*${tokens[2].raw}` },
+      occurrence: makeOccurrence(numberFromToken(first), numberFromToken(tokens[2]), `${first.raw}*${tokens[2].raw}`),
     };
   }
 
   if (first.type === 'number' && tokens[1]?.value === '*') {
     return {
       consumed: 2,
-      occurrence: { min: numberFromToken(first), count: Math.max(1, numberFromToken(first)), optional: false, raw: `${first.raw}*` },
+      occurrence: makeOccurrence(numberFromToken(first), Infinity, `${first.raw}*`),
     };
   }
 
   if (first.value === '*' && tokens[1]?.type === 'number') {
     return {
       consumed: 2,
-      occurrence: { min: 0, count: 1, optional: false, raw: `*${tokens[1].raw}` },
+      occurrence: makeOccurrence(0, numberFromToken(tokens[1]), `*${tokens[1].raw}`),
     };
   }
 
   return null;
+}
+
+/** Occurrence with a concrete repeat count that always respects [min, max]. */
+function makeOccurrence(min, max, raw, optional = false) {
+  const lo = Number.isFinite(min) && min >= 0 ? min : 0;
+  const hi = max === Infinity || (Number.isFinite(max) && max >= lo) ? max : lo;
+  const count = Math.max(lo, Math.min(1, hi));
+  return { min: lo, max: hi, count, optional, raw };
+}
+
+/** Repeat count clamped to MAX_REPEAT; exceeding the cap is reported, never silent. */
+function repeatCount(occurrence, ctx) {
+  const wanted = occurrence?.count ?? 1;
+  if (wanted <= MAX_REPEAT) return wanted;
+  ctx.constraintsSatisfied = false;
+  ctx.warnings.push(`Occurrence "${occurrence.raw}" requires ${wanted} items; generated ${MAX_REPEAT} to keep the sample manageable.`);
+  return MAX_REPEAT;
+}
+
+/** True when an optional entry should be omitted for this attempt. */
+function skipOptional(entry, ctx) {
+  return ctx.includeOptional === false && entry?.occurrence?.optional === true;
+}
+
+/** Assign without invoking inherited setters such as `__proto__`. */
+function setMember(object, key, value) {
+  Object.defineProperty(object, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+/** Object.assign equivalent that is safe for `__proto__` keys. */
+function mergeMembers(target, source) {
+  if (!source || typeof source !== 'object') return target;
+  for (const key of Object.keys(source)) setMember(target, key, source[key]);
+  return target;
 }
 
 function parseKey(tokens) {
@@ -583,6 +657,10 @@ function generateNode(node, key, ctx, depth, visiting, env, label) {
       return generateNode(node.inner, key, ctx, depth + 1, visiting, env, label);
     case 'map': return generateMap(node.entries, ctx, depth + 1, visiting, env);
     case 'array': return generateArray(node.entries, ctx, depth + 1, visiting, env);
+    case 'group':
+      return hasMemberEntries(node.entries)
+        ? generateMap(node.entries, ctx, depth + 1, visiting, env)
+        : generateArray(node.entries, ctx, depth + 1, visiting, env);
     case 'enum': return generateEnum(node.entries, ctx, depth + 1, visiting, env);
     case 'groupMerge': return generateGroupMerge(node.options, ctx, depth + 1, visiting, env);
     case 'enumRef': {
@@ -757,33 +835,55 @@ function generateMap(entries, ctx, depth, visiting, env) {
     if (!entry) continue;
     if (entry.kind === 'groupChoice') {
       ctx.warnings.push('Using first alternative of group choice.');
-      Object.assign(object, generateMap(entry.options[0], ctx, depth + 1, visiting, env));
+      mergeMembers(object, generateMap(entry.options[0], ctx, depth + 1, visiting, env));
       continue;
     }
 
     if (entry.kind === 'group') {
-      Object.assign(object, generateMap(entry.entries, ctx, depth + 1, visiting, env));
+      mergeMembers(object, generateMap(entry.entries, ctx, depth + 1, visiting, env));
       continue;
     }
     if (entry.kind === 'member') {
-      const key = keyToString(entry.key, ctx, depth, visiting, env, entry.arrow);
-      const before = ctx.warnings.length;
-      object[key] = generateNode(entry.value, key, ctx, depth + 1, visiting, env, key);
-      if (entry.occurrence.optional && ctx.warnings.length > before) {
-        ctx.warnings.push(`Optional member "${key}" was included using a heuristic value.`);
+      if (skipOptional(entry, ctx)) continue;
+      const count = repeatCount(entry.occurrence, ctx);
+      for (let i = 0; i < count; i++) {
+        const baseKey = keyToString(entry.key, ctx, depth, visiting, env, entry.arrow);
+        // A map cannot hold duplicate keys, so repeated members need distinct ones.
+        const key = i === 0 ? baseKey : distinctKey(object, baseKey, entry, ctx, i);
+        const before = ctx.warnings.length;
+        setMember(object, key, generateNode(entry.value, key, ctx, depth + 1, visiting, env, key));
+        if (entry.occurrence.optional && ctx.warnings.length > before) {
+          ctx.warnings.push(`Optional member "${key}" was included using a heuristic value.`);
+        }
       }
       continue;
     }
     if (entry.kind === 'element') {
       const value = generateNode(entry.value, null, ctx, depth + 1, visiting, env, null);
-      if (value && typeof value === 'object' && !Array.isArray(value)) Object.assign(object, value);
+      if (value && typeof value === 'object' && !Array.isArray(value)) mergeMembers(object, value);
       else if (value !== null) {
         ctx.warnings.push('Group entry did not produce an object member; stored it under "value".');
-        object.value = value;
+        setMember(object, 'value', value);
       }
     }
   }
   return object;
+}
+
+/** A key not already present, for repeated map members. Literal keys cannot repeat. */
+function distinctKey(object, baseKey, entry, ctx, index) {
+  if (entry.key?.kind === 'literal') {
+    ctx.constraintsSatisfied = false;
+    ctx.warnings.push(`Member "${baseKey}" repeats ${entry.occurrence.raw} times but has a literal key; a JSON object cannot hold duplicates.`);
+    return baseKey;
+  }
+  let candidate = `${baseKey}${index + 1}`;
+  let suffix = index + 1;
+  while (Object.prototype.hasOwnProperty.call(object, candidate)) {
+    suffix += 1;
+    candidate = `${baseKey}${suffix}`;
+  }
+  return candidate;
 }
 
 function generateGroupMerge(options, ctx, depth, visiting, env) {
@@ -801,14 +901,43 @@ function generateArray(entries, ctx, depth, visiting, env) {
       array.push(...generateArray(entry.options[0], ctx, depth + 1, visiting, env));
       continue;
     }
-    const count = Math.max(1, Math.min(entry.occurrence?.count ?? 1, 10));
+    if (skipOptional(entry, ctx)) continue;
+    const count = repeatCount(entry.occurrence, ctx);
     for (let i = 0; i < count; i++) {
       if (entry.kind === 'member') array.push(generateNode(entry.value, keyToString(entry.key, ctx, depth, visiting, env, entry.arrow), ctx, depth + 1, visiting, env, null));
       else if (entry.kind === 'group') array.push(...generateArray(entry.entries, ctx, depth + 1, visiting, env));
-      else array.push(generateNode(entry.value, null, ctx, depth + 1, visiting, env, null));
+      else {
+        // A group reference contributes its entries to the array, not a nested array.
+        const group = resolveGroupNode(entry.value, ctx, env, new Set());
+        if (group) array.push(...generateArray(group.entries, ctx, depth + 1, visiting, env));
+        else array.push(generateNode(entry.value, null, ctx, depth + 1, visiting, env, null));
+      }
     }
   }
   return array;
+}
+
+/** True when entries describe map members rather than array elements. */
+function hasMemberEntries(entries) {
+  return (entries || []).some((entry) => {
+    if (!entry) return false;
+    if (entry.kind === 'member') return true;
+    if (entry.kind === 'group') return hasMemberEntries(entry.entries);
+    if (entry.kind === 'groupChoice') return entry.options.some(hasMemberEntries);
+    return false;
+  });
+}
+
+/** Follow references to an inline group definition, or null when it is not one. */
+function resolveGroupNode(node, ctx, env, seen) {
+  if (!node) return null;
+  if (node.kind === 'group') return hasMemberEntries(node.entries) ? null : node;
+  if (node.kind !== 'ref' || node.args.length > 0) return null;
+  if (env?.has(node.name)) return resolveGroupNode(env.get(node.name), ctx, env, seen);
+  if (seen.has(node.name)) return null;
+  seen.add(node.name);
+  const rule = ctx.model.rules.get(node.name);
+  return rule && rule.params.length === 0 ? resolveGroupNode(rule.node, ctx, env, seen) : null;
 }
 
 function generateEnum(entries, ctx, depth, visiting, env) {
