@@ -6,6 +6,7 @@ import { parseRules, renderOutline, registerNavigation } from './src/outline.js'
 import { generateSample, listRootCandidates } from './src/sample-gen.js';
 import { initToasts, toast } from './src/toast.js';
 import { initShortcutsModal } from './src/shortcuts.js';
+import { buildSuggestions, completionContext } from './src/cddl-completion.js';
 
 // ─── CDDL Language Registration ───────────────────────────────────────────────
 
@@ -129,29 +130,51 @@ monaco.editor.defineTheme('cddl-light', {
   },
 });
 
-// Autocomplete for common CDDL types
+// Autocomplete: rule/group names from the live buffer, the full RFC 8610
+// prelude, and control operators after a `.`.
+const COMPLETION_KIND = {
+  rule: () => monaco.languages.CompletionItemKind.Struct,
+  prelude: () => monaco.languages.CompletionItemKind.Keyword,
+  control: () => monaco.languages.CompletionItemKind.Operator,
+};
+
 monaco.languages.registerCompletionItemProvider('cddl', {
-  provideCompletionItems: () => {
-    const types = [
-      ['tstr', 'Text string'],
-      ['bstr', 'Byte string'],
-      ['uint', 'Unsigned integer'],
-      ['int', 'Integer'],
-      ['float', 'Floating point number'],
-      ['bool', 'Boolean'],
-      ['null', 'Null value'],
-      ['any', 'Any value'],
-      ['text', 'Text string (alias for tstr)'],
-      ['bytes', 'Byte string (alias for bstr)'],
-    ];
-    return {
-      suggestions: types.map(([label, doc]) => ({
-        label,
-        kind: monaco.languages.CompletionItemKind.Keyword,
-        insertText: label,
-        documentation: doc,
-      })),
+  // `.` is not part of Monaco's default word pattern, so without this the
+  // provider is never invoked for control operators.
+  triggerCharacters: ['.'],
+  provideCompletionItems: (model, position) => {
+    const linePrefix = model.getValueInRange({
+      startLineNumber: position.lineNumber,
+      startColumn: 1,
+      endLineNumber: position.lineNumber,
+      endColumn: position.column,
+    });
+
+    const word = model.getWordUntilPosition(position);
+    let startColumn = word.startColumn;
+    if (completionContext(linePrefix) === 'control') {
+      // Extend the replaced range back over the leading `.` so inserting
+      // `.size` does not produce `..size`.
+      const dot = /\.[A-Za-z]*$/.exec(linePrefix);
+      if (dot) startColumn = dot.index + 1;
+    }
+    const range = {
+      startLineNumber: position.lineNumber,
+      endLineNumber: position.lineNumber,
+      startColumn,
+      endColumn: position.column,
     };
+
+    const suggestions = buildSuggestions(model.getValue(), linePrefix).map((s) => ({
+      label: s.label,
+      kind: (COMPLETION_KIND[s.group] || COMPLETION_KIND.prelude)(),
+      insertText: s.insertText,
+      detail: s.detail,
+      documentation: s.documentation,
+      sortText: s.sortText,
+      range,
+    }));
+    return { suggestions };
   },
 });
 
