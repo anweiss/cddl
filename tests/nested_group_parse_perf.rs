@@ -248,3 +248,175 @@ fn non_member_entries_still_parse() {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Linearity
+//
+// Factoring the shared `member_key` prefix removed one of three redundant full
+// parses per nesting level, taking the curve from O(3^depth) to O(2^depth) --
+// better, but still exponential. The residual cost was the remaining pair of
+// full parses: `member_key`'s first branch is `type1 ~ &("=>")`, which parses
+// an entire nested subtree and only then checks a lookahead that can never
+// succeed for a plain array element, after which the bare `type_expr`
+// alternative parsed the very same subtree again.
+//
+// Trying the bare-type alternative first, guarded by a cheap negative lookahead
+// for the `=>`/`:` delimiter, means a non-member entry is parsed exactly once.
+// The curve is now linear in depth.
+//
+// Measured (release, parse only): depth 16 went from 222ms to 0.05ms, and
+// depth 24 from roughly 68s to 0.07ms. Doubling the depth now doubles the cost.
+//
+// The bounds below are hundreds of times the post-fix cost so they stay
+// reliable on slow CI, while still failing by a wide margin on the previous
+// grammar. Depths are ordered cheapest-first so a genuine regression fails in
+// a few seconds rather than after a minute.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nested_array_parse_time_is_linear_in_depth() {
+  // Depth 20 costs about 3.9s on the previous grammar and 0.06ms now, so this
+  // trips quickly if the exponential behaviour returns.
+  for depth in [20usize, 24] {
+    let src = nested_array(depth);
+    let start = Instant::now();
+    let parsed = cddl_from_str(&src, true);
+    let elapsed = start.elapsed();
+    assert!(parsed.is_ok(), "depth-{} nested array should parse", depth);
+    assert!(
+      elapsed < Duration::from_secs(1),
+      "depth-{} nested array took {:?}; the previous grammar needed about 3.9s \
+       at depth 20 and 68s at depth 24, so parse cost is exponential again",
+      depth,
+      elapsed
+    );
+  }
+}
+
+/// Arrays of parenthesised groups were the worst shape of all: every `[( ... )]`
+/// level compounded the array and paren entries, giving roughly 3x per level
+/// even after the earlier factoring (131s at depth 16).
+#[test]
+fn nested_arrays_of_parenthesised_groups_stay_fast() {
+  for depth in [12usize, 14] {
+    let mut inner = String::from("int");
+    for _ in 0..depth {
+      inner = format!("[({})]", inner);
+    }
+    let src = format!("a = {}", inner);
+
+    let start = Instant::now();
+    let parsed = cddl_from_str(&src, true);
+    let elapsed = start.elapsed();
+    assert!(parsed.is_ok(), "depth-{} [( )] nesting should parse", depth);
+    assert!(
+      elapsed < Duration::from_secs(1),
+      "depth-{} [( )] nesting took {:?}; the previous grammar needed about 1.6s \
+       at depth 12 and 14.5s at depth 14",
+      depth,
+      elapsed
+    );
+  }
+}
+
+/// Doubling the depth should roughly double the cost. Comparing two depths
+/// rather than asserting an absolute time keeps this meaningful across
+/// hardware. Linear is 2x; the previous grammar was about 2^16 (~65000x).
+#[test]
+fn doubling_nested_depth_roughly_doubles_parse_cost() {
+  let shallow = nested_array(16);
+  let deep = nested_array(32);
+
+  let _ = cddl_from_str(&shallow, true);
+
+  let shallow_ns = best_parse_time(&shallow, 5).as_nanos().max(1);
+  let deep_ns = best_parse_time(&deep, 5).as_nanos().max(1);
+
+  let ratio = deep_ns as f64 / shallow_ns as f64;
+  assert!(
+    ratio < 10.0,
+    "depth 32 was {:.1}x the cost of depth 16 (shallow {}ns, deep {}ns); linear \
+     growth is 2x and the previous grammar was about 65000x",
+    ratio,
+    shallow_ns,
+    deep_ns
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Guard correctness
+//
+// The bare-type alternative is now tried before the member alternative, so a
+// negative lookahead is the only thing stopping it from consuming the *key*
+// half of `key: value` and leaving `: value` stranded. These tests pin that
+// down, along with the AST shapes that the reordering must not disturb.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_delimiter_guard_does_not_steal_member_keys() {
+  // Each of these would fail to parse if the bare-type alternative were allowed
+  // to match the key and stop.
+  for src in [
+    "g = ( x: int )\na = { g }",
+    "a = { x: int }",
+    "a = { x: int, y: tstr }",
+    "a = [ ( x: int, y: tstr ) ]",
+    "a = { x => int }",
+    "a = { x ^ => int }",
+    "a = ( x: int )",
+    "a = ( x => int )",
+    "a = { * tstr => any }",
+    "a = [ * ( x: int ) ]",
+  ] {
+    assert!(
+      cddl_from_str(src, true).is_ok(),
+      "delimiter guard must not break: {}",
+      src
+    );
+  }
+}
+
+/// A parenthesised group entry must still be a group entry, not a
+/// parenthesised *type*. The bare-type alternative can match `(int)` as a type,
+/// so the parenthesised-group alternative has to keep winning.
+#[test]
+fn parenthesised_group_entries_are_still_groups() {
+  let cddl = cddl_from_str("a = [ (int) ]", true).unwrap();
+  let group = match &cddl.rules[0] {
+    Rule::Type { rule, .. } => match &rule.value.type_choices[0].type1.type2 {
+      Type2::Array { group, .. } => group,
+      other => panic!("expected an array, got {:?}", other),
+    },
+    other => panic!("expected a type rule, got {:?}", other),
+  };
+  assert!(
+    matches!(
+      &group.group_choices[0].group_entries[0].0,
+      GroupEntry::InlineGroup { .. }
+    ),
+    "`(int)` inside an array must stay an inline group entry, got {:?}",
+    &group.group_choices[0].group_entries[0].0
+  );
+}
+
+/// The guard must not consume the whitespace it looks past. An earlier version
+/// of this fix placed the lookahead after the closing `)`, which let pest's
+/// implicit whitespace skip run first and silently extended the enclosing
+/// rule's span over the trailing newline.
+#[test]
+fn guard_lookahead_does_not_extend_rule_spans() {
+  let src = "b = ( x: int ) \n a = { b }";
+  let cddl = cddl_from_str(src, true).unwrap();
+  let span = match &cddl.rules[0] {
+    Rule::Group { span, .. } => *span,
+    other => panic!("expected a group rule, got {:?}", other),
+  };
+  assert_eq!(
+    span.1,
+    14,
+    "rule span must end at the closing paren, not swallow trailing whitespace; \
+     got {:?} which covers {:?}",
+    span,
+    &src[span.0..span.1]
+  );
+}
