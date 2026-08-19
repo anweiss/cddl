@@ -330,7 +330,10 @@ fn doubling_nested_depth_roughly_doubles_parse_cost() {
   let shallow = nested_array(8);
   let deep = nested_array(16);
 
-  let _ = cddl_from_str(&shallow, true);
+  assert!(
+    cddl_from_str(&shallow, true).is_ok(),
+    "warm-up parse must succeed, otherwise the ratio compares failure paths"
+  );
 
   let shallow_ns = best_parse_time(&shallow, 5).as_nanos().max(1);
   let deep_ns = best_parse_time(&deep, 5).as_nanos().max(1);
