@@ -79,9 +79,9 @@ fn is_ident_continue(b: u8) -> bool {
 fn generic_params_end(bytes: &[u8], open: usize) -> Option<usize> {
   let mut i = open + 1;
   while i < bytes.len() && bytes[i] != b'>' {
-    // Parameters are plain identifiers; anything structural means this is not
-    // a parameter list.
-    if matches!(bytes[i], b'(' | b'[' | b'{' | b'<' | b'"' | b'\'' | b';' | b'\n') {
+    // Parameters are plain identifiers separated by commas and whitespace;
+    // anything structural means this is not a parameter list.
+    if matches!(bytes[i], b'(' | b'[' | b'{' | b'<' | b'"' | b'\'' | b';') {
       return None;
     }
     i += 1;
@@ -210,26 +210,31 @@ pub(crate) fn scan(src: &str) -> Scan {
       // assignment operator, i.e. the head of `messages<a, b> = ...`. Anywhere
       // else a `<` group holds generic *arguments*, whose identifiers are real
       // references and are scanned normally.
-      b'<' if depth == 0 && generic_params_end(bytes, i).is_some() => {
-        let close = generic_params_end(bytes, i).unwrap();
-        i += 1;
-        while i < close {
-          if is_ident_start(bytes[i]) {
-            let start = i;
-            while i < close && (is_ident_continue(bytes[i]) || bytes[i] == b'-') {
-              i += 1;
-            }
-            idents.push(IdentToken {
-              start,
-              end: i,
-              text: src[start..i].to_string(),
-              role: IdentRole::GenericParam,
-            });
-          } else {
+      b'<' if depth == 0 => {
+        match generic_params_end(bytes, i) {
+          Some(close) => {
             i += 1;
+            while i < close {
+              if is_ident_start(bytes[i]) {
+                let start = i;
+                while i < close && (is_ident_continue(bytes[i]) || bytes[i] == b'-') {
+                  i += 1;
+                }
+                idents.push(IdentToken {
+                  start,
+                  end: i,
+                  text: src[start..i].to_string(),
+                  role: IdentRole::GenericParam,
+                });
+              } else {
+                i += 1;
+              }
+            }
+            i = close + 1;
           }
+          None => i += 1,
         }
-        i = close + 1;
+
         prev_was_ident_end = false;
       }
 
@@ -365,6 +370,31 @@ mod tests {
       .iter()
       .filter(|i| i.text == "a")
       .any(|i| i.role == IdentRole::GenericParam));
+  }
+
+  #[test]
+  fn generic_parameters_may_span_lines() {
+    let scan = scan("messages<\n  a,\n  b\n> = [a, b]\n");
+    assert_eq!(scan.rules.len(), 1);
+    assert_eq!(scan.rules[0].name, "messages");
+  }
+
+  #[test]
+  fn generic_arguments_are_references() {
+    let scan = scan("a = messages<int>\n");
+    assert_eq!(scan.rules.len(), 1);
+    assert_eq!(scan.rules[0].name, "a");
+    assert!(scan
+      .idents
+      .iter()
+      .any(|i| i.text == "messages" && i.role == IdentRole::Reference));
+  }
+
+  #[test]
+  fn extensions_are_separate_spans() {
+    let scan = scan("foo = int\nbar = tstr\nfoo /= tstr\n");
+    let names: Vec<_> = scan.rules.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["foo", "bar", "foo"]);
   }
 
   #[test]

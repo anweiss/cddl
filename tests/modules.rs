@@ -310,6 +310,44 @@ fn a_malformed_directive_is_an_error_not_a_comment() {
 }
 
 #[test]
+fn a_rule_carries_its_noncontiguous_extensions() {
+  let mut source = MemoryModuleSource::new();
+  source.insert(
+    "ext",
+    "foo = int\nbar = baz\nbaz = tstr\nfoo /= tstr\n",
+  );
+
+  let output = resolve_modules(
+    "start = foo\n;# include foo from ext\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+
+  assert!(output.contains("foo = int"), "{}", output);
+  assert!(output.contains("foo /= tstr"), "{}", output);
+  assert!(!output.contains("bar"), "{}", output);
+  assert_parses(&output);
+}
+
+#[test]
+fn a_later_import_sees_references_introduced_by_an_earlier_include() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("module-a", "wrapper = [* external]\n");
+  source.insert("module-b", "external = int\nunused = tstr\n");
+
+  let output = resolve_modules(
+    "root = wrapper\n;# include wrapper from module-a\n;# import module-b\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+
+  assert_eq!(defined_order(&output), ["root", "wrapper", "external"]);
+  assert_parses(&output);
+}
+
+#[test]
 fn a_rule_already_defined_locally_is_not_pulled_in() {
   let output = resolve("label = tstr\nmydata = {* label => values}\n;# include label, values from rfc9052\n");
 

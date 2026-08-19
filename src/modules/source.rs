@@ -136,9 +136,13 @@ mod tests {
 
   #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
   #[test]
-  fn empty_include_path_elements_are_skipped() {
+  fn empty_include_path_elements_carry_no_bundled_collection() {
+    // §2.4 gives an empty element the meaning "the processor's own collection".
+    // This implementation ships no such collection, so the element resolves to
+    // nothing rather than to the root directory.
     let source = FsModuleSource::from_include_path(".:");
     assert_eq!(source.directories().len(), 1);
+    assert_eq!(source.load("rfc9052").unwrap(), None);
   }
 }
 

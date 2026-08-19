@@ -252,6 +252,10 @@ fn resolve(
       }
 
       if let Some(rule) = index.get(name.as_str()) {
+        // A rule pulled in here may reference names that a later directive is
+        // responsible for supplying, so the reference set has to grow as rules
+        // are emitted rather than being fixed at the original body.
+        references.extend(referenced_names(&rule.text));
         pulled.push(rule.text.clone());
       }
     }
@@ -366,6 +370,11 @@ fn strip_directives(input: &str) -> String {
 
 /// Split a document into its rules, recording each rule's dependencies on
 /// other rules of the same document.
+///
+/// A name may be defined more than once — RFC 8610 allows a rule to be extended
+/// with `/=` and `//=`, and those extensions need not be adjacent to the
+/// original definition. All occurrences of a name are merged into a single
+/// entry so that selecting a rule always carries its extensions with it.
 fn rules_of(src: &str) -> Vec<ModuleRule> {
   let scanned = scan(src);
   let defined: BTreeSet<&str> = scanned
@@ -374,33 +383,45 @@ fn rules_of(src: &str) -> Vec<ModuleRule> {
     .map(|rule| rule.name.as_str())
     .collect();
 
-  scanned
-    .rules
-    .iter()
-    .map(|rule| {
-      let mut deps: Vec<String> = Vec::new();
+  let mut merged: Vec<ModuleRule> = Vec::new();
 
-      for ident in &scanned.idents {
-        if ident.role != IdentRole::Reference
-          || ident.start < rule.start
-          || ident.end > rule.end
-          || ident.text == rule.name
-          || PRELUDE.contains(&ident.text.as_str())
-          || !defined.contains(ident.text.as_str())
-        {
-          continue;
+  for rule in &scanned.rules {
+    let mut deps: Vec<String> = Vec::new();
+
+    for ident in &scanned.idents {
+      if ident.role != IdentRole::Reference
+        || ident.start < rule.start
+        || ident.end > rule.end
+        || ident.text == rule.name
+        || PRELUDE.contains(&ident.text.as_str())
+        || !defined.contains(ident.text.as_str())
+      {
+        continue;
+      }
+
+      push_unique(&mut deps, ident.text.clone());
+    }
+
+    let text = src[rule.start..rule.end].to_string();
+
+    match merged.iter_mut().find(|existing| existing.name == rule.name) {
+      Some(existing) => {
+        existing.text.push('\n');
+        existing.text.push_str(&text);
+
+        for dep in deps {
+          push_unique(&mut existing.deps, dep);
         }
-
-        push_unique(&mut deps, ident.text.clone());
       }
-
-      ModuleRule {
+      None => merged.push(ModuleRule {
         name: rule.name.clone(),
-        text: src[rule.start..rule.end].to_string(),
+        text,
         deps,
-      }
-    })
-    .collect()
+      }),
+    }
+  }
+
+  merged
 }
 
 /// Every name referenced — as opposed to defined — by a document.
