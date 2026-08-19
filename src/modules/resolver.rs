@@ -155,8 +155,10 @@ fn resolve(
     };
 
     let rules = rules_of(&text);
-    let index: BTreeMap<&str, &ModuleRule> =
-      rules.iter().map(|rule| (rule.name.as_str(), rule)).collect();
+    let index: BTreeMap<&str, &ModuleRule> = rules
+      .iter()
+      .map(|rule| (rule.name.as_str(), rule))
+      .collect();
 
     let mut aliases: Vec<String> = Vec::new();
 
@@ -404,7 +406,10 @@ fn rules_of(src: &str) -> Vec<ModuleRule> {
 
     let text = src[rule.start..rule.end].to_string();
 
-    match merged.iter_mut().find(|existing| existing.name == rule.name) {
+    match merged
+      .iter_mut()
+      .find(|existing| existing.name == rule.name)
+    {
       Some(existing) => {
         existing.text.push('\n');
         existing.text.push_str(&text);

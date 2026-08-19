@@ -100,17 +100,20 @@ impl ModuleSource for FsModuleSource {
     for directory in &self.directories {
       // A module name matches the `filename` production, which admits no path
       // separator, so this can only ever name a direct child.
-      for candidate in [directory.join(name), directory.join(format!("{}.cddl", name))] {
+      for candidate in [
+        directory.join(name),
+        directory.join(format!("{}.cddl", name)),
+      ] {
         if !candidate.is_file() {
           continue;
         }
 
-        return std::fs::read_to_string(&candidate)
-          .map(Some)
-          .map_err(|e| ModuleError::ModuleUnreadable {
+        return std::fs::read_to_string(&candidate).map(Some).map_err(|e| {
+          ModuleError::ModuleUnreadable {
             name: name.to_string(),
             message: e.to_string(),
-          });
+          }
+        });
       }
     }
 
@@ -145,4 +148,3 @@ mod tests {
     assert_eq!(source.load("rfc9052").unwrap(), None);
   }
 }
-

@@ -107,11 +107,7 @@ impl fmt::Display for ModuleError {
       ModuleError::ModuleParse { name, message } => {
         write!(f, "module \"{}\" is not valid CDDL: {}", name, message)
       }
-      ModuleError::RuleNotFound {
-        rule,
-        module,
-        line,
-      } => write!(
+      ModuleError::RuleNotFound { rule, module, line } => write!(
         f,
         "rule \"{}\" named on line {} is not defined in module \"{}\"",
         rule, line, module

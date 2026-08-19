@@ -333,13 +333,19 @@ mod tests {
     let scan = scan(src);
     let names: Vec<_> = scan.rules.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(names, ["label", "values"]);
-    assert_eq!(&src[scan.rules[0].start..scan.rules[0].end], "label = int / tstr");
+    assert_eq!(
+      &src[scan.rules[0].start..scan.rules[0].end],
+      "label = int / tstr"
+    );
   }
 
   #[test]
   fn namespaced_names_scan_as_one_identifier() {
     let scan = scan("mydata = {Fritz: cose.empty_or_serialized_map}");
-    assert!(scan.idents.iter().any(|i| i.text == "cose.empty_or_serialized_map"));
+    assert!(scan
+      .idents
+      .iter()
+      .any(|i| i.text == "cose.empty_or_serialized_map"));
   }
 
   #[test]

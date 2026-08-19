@@ -103,7 +103,10 @@ fn parse_line(rest: &str, line: usize) -> Result<Directive, ModuleError> {
     Some(other) => {
       return Err(ModuleError::Directive {
         line,
-        message: format!("unknown directive \"{}\"; expected \"import\" or \"include\"", other),
+        message: format!(
+          "unknown directive \"{}\"; expected \"import\" or \"include\"",
+          other
+        ),
       })
     }
     None => return Err(err(line, "empty directive")),
@@ -202,9 +205,9 @@ fn is_id(name: &str) -> bool {
     _ => return false,
   }
 
-  chars.all(|c| {
-    c == '$' || c == '@' || c == '_' || c == '.' || c == '-' || c.is_ascii_alphanumeric()
-  }) && !name.ends_with(['.', '-'])
+  chars
+    .all(|c| c == '$' || c == '@' || c == '_' || c == '.' || c == '-' || c.is_ascii_alphanumeric())
+    && !name.ends_with(['.', '-'])
 }
 
 /// Whether `name` matches the `filename` production. Note that the production
@@ -296,14 +299,10 @@ mod tests {
       ";# include from rfc9052\n",
     ] {
       assert!(
-        matches!(
-          parse_directives(input),
-          Err(ModuleError::Directive { .. })
-        ),
+        matches!(parse_directives(input), Err(ModuleError::Directive { .. })),
         "expected {:?} to be rejected",
         input
       );
     }
   }
 }
-

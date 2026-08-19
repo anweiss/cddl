@@ -125,7 +125,10 @@ fn include_from_honors_an_already_namespaced_selector() {
     "mydata = {* cose.label => cose.values}\n;# include cose.label, cose.values from rfc9052 as cose\n",
   );
 
-  assert_eq!(defined_order(&output), ["mydata", "cose.label", "cose.values"]);
+  assert_eq!(
+    defined_order(&output),
+    ["mydata", "cose.label", "cose.values"]
+  );
   assert_parses(&output);
 }
 
@@ -210,12 +213,7 @@ fn command_line_import_and_start_rule() {
   assert!(output.starts_with("$.start.$ = cose.COSE_Key\n"));
   assert_eq!(
     defined_order(&output),
-    [
-      "$.start.$",
-      "cose.COSE_Key",
-      "cose.label",
-      "cose.values"
-    ]
+    ["$.start.$", "cose.COSE_Key", "cose.label", "cose.values"]
   );
 }
 
@@ -223,7 +221,10 @@ fn command_line_import_and_start_rule() {
 fn directives_are_resolved_transitively_through_modules() {
   let mut source = MemoryModuleSource::new();
   source.insert("rfc9052", RFC9052);
-  source.insert("middle", "wrapper = [* label]\n;# include label from rfc9052\n");
+  source.insert(
+    "middle",
+    "wrapper = [* label]\n;# include label from rfc9052\n",
+  );
 
   let output = resolve_modules(
     "top = wrapper\n;# import middle\n",
@@ -257,8 +258,12 @@ fn circular_module_references_are_detected() {
   source.insert("one", "a = b\n;# include two\n");
   source.insert("two", "b = c\n;# include one\n");
 
-  let error = resolve_modules("start = a\n;# include one\n", &source, &ResolveOptions::default())
-    .unwrap_err();
+  let error = resolve_modules(
+    "start = a\n;# include one\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap_err();
 
   assert!(matches!(error, ModuleError::CircularReference { .. }));
 }
@@ -312,10 +317,7 @@ fn a_malformed_directive_is_an_error_not_a_comment() {
 #[test]
 fn a_rule_carries_its_noncontiguous_extensions() {
   let mut source = MemoryModuleSource::new();
-  source.insert(
-    "ext",
-    "foo = int\nbar = baz\nbaz = tstr\nfoo /= tstr\n",
-  );
+  source.insert("ext", "foo = int\nbar = baz\nbaz = tstr\nfoo /= tstr\n");
 
   let output = resolve_modules(
     "start = foo\n;# include foo from ext\n",
@@ -349,7 +351,8 @@ fn a_later_import_sees_references_introduced_by_an_earlier_include() {
 
 #[test]
 fn a_rule_already_defined_locally_is_not_pulled_in() {
-  let output = resolve("label = tstr\nmydata = {* label => values}\n;# include label, values from rfc9052\n");
+  let output =
+    resolve("label = tstr\nmydata = {* label => values}\n;# include label, values from rfc9052\n");
 
   let defined = defined_order(&output);
   assert_eq!(defined.iter().filter(|d| *d == "label").count(), 1);
