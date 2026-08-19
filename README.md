@@ -152,6 +152,45 @@ An extension for editing CDDL documents with Visual Studio Code has been publish
 * [x] unprefixed byte strings
 * [x] prefixed byte strings
 
+## Module structure (experimental)
+
+Behind the default-off `modules` feature, this crate implements the CDDL module
+structure of
+[draft-ietf-cbor-cddl-modules-06](https://datatracker.ietf.org/doc/draft-ietf-cbor-cddl-modules/06/).
+Directives are carried in comments beginning with `;#`, so a module-structured
+document remains valid basic CDDL for tools that do not understand them.
+
+Resolution is a source-to-source transformation into basic RFC 8610 CDDL,
+matching the behavior of the `cddlc -2tcddl` tool described in Appendix B of the
+draft:
+
+```rust
+use cddl::modules::{resolve_modules, FsModuleSource, ResolveOptions};
+
+let input = "start = cose.COSE_Key\n;# import rfc9052 as cose\n";
+let basic_cddl = resolve_modules(
+  input,
+  &FsModuleSource::from_env(),
+  &ResolveOptions::default(),
+)?;
+let ast = cddl::parser::cddl_from_str(&basic_cddl, false)?;
+```
+
+Modules are located by filename along the colon-separated `CDDL_INCLUDE_PATH`,
+which defaults to `.:`. Targets without a filesystem (such as
+`wasm32-unknown-unknown`) can supply modules through the `ModuleSource` trait;
+`MemoryModuleSource` is provided for that purpose.
+
+The CLI exposes the same functionality, including the `-i` and `-s` shortcuts of
+§2.7:
+
+```sh
+cddl resolve-modules -icose=rfc9052 -scose.COSE_Key
+```
+
+Being an unratified draft, this is gated off by default and its output is not
+covered by semantic versioning guarantees.
+
 ## Usage
 
 Simply add the dependency to `Cargo.toml` :

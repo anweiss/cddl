@@ -518,6 +518,9 @@ pub mod ast;
 pub mod error;
 /// Lexer types (position information)
 pub mod lexer;
+/// CDDL module structure (draft-ietf-cbor-cddl-modules)
+#[cfg(feature = "modules")]
+pub mod modules;
 /// Parser for CDDL
 pub mod parser;
 /// Bridge layer between Pest parser and existing AST

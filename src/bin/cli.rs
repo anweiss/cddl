@@ -8,6 +8,8 @@
 extern crate log;
 
 use cddl::cddl_from_str;
+#[cfg(all(feature = "modules", not(target_arch = "wasm32")))]
+use cddl::modules::{resolve_modules, FsModuleSource, ResolveOptions};
 #[cfg(not(target_arch = "wasm32"))]
 use cddl::{
   parser::root_type_name_from_cddl_str, validate_cbor_from_slice, validate_csv_from_str,
@@ -48,6 +50,37 @@ enum Commands {
     file: String,
   },
   Validate(Validate),
+  #[cfg(feature = "modules")]
+  #[clap(
+    name = "resolve-modules",
+    about = "Resolve CDDL module directives (draft-ietf-cbor-cddl-modules) into basic RFC 8610 CDDL"
+  )]
+  ResolveModules {
+    #[clap(
+      short = 'c',
+      long = "cddl",
+      help = "Path to a module-structured CDDL document; omit or pass \"-\" to read stdin"
+    )]
+    file: Option<String>,
+    #[clap(
+      short = 'i',
+      long = "import",
+      help = "Synthesize an import directive: -icose=rfc9052 is shorthand for \";# import rfc9052 as cose\"",
+      action = ArgAction::Append
+    )]
+    imports: Vec<String>,
+    #[clap(
+      short = 's',
+      long = "start",
+      help = "Emit a start (root) rule, as $.start.$ = <rule>"
+    )]
+    start: Option<String>,
+    #[clap(
+      long = "include-path",
+      help = "Colon-separated module search path; defaults to CDDL_INCLUDE_PATH, then \".:\""
+    )]
+    include_path: Option<String>,
+  },
 }
 
 #[derive(Args)]
@@ -332,6 +365,62 @@ fn main() -> Result<(), Box<dyn Error>> {
           }
         }
       }
+    }
+    #[cfg(feature = "modules")]
+    Commands::ResolveModules {
+      file,
+      imports,
+      start,
+      include_path,
+    } => {
+      let input = match file.as_deref() {
+        None | Some("-") => {
+          let mut buffer = String::new();
+          io::stdin().read_to_string(&mut buffer)?;
+          buffer
+        }
+        Some(path) => {
+          let p = Path::new(path);
+          if !p.exists() {
+            error!(cli.ci, "CDDL document {:?} does not exist", p);
+            return Ok(());
+          }
+
+          fs::read_to_string(path)?
+        }
+      };
+
+      let mut command_line_imports = Vec::new();
+      for spec in imports {
+        match spec.split_once('=') {
+          Some((namespace, module)) if !namespace.is_empty() && !module.is_empty() => {
+            command_line_imports.push((namespace.to_string(), module.to_string()))
+          }
+          _ => {
+            error!(
+              cli.ci,
+              "invalid --import {:?}; expected <namespace>=<module>", spec
+            );
+            return Ok(());
+          }
+        }
+      }
+
+      let source = match include_path {
+        Some(path) => FsModuleSource::from_include_path(path),
+        None => FsModuleSource::from_env(),
+      };
+
+      let resolved = resolve_modules(
+        &input,
+        &source,
+        &ResolveOptions {
+          start_rule: start.clone(),
+          command_line_imports,
+        },
+      )?;
+
+      print!("{}", resolved);
     }
   }
 
