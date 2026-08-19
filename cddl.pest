@@ -172,8 +172,15 @@ group_choice_op = { "//" }
 // - Named group reference: groupname
 // - Nested group: ( group )
 // - Cut entries: key ^ => type (prevents backtracking)
-group_entry = { occur? ~ S ~ member_key ~ S ~ cut? ~ S ~ "=>" ~ S ~ type_expr
-              | occur? ~ S ~ member_key ~ S ~ ":" ~ S ~ type_expr
+// Note on ordering/factoring: alternatives 1 and 2 previously each began with
+// `occur? ~ S ~ member_key`, so a failing entry parsed `member_key` twice before
+// falling through to the bare `type_expr` alternative. Because `member_key`'s
+// first alternative is `type1 ~ &("=>")`, every array element was fully parsed
+// three times per nesting level, giving O(3^depth) parse time on nested arrays.
+// Factoring the shared prefix into a single `member_key` attempt removes one of
+// those redundant full parses. `member_key` is deterministic for a given input,
+// so the combined form matches exactly the same language as the split form.
+group_entry = { occur? ~ S ~ member_key ~ S ~ (cut? ~ S ~ "=>" | ":") ~ S ~ type_expr
               | occur? ~ S ~ "(" ~ S ~ group ~ S ~ ")"
               | occur? ~ S ~ type_expr
               | occur? ~ S ~ groupname ~ generic_args? }
