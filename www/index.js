@@ -1380,12 +1380,15 @@ function clearInstanceResult() {
   if (!instanceResult) return;
   instanceResult.textContent = '';
   instanceResult.classList.remove('ok', 'fail');
-  instanceResult.hidden = true;
+  // Restore the seeded placeholder rather than leaving an empty box behind.
+  const empty = document.createElement('div');
+  empty.className = 'instance-result-empty';
+  empty.textContent = 'Validation results will appear here.';
+  instanceResult.appendChild(empty);
 }
 
 function renderInstanceResult(result) {
   if (!instanceResult) return;
-  instanceResult.hidden = false;
   instanceResult.textContent = '';
   instanceResult.classList.remove('ok', 'fail');
   instanceResult.classList.add(result.ok ? 'ok' : 'fail');

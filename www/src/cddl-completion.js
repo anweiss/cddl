@@ -102,19 +102,40 @@ export function extractRuleNames(text) {
 }
 
 /**
+ * Is the cursor inside a comment or an unterminated text literal on this line?
+ * CDDL comments run from an unquoted `;` to end of line (RFC 8610 §2), so a
+ * single left-to-right scan tracking quote state is enough.
+ */
+export function inCommentOrString(linePrefix) {
+  const prefix = typeof linePrefix === 'string' ? linePrefix : '';
+  let inString = false;
+  for (let i = 0; i < prefix.length; i++) {
+    const ch = prefix[i];
+    if (inString) {
+      if (ch === '\\') i++;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+    } else if (ch === ';') {
+      return true;
+    }
+  }
+  return inString;
+}
+
+/**
  * Decide what to offer given the text on the current line up to the cursor.
  * After a `.` (optionally followed by a partial word) only control operators
- * make sense; everywhere else offer rule names and prelude types.
+ * make sense; everywhere else offer rule names and prelude types. Comments and
+ * string literals get nothing.
+ *
+ * Whitespace is what separates a control operator from a rule name containing a
+ * dot: `foo .size` is an operator, `my.rule` is one identifier.
  */
 export function completionContext(linePrefix) {
   const prefix = typeof linePrefix === 'string' ? linePrefix : '';
-  // `.` immediately after whitespace or an identifier, then an optional partial.
-  if (/(^|[\s\])}])\.[A-Za-z]*$/.test(prefix) || /[A-Za-z0-9_)\]}"']\s*\.[A-Za-z]*$/.test(prefix)) {
-    // A `.` that is part of an identifier (e.g. `my.rule`) is not an operator,
-    // but `foo .si` is. Require whitespace before the dot unless the line is
-    // only the dot so far.
-    if (/\s\.[A-Za-z]*$/.test(prefix) || /^\s*\.[A-Za-z]*$/.test(prefix)) return 'control';
-  }
+  if (inCommentOrString(prefix)) return 'none';
+  if (/\s\.[A-Za-z]*$/.test(prefix) || /^\s*\.[A-Za-z]*$/.test(prefix)) return 'control';
   return 'type';
 }
 
@@ -128,6 +149,7 @@ export function completionContext(linePrefix) {
  */
 export function buildSuggestions(text, linePrefix, selfRule) {
   const kind = completionContext(linePrefix);
+  if (kind === 'none') return [];
   if (kind === 'control') {
     return CONTROL_OPERATORS.map(([label, doc, example]) => ({
       label,
