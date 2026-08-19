@@ -98,8 +98,14 @@
       background: var(--bg-elevated);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
+      /* position:relative so the z-index below actually applies — without it
+         the outline pane paints over the Examples dropdown. */
+      position: relative;
       z-index: 10;
-      overflow: hidden;
+      /* Clip horizontally so a crowded toolbar never creates a page scrollbar,
+         but stay visible vertically so the Examples dropdown can drop below. */
+      overflow-x: clip;
+      overflow-y: visible;
     }
 
     .topbar-left {
@@ -203,7 +209,11 @@
       gap: 0.5rem;
       min-width: 0;
       flex: 1 1 auto;
-      overflow: hidden;
+      /* No clipping here: the Examples dropdown is anchored inside this row but
+         extends to its left, so clipping here would cut the dropdown off. The
+         parent .topbar still clips horizontally, which is what prevents a page
+         scrollbar when the toolbar is crowded. */
+      overflow: visible;
       white-space: nowrap;
     }
 
