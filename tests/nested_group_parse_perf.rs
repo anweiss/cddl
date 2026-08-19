@@ -321,11 +321,14 @@ fn nested_arrays_of_parenthesised_groups_stay_fast() {
 
 /// Doubling the depth should roughly double the cost. Comparing two depths
 /// rather than asserting an absolute time keeps this meaningful across
-/// hardware. Linear is 2x; the previous grammar was about 2^16 (~65000x).
+/// hardware. Linear is 2x; the previous grammar was about 2^8 (~256x). The
+/// depths are kept small deliberately: if the exponential behaviour ever
+/// regresses, depth 16 still fails in a fraction of a second rather than
+/// hanging CI the way depth 32 would.
 #[test]
 fn doubling_nested_depth_roughly_doubles_parse_cost() {
-  let shallow = nested_array(16);
-  let deep = nested_array(32);
+  let shallow = nested_array(8);
+  let deep = nested_array(16);
 
   let _ = cddl_from_str(&shallow, true);
 
@@ -335,8 +338,8 @@ fn doubling_nested_depth_roughly_doubles_parse_cost() {
   let ratio = deep_ns as f64 / shallow_ns as f64;
   assert!(
     ratio < 10.0,
-    "depth 32 was {:.1}x the cost of depth 16 (shallow {}ns, deep {}ns); linear \
-     growth is 2x and the previous grammar was about 65000x",
+    "depth 16 was {:.1}x the cost of depth 8 (shallow {}ns, deep {}ns); linear \
+     growth is 2x and the previous grammar was about 256x",
     ratio,
     shallow_ns,
     deep_ns
