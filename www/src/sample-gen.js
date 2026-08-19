@@ -120,7 +120,7 @@ function generateOnce(source, rootRuleName, includeOptional) {
     const generated = generateRef(root, [], null, ctx, 0, new Set(), new Map());
     if (generated === UNSATISFIABLE) {
       ctx.constraintsSatisfied = false;
-      warnings.push(`Root rule "${root}" is recursive with no terminating case; emitted null, which will not validate.`);
+      warnings.push(`Root rule "${root}" cannot be generated (recursive, too deeply nested, or too large); emitted null, which will not validate.`);
     }
     const value = concrete(generated);
     return {
@@ -918,8 +918,12 @@ function generateMap(entries, ctx, depth, visiting, env, target) {
       continue;
     }
     if (entry.kind === 'element') {
-      const value = generateNode(entry.value, null, ctx, depth + 1, visiting, env, null);
-      if (value === UNSATISFIABLE) continue;
+      const placed = placeAtOccurrence(
+        generateNode(entry.value, null, ctx, depth + 1, visiting, env, null),
+        entry.occurrence, ctx, 'Group entry',
+      );
+      if (placed.omit) continue;
+      const value = placed.value;
       if (value && typeof value === 'object' && !Array.isArray(value)) mergeMembers(object, value);
       else if (value !== null) {
         ctx.warnings.push('Group entry did not produce an object member; stored it under "value".');
@@ -964,7 +968,7 @@ function placeAtOccurrence(value, occurrence, ctx, what) {
   if ((occurrence?.min ?? 1) === 0) return { omit: true, value: undefined };
   ctx.constraintsSatisfied = false;
   ctx.warnings.push(
-    `${what} requires at least ${occurrence?.min ?? 1} item${(occurrence?.min ?? 1) === 1 ? '' : 's'} but cannot be generated (recursive or too deeply nested); emitted null, which will not validate.`,
+    `${what} requires at least ${occurrence?.min ?? 1} item${(occurrence?.min ?? 1) === 1 ? '' : 's'} but cannot be generated (recursive, too deeply nested, or too large); the sample will not validate.`,
   );
   return { omit: false, value: null };
 }
