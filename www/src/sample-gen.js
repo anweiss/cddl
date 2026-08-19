@@ -4,6 +4,19 @@
 
 const MAX_DEPTH = 32;
 const MAX_NODES = 5000;
+/**
+ * Returned when a node cannot be generated at all — a reference cycle, the depth
+ * limit, or the node budget. It is deliberately not `null`, because `null` is a
+ * legitimate sample value for `nil`/`null`, and conflating the two made cyclic
+ * schemas emit `[null]`, which does not validate against the schema that produced it.
+ * Occurrence sites omit the entry instead when the occurrence permits zero items.
+ */
+const UNSATISFIABLE = Symbol('unsatisfiable');
+
+/** Collapse the sentinel to `null` for contexts that must yield a concrete value. */
+function concrete(value) {
+  return value === UNSATISFIABLE ? null : value;
+}
 /** Upper bound on repeated occurrences; schemas demanding more fail explicitly. */
 const MAX_REPEAT = 64;
 /** Structural limits that keep hostile shared links from freezing the tab. */
@@ -104,7 +117,12 @@ function generateOnce(source, rootRuleName, includeOptional) {
       unappliedControls: new Set(),
       includeOptional,
     };
-    const value = generateRef(root, [], null, ctx, 0, new Set(), new Map());
+    const generated = generateRef(root, [], null, ctx, 0, new Set(), new Map());
+    if (generated === UNSATISFIABLE) {
+      ctx.constraintsSatisfied = false;
+      warnings.push(`Root rule "${root}" is recursive with no terminating case; emitted null, which will not validate.`);
+    }
+    const value = concrete(generated);
     return {
       json: JSON.stringify(value, null, 2),
       warnings,
@@ -627,12 +645,12 @@ function generateRef(name, args, key, ctx, depth, visiting, env) {
   if (env.has(name)) return generateNode(env.get(name), key, ctx, depth + 1, visiting, env, name);
   if (BUILTINS.has(name)) return generateBuiltin(name, key, ctx);
   if (depth > MAX_DEPTH) {
-    ctx.warnings.push(`Recursion depth exceeded while resolving "${name}"; emitted null.`);
-    return null;
+    ctx.warnings.push(`Recursion depth exceeded while resolving "${name}".`);
+    return UNSATISFIABLE;
   }
   if (visiting.has(name)) {
-    ctx.warnings.push(`Cycle detected while resolving "${name}"; emitted null.`);
-    return null;
+    ctx.warnings.push(`Cycle detected while resolving "${name}".`);
+    return UNSATISFIABLE;
   }
 
   const rule = ctx.model.rules.get(name);
@@ -654,12 +672,12 @@ function generateRef(name, args, key, ctx, depth, visiting, env) {
 function generateNode(node, key, ctx, depth, visiting, env, label) {
   if (!node) return null;
   if (--ctx.budget < 0) {
-    ctx.warnings.push('Sample generation node budget exhausted; emitted null.');
-    return null;
+    ctx.warnings.push('Sample generation node budget exhausted.');
+    return UNSATISFIABLE;
   }
   if (depth > MAX_DEPTH) {
-    ctx.warnings.push(`Recursion depth exceeded${label ? ` at "${label}"` : ''}; emitted null.`);
-    return null;
+    ctx.warnings.push(`Recursion depth exceeded${label ? ` at "${label}"` : ''}.`);
+    return UNSATISFIABLE;
   }
 
   switch (node.kind) {
@@ -714,6 +732,7 @@ function generateControl(node, key, ctx, depth, visiting, env, label) {
     case '.size': {
       const size = controlNumber(node.controller);
       const value = base();
+      if (value === UNSATISFIABLE) return UNSATISFIABLE;
       if (size == null || size < 0) return markControlUnapplied(ctx, node.op, value);
       if (typeof value === 'string') return sizedString(value, size);
       if (typeof value === 'number') return Number.isInteger(value) ? sizedInteger(value, size) : value;
@@ -725,20 +744,24 @@ function generateControl(node, key, ctx, depth, visiting, env, label) {
     case '.ge': {
       const limit = controlNumber(node.controller);
       const value = base();
+      if (value === UNSATISFIABLE) return UNSATISFIABLE;
       if (limit == null || typeof value !== 'number') return markControlUnapplied(ctx, node.op, value);
       return boundedNumber(value, limit, node.op);
     }
     case '.ne': {
       const value = base();
       const excluded = controller();
+      if (value === UNSATISFIABLE || excluded === UNSATISFIABLE) return UNSATISFIABLE;
       if (value !== excluded) return value;
       if (typeof value === 'number') return value + 1;
       if (typeof value === 'string') return `${value}x`;
       if (typeof value === 'boolean') return !value;
       return markControlUnapplied(ctx, node.op, value);
     }
-    default:
-      return markControlUnapplied(ctx, node.op, base());
+    default: {
+      const value = base();
+      return value === UNSATISFIABLE ? UNSATISFIABLE : markControlUnapplied(ctx, node.op, value);
+    }
   }
 }
 
@@ -882,7 +905,12 @@ function generateMap(entries, ctx, depth, visiting, env, target) {
         const taken = Object.prototype.hasOwnProperty.call(object, baseKey);
         const key = i === 0 && !taken ? baseKey : distinctKey(object, baseKey, entry, ctx, i);
         const before = ctx.warnings.length;
-        setMember(object, key, generateNode(entry.value, key, ctx, depth + 1, visiting, env, key));
+        const placed = placeAtOccurrence(
+          generateNode(entry.value, key, ctx, depth + 1, visiting, env, key),
+          entry.occurrence, ctx, `Member "${key}"`,
+        );
+        if (placed.omit) continue;
+        setMember(object, key, placed.value);
         if (entry.occurrence.optional && ctx.warnings.length > before) {
           ctx.warnings.push(`Optional member "${key}" was included using a heuristic value.`);
         }
@@ -891,6 +919,7 @@ function generateMap(entries, ctx, depth, visiting, env, target) {
     }
     if (entry.kind === 'element') {
       const value = generateNode(entry.value, null, ctx, depth + 1, visiting, env, null);
+      if (value === UNSATISFIABLE) continue;
       if (value && typeof value === 'object' && !Array.isArray(value)) mergeMembers(object, value);
       else if (value !== null) {
         ctx.warnings.push('Group entry did not produce an object member; stored it under "value".');
@@ -924,6 +953,22 @@ function generateGroupMerge(options, ctx, depth, visiting, env) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+/**
+ * Resolve a generated value at an occurrence site.
+ * Returns `{ omit: true }` when the value could not be generated and the
+ * occurrence permits zero items, and otherwise a concrete value — falling back
+ * to `null` with an explicit warning when the occurrence demands at least one.
+ */
+function placeAtOccurrence(value, occurrence, ctx, what) {
+  if (value !== UNSATISFIABLE) return { omit: false, value };
+  if ((occurrence?.min ?? 1) === 0) return { omit: true, value: undefined };
+  ctx.constraintsSatisfied = false;
+  ctx.warnings.push(
+    `${what} requires at least ${occurrence?.min ?? 1} item${(occurrence?.min ?? 1) === 1 ? '' : 's'} but cannot be generated (recursive or too deeply nested); emitted null, which will not validate.`,
+  );
+  return { omit: false, value: null };
+}
+
 function generateArray(entries, ctx, depth, visiting, env) {
   const array = [];
   for (const entry of entries) {
@@ -936,14 +981,26 @@ function generateArray(entries, ctx, depth, visiting, env) {
     if (skipOptional(entry, ctx)) continue;
     const count = repeatCount(entry.occurrence, ctx);
     for (let i = 0; i < count; i++) {
-      if (entry.kind === 'member') array.push(generateNode(entry.value, keyToString(entry.key, ctx, depth, visiting, env, entry.arrow), ctx, depth + 1, visiting, env, null));
-      else if (entry.kind === 'group') array.push(...generateArray(entry.entries, ctx, depth + 1, visiting, env));
+      if (entry.kind === 'member') {
+        const key = keyToString(entry.key, ctx, depth, visiting, env, entry.arrow);
+        const placed = placeAtOccurrence(
+          generateNode(entry.value, key, ctx, depth + 1, visiting, env, null),
+          entry.occurrence, ctx, `Array element "${key}"`,
+        );
+        if (!placed.omit) array.push(placed.value);
+      } else if (entry.kind === 'group') array.push(...generateArray(entry.entries, ctx, depth + 1, visiting, env));
       else {
         // A group reference contributes its entries to the array, not a nested array.
         const seen = new Set();
         const resolved = resolveGroupNode(entry.value, ctx, env, seen, visiting);
         if (resolved) array.push(...generateArray(resolved.group.entries, ctx, depth + 1, new Set([...visiting, ...seen]), resolved.env));
-        else array.push(generateNode(entry.value, null, ctx, depth + 1, visiting, env, null));
+        else {
+          const placed = placeAtOccurrence(
+            generateNode(entry.value, null, ctx, depth + 1, visiting, env, null),
+            entry.occurrence, ctx, 'Array element',
+          );
+          if (!placed.omit) array.push(placed.value);
+        }
       }
     }
   }
@@ -1000,12 +1057,12 @@ function keyToString(key, ctx, depth, visiting, env, arrow = false) {
     return String(key.value);
   }
   if (key.kind === 'name' && arrow && (ctx.model.rules.has(key.name) || BUILTINS.has(key.name))) {
-    const value = generateRef(key.name, [], null, ctx, depth + 1, visiting, env);
+    const value = concrete(generateRef(key.name, [], null, ctx, depth + 1, visiting, env));
     if (typeof value !== 'string') markNotJsonRepresentable(ctx, 'integer or non-text member keys');
     return value == null ? key.name : String(value);
   }
   if (key.kind === 'name') return key.name;
-  const value = generateNode(key.node, null, ctx, depth + 1, visiting, env, null);
+  const value = concrete(generateNode(key.node, null, ctx, depth + 1, visiting, env, null));
   if (typeof value !== 'string') markNotJsonRepresentable(ctx, 'integer or non-text member keys');
   ctx.warnings.push(`Computed map key "${key.text}" approximated as a JSON object key.`);
   return value == null ? 'key' : String(value);
