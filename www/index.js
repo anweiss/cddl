@@ -155,7 +155,7 @@ monaco.languages.registerCompletionItemProvider('cddl', {
     if (completionContext(linePrefix) === 'control') {
       // Extend the replaced range back over the leading `.` so inserting
       // `.size` does not produce `..size`.
-      const dot = /\.[A-Za-z]*$/.exec(linePrefix);
+      const dot = /\.[A-Za-z0-9-]*$/.exec(linePrefix);
       if (dot) startColumn = dot.index + 1;
     }
     const range = {

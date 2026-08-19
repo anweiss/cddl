@@ -3,10 +3,13 @@
 // Suggestion sources for the CDDL editor's autocomplete:
 //   1. Rule and group names defined in the live buffer.
 //   2. The full RFC 8610 Appendix D standard prelude.
-//   3. Control operators (RFC 8610 §3.8 plus RFC 9165 additions).
+//   3. Control operators (RFC 8610 §3.8 plus the RFC 9165/9741 and freezer
+//      additions enabled by this playground's default WASM build).
 //
 // Pure data + string manipulation; no Monaco imports so this stays unit-testable
 // and lets `index.js` own the `registerCompletionItemProvider` wiring.
+
+import { parseRules } from './outline.js';
 
 /** RFC 8610 Appendix D — the standard prelude, in spec order. */
 export const PRELUDE_TYPES = [
@@ -52,11 +55,17 @@ export const PRELUDE_TYPES = [
   ['undefined', 'Undefined (simple value 23)'],
 ];
 
-/** Control operators — RFC 8610 §3.8, plus `.cborseq` and RFC 9165 `.b64u` family. */
+/**
+ * Control operators accepted by the playground's WASM build: RFC 8610 §3.8, the
+ * proposed `.pcre` extension, the `freezer` controls, and the RFC 9165/9741
+ * additions (`additional-controls` is a default crate feature).
+ */
 export const CONTROL_OPERATORS = [
   ['.size', 'Constrain the size in bytes (or integer range)', 'tstr .size 12'],
   ['.bits', 'Constrain which bits may be set', 'uint .bits flags'],
   ['.regexp', 'Constrain a text string by XSD regular expression', 'tstr .regexp "[a-z]+"'],
+  ['.pcre', 'Constrain a text string by PCRE regular expression', 'tstr .pcre "^[a-z]+$"'],
+  ['.iregexp', 'Constrain a text string by an I-Regexp (RFC 9485)', 'tstr .iregexp "[0-9]{4}"'],
   ['.cbor', 'The byte string carries an embedded CBOR data item', 'bstr .cbor header'],
   ['.cborseq', 'The byte string carries a CBOR sequence', 'bstr .cborseq item'],
   ['.within', 'Constrain to a subset of another type', 'uint .within 0..255'],
@@ -68,33 +77,48 @@ export const CONTROL_OPERATORS = [
   ['.eq', 'Equal to the control value', 'tstr .eq "yes"'],
   ['.ne', 'Not equal to the control value', 'uint .ne 0'],
   ['.default', 'Declare a default value for an optional entry', 'uint .default 0'],
+  ['.bitfield', 'Validate the bitfield layout of a uint (freezer)', 'uint .bitfield flags'],
+  ['.cat', 'Concatenate the two literals (RFC 9165)', '"a" .cat "b"'],
+  ['.det', 'Concatenate after removing common indentation (RFC 9165)', 'tstr .det doc'],
+  ['.plus', 'Numeric addition of the control value (RFC 9165)', 'uint .plus base'],
+  ['.abnf', 'Text matches the ABNF grammar (RFC 9165)', 'tstr .abnf rulelist'],
+  ['.abnfb', 'Byte string matches the ABNF grammar (RFC 9165)', 'bstr .abnfb rulelist'],
+  ['.feature', 'Mark the type as belonging to a named feature (RFC 9165)', 'tstr .feature "v2"'],
+  ['.b64u', 'base64url (unpadded) encoding of the control type (RFC 9741)', 'tstr .b64u bstr'],
+  ['.b64c', 'base64 classic (padded) encoding of the control type (RFC 9741)', 'tstr .b64c bstr'],
+  ['.b64u-sloppy', 'base64url encoding, padding tolerated (RFC 9741)', 'tstr .b64u-sloppy bstr'],
+  ['.b64c-sloppy', 'base64 classic encoding, padding tolerated (RFC 9741)', 'tstr .b64c-sloppy bstr'],
+  ['.hex', 'base16 encoding in either case (RFC 9741)', 'tstr .hex bstr'],
+  ['.hexlc', 'base16 encoding, lowercase (RFC 9741)', 'tstr .hexlc bstr'],
+  ['.hexuc', 'base16 encoding, uppercase (RFC 9741)', 'tstr .hexuc bstr'],
+  ['.b32', 'base32 encoding of the control type (RFC 9741)', 'tstr .b32 bstr'],
+  ['.h32', 'base32hex encoding of the control type (RFC 9741)', 'tstr .h32 bstr'],
+  ['.b45', 'base45 encoding of the control type (RFC 9741)', 'tstr .b45 bstr'],
+  ['.base10', 'Decimal text representation of an integer (RFC 9741)', 'tstr .base10 int'],
+  ['.printf', 'Text formatted per a printf-style specification (RFC 9741)', 'tstr .printf ["%d", int]'],
+  ['.json', 'Text is the JSON encoding of the control type (RFC 9741)', 'tstr .json my-type'],
+  ['.join', 'Text is the concatenation of an array of literals (RFC 9741)', 'tstr .join parts'],
 ];
 
 const PRELUDE_NAMES = new Set(PRELUDE_TYPES.map(([name]) => name));
 
-// A CDDL rule/group definition at the start of a line:
-//   name = ...   name<a, b> = ...   name /= ...   name //= ...
-// Rule names may contain letters, digits, and `.`/`-`/`_`/`@`/`$` after the
-// first character (RFC 8610 §3.1).
-const RULE_DEF = /^[ \t]*([A-Za-z@_$][A-Za-z0-9@_$.\-]*)[ \t]*(<[^>\n]*>)?[ \t]*(\/\/=|\/=|=)(?!=)/gm;
-
 /**
  * Extract rule and group names defined in a CDDL buffer.
+ * Delegates to the quote- and comment-aware scanner in `outline.js` so literal
+ * content inside comments or (multiline) byte strings is never mistaken for a
+ * rule definition.
  * Returns `[{ name, generic, definition }]` in first-definition order.
  */
 export function extractRuleNames(text) {
   if (typeof text !== 'string' || text.length === 0) return [];
+  const lines = text.split(/\r?\n/);
   const seen = new Map();
-  RULE_DEF.lastIndex = 0;
-  let match;
-  while ((match = RULE_DEF.exec(text)) !== null) {
-    const name = match[1];
-    if (seen.has(name)) continue;
-    const lineEnd = text.indexOf('\n', match.index);
-    const line = text.slice(match.index, lineEnd === -1 ? text.length : lineEnd).trim();
-    seen.set(name, {
-      name,
-      generic: match[2] || '',
+  for (const rule of parseRules(text)) {
+    if (seen.has(rule.name)) continue;
+    const line = (lines[rule.line - 1] || '').trim();
+    seen.set(rule.name, {
+      name: rule.name,
+      generic: rule.generic || '',
       definition: line.length > 120 ? `${line.slice(0, 117)}…` : line,
     });
   }
@@ -102,25 +126,27 @@ export function extractRuleNames(text) {
 }
 
 /**
- * Is the cursor inside a comment or an unterminated text literal on this line?
- * CDDL comments run from an unquoted `;` to end of line (RFC 8610 §2), so a
- * single left-to-right scan tracking quote state is enough.
+ * Is the cursor inside a comment or an unterminated text/byte literal on this
+ * line? CDDL comments run from an unquoted `;` to end of line (RFC 8610 §2),
+ * and literals are delimited by `"` or `'` (the latter also covering the `h'…'`
+ * and `b64'…'` byte string prefixes), so a single left-to-right scan tracking
+ * the active delimiter is enough.
  */
 export function inCommentOrString(linePrefix) {
   const prefix = typeof linePrefix === 'string' ? linePrefix : '';
-  let inString = false;
+  let quote = null;
   for (let i = 0; i < prefix.length; i++) {
     const ch = prefix[i];
-    if (inString) {
-      if (ch === '\\') i++;
-      else if (ch === '"') inString = false;
-    } else if (ch === '"') {
-      inString = true;
+    if (quote) {
+      if (ch === '\\' && quote === '"') i++;
+      else if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
     } else if (ch === ';') {
       return true;
     }
   }
-  return inString;
+  return quote !== null;
 }
 
 /**
@@ -135,7 +161,7 @@ export function inCommentOrString(linePrefix) {
 export function completionContext(linePrefix) {
   const prefix = typeof linePrefix === 'string' ? linePrefix : '';
   if (inCommentOrString(prefix)) return 'none';
-  if (/\s\.[A-Za-z]*$/.test(prefix) || /^\s*\.[A-Za-z]*$/.test(prefix)) return 'control';
+  if (/\s\.[A-Za-z0-9-]*$/.test(prefix) || /^\s*\.[A-Za-z0-9-]*$/.test(prefix)) return 'control';
   return 'type';
 }
 
