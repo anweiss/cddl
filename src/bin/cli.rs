@@ -26,6 +26,18 @@ use std::{
   path::Path,
 };
 
+/// Help text for `--include-path`, whose separator is platform-specific: `;` on
+/// Windows, where `:` occurs in drive-letter paths, and `:` elsewhere.
+#[cfg(all(feature = "modules", windows))]
+const INCLUDE_PATH_HELP: &str =
+  "Semicolon-separated module search path; defaults to CDDL_INCLUDE_PATH, then \".;\"";
+
+/// Help text for `--include-path`, whose separator is platform-specific: `;` on
+/// Windows, where `:` occurs in drive-letter paths, and `:` elsewhere.
+#[cfg(all(feature = "modules", not(windows)))]
+const INCLUDE_PATH_HELP: &str =
+  "Colon-separated module search path; defaults to CDDL_INCLUDE_PATH, then \".:\"";
+
 #[derive(Parser)]
 #[clap(author, version, about = "Tool for verifying conformance of CDDL definitions against RFC 8610 and for validating JSON documents and CBOR binary files", long_about = None)]
 struct Cli {
@@ -77,7 +89,7 @@ enum Commands {
     start: Option<String>,
     #[clap(
       long = "include-path",
-      help = "Colon-separated module search path; defaults to CDDL_INCLUDE_PATH, then \".:\""
+      help = INCLUDE_PATH_HELP
     )]
     include_path: Option<String>,
   },

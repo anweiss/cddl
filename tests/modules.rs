@@ -269,6 +269,24 @@ fn circular_module_references_are_detected() {
 }
 
 #[test]
+fn a_module_that_is_not_basic_cddl_is_reported_against_the_module() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("broken", "label = \n");
+
+  let error = resolve_modules(
+    "start = broken.label\n;# import broken\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap_err();
+
+  match error {
+    ModuleError::ModuleParse { name, .. } => assert_eq!(name, "broken"),
+    other => panic!("expected a ModuleParse error, got {:?}", other),
+  }
+}
+
+#[test]
 fn a_missing_module_is_reported_with_its_line() {
   let error = resolve_modules(
     "start = int\n;# import nowhere\n",

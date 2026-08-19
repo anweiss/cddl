@@ -176,8 +176,9 @@ let basic_cddl = resolve_modules(
 let ast = cddl::parser::cddl_from_str(&basic_cddl, false)?;
 ```
 
-Modules are located by filename along the colon-separated `CDDL_INCLUDE_PATH`,
-which defaults to `.:`. Targets without a filesystem (such as
+Modules are located by filename along `CDDL_INCLUDE_PATH`, whose elements are
+separated by `:` on Unix and by `;` on Windows, where `:` occurs in drive-letter
+paths. It defaults to `.:` (`.;` on Windows). Targets without a filesystem (such as
 `wasm32-unknown-unknown`) can supply modules through the `ModuleSource` trait;
 `MemoryModuleSource` is provided for that purpose.
 

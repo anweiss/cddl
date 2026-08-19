@@ -309,7 +309,31 @@ fn load_module(
   let resolved = resolve(&text, source, &ResolveOptions::default(), chain);
   chain.pop();
 
-  resolved
+  let resolved = resolved?;
+  validate_module(name, &resolved)?;
+
+  Ok(resolved)
+}
+
+/// Check that a resolved module is basic CDDL, so that a malformed module is
+/// reported against the module that contains it rather than surfacing later as
+/// a parse failure of the resolved document.
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_module(name: &str, resolved: &str) -> Result<(), ModuleError> {
+  crate::parser::cddl_from_str(resolved, false)
+    .map(|_| ())
+    .map_err(|message| ModuleError::ModuleParse {
+      name: name.to_string(),
+      message,
+    })
+}
+
+/// On `wasm32`, [`crate::parser::cddl_from_str`] is the `wasm_bindgen` export
+/// rather than the native parser entry point, so a loaded module is taken as
+/// given.
+#[cfg(target_arch = "wasm32")]
+fn validate_module(_name: &str, _resolved: &str) -> Result<(), ModuleError> {
+  Ok(())
 }
 
 /// Resolve a name written in a directive against the directive's namespace.

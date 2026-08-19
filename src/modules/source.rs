@@ -48,13 +48,28 @@ impl ModuleSource for MemoryModuleSource {
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub const INCLUDE_PATH_VAR: &str = "CDDL_INCLUDE_PATH";
 
+/// The character separating elements of the module search path: `;` on Windows,
+/// where `:` occurs in drive-letter paths, and `:` elsewhere.
+#[cfg(all(feature = "std", not(target_arch = "wasm32"), windows))]
+pub const INCLUDE_PATH_SEPARATOR: char = ';';
+
+/// The character separating elements of the module search path: `;` on Windows,
+/// where `:` occurs in drive-letter paths, and `:` elsewhere.
+#[cfg(all(feature = "std", not(target_arch = "wasm32"), not(windows)))]
+pub const INCLUDE_PATH_SEPARATOR: char = ':';
+
 /// The search path used when [`INCLUDE_PATH_VAR`] is unset: the current
 /// directory, followed by the processor's own collection.
-#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32"), windows))]
+pub const DEFAULT_INCLUDE_PATH: &str = ".;";
+
+/// The search path used when [`INCLUDE_PATH_VAR`] is unset: the current
+/// directory, followed by the processor's own collection.
+#[cfg(all(feature = "std", not(target_arch = "wasm32"), not(windows)))]
 pub const DEFAULT_INCLUDE_PATH: &str = ".:";
 
-/// A [`ModuleSource`] backed by a colon-separated search path of directories,
-/// per §2.4 of the specification.
+/// A [`ModuleSource`] backed by a search path of directories separated by
+/// [`INCLUDE_PATH_SEPARATOR`], per §2.4 of the specification.
 ///
 /// An empty path element denotes the processor's own bundled collection of
 /// modules extracted from published RFCs. This implementation ships no such
@@ -68,11 +83,12 @@ pub struct FsModuleSource {
 
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 impl FsModuleSource {
-  /// Build a source from a colon-separated search path.
+  /// Build a source from a search path whose elements are separated by
+  /// [`INCLUDE_PATH_SEPARATOR`].
   pub fn from_include_path(path: &str) -> Self {
     FsModuleSource {
       directories: path
-        .split(':')
+        .split(INCLUDE_PATH_SEPARATOR)
         .filter(|element| !element.is_empty())
         .map(std::path::PathBuf::from)
         .collect(),
@@ -143,7 +159,7 @@ mod tests {
     // §2.4 gives an empty element the meaning "the processor's own collection".
     // This implementation ships no such collection, so the element resolves to
     // nothing rather than to the root directory.
-    let source = FsModuleSource::from_include_path(".:");
+    let source = FsModuleSource::from_include_path(DEFAULT_INCLUDE_PATH);
     assert_eq!(source.directories().len(), 1);
     assert_eq!(source.load("rfc9052").unwrap(), None);
   }

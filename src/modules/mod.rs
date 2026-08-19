@@ -40,7 +40,7 @@ pub use resolver::{resolve_modules, ResolveOptions};
 pub use source::{MemoryModuleSource, ModuleSource};
 
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
-pub use source::{FsModuleSource, DEFAULT_INCLUDE_PATH, INCLUDE_PATH_VAR};
+pub use source::{FsModuleSource, DEFAULT_INCLUDE_PATH, INCLUDE_PATH_SEPARATOR, INCLUDE_PATH_VAR};
 
 /// Errors arising from parsing or resolving CDDL module directives.
 #[derive(Debug, Clone, PartialEq, Eq)]

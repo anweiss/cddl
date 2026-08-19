@@ -90,6 +90,10 @@ jobs:
         run: |
           cargo +${{ matrix.rust_toolchain }} test --all -- --nocapture
 
+      - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.os }} (modules)
+        run: |
+          cargo +${{ matrix.rust_toolchain }} test --all --features modules -- --nocapture
+
   wasm-test-suite:
     name: wasm test suite
     runs-on: ubuntu-latest
