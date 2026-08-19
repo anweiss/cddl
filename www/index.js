@@ -898,11 +898,14 @@ let problemsPanel, problemsBadge, problemsBody, problemsEmpty;
 let cursorPosition;
 
 const INSTANCE_TEXT_CACHE_KEY = 'cddl-playground-instance-text';
+const INSTANCE_TEXT_CBOR_CACHE_KEY = 'cddl-playground-instance-text-cbor';
 const INSTANCE_KIND_CACHE_KEY = 'cddl-playground-instance-kind';
 const INSTANCE_PANE_CACHE_KEY = 'cddl-playground-instance-open';
 const OUTLINE_PANE_CACHE_KEY = 'cddl-playground-outline-open';
 
 let instanceKind = 'json';
+// One buffer per instance kind — switching tabs must not carry text over.
+let instanceTexts = { json: '', cbor: '' };
 let instancePane, instanceToggleBtn, instanceResult, instanceRootRule;
 let instanceTabJson, instanceTabCbor, instanceCborHint;
 let outlinePane, outlineToggleBtn, outlineFilter, outlineList;
@@ -1284,12 +1287,25 @@ function toMarker(model, err) {
 
 // ─── Instance Validation ─────────────────────────────────────────────────────
 
-function loadInstanceText(sharedState) {
-  if (sharedState) return typeof sharedState.instance === 'string' ? sharedState.instance : '';
+function loadInstanceTexts(sharedState, kind) {
+  const texts = { json: '', cbor: '' };
+  if (sharedState) {
+    texts[kind] = typeof sharedState.instance === 'string' ? sharedState.instance : '';
+    return texts;
+  }
   try {
-    return localStorage.getItem(INSTANCE_TEXT_CACHE_KEY) || '';
+    // The legacy single-buffer key predates per-kind buffers. If the user was
+    // last on the CBOR tab and no CBOR buffer exists yet, that text is CBOR.
+    const legacy = localStorage.getItem(INSTANCE_TEXT_CACHE_KEY) || '';
+    const cbor = localStorage.getItem(INSTANCE_TEXT_CBOR_CACHE_KEY);
+    if (cbor === null && kind === 'cbor') {
+      texts.cbor = legacy;
+    } else {
+      texts.json = legacy;
+      texts.cbor = cbor || '';
+    }
   } catch (_) {}
-  return '';
+  return texts;
 }
 
 function loadInstanceKind(sharedState) {
@@ -1303,7 +1319,11 @@ function loadInstanceKind(sharedState) {
 
 function saveInstanceState() {
   try {
-    if (instanceEditor) localStorage.setItem(INSTANCE_TEXT_CACHE_KEY, instanceEditor.getValue());
+    if (instanceEditor) {
+      instanceTexts[instanceKind] = instanceEditor.getValue();
+      localStorage.setItem(INSTANCE_TEXT_CACHE_KEY, instanceTexts.json);
+      localStorage.setItem(INSTANCE_TEXT_CBOR_CACHE_KEY, instanceTexts.cbor);
+    }
     localStorage.setItem(INSTANCE_KIND_CACHE_KEY, instanceKind);
     if (instancePane) localStorage.setItem(INSTANCE_PANE_CACHE_KEY, String(!instancePane.classList.contains('collapsed')));
   } catch (_) {}
@@ -1320,7 +1340,15 @@ function layoutPlaygroundEditors() {
 }
 
 function setInstanceKind(kind) {
-  instanceKind = kind === 'cbor' ? 'cbor' : 'json';
+  const next = kind === 'cbor' ? 'cbor' : 'json';
+  const previous = instanceKind;
+  const switching = next !== previous;
+
+  // JSON and CBOR are different documents, not two views of one. Stash the
+  // outgoing buffer before swapping so switching tabs never carries text over.
+  if (switching && instanceEditor) instanceTexts[previous] = instanceEditor.getValue();
+
+  instanceKind = next;
   if (instanceTabJson) {
     instanceTabJson.classList.toggle('active', instanceKind === 'json');
     instanceTabJson.setAttribute('aria-selected', String(instanceKind === 'json'));
@@ -1338,12 +1366,26 @@ function setInstanceKind(kind) {
   }
   if (instanceEditor?.getModel()) {
     monaco.editor.setModelLanguage(instanceEditor.getModel(), instanceKind === 'json' ? 'json' : 'plaintext');
+    if (switching) {
+      const restored = instanceTexts[instanceKind] || '';
+      if (instanceEditor.getValue() !== restored) instanceEditor.setValue(restored);
+    }
   }
+  // A stale result from the other tab is misleading once the buffer changes.
+  if (switching) clearInstanceResult();
   saveInstanceState();
+}
+
+function clearInstanceResult() {
+  if (!instanceResult) return;
+  instanceResult.textContent = '';
+  instanceResult.classList.remove('ok', 'fail');
+  instanceResult.hidden = true;
 }
 
 function renderInstanceResult(result) {
   if (!instanceResult) return;
+  instanceResult.hidden = false;
   instanceResult.textContent = '';
   instanceResult.classList.remove('ok', 'fail');
   instanceResult.classList.add(result.ok ? 'ok' : 'fail');
@@ -1435,10 +1477,22 @@ function generateCurrentSample() {
   }
   let warnedAlready = false;
   if (result.json !== null) {
+    // The sample generator emits JSON only. If the user is on the CBOR tab,
+    // say so instead of silently swapping the tab out from under them — their
+    // CBOR buffer is preserved by setInstanceKind.
+    const cameFromCbor = instanceKind === 'cbor';
     setInstanceKind('json');
     instanceEditor.setValue(result.json);
     saveInstanceState();
     toggleInstancePane(true);
+    if (cameFromCbor) {
+      toast(
+        'The sample generator produces JSON, so the JSON tab was selected. Your CBOR input is preserved on the CBOR tab.',
+        'warning',
+        7000,
+      );
+      warnedAlready = true;
+    }
     if (result.jsonRepresentable === false) {
       toast(
         'This schema uses CBOR-only features (integer keys, byte strings, or tags). The sample shows the expected structure but cannot validate as JSON — encode an equivalent CBOR document to validate it.',
@@ -1481,8 +1535,9 @@ function initInstanceFeature(sharedState) {
     if (!container) return;
 
     instanceKind = loadInstanceKind(sharedState);
+    instanceTexts = loadInstanceTexts(sharedState, instanceKind);
     instanceEditor = monaco.editor.create(container, {
-      value: loadInstanceText(sharedState),
+      value: instanceTexts[instanceKind] || '',
       language: instanceKind === 'json' ? 'json' : 'plaintext',
       theme: isDark ? 'cddl-dark' : 'cddl-light',
       fontSize: 14,
