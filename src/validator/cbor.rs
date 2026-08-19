@@ -178,8 +178,8 @@ pub struct CBORValidator<'a> {
   probing_single_entry_assignment: bool,
   // Candidate batch produced while visiting one repeating map member's key.
   // `visit_value_member_key_entry` immediately takes this relay field so the
-  // physical indices and values cannot affect a later group entry.
-  map_entry_candidates: Option<Vec<(usize, Value)>>,
+  // physical indices, keys, and values cannot affect a later group entry.
+  map_entry_candidates: Option<Vec<(usize, Value, Value)>>,
   // Whether or not the validator is validating a map entry value
   validating_value: bool,
   range_upper: Option<usize>,
@@ -532,14 +532,14 @@ impl<'a> CBORValidator<'a> {
     entries: &[(Value, Value)],
     claimed_entries: &[usize],
     predicate: impl Fn(&Value) -> bool,
-  ) -> Vec<(usize, Value)> {
+  ) -> Vec<(usize, Value, Value)> {
     entries
       .iter()
       .enumerate()
-      .filter_map(|(entry_index, (key, value))| {
-        (predicate(key) && Self::is_unconsumed_map_entry(entry_index, claimed_entries))
-          .then(|| (entry_index, value.clone()))
+      .filter(|(entry_index, (key, _))| {
+        predicate(key) && Self::is_unconsumed_map_entry(*entry_index, claimed_entries)
       })
+      .map(|(entry_index, (key, value))| (entry_index, key.clone(), value.clone()))
       .collect()
   }
 
@@ -4141,7 +4141,7 @@ where
       let max_matches = Self::repeating_member_upper_bound(entry).unwrap_or(usize::MAX);
       let mut match_count = 0;
 
-      for (entry_index, value) in candidates {
+      for (entry_index, key, value) in candidates {
         if match_count == max_matches {
           break;
         }
@@ -4149,7 +4149,13 @@ where
         let mut cv = self.new_with_recursion_state(value);
         cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
         cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
-        cv.state.data_location.push_str(&self.state.data_location);
+        // The child inherits the recursion guard, so advance to this pair's
+        // value before resolving recursive table types (as JSON does).
+        let _ = write!(
+          cv.state.data_location,
+          "{}/{:?}",
+          self.state.data_location, key
+        );
         cv.state.type_group_name_entry = self.state.type_group_name_entry;
         cv.validating_value = true;
         cv.visit_type(&entry.entry_type)?;
