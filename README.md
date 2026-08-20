@@ -118,7 +118,17 @@ docker run -i --rm -v $PWD:/data -w /data ghcr.io/anweiss/cddl-cli:0.10.7 valida
 
 ## Website
 
-You can also find a simple RFC 8610 conformance tool at [https://cddl.anweiss.tech](https://cddl.anweiss.tech). This same codebase has been compiled for use in the browser via WebAssembly.
+A browser-based CDDL playground is available at [https://cddl.anweiss.tech](https://cddl.anweiss.tech), built on this same codebase compiled to WebAssembly. Beyond RFC 8610 conformance checking, it provides:
+
+* **Editing** — syntax highlighting, autocompletion over the rules defined in the current document plus the RFC 8610 Appendix D prelude and the supported control operators, formatting, find/replace and comment toggling.
+* **Diagnostics** — a Problems panel listing parser errors, and an optional check for references to undefined rules.
+* **Instance validation** — validate a JSON or CBOR instance against the schema, using a chosen root rule. CBOR can be pasted as hex or base64.
+* **Sample generation** — generate a sample JSON instance from the schema; samples are validated back against the schema before being shown.
+* **Outline** — a filterable list of the rules in the document, distinguishing types, groups and sockets/plugs.
+* **Files and sharing** — open and save `.cddl`, `.json` and `.cbor` files, including by drag-and-drop, and share the current schema and instance via a URL.
+* **Examples** — a built-in set covering basic types, arrays, choices, generics, sockets/plugs, constrained strings, tagged CBOR, occurrence indicators, JWT and COSE keys.
+
+Keyboard shortcuts are listed in-app under **Shortcuts**.
 
 ## Visual Studio Code extension
 
