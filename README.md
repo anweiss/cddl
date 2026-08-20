@@ -14,6 +14,7 @@ This crate supports the following CDDL-related RFCs:
 | [RFC 9741](https://datatracker.ietf.org/doc/html/rfc9741) | Additional Control Operators for Text in CDDL | ✔️ `.b64u` , `.b64c` , `.hex` , `.hexlc` , `.hexuc` , `.b32` , `.h32` , `.b45` , `.base10` , `.printf` , `.json` , `.join` and sloppy variants |
 | [draft-bormann-cbor-cddl-csv-08](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/08/) | Using CDDL for CSV | ✔️ CSV validation via generic data model mapping |
 | [draft-bormann-cbor-cddl-freezer-17](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-17) | CDDL Feature Freezer | ✔️ `.pcre` (PCRE2), `.iregexp` (RFC 9485), `.bitfield` |
+| [draft-ietf-cbor-cddl-modules-06](https://datatracker.ietf.org/doc/draft-ietf-cbor-cddl-modules/06/) | CDDL Module Structure | ✔️ `;#` directives, `import` / `include`, `from` selection and `as` namespacing — behind the default-off `modules` feature |
 
 This crate uses [Pest](https://pest.rs/) (a PEG parser generator for Rust) to parse CDDL. The grammar is defined in [ `cddl.pest` ](cddl.pest) and closely follows the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
@@ -151,6 +152,116 @@ An extension for editing CDDL documents with Visual Studio Code has been publish
 * [x] numerical values with exponents
 * [x] unprefixed byte strings
 * [x] prefixed byte strings
+
+## Module structure (experimental)
+
+Behind the default-off `modules` feature, this crate implements the CDDL module
+structure of
+[draft-ietf-cbor-cddl-modules-06](https://datatracker.ietf.org/doc/draft-ietf-cbor-cddl-modules/06/).
+Directives are carried in comments beginning with `;#`, so a module-structured
+document remains valid basic CDDL for tools that do not understand them.
+
+### Directives
+
+| Directive | Effect |
+| --- | --- |
+| `;# import <module>` | Bring in the rules of `<module>` this document actually references, transitively. |
+| `;# import <module> as <ns>` | As above, with each imported rule prefixed `<ns>.`. Prelude names are never prefixed. |
+| `;# include <module>` | Bring in every rule of `<module>`. |
+| `;# include <names> from <module>` | Bring in exactly the rules named, plus whatever they reference. |
+| `;# import <name> from <module> as <ns>` | Bring in `<name>` under the `<ns>.` prefix, and emit an alias so the unprefixed name resolves too. |
+| `;# include * from <module>` | `*` selects every rule of the module. |
+
+Names in a `from` clause may be written with or without the namespace prefix.
+Modules may themselves carry directives; they are resolved transitively, and
+circular references are reported rather than followed.
+
+### Example
+
+Given a module `rfc9052.cddl` on the search path:
+
+```cddl
+COSE_Key = {
+  1 => tstr / int,
+  ? 2 => bstr,
+  * label => values,
+}
+label = int / tstr
+values = any
+```
+
+this document:
+
+```cddl
+start = cose.COSE_Key
+;# import rfc9052 as cose
+```
+
+resolves to:
+
+```cddl
+start = cose.COSE_Key
+cose.COSE_Key = {
+  1 => tstr / int,
+  ? 2 => bstr,
+  * cose.label => cose.values,
+}
+cose.label = int / tstr
+cose.values = any
+```
+
+### Library
+
+Resolution is a source-to-source transformation into basic RFC 8610 CDDL,
+matching the behavior of the `cddlc -2tcddl` tool described in Appendix B of the
+draft. Resolve first, then parse the result:
+
+```rust
+use cddl::modules::{resolve_modules, FsModuleSource, ResolveOptions};
+
+let input = "start = cose.COSE_Key\n;# import rfc9052 as cose\n";
+let basic_cddl = resolve_modules(
+  input,
+  &FsModuleSource::from_env(),
+  &ResolveOptions::default(),
+)?;
+let ast = cddl::parser::cddl_from_str(&basic_cddl, false)?;
+```
+
+Modules are located by filename along `CDDL_INCLUDE_PATH`, whose elements are
+separated by `:` on Unix and by `;` on Windows, where `:` occurs in drive-letter
+paths. It defaults to `.:` (`.;` on Windows). Targets without a filesystem (such as
+`wasm32-unknown-unknown`) can supply modules through the `ModuleSource` trait;
+`MemoryModuleSource` is provided for that purpose.
+
+Each loaded module is parsed after resolution, so a module that is not valid
+CDDL is reported as an error rather than silently producing a broken document.
+This check is skipped on `wasm32`, where the crate's parser entry point is the
+`wasm_bindgen` export.
+
+### CLI
+
+```sh
+cddl resolve-modules --cddl schema.cddl
+```
+
+The document may also be piped in on stdin. The `-i` and `-s` shortcuts of §2.7
+are supported, which import a module and emit a start rule without editing the
+document:
+
+```sh
+cddl resolve-modules -icose=rfc9052 -scose.COSE_Key
+```
+
+`--include-path` overrides the module search path for a single invocation.
+
+### Stability
+
+Being an unratified draft, this is gated off by default and its output is not
+covered by semantic versioning guarantees. Two deliberate deviations from the
+Appendix A ABNF are documented in the source: identifiers accept `.` and `-`
+(required, since the draft's own examples use `cose.label`), and `.` and `..`
+are rejected as module names.
 
 ## Usage
 
