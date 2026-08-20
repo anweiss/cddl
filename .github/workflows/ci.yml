@@ -91,11 +91,11 @@ jobs:
           cargo +${{ matrix.rust_toolchain }} test --all -- --nocapture
 
       - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.os }} (modules)
-        # Reusing the incremental cache left by the run above, which has a
-        # different feature set, has produced spurious link failures, so this
-        # run compiles from scratch.
-        env:
-          CARGO_INCREMENTAL: 0
+        # Scoped to -p cddl: under `--all`, cddl-derive's proc-macro
+        # dependency on cddl is built without `modules` while the workspace
+        # build enables it, and resolver v2 keeps those feature sets separate.
+        # The two builds then collide on the unhashed `libcddl.so` name of the
+        # cdylib target and the link fails.
         run: |
           cargo +${{ matrix.rust_toolchain }} test -p cddl --features modules -- --nocapture
 
