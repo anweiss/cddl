@@ -664,6 +664,49 @@ impl<'a> CBORValidator<'a> {
     Ok(())
   }
 
+  /// Validate every definition contributing to a named type choice from one
+  /// error checkpoint. Failed arms are tentative; their errors are retained
+  /// only when every arm fails.
+  fn visit_named_type_choice<T: std::fmt::Debug + 'static>(
+    &mut self,
+    ident: &Identifier<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let choices = type_choice_types_from_ident(self.state.cddl, ident);
+
+    if choices.len() > 1 {
+      self.state.is_multi_type_choice = true;
+
+      if self.cbor.is_array() {
+        self.state.is_multi_type_choice_type_rule_validating_array = true;
+      }
+
+      let error_count = self.errors.len();
+      for choice in choices {
+        let current_error_count = self.errors.len();
+        self.visit_type(choice)?;
+        if self.errors.len() == current_error_count {
+          self.errors.truncate(error_count);
+          return Ok(());
+        }
+      }
+
+      return Ok(());
+    }
+
+    if let Some(choice) = choices.first() {
+      if choice.type_choices.len() > 1 && self.cbor.is_array() {
+        self.state.is_multi_type_choice_type_rule_validating_array = true;
+      }
+
+      return self.visit_type(choice);
+    }
+
+    Ok(())
+  }
+
   // Helper function to resolve a Type2 bound to a usize value
   fn resolve_range_bound(&self, bound: &Type2<'a>) -> std::result::Result<RangeBound, String> {
     match bound {
@@ -869,24 +912,6 @@ impl<'a> CBORValidator<'a> {
 
               cv.state.eval_generic_rule = Some(ge.name.ident);
               return cv.visit_rule(rule);
-            }
-          }
-
-          // Type socket with no main rule definition: its "/=" alternates
-          // are the only choices (visit_identifier cannot resolve these)
-          if rule_from_ident(cv.state.cddl, &ge.name).is_none() {
-            let alternates = type_choice_alternates_from_ident(cv.state.cddl, &ge.name);
-            if !alternates.is_empty() {
-              cv.state.is_multi_type_choice = true;
-              for t in alternates {
-                let error_count = cv.errors.len();
-                cv.visit_type(t)?;
-                if cv.errors.len() == error_count {
-                  cv.errors.clear();
-                  break;
-                }
-              }
-              return Ok(());
             }
           }
 
@@ -1283,51 +1308,7 @@ where
       }
     }
 
-    let type_choice_alternates = type_choice_alternates_from_ident(self.state.cddl, &tr.name);
-    if !type_choice_alternates.is_empty() {
-      self.state.is_multi_type_choice = true;
-
-      if self.cbor.is_array() {
-        self.state.is_multi_type_choice_type_rule_validating_array = true;
-      }
-
-      // When there are type choice alternates, we need to treat the main rule
-      // and all alternates as equal choices. According to RFC 8610 Section 2.2.2,
-      // "/=" extends a type by creating additional choices that should be
-      // combined with the main rule definition.
-      let error_count = self.errors.len();
-
-      // First try the main rule
-      let cur_errors = self.errors.len();
-      self.visit_type(&tr.value)?;
-      if self.errors.len() == cur_errors {
-        for _ in 0..self.errors.len() - error_count {
-          self.errors.pop();
-        }
-        return Ok(());
-      }
-
-      // Then try each alternate
-      for t in type_choice_alternates {
-        let cur_errors = self.errors.len();
-        self.visit_type(t)?;
-        if self.errors.len() == cur_errors {
-          for _ in 0..self.errors.len() - error_count {
-            self.errors.pop();
-          }
-          return Ok(());
-        }
-      }
-
-      // If we get here, none of the choices matched
-      return Ok(());
-    }
-
-    if tr.value.type_choices.len() > 1 && self.cbor.is_array() {
-      self.state.is_multi_type_choice_type_rule_validating_array = true;
-    }
-
-    self.visit_type(&tr.value)
+    self.visit_named_type_choice(&tr.name)
   }
 
   fn visit_group_rule(&mut self, gr: &GroupRule<'a>) -> visitor::Result<Error<T>> {
@@ -3328,24 +3309,6 @@ where
           }
         }
 
-        let type_choice_alternates = type_choice_alternates_from_ident(self.state.cddl, ident);
-        if !type_choice_alternates.is_empty() {
-          self.state.is_multi_type_choice = true;
-        }
-
-        let error_count = self.errors.len();
-        for t in type_choice_alternates {
-          let cur_errors = self.errors.len();
-          self.visit_type(t)?;
-          if self.errors.len() == cur_errors {
-            for _ in 0..self.errors.len() - error_count {
-              self.errors.pop();
-            }
-
-            return Ok(());
-          }
-        }
-
         self.visit_identifier(ident)
       }
       Type2::IntValue { value, .. } => self.visit_value(&token::Value::INT(*value)),
@@ -3756,23 +3719,44 @@ where
       }
     }
 
+    // A revisited rule only indicates a cycle when validation has not
+    // consumed any input since the previous visit, so recursion is tracked
+    // per data location: `t /= [t]` must recurse into nested elements
+    // (RFC 8610 Appendix A PEG matching) while a zero-progress reference
+    // like `a /= a` is still caught at its fixed position. NUL cannot
+    // appear in an identifier, so the key is unambiguous.
+    let visited_key = format!("{}\u{0}{}", ident.ident, self.state.data_location);
+
     // self.state.is_colon_shortcut_present is only true when the ident is part of a
     // member key
     if !self.state.is_colon_shortcut_present {
       if let Some(r) = rule_from_ident(self.state.cddl, ident) {
         // Check for recursion to prevent stack overflow
-        let rule_key = ident.ident.to_string();
-        if self.state.visited_rules.contains(&rule_key) {
+        if self.state.visited_rules.contains(&visited_key) {
           // We've already validated this rule in the current validation path
           // This is a recursive reference, so we allow it and assume it's valid
           return Ok(());
         }
 
         // Mark this rule as visited before recursing
-        self.state.visited_rules.insert(rule_key.clone());
+        self.state.visited_rules.insert(visited_key.clone());
         let result = self.visit_rule(r);
         // Remove the rule from visited set after processing
-        self.state.visited_rules.remove(&rule_key);
+        self.state.visited_rules.remove(&visited_key);
+
+        return result;
+      }
+
+      // A name may consist entirely of `/=` definitions (RFC 8610 Section
+      // 2.2.2). Such a choice has no base rule for `rule_from_ident` to find.
+      if !type_choice_types_from_ident(self.state.cddl, ident).is_empty() {
+        if self.state.visited_rules.contains(&visited_key) {
+          return Ok(());
+        }
+
+        self.state.visited_rules.insert(visited_key.clone());
+        let result = self.visit_named_type_choice(ident);
+        self.state.visited_rules.remove(&visited_key);
 
         return result;
       }
@@ -4321,24 +4305,6 @@ where
           self.active_single_entry_claim = None;
         }
         self.errors.append(&mut cv.errors);
-
-        return Ok(());
-      }
-    }
-
-    let type_choice_alternates = type_choice_alternates_from_ident(self.state.cddl, &entry.name);
-    if !type_choice_alternates.is_empty() {
-      self.state.is_multi_type_choice = true;
-    }
-
-    let error_count = self.errors.len();
-    for t in type_choice_alternates {
-      let cur_errors = self.errors.len();
-      self.visit_type(t)?;
-      if self.errors.len() == cur_errors {
-        for _ in 0..self.errors.len() - error_count {
-          self.errors.pop();
-        }
 
         return Ok(());
       }
