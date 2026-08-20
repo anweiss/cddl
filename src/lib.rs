@@ -140,8 +140,9 @@
 //! * **Instance validation** — validate a JSON or CBOR instance against the
 //!   schema, using a chosen root rule. CBOR can be pasted as hex or base64.
 //! * **Sample generation** — generate a sample JSON instance from the
-//!   schema; samples are validated back against the schema before being
-//!   shown.
+//!   schema; when the WebAssembly validator is available, samples are
+//!   validated back against the schema and any that do not conform are
+//!   flagged.
 //! * **Outline** — a filterable list of the rules in the document,
 //!   distinguishing types, groups and sockets/plugs.
 //! * **Files and sharing** — open and save `.cddl`, `.json` and `.cbor`
