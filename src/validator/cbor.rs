@@ -178,8 +178,8 @@ pub struct CBORValidator<'a> {
   probing_single_entry_assignment: bool,
   // Candidate batch produced while visiting one repeating map member's key.
   // `visit_value_member_key_entry` immediately takes this relay field so the
-  // physical indices and values cannot affect a later group entry.
-  map_entry_candidates: Option<Vec<(usize, Value)>>,
+  // physical indices cannot affect a later group entry.
+  map_entry_candidates: Option<Vec<usize>>,
   // Whether or not the validator is validating a map entry value
   validating_value: bool,
   range_upper: Option<usize>,
@@ -532,13 +532,13 @@ impl<'a> CBORValidator<'a> {
     entries: &[(Value, Value)],
     claimed_entries: &[usize],
     predicate: impl Fn(&Value) -> bool,
-  ) -> Vec<(usize, Value)> {
+  ) -> Vec<usize> {
     entries
       .iter()
       .enumerate()
-      .filter_map(|(entry_index, (key, value))| {
+      .filter_map(|(entry_index, (key, _))| {
         (predicate(key) && Self::is_unconsumed_map_entry(entry_index, claimed_entries))
-          .then(|| (entry_index, value.clone()))
+          .then_some(entry_index)
       })
       .collect()
   }
@@ -4141,15 +4141,33 @@ where
       let max_matches = Self::repeating_member_upper_bound(entry).unwrap_or(usize::MAX);
       let mut match_count = 0;
 
-      for (entry_index, value) in candidates {
+      for entry_index in candidates {
         if match_count == max_matches {
           break;
         }
 
+        // Look the pair up lazily so candidate collection does not clone the
+        // key and value of every matching entry.
+        let candidate = match &self.cbor {
+          Value::Map(entries) => entries.get(entry_index).map(|(key, value)| {
+            let mut data_location = self.state.data_location.clone();
+            // The child inherits the recursion guard, so advance to this
+            // pair's value before resolving recursive table types (as JSON
+            // does).
+            let _ = write!(data_location, "/{:?}", key);
+            (data_location, value.clone())
+          }),
+          _ => None,
+        };
+
+        let Some((data_location, value)) = candidate else {
+          continue;
+        };
+
         let mut cv = self.new_with_recursion_state(value);
         cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
         cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
-        cv.state.data_location.push_str(&self.state.data_location);
+        cv.state.data_location = data_location;
         cv.state.type_group_name_entry = self.state.type_group_name_entry;
         cv.validating_value = true;
         cv.visit_type(&entry.entry_type)?;
