@@ -1476,6 +1476,26 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
           }
         }
       }
+
+      // A control operator does not otherwise visit its target identifier.
+      // Preserve the float prelude's value-domain constraint before applying
+      // the controller; integer-domain corrections are handled separately.
+      if let Some(kind) = ident_numeric_kind(self.state.cddl, target_ident) {
+        let float_target_mismatch = match (&self.json, kind) {
+          (Value::Number(number), NumericKind::Float) => !number.as_f64().is_some_and(|value| {
+            number.is_f64() && ident_matches_float_value(self.state.cddl, target_ident, value)
+          }),
+          (Value::Number(number), NumericKind::Both) if number.is_f64() => !number
+            .as_f64()
+            .is_some_and(|value| ident_matches_float_value(self.state.cddl, target_ident, value)),
+          (_, NumericKind::Float) => true,
+          _ => false,
+        };
+        if float_target_mismatch {
+          self.add_error(format!("expected type float, got {}", self.json));
+          return Ok(());
+        }
+      }
     }
 
     match ctrl {
@@ -2783,8 +2803,15 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         } else if let Some(kind) = ident_numeric_kind(self.state.cddl, ident) {
           let matches_kind = match kind {
             NumericKind::Int => n.is_i64(),
-            NumericKind::Float => n.is_f64(),
-            NumericKind::Both => n.is_i64() || n.is_f64(),
+            NumericKind::Float => n.as_f64().is_some_and(|value| {
+              n.is_f64() && ident_matches_float_value(self.state.cddl, ident, value)
+            }),
+            NumericKind::Both => {
+              n.is_i64()
+                || n.as_f64().is_some_and(|value| {
+                  n.is_f64() && ident_matches_float_value(self.state.cddl, ident, value)
+                })
+            }
           };
           if matches_kind {
             return Ok(());
