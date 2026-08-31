@@ -919,9 +919,9 @@ dependencies = [
 
 [[package]]
 name = "pest_vm"
-version = "2.8.8"
+version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db19ff1ad3a03046f9a1c15fa5e8946f70fee0ba416e9614c41c2fe04d781199"
+checksum = "acc61426b097b21a756e352306f516c12ed67585ff53946384847af779d8c4f9"
 dependencies = [
  "pest",
  "pest_meta",
