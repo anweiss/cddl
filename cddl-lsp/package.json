@@ -130,7 +130,7 @@
     "@typescript-eslint/parser": "^8.65.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild-loader": "^4.5.0",
-    "eslint": "^10.8.1",
+    "eslint": "^10.9.1",
     "merge-options": "^3.0.4",
     "mocha": "^11.7.6",
     "rimraf": "^6.1.3",
