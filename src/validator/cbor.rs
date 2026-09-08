@@ -4660,9 +4660,17 @@ where
           }
           _ => Some(format!("expected {}, got {}", u, s)),
         },
-        token::Value::BYTE(token::ByteValue::UTF8(b)) if s.as_bytes() == b.as_ref() => None,
-        token::Value::BYTE(token::ByteValue::B16(b)) if s.as_bytes() == b.as_ref() => None,
-        token::Value::BYTE(token::ByteValue::B64(b)) if s.as_bytes() == b.as_ref() => None,
+        // RFC 8610 Section 3.8.6: a text string is never equal to a byte
+        // string, so .ne (and .default, its variant) is always satisfied by
+        // a byte-string controller here.
+        token::Value::BYTE(_)
+          if matches!(
+            self.state.ctrl,
+            Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
+          ) =>
+        {
+          None
+        }
         _ => Some(format!("expected {}, got \"{}\"", value, s)),
       },
       Value::Bytes(b) => match value {
@@ -4768,12 +4776,8 @@ where
                 )
               })
           }
-          _ => Some(format!(
-            "expected value {} {}, got {:?}",
-            self.state.ctrl.unwrap(),
-            t,
-            b
-          )),
+          Some(ctrl) => Some(format!("expected value {} {}, got {:?}", ctrl, t, b)),
+          None => Some(format!("expected value {}, got {:?}", t, b)),
         },
         #[cfg(feature = "additional-controls")]
         token::Value::BYTE(bv) => match &self.state.ctrl {
