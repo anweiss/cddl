@@ -1306,11 +1306,9 @@ impl fmt::Display for Type2<'_> {
       Type2::UintValue { value, .. } => write!(f, "{}", value),
       Type2::FloatValue { value, .. } => write!(f, "{}", value),
       Type2::TextValue { value, .. } => write!(f, "\"{}\"", value),
-      Type2::UTF8ByteString { value, .. } => write!(
-        f,
-        "'{}'",
-        core::str::from_utf8(value).map_err(|_| fmt::Error)?
-      ),
+      Type2::UTF8ByteString { value, .. } => {
+        write!(f, "{}", ByteValue::UTF8(Cow::Borrowed(value.as_ref())))
+      }
       Type2::B16ByteString { value, .. } => {
         write!(f, "{}", ByteValue::B16(Cow::Borrowed(value.as_ref())))
       }
