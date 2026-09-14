@@ -21,7 +21,7 @@
     "@types/vscode": "^1.137.0",
     "@vscode/test-electron": "^3.1.0",
     "glob": "^13.0.6",
-    "mocha": "^11.8.0"
+    "mocha": "^12.0.0"
   },
   "overrides": {
     "serialize-javascript": "^7.0.4",
