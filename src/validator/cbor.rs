@@ -1456,7 +1456,13 @@ where
       let initial_error_count = self.errors.len();
       for tc in type_choices_from_group_choice(self.state.cddl, gc).iter() {
         let error_count = self.errors.len();
-        self.visit_type_choice(tc)?;
+        // The group has been converted to type choices.
+        // Validate each type normally so its nested groups are not converted again.
+        self.state.is_group_to_choice_enum = false;
+        let result = self.visit_type_choice(tc);
+        // Restore enumeration mode for the remaining choices, even on errors.
+        self.state.is_group_to_choice_enum = true;
+        result?;
         if self.errors.len() == error_count {
           let type_choice_error_count = self.errors.len() - initial_error_count;
           if type_choice_error_count > 0 {
