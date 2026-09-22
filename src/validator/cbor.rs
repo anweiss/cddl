@@ -1460,6 +1460,9 @@ where
         // Validate each type normally so its nested groups are not converted again.
         self.state.is_group_to_choice_enum = false;
         let result = self.visit_type_choice(tc);
+        for error in &mut self.errors[error_count..] {
+          error.is_group_to_choice_enum = true;
+        }
         // Restore enumeration mode for the remaining choices, even on errors.
         self.state.is_group_to_choice_enum = true;
         result?;
