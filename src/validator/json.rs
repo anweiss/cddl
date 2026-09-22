@@ -1230,6 +1230,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       let initial_error_count = self.errors.len();
       for tc in type_choices_from_group_choice(self.state.cddl, gc).iter() {
         let error_count = self.errors.len();
+        let prev_is_group_to_choice_enum = self.state.is_group_to_choice_enum;
         // The group has been converted to type choices.
         // Validate each type normally so its nested groups are not converted again.
         self.state.is_group_to_choice_enum = false;
@@ -1238,7 +1239,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
           error.is_group_to_choice_enum = true;
         }
         // Restore enumeration mode for the remaining choices, even on errors.
-        self.state.is_group_to_choice_enum = true;
+        self.state.is_group_to_choice_enum = prev_is_group_to_choice_enum;
         result?;
         if self.errors.len() == error_count {
           let type_choice_error_count = self.errors.len() - initial_error_count;
