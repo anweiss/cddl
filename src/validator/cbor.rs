@@ -1460,9 +1460,14 @@ where
         // The group has been converted to type choices.
         // Validate each type normally so its nested groups are not converted again.
         self.state.is_group_to_choice_enum = false;
-        let result = self.visit_type_choice(tc);
+        let mut result = self.visit_type_choice(tc);
         for error in &mut self.errors[error_count..] {
           error.is_group_to_choice_enum = true;
+        }
+        if let Err(Error::Validation(errors)) = &mut result {
+          for error in errors {
+            error.is_group_to_choice_enum = true;
+          }
         }
         // Restore enumeration mode for the remaining choices, even on errors.
         self.state.is_group_to_choice_enum = prev_is_group_to_choice_enum;
