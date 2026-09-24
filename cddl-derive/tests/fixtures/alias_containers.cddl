@@ -1,0 +1,9 @@
+timestamps = [* tdate]
+Tdate = uint
+pairlist = [* [bstr, tdate]]
+container-record = {
+  count: Tdate,
+  direct-times: [* tdate],
+  times: timestamps,
+  pairs: pairlist
+}

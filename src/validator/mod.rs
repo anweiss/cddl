@@ -702,6 +702,21 @@ pub fn type_choice_alternates_from_ident<'a>(
     .collect::<Vec<_>>()
 }
 
+/// Find every type assigned to an identifier, in document order.
+///
+/// RFC 8610 Section 2.2.2 defines each `/=` assignment as another arm of the
+/// named type choice. Appendix C requires the arms to retain rule order.
+pub fn type_choice_types_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Vec<&'a Type<'a>> {
+  cddl
+    .rules
+    .iter()
+    .filter_map(|r| match r {
+      Rule::Type { rule, .. } if &rule.name == ident => Some(&rule.value),
+      _ => None,
+    })
+    .collect::<Vec<_>>()
+}
+
 /// Find all group choice alternate rules from a given identifier
 pub fn group_choice_alternates_from_ident<'a>(
   cddl: &'a CDDL,

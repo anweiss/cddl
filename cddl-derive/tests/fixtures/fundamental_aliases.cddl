@@ -1,0 +1,12 @@
+created = tdate
+second-created = created
+record = {
+  when: tdate,
+  when2: second-created,
+  ? maybe: second-created,
+  hash: bstr,
+  blobs: [* bstr],
+  names: [* tstr],
+  times: [* created],
+  payload: any
+}
