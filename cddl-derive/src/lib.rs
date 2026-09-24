@@ -97,6 +97,28 @@
 //!
 //! # Required dependencies of generated code
 //!
+//! Add these crates to the **consumer crate's `[dependencies]`**, not only its
+//! `[dev-dependencies]` or `[build-dependencies]`. A proc macro's dependencies
+//! (including this crate's test dependencies) are not made available to the
+//! code it generates in another crate. The core `cddl` crate does not re-export
+//! them.
+//!
+//! For a schema using byte strings, tagged prelude types, and `any`, add the
+//! following alongside your existing `cddl-derive` dependency:
+//!
+//! ```toml
+//! [dependencies]
+//! serde = { version = "1", features = ["derive"] }
+//! serde_with = { version = "3", features = ["macros"] }
+//! ciborium = "0.2"
+//! serde_json = "1"
+//! ```
+//!
+//! Keep the dependency names shown here: generated paths refer to `serde`,
+//! `serde_with`, `ciborium`, and `serde_json` directly. A custom `any_type` or
+//! `substitute` path also requires its defining crate to be available to the
+//! consumer. You can omit schema-specific dependencies using the table below.
+//!
 //! Generated types always depend on `serde`. Some CDDL constructs pull in
 //! additional crates, and only when the schema actually uses them:
 //!

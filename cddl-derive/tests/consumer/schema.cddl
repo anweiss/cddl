@@ -1,0 +1,5 @@
+record = {
+  hash: bstr,
+  when: tdate,
+  payload: any,
+}
