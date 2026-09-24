@@ -49,6 +49,10 @@ jobs:
         run: |
           cargo +${{ matrix.rust_toolchain }} check --locked -p cddl --lib --no-default-features --features _build-parser --target thumbv7em-none-eabihf
 
+      - name: Check compilation with no default features (modules)
+        run: |
+          cargo +${{ matrix.rust_toolchain }} check --locked -p cddl --lib --no-default-features --features modules,_build-parser --target thumbv7em-none-eabihf
+
   compilation-check:
     uses: ./.github/workflows/compilation-check.yml
 
@@ -72,6 +76,10 @@ jobs:
         run: |
           cargo +${{ matrix.rust_toolchain }} check -p cddl --lib --target wasm32-unknown-unknown
 
+      - name: Check compilation for wasm target (modules)
+        run: |
+          cargo +${{ matrix.rust_toolchain }} check -p cddl --lib --target wasm32-unknown-unknown --features modules
+
   test-suite:
     strategy:
       matrix:
@@ -92,6 +100,15 @@ jobs:
       - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.os }}
         run: |
           cargo +${{ matrix.rust_toolchain }} test --all -- --nocapture
+
+      - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.os }} (modules)
+        # Scoped to -p cddl: under `--all`, cddl-derive's proc-macro
+        # dependency on cddl is built without `modules` while the workspace
+        # build enables it, and resolver v2 keeps those feature sets separate.
+        # The two builds then collide on the unhashed `libcddl.so` name of the
+        # cdylib target and the link fails.
+        run: |
+          cargo +${{ matrix.rust_toolchain }} test -p cddl --features modules -- --nocapture
 
       - name: Test standalone derive consumer
         run: cargo +${{ matrix.rust_toolchain }} test --locked --manifest-path cddl-derive/tests/consumer/Cargo.toml

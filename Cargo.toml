@@ -133,6 +133,9 @@ ast-parent = []
 json = ["std"]
 cbor = ["std"]
 csv-validate = ["std", "json", "csv"]
+# CDDL module structure (draft-ietf-cbor-cddl-modules-06). Default-off: with the
+# feature disabled, parsing behavior is unchanged from RFC 8610.
+modules = []
 _build-parser = ["dep:pest_generator", "dep:proc-macro2"]
 
 [[bin]]

@@ -1,0 +1,657 @@
+//! A minimal structural scanner over CDDL source text.
+//!
+//! Module resolution is a source-to-source transformation, so it needs three
+//! things from a module's text and nothing more: where each rule begins and
+//! ends, what each rule is named, and which identifiers a rule references. A
+//! full parse would give all three, but it would also discard the original
+//! formatting that the resolved output is expected to preserve, and it would
+//! couple resolution to the AST's lifetimes. This scanner works directly on the
+//! text instead.
+//!
+//! It is deliberately conservative: string literals, comments and control
+//! operator names are recognized only well enough to keep them from being
+//! mistaken for rule references. A false positive is harmless — an identifier
+//! that names no rule in the module is simply ignored during selection.
+
+#[cfg(not(feature = "std"))]
+use alloc::{
+  string::{String, ToString},
+  vec::Vec,
+};
+
+/// What an identifier occurrence means structurally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IdentRole {
+  /// The name being defined by a rule.
+  RuleHead,
+  /// A reference to some other name.
+  Reference,
+  /// The name of a control operator, e.g. the `size` in `.size`.
+  ControlName,
+  /// A generic parameter declaration or use, which is local to that rule.
+  GenericParam,
+  /// A literal bareword member key before `:`, not a rule reference.
+  BarewordKey,
+}
+
+/// A single identifier occurrence, as a byte range into the scanned source.
+#[derive(Debug, Clone)]
+pub(crate) struct IdentToken {
+  /// Byte offset of the first character.
+  pub start: usize,
+  /// Byte offset one past the last character.
+  pub end: usize,
+  /// The identifier text.
+  pub text: String,
+  /// What this occurrence means.
+  pub role: IdentRole,
+}
+
+/// The extent of a single rule definition.
+#[derive(Debug, Clone)]
+pub(crate) struct RuleSpan {
+  /// The defined name.
+  pub name: String,
+  /// Byte offset where the rule begins (at its head identifier).
+  pub start: usize,
+  /// Byte offset one past the end of the rule, trailing whitespace trimmed.
+  pub end: usize,
+}
+
+/// The result of scanning a CDDL document.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Scan {
+  /// Every identifier occurrence, in source order.
+  pub idents: Vec<IdentToken>,
+  /// Every rule definition, in source order.
+  pub rules: Vec<RuleSpan>,
+}
+
+fn is_ident_start(b: u8) -> bool {
+  b == b'$' || b == b'_' || b == b'@' || b.is_ascii_alphabetic()
+}
+
+fn is_ident_continue(b: u8) -> bool {
+  is_ident_start(b) || b.is_ascii_digit()
+}
+
+fn skip_spacing(bytes: &[u8], mut i: usize) -> usize {
+  loop {
+    match bytes.get(i) {
+      Some(b' ' | b'\t' | b'\r' | b'\n') => i += 1,
+      Some(b';') => {
+        while i < bytes.len() && bytes[i] != b'\n' {
+          i += 1;
+        }
+      }
+      _ => return i,
+    }
+  }
+}
+
+fn ident_end(bytes: &[u8], mut i: usize) -> usize {
+  while i < bytes.len() {
+    let c = bytes[i];
+    if is_ident_continue(c) || c == b'-' {
+      i += 1;
+    } else if c == b'.'
+      && i + 1 < bytes.len()
+      && (is_ident_continue(bytes[i + 1]) || bytes[i + 1] == b'-')
+    {
+      i += 2;
+    } else {
+      break;
+    }
+  }
+  i
+}
+
+fn uint_end(bytes: &[u8], mut i: usize) -> (usize, u32) {
+  let radix = match (bytes[i], bytes.get(i + 1), bytes.get(i + 2)) {
+    (b'0', Some(b'x' | b'X'), Some(digit)) if digit.is_ascii_hexdigit() => 16,
+    (b'0', Some(b'b' | b'B'), Some(b'0' | b'1')) => 2,
+    _ => 10,
+  };
+  if radix != 10 {
+    i += 2;
+  }
+  if radix == 10 && bytes[i] == b'0' {
+    i += 1;
+  } else {
+    while bytes.get(i).is_some_and(|b| (*b as char).is_digit(radix)) {
+      i += 1;
+    }
+  }
+  (i, radix)
+}
+
+fn number_end(bytes: &[u8], start: usize) -> usize {
+  let (mut i, radix) = uint_end(bytes, start);
+  let integer_end = i;
+  if radix == 2 {
+    return i;
+  }
+  if bytes.get(i) == Some(&b'.')
+    && bytes
+      .get(i + 1)
+      .is_some_and(|b| (*b as char).is_digit(radix))
+  {
+    i += 1;
+    while bytes.get(i).is_some_and(|b| (*b as char).is_digit(radix)) {
+      i += 1;
+    }
+  }
+  let mantissa_end = i;
+  let exponent = if radix == 16 { b'p' } else { b'e' };
+  if bytes
+    .get(i)
+    .is_some_and(|b| b.to_ascii_lowercase() == exponent)
+  {
+    i += 1;
+    if matches!(bytes.get(i), Some(b'+' | b'-')) {
+      i += 1;
+    }
+    let digits = i;
+    while bytes.get(i).is_some_and(u8::is_ascii_digit) {
+      i += 1;
+    }
+    if i > digits {
+      return i;
+    }
+  }
+  // A hex fraction belongs to a number only when followed by a p exponent.
+  if radix == 16 {
+    integer_end
+  } else {
+    mantissa_end
+  }
+}
+
+/// If the `<` at `open` begins a generic *parameter* list — that is, if the
+/// group it opens is followed by an assignment operator — return the byte
+/// offset of its closing `>`.
+fn generic_params_end(bytes: &[u8], open: usize) -> Option<usize> {
+  let mut i = skip_spacing(bytes, open + 1);
+  while i < bytes.len() && bytes[i] != b'>' {
+    // Parameters are plain identifiers separated by commas and whitespace;
+    // anything structural means this is not a parameter list.
+    if matches!(bytes[i], b'(' | b'[' | b'{' | b'<' | b'"' | b'\'') {
+      return None;
+    }
+    i = skip_spacing(bytes, i + 1);
+  }
+
+  if i >= bytes.len() {
+    return None;
+  }
+
+  let close = i;
+  let mut j = skip_spacing(bytes, close + 1);
+
+  while j < bytes.len() && bytes[j] == b'/' {
+    j += 1;
+  }
+
+  if j < bytes.len() && bytes[j] == b'=' && !(j + 1 < bytes.len() && bytes[j + 1] == b'>') {
+    Some(close)
+  } else {
+    None
+  }
+}
+
+/// Scan `src`, recovering rule extents and identifier occurrences.
+pub(crate) fn scan(src: &str) -> Scan {
+  let bytes = src.as_bytes();
+  let mut idents: Vec<IdentToken> = Vec::new();
+  // Byte offsets of assignment operators found at bracket depth zero.
+  let mut top_level_assigns: Vec<usize> = Vec::new();
+
+  let mut i = 0usize;
+  let mut depth = 0usize;
+  // Byte offset of the previous non-whitespace byte, used to tell a control
+  // operator (`bstr .size 4`, where `.` follows whitespace) from a namespaced
+  // identifier (`cose.label`, where `.` is part of the identifier itself).
+  let mut prev_was_ident_end = false;
+
+  while i < bytes.len() {
+    let b = bytes[i];
+
+    match b {
+      b' ' | b'\t' | b'\r' | b'\n' => {
+        prev_was_ident_end = false;
+        i += 1;
+      }
+
+      // Comment (including a `;#` directive line) runs to end of line.
+      b';' => {
+        prev_was_ident_end = false;
+        while i < bytes.len() && bytes[i] != b'\n' {
+          i += 1;
+        }
+      }
+
+      // Byte strings have raw content, with no backslash escapes.
+      b'h' if matches!(bytes.get(i + 1), Some(b'\'' | b'"')) => {
+        prev_was_ident_end = false;
+        let quote = bytes[i + 1];
+        i += 2;
+        while i < bytes.len() && bytes[i] != quote {
+          i += 1;
+        }
+        i += usize::from(i < bytes.len());
+      }
+      b'b' if bytes[i..].starts_with(b"b64'") => {
+        prev_was_ident_end = false;
+        i += 3;
+      }
+
+      // Text string.
+      b'"' => {
+        prev_was_ident_end = false;
+        i += 1;
+        while i < bytes.len() {
+          match bytes[i] {
+            b'\\' => i += 2,
+            b'"' => {
+              i += 1;
+              break;
+            }
+            _ => i += 1,
+          }
+        }
+      }
+
+      // Byte string.
+      b'\'' => {
+        prev_was_ident_end = false;
+        i += 1;
+        while i < bytes.len() {
+          match bytes[i] {
+            b'\'' => {
+              i += 1;
+              break;
+            }
+            _ => i += 1,
+          }
+        }
+      }
+
+      b'(' | b'[' | b'{' => {
+        prev_was_ident_end = false;
+        depth += 1;
+        i += 1;
+      }
+
+      b')' | b']' | b'}' => {
+        prev_was_ident_end = false;
+        depth = depth.saturating_sub(1);
+        i += 1;
+      }
+
+      // A control operator: a `.` that does not directly follow an identifier
+      // character. The name that follows is an operator name, not a reference.
+      b'.' if !prev_was_ident_end || bytes.get(i + 1) == Some(&b'.') => {
+        let start = i;
+        i += 1;
+        // `..` and `...` are range operators, not control operators.
+        while i < bytes.len() && bytes[i] == b'.' {
+          i += 1;
+        }
+        if i == start + 1 && i < bytes.len() && is_ident_start(bytes[i]) {
+          let start = i;
+          while i < bytes.len() && (is_ident_continue(bytes[i]) || bytes[i] == b'-') {
+            i += 1;
+          }
+          idents.push(IdentToken {
+            start,
+            end: i,
+            text: src[start..i].to_string(),
+            role: IdentRole::ControlName,
+          });
+        }
+        prev_was_ident_end = false;
+      }
+
+      // Generic parameters: a `<` group that is immediately followed by an
+      // assignment operator, i.e. the head of `messages<a, b> = ...`. Anywhere
+      // else a `<` group holds generic *arguments*, whose identifiers are real
+      // references and are scanned normally.
+      b'<' if depth == 0 => {
+        match generic_params_end(bytes, i) {
+          Some(close) => {
+            i = skip_spacing(bytes, i + 1);
+            while i < close {
+              if is_ident_start(bytes[i]) {
+                let start = i;
+                i = ident_end(bytes, i);
+                idents.push(IdentToken {
+                  start,
+                  end: i,
+                  text: src[start..i].to_string(),
+                  role: IdentRole::GenericParam,
+                });
+              } else {
+                i += 1;
+              }
+              i = skip_spacing(bytes, i);
+            }
+            i = close + 1;
+          }
+          None => i += 1,
+        }
+
+        prev_was_ident_end = false;
+      }
+
+      // Assignment operators: `=`, `/=`, `//=`. `=>` is an entry separator and
+      // must not be mistaken for one.
+      b'=' if i + 1 >= bytes.len() || bytes[i + 1] != b'>' => {
+        if depth == 0 {
+          top_level_assigns.push(i);
+        }
+        prev_was_ident_end = false;
+        i += 1;
+      }
+
+      // Keep a tag's separator out of decimal-fraction scanning.
+      b'#' => {
+        prev_was_ident_end = false;
+        i += 1;
+        if bytes.get(i).is_some_and(u8::is_ascii_digit) {
+          i += 1;
+          if bytes.get(i) == Some(&b'.') {
+            i += 1;
+            if bytes.get(i).is_some_and(u8::is_ascii_digit) {
+              i = uint_end(bytes, i).0;
+            }
+          }
+        }
+      }
+
+      b'0'..=b'9' => {
+        prev_was_ident_end = false;
+        i = number_end(bytes, i);
+      }
+
+      _ if is_ident_start(b) => {
+        let start = i;
+        i = ident_end(bytes, i);
+        idents.push(IdentToken {
+          start,
+          end: i,
+          text: src[start..i].to_string(),
+          role: if bytes.get(skip_spacing(bytes, i)) == Some(&b':') {
+            IdentRole::BarewordKey
+          } else {
+            IdentRole::Reference
+          },
+        });
+        prev_was_ident_end = true;
+      }
+
+      _ => {
+        prev_was_ident_end = false;
+        i += 1;
+      }
+    }
+  }
+
+  // The head of a rule is the last plain reference occurring before its
+  // assignment operator; generic parameters and control names are excluded by
+  // construction.
+  let mut head_indices: Vec<usize> = Vec::new();
+  for assign in &top_level_assigns {
+    let head = idents
+      .iter()
+      .enumerate()
+      .rev()
+      .find(|(_, id)| id.end <= *assign && id.role == IdentRole::Reference)
+      .map(|(idx, _)| idx);
+
+    if let Some(idx) = head {
+      if !head_indices.contains(&idx) {
+        head_indices.push(idx);
+      }
+    }
+  }
+
+  for idx in &head_indices {
+    idents[*idx].role = IdentRole::RuleHead;
+  }
+
+  let mut rules: Vec<RuleSpan> = Vec::new();
+  for (n, idx) in head_indices.iter().enumerate() {
+    let next = head_indices.get(n + 1).copied().unwrap_or(idents.len());
+    let params: Vec<String> = idents[*idx..next]
+      .iter()
+      .filter(|ident| ident.role == IdentRole::GenericParam)
+      .map(|ident| ident.text.clone())
+      .collect();
+    for ident in &mut idents[*idx..next] {
+      if ident.role == IdentRole::Reference && params.contains(&ident.text) {
+        ident.role = IdentRole::GenericParam;
+      }
+    }
+
+    let start = idents[*idx].start;
+    let end = match head_indices.get(n + 1) {
+      Some(next) => idents[*next].start,
+      None => src.len(),
+    };
+    let end = src[start..end].trim_end().len() + start;
+
+    rules.push(RuleSpan {
+      name: idents[*idx].text.clone(),
+      start,
+      end,
+    });
+  }
+
+  Scan { idents, rules }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn finds_rule_extents_and_names() {
+    let src = "label = int / tstr\nvalues = any\n";
+    let scan = scan(src);
+    let names: Vec<_> = scan.rules.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["label", "values"]);
+    assert_eq!(
+      &src[scan.rules[0].start..scan.rules[0].end],
+      "label = int / tstr"
+    );
+  }
+
+  #[test]
+  fn namespaced_names_scan_as_one_identifier() {
+    let scan = scan("mydata = {Fritz: cose.empty_or_serialized_map}");
+    assert!(scan
+      .idents
+      .iter()
+      .any(|i| i.text == "cose.empty_or_serialized_map"));
+  }
+
+  #[test]
+  fn control_names_are_not_references() {
+    let scan = scan("a = bstr .cbor header_map");
+    let cbor = scan.idents.iter().find(|i| i.text == "cbor").unwrap();
+    assert_eq!(cbor.role, IdentRole::ControlName);
+    assert!(scan
+      .idents
+      .iter()
+      .any(|i| i.text == "header_map" && i.role == IdentRole::Reference));
+  }
+
+  #[test]
+  fn entry_separator_is_not_an_assignment() {
+    let scan = scan("m = {\n  1 => tstr,\n}\nn = int\n");
+    let names: Vec<_> = scan.rules.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["m", "n"]);
+  }
+
+  #[test]
+  fn generic_parameters_are_local() {
+    let scan = scan("messages<a, b> = [a, b]\n");
+    assert_eq!(scan.rules.len(), 1);
+    assert_eq!(scan.rules[0].name, "messages");
+    assert!(scan
+      .idents
+      .iter()
+      .filter(|i| i.text == "a")
+      .all(|i| i.role == IdentRole::GenericParam));
+  }
+
+  #[test]
+  fn generic_parameters_are_scoped_to_each_rule() {
+    let scan =
+      scan("a = int\nmessages<a, ; parameter comment\n b.c> = [a, b.c]\nother = [a, b.c]\n");
+    let roles: Vec<_> = scan
+      .idents
+      .iter()
+      .filter(|i| i.text == "a" || i.text == "b.c")
+      .map(|i| i.role)
+      .collect();
+    assert_eq!(
+      roles,
+      [
+        IdentRole::RuleHead,
+        IdentRole::GenericParam,
+        IdentRole::GenericParam,
+        IdentRole::GenericParam,
+        IdentRole::GenericParam,
+        IdentRole::Reference,
+        IdentRole::Reference,
+      ]
+    );
+  }
+
+  #[test]
+  fn bareword_keys_are_not_references() {
+    let scan = scan("m = {label: tstr, ? label ; comment\n : int, * label => tstr}\n");
+    let roles: Vec<_> = scan
+      .idents
+      .iter()
+      .filter(|i| i.text == "label")
+      .map(|i| i.role)
+      .collect();
+    assert_eq!(
+      roles,
+      [
+        IdentRole::BarewordKey,
+        IdentRole::BarewordKey,
+        IdentRole::Reference
+      ]
+    );
+  }
+
+  #[test]
+  fn generic_parameters_may_span_lines() {
+    let scan = scan("messages<\n  a,\n  b\n> = [a, b]\n");
+    assert_eq!(scan.rules.len(), 1);
+    assert_eq!(scan.rules[0].name, "messages");
+  }
+
+  #[test]
+  fn generic_arguments_are_references() {
+    let scan = scan("a = messages<int>\n");
+    assert_eq!(scan.rules.len(), 1);
+    assert_eq!(scan.rules[0].name, "a");
+    assert!(scan
+      .idents
+      .iter()
+      .any(|i| i.text == "messages" && i.role == IdentRole::Reference));
+  }
+
+  #[test]
+  fn extensions_are_separate_spans() {
+    let scan = scan("foo = int\nbar = tstr\nfoo /= tstr\n");
+    let names: Vec<_> = scan.rules.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["foo", "bar", "foo"]);
+  }
+
+  #[test]
+  fn comments_and_strings_are_skipped() {
+    let scan = scan("a = \"not_a_rule = x\" ; nor = this\nb = int\n");
+    let names: Vec<_> = scan.rules.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["a", "b"]);
+  }
+
+  #[test]
+  fn byte_string_prefixes_are_not_references() {
+    let scan = scan("a = [h'00', b64'AA==', h\"00\", h, b64]\n");
+    let references: Vec<_> = scan
+      .idents
+      .iter()
+      .filter(|ident| ident.role == IdentRole::Reference)
+      .map(|ident| ident.text.as_str())
+      .collect();
+    assert_eq!(references, ["h", "b64"]);
+  }
+
+  #[test]
+  fn numeric_tokens_leave_adjacent_references_and_controls_intact() {
+    for (number, rest) in [
+      ("0", "x"),
+      ("0", "b"),
+      ("0", "42"),
+      ("0", ""),
+      ("10", ""),
+      ("0xff", ""),
+      ("0b10", ""),
+      ("1.5", "e"),
+      ("1", "e+"),
+      ("0x1", ".ap"),
+      ("1e+5", ".eq limit"),
+      ("0x1.8p-1", "..limit"),
+      ("0b10", "...limit"),
+      ("1", "item"),
+    ] {
+      let input = format!("{}{}", number, rest);
+      assert_eq!(number_end(input.as_bytes(), 0), number.len(), "{}", input);
+    }
+    let scanned = scan("value = [1e+5 item, 0x10 other, 0b10 third]\n");
+    let references: Vec<_> = scanned
+      .idents
+      .iter()
+      .filter(|ident| ident.role == IdentRole::Reference)
+      .map(|ident| ident.text.as_str())
+      .collect();
+    assert_eq!(references, ["item", "other", "third"]);
+    let scan = scan("value = 1e+5.eq limit\n");
+    assert!(scan
+      .idents
+      .iter()
+      .any(|ident| ident.text == "eq" && ident.role == IdentRole::ControlName));
+    assert!(scan
+      .idents
+      .iter()
+      .any(|ident| ident.text == "limit" && ident.role == IdentRole::Reference));
+  }
+
+  #[test]
+  fn tag_numbers_leave_adjacent_references_intact() {
+    let scan = scan("value = [#7.32e5, #7.0x20p1, #7.0b100000e5]\n");
+    let references: Vec<_> = scan
+      .idents
+      .iter()
+      .filter(|ident| ident.role == IdentRole::Reference)
+      .map(|ident| ident.text.as_str())
+      .collect();
+    assert_eq!(references, ["e5", "p1", "e5"]);
+  }
+
+  #[test]
+  fn text_strings_still_honor_escaped_quotes() {
+    let scan = scan(
+      r#"value = "escaped \"not = a rule"
+following = int
+"#,
+    );
+    let names: Vec<_> = scan.rules.iter().map(|rule| rule.name.as_str()).collect();
+    assert_eq!(names, ["value", "following"]);
+  }
+}
