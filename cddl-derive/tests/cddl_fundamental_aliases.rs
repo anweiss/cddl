@@ -77,7 +77,7 @@ fn fundamental_aliases_preserve_wire_encoding_in_both_macros() {
   let _: enabled::Tdate = "date".into();
   let _: enabled::Tstr = "text".into();
   let _: enabled::Any = serde_json::Value::Null;
-  let _: attribute::__cddl_prelude_first::Bstr = vec![1, 2];
+  let _: attribute::__cddl_prelude_First::Bstr = vec![1, 2];
   for present in [true, false] {
     let mut input = json();
     if !present {

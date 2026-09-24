@@ -125,7 +125,10 @@
 //!
 //! `cddl_typegen!` emits public aliases beside the generated types. For
 //! `#[cddl]`, aliases live in a public `__cddl_prelude_<struct_name>` module
-//! (with the struct name in snake_case) and fields use qualified paths.
+//! (preserving the exact struct identifier's case, without a raw `r#` prefix)
+//! and fields use qualified paths. For example, `First` uses
+//! `__cddl_prelude_First`. Configured `self::` and `super::` paths retain their
+//! caller-module meaning.
 //! This allows multiple attribute invocations in the same Rust module.
 //! Referenced user-defined types still need their own definitions, as usual.
 //!

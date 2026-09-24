@@ -655,7 +655,8 @@ pub(crate) fn generate_single_type(
 
   let mut output = String::new();
   let emit_name = output_name.unwrap_or(rule_name);
-  let alias_mod = format!("__cddl_prelude_{}", to_snake_case(emit_name));
+  let exact_name = emit_name.strip_prefix("r#").unwrap_or(emit_name);
+  let alias_mod = format!("__cddl_prelude_{}", exact_name);
   let used = referenced_fundamental_aliases(std::slice::from_ref(&matching));
   let mut scoped = BTreeMap::new();
   let aliases: Vec<_> = fundamental_aliases
@@ -664,12 +665,28 @@ pub(crate) fn generate_single_type(
     .collect();
   if !aliases.is_empty() {
     writeln!(output, "#[doc(hidden)]")?;
+    writeln!(output, "#[allow(non_snake_case)]")?;
     writeln!(output, "pub mod {} {{", alias_mod)?;
     // Unqualified configured types retain their caller-module meaning.
     writeln!(output, "    #[allow(unused_imports)] use super::*;")?;
     for def in aliases {
       if let RustTypeDef::TypeAlias { name, target, doc } = def {
-        render_type_alias(&mut output, name, target, doc)?;
+        // A helper module is one level below the caller's configured paths.
+        let paths: BTreeMap<_, _> = target
+          .split(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
+          .filter_map(|token| {
+            if let Some(path) = token.strip_prefix("self::") {
+              Some((token.into(), format!("super::{}", path)))
+            } else if token.starts_with("super::") {
+              Some((token.into(), format!("super::{}", token)))
+            } else {
+              None
+            }
+          })
+          .collect();
+        let mut target = target.clone();
+        rewrite_type(&mut target, &paths, DEFAULT_ANY_TYPE);
+        render_type_alias(&mut output, name, &target, doc)?;
         scoped.insert(name.clone(), format!("{}::{}", alias_mod, name));
       }
     }
@@ -693,7 +710,12 @@ pub(crate) fn generate_single_type(
       let emit_name = output_name.unwrap_or(name);
       // Scope the helper module to this type, so several single-type macro
       // invocations can coexist in one file without colliding.
-      let tag_mod = format!("{}_{}", TAG_HELPER_MOD, to_snake_case(emit_name));
+      let suffix = if opts.fundamental_aliases {
+        exact_name.to_string()
+      } else {
+        to_snake_case(emit_name)
+      };
+      let tag_mod = format!("{}_{}", TAG_HELPER_MOD, suffix);
       let tags = collect_tags(std::slice::from_ref(&matching));
       render_tag_helpers(
         &mut output,
