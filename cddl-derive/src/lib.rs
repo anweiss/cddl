@@ -97,6 +97,28 @@
 //!
 //! # Required dependencies of generated code
 //!
+//! Add these crates to the **consumer crate's `[dependencies]`**, not only its
+//! `[dev-dependencies]` or `[build-dependencies]`. A proc macro's dependencies
+//! (including this crate's test dependencies) are not made available to the
+//! code it generates in another crate. The core `cddl` crate does not re-export
+//! them.
+//!
+//! For a schema using byte strings, tagged prelude types, and `any`, add the
+//! following alongside your existing `cddl-derive` dependency:
+//!
+//! ```toml
+//! [dependencies]
+//! serde = { version = "1", features = ["derive"] }
+//! serde_with = { version = "3", features = ["macros"] }
+//! ciborium = "0.2"
+//! serde_json = "1"
+//! ```
+//!
+//! Keep the dependency names shown here: generated paths refer to `serde`,
+//! `serde_with`, `ciborium`, and `serde_json` directly. A custom `any_type` or
+//! `substitute` path also requires its defining crate to be available to the
+//! consumer. You can omit schema-specific dependencies using the table below.
+//!
 //! Generated types always depend on `serde`. Some CDDL constructs pull in
 //! additional crates, and only when the schema actually uses them:
 //!
@@ -109,6 +131,10 @@
 //! `bstr` needs `serde_with` because serde encodes a bare `Vec<u8>` as an array
 //! of integers rather than as a CBOR byte string (major type 2). See
 //! <https://github.com/anweiss/cddl/issues/638>.
+//! This dependency also applies to other fields generated as `Vec<u8>`:
+//! byte-string literals, CBOR major type `#2`, `biguint`, `bignint`, and
+//! `bigint`, as well as byte-backed fields nested in containers. It also
+//! applies when an explicit substitution produces `Vec<u8>`.
 //!
 //! The tagged prelude types are CBOR tags wrapping a simpler value (RFC 8610
 //! Appendix D). The generated struct keeps the inner Rust type and applies the
