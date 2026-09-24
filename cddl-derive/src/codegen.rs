@@ -12,6 +12,8 @@ use std::fmt::Write;
 pub(crate) enum CodegenError {
   /// CDDL parsing failed.
   ParseError(String),
+  /// A Rust type alias cycle cannot be emitted.
+  AliasCycle(String),
   /// Formatting error.
   FmtError(std::fmt::Error),
 }
@@ -20,6 +22,7 @@ impl std::fmt::Display for CodegenError {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       CodegenError::ParseError(msg) => write!(f, "CDDL parse error: {}", msg),
+      CodegenError::AliasCycle(name) => write!(f, "cyclic type alias involving '{}'", name),
       CodegenError::FmtError(e) => write!(f, "formatting error: {}", e),
     }
   }
@@ -38,6 +41,8 @@ impl From<std::fmt::Error> for CodegenError {
 /// <https://github.com/anweiss/cddl/issues/641>.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct CodegenOptions {
+  /// Internal lowering mode: retain tag identity until encoding is inferred.
+  preserve_tag_names: bool,
   /// Rust type to generate for CDDL `any`. Defaults to `serde_json::Value`.
   ///
   /// Set this to `ciborium::Value` for a CBOR-first schema. Individual fields
@@ -166,10 +171,7 @@ fn alias_encoding(
   let ty = ty.trim();
   if let Some((target, tag)) = aliases.get(ty) {
     if visiting.iter().any(|name| name == ty) {
-      return Err(CodegenError::ParseError(format!(
-        "cyclic type alias involving '{}'",
-        ty
-      )));
+      return Err(CodegenError::AliasCycle(ty.into()));
     }
     visiting.push(ty.into());
     let encoding = if let Some(tag) = tag {
@@ -206,44 +208,55 @@ fn apply_alias_encodings(
   cddl: &CDDL<'_>,
   defs: &mut [RustTypeDef],
   opts: &CodegenOptions,
+  root: Option<&str>,
 ) -> Result<(), CodegenError> {
-  let mut tagged: BTreeMap<_, _> = cddl
-    .rules
+  let metadata_opts = CodegenOptions {
+    preserve_tag_names: true,
+    ..opts.clone()
+  };
+  let mut metadata = collect_type_defs(cddl, &CommentMap::default(), &metadata_opts)?;
+  apply_options(&mut metadata, opts);
+  let mut aliases: AliasMap = defs
     .iter()
-    .filter_map(|rule| {
-      if let Rule::Type { rule, .. } = rule {
-        type_tagged_prelude(&rule.value).map(|tag| (to_pascal_case(rule.name.ident), tag))
-      } else {
-        None
-      }
-    })
-    .collect();
-  if opts.fundamental_aliases {
-    for tag in TAGGED_PRELUDE_TYPES {
-      tagged.insert(to_pascal_case(tag.ident), *tag);
-    }
-  }
-  let aliases: AliasMap = defs
-    .iter()
+    .chain(metadata.iter())
     .filter_map(|def| {
       if let RustTypeDef::TypeAlias { name, target, .. } = def {
-        Some((name.clone(), (target.clone(), tagged.get(name).copied())))
+        Some((name.clone(), (target.clone(), None)))
       } else {
         None
       }
     })
     .collect();
+  for tag in TAGGED_PRELUDE_TYPES {
+    aliases.insert(tag_encoding_name(tag.ident), (tag.inner.into(), Some(*tag)));
+  }
   for name in aliases.keys() {
-    alias_encoding(name, &aliases, &mut Vec::new())?;
+    if root.is_none() || root == Some(name.as_str()) {
+      alias_encoding(name, &aliases, &mut Vec::new())?;
+    }
   }
   for def in defs {
     if let RustTypeDef::Struct { name, fields, .. } = def {
+      if root.is_some() && root != Some(name.as_str()) {
+        continue;
+      }
+      let metadata_fields = metadata.iter().find_map(|def| match def {
+        RustTypeDef::Struct {
+          name: metadata_name,
+          fields,
+          ..
+        } if metadata_name == name => Some(fields),
+        _ => None,
+      });
       for field in fields {
         let key = format!("{}.{}", to_cddl_lookup_name(name), field.original_name);
         if field.tag.is_some() || opts.substitutions.contains_key(&key) {
           continue;
         }
-        match alias_encoding(&field.rust_type, &aliases, &mut Vec::new())? {
+        let encoding_type = metadata_fields
+          .and_then(|fields| fields.iter().find(|f| f.name == field.name))
+          .map_or(field.rust_type.as_str(), |f| f.rust_type.as_str());
+        match alias_encoding(encoding_type, &aliases, &mut Vec::new())? {
           Some(Encoding::Tag(tag)) => field.tag = Some(tag),
           encoding => field.encoding = encoding,
         }
@@ -602,7 +615,7 @@ pub(crate) fn generate_all_types(
   let mut type_defs = collect_type_defs(cddl, &comments, opts)?;
   apply_options(&mut type_defs, opts);
   append_fundamental_aliases(&mut type_defs, opts)?;
-  apply_alias_encodings(cddl, &mut type_defs, opts)?;
+  apply_alias_encodings(cddl, &mut type_defs, opts, None)?;
   render_type_defs(&type_defs, opts)
 }
 
@@ -622,7 +635,7 @@ pub(crate) fn generate_single_type(
   let mut type_defs = collect_type_defs(cddl, &comments, opts)?;
   apply_options(&mut type_defs, opts);
   let fundamental_aliases = append_fundamental_aliases(&mut type_defs, opts)?;
-  apply_alias_encodings(cddl, &mut type_defs, opts)?;
+  apply_alias_encodings(cddl, &mut type_defs, opts, Some(rule_name))?;
   let mut matching = type_defs
     .into_iter()
     .find(|d| match d {
@@ -1606,7 +1619,14 @@ const FUNDAMENTAL_TYPES: &[(&str, &str)] = &[
   ("bigint", "Vec<u8>"),
 ];
 
+fn tag_encoding_name(ident: &str) -> String {
+  format!("__cddl_encoding::{}", ident)
+}
+
 fn cddl_ident_to_rust_type(ident: &str, opts: &CodegenOptions) -> String {
+  if opts.preserve_tag_names && tagged_prelude(ident).is_some() {
+    return tag_encoding_name(ident);
+  }
   match FUNDAMENTAL_TYPES.iter().find(|(name, _)| *name == ident) {
     Some((_, target)) if !opts.fundamental_aliases => (*target).into(),
     _ => to_pascal_case(ident),
@@ -1667,6 +1687,16 @@ fn append_fundamental_aliases(
     }
   }
   let used = referenced_fundamental_aliases(defs);
+  for target in opts.substitutions.values().chain(opts.any_type.iter()) {
+    for token in target.split(|c: char| !c.is_alphanumeric() && c != '_' && c != ':') {
+      if available.contains_key(token) {
+        return Err(CodegenError::ParseError(format!(
+          "custom type '{}' conflicts with a fundamental alias; use a qualified path such as crate::{}",
+          token, token
+        )));
+      }
+    }
+  }
   let aliases: Vec<_> = available
     .into_iter()
     .filter(|(name, _)| used.contains(name))
@@ -1988,11 +2018,11 @@ fn split_generic_args(args: &str) -> Vec<String> {
 
   for c in args.chars() {
     match c {
-      '<' => {
+      '<' | '(' | '[' => {
         depth += 1;
         current.push(c);
       }
-      '>' => {
+      '>' | ')' | ']' => {
         depth = depth.saturating_sub(1);
         current.push(c);
       }
@@ -2473,6 +2503,44 @@ mod tests {
       .contains("conflicts with a fundamental alias"));
   }
 
+  #[test]
+  fn every_supported_fundamental_name_can_be_generated() {
+    let opts = CodegenOptions {
+      fundamental_aliases: true,
+      ..CodegenOptions::default()
+    };
+    for (ident, target) in FUNDAMENTAL_TYPES {
+      let input = format!("record = {{ field: {} }}", ident);
+      let cddl = cddl_from_str(&input, true).unwrap();
+      let generated = generate_all_types(&cddl, &input, &opts).unwrap();
+      assert!(
+        generated.contains(&format!("pub type {} = {};", to_pascal_case(ident), target)),
+        "missing alias for {ident}: {generated}"
+      );
+    }
+  }
+
+  #[test]
+  fn custom_types_cannot_be_silently_replaced_by_fundamental_aliases() {
+    let input = "record = { hash: uint }";
+    let cddl = cddl_from_str(input, true).unwrap();
+    let mut opts = CodegenOptions {
+      fundamental_aliases: true,
+      ..CodegenOptions::default()
+    };
+    opts
+      .substitutions
+      .insert("record.hash".into(), "Bstr".into());
+    let error = generate_all_types(&cddl, input, &opts).unwrap_err();
+    assert!(error.to_string().contains("use a qualified path"));
+    opts
+      .substitutions
+      .insert("record.hash".into(), "crate::Bstr".into());
+    let generated = generate_all_types(&cddl, input, &opts).unwrap();
+    assert!(generated.contains("pub hash: crate::Bstr,"));
+    assert!(!generated.contains("pub type Bstr"));
+  }
+
   fn gen(input: &str) -> String {
     let cddl = cddl_from_str(input, true).unwrap();
     generate_all_types(&cddl, input, &CodegenOptions::default()).unwrap()
@@ -2484,6 +2552,22 @@ mod tests {
     let cddl = cddl_from_str(input, true).unwrap();
     let error = generate_all_types(&cddl, input, &CodegenOptions::default()).unwrap_err();
     assert!(error.to_string().contains("cyclic type alias"));
+  }
+
+  #[test]
+  fn single_type_checks_only_reachable_alias_cycles() {
+    let input = "first = [* second]\nsecond = first\nrecord = { n: uint }\nbroken = { n: first }";
+    let cddl = cddl_from_str(input, true).unwrap();
+    let opts = CodegenOptions::default();
+    assert!(generate_single_type(&cddl, "Record", None, input, &opts).is_ok());
+    assert!(matches!(
+      generate_single_type(&cddl, "Broken", None, input, &opts),
+      Err(CodegenError::AliasCycle(_))
+    ));
+    assert!(matches!(
+      generate_all_types(&cddl, input, &opts),
+      Err(CodegenError::AliasCycle(_))
+    ));
   }
 
   #[test]

@@ -1,0 +1,6 @@
+digest = bstr
+created = tdate
+tuple-record = {
+  nested: [[digest, uint], created],
+  pairs: [* [digest, uint]]
+}

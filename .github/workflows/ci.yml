@@ -39,6 +39,9 @@ jobs:
         run: |
           cargo +${{ matrix.rust_toolchain }} check --locked --all --bins --examples --tests
 
+      - name: Check standalone derive consumer
+        run: cargo +${{ matrix.rust_toolchain }} check --locked --tests --manifest-path cddl-derive/tests/consumer/Cargo.toml
+
       - name: Install thumbv7em-none-eabihf target
         run: rustup target add thumbv7em-none-eabihf --toolchain ${{ matrix.rust_toolchain }}
 
@@ -89,6 +92,9 @@ jobs:
       - name: cargo +${{ matrix.rust_toolchain }} test ${{ matrix.os }}
         run: |
           cargo +${{ matrix.rust_toolchain }} test --all -- --nocapture
+
+      - name: Test standalone derive consumer
+        run: cargo +${{ matrix.rust_toolchain }} test --locked --manifest-path cddl-derive/tests/consumer/Cargo.toml
 
   wasm-test-suite:
     name: wasm test suite
