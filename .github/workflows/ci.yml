@@ -69,6 +69,10 @@ jobs:
         run: |
           cargo +${{ matrix.rust_toolchain }} check -p cddl --lib --target wasm32-unknown-unknown
 
+      - name: Check compilation for wasm target (modules)
+        run: |
+          cargo +${{ matrix.rust_toolchain }} check -p cddl --lib --target wasm32-unknown-unknown --features modules
+
   test-suite:
     strategy:
       matrix:

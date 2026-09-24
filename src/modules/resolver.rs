@@ -231,7 +231,7 @@ fn resolve(
 
               // §2.6: importing a name that was written without the namespace
               // prefix also defines an unprefixed alias for it.
-              if resolved != *written && !emitted.contains(written) {
+              if resolved != *written && emitted.insert(written.clone()) {
                 aliases.push(format!("{} = {}", written, resolved));
               }
 

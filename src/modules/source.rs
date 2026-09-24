@@ -96,10 +96,10 @@ impl FsModuleSource {
   }
 
   /// Build a source from `CDDL_INCLUDE_PATH`, falling back to
-  /// [`DEFAULT_INCLUDE_PATH`].
+  /// [`DEFAULT_INCLUDE_PATH`] only if the variable is unset or unreadable.
   pub fn from_env() -> Self {
     match std::env::var(INCLUDE_PATH_VAR) {
-      Ok(path) if !path.is_empty() => Self::from_include_path(&path),
+      Ok(path) => Self::from_include_path(&path),
       _ => Self::from_include_path(DEFAULT_INCLUDE_PATH),
     }
   }
@@ -113,9 +113,18 @@ impl FsModuleSource {
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 impl ModuleSource for FsModuleSource {
   fn load(&self, name: &str) -> Result<Option<String>, ModuleError> {
+    let mut components = std::path::Path::new(name).components();
+    if !matches!(
+      (components.next(), components.next()),
+      (Some(std::path::Component::Normal(component)), None) if component == name
+    ) {
+      return Err(ModuleError::ModuleUnreadable {
+        name: name.to_string(),
+        message: "module name must be exactly one normal path component".to_string(),
+      });
+    }
+
     for directory in &self.directories {
-      // A module name matches the `filename` production, which admits no path
-      // separator, so this can only ever name a direct child.
       for candidate in [
         directory.join(name),
         directory.join(format!("{}.cddl", name)),
@@ -162,5 +171,47 @@ mod tests {
     let source = FsModuleSource::from_include_path(DEFAULT_INCLUDE_PATH);
     assert_eq!(source.directories().len(), 1);
     assert_eq!(source.load("rfc9052").unwrap(), None);
+    assert!(FsModuleSource::from_include_path("")
+      .directories()
+      .is_empty());
+  }
+
+  #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
+  #[test]
+  fn filesystem_source_rejects_path_components() {
+    let source = FsModuleSource::default();
+    for name in [
+      "",
+      ".",
+      "..",
+      "../secret",
+      "/secret",
+      "sub/module",
+      "./module",
+      "module/",
+      "module/.",
+    ] {
+      assert!(
+        matches!(source.load(name), Err(ModuleError::ModuleUnreadable { .. })),
+        "expected {:?} to be rejected",
+        name
+      );
+    }
+    for name in ["module", "module.cddl", "module-name"] {
+      assert_eq!(source.load(name).unwrap(), None);
+    }
+    #[cfg(windows)]
+    for name in [
+      r"..\secret",
+      r"C:\secret",
+      r"C:secret",
+      r"\secret",
+      r"\\server\share\secret",
+    ] {
+      assert!(matches!(
+        source.load(name),
+        Err(ModuleError::ModuleUnreadable { .. })
+      ));
+    }
   }
 }

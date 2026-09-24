@@ -168,7 +168,7 @@ document remains valid basic CDDL for tools that do not understand them.
 | `;# import <module>` | Bring in the rules of `<module>` this document actually references, transitively. |
 | `;# import <module> as <ns>` | As above, with each imported rule prefixed `<ns>.`. Prelude names are never prefixed. |
 | `;# include <module>` | Bring in every rule of `<module>`. |
-| `;# include <names> from <module>` | Bring in exactly the rules named, plus whatever they reference. |
+| `;# include <names> from <module>` | Bring in exactly the rules named, without their dependencies. |
 | `;# import <name> from <module> as <ns>` | Bring in `<name>` under the `<ns>.` prefix, and emit an alias so the unprefixed name resolves too. |
 | `;# include * from <module>` | `*` selects every rule of the module. |
 

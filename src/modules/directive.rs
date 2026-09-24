@@ -91,11 +91,11 @@ fn err(line: usize, message: &str) -> ModuleError {
 }
 
 fn parse_line(rest: &str, line: usize) -> Result<Directive, ModuleError> {
-  if !rest.starts_with([' ', '\t']) {
-    return Err(err(line, "expected whitespace after \";#\""));
+  if !rest.starts_with(' ') {
+    return Err(err(line, "expected an ASCII space after \";#\""));
   }
 
-  let tokens: Vec<&str> = rest.split_whitespace().collect();
+  let tokens: Vec<&str> = rest.split(' ').filter(|token| !token.is_empty()).collect();
 
   let kind = match tokens.first() {
     Some(&"import") => DirectiveKind::Import,
@@ -118,29 +118,28 @@ fn parse_line(rest: &str, line: usize) -> Result<Directive, ModuleError> {
   // which keeps `from` usable as an ordinary rule name.
   let from_at = tail
     .iter()
-    .position(|t| *t == "from")
-    .filter(|position| *position >= 1);
+    .enumerate()
+    .skip(1)
+    .find(|(position, token)| {
+      **token == "from" && matches!(&tail[position + 1..], [_] | [_, "as", _])
+    })
+    .map(|(position, _)| position);
 
   let (names, remainder) = match from_at {
     Some(position) => {
       let mut selectors = Vec::new();
 
       for token in &tail[..position] {
-        for name in token.split(',') {
-          if name.is_empty() {
-            continue;
-          }
-
-          if name == "*" {
-            selectors.push(NameSelector::All);
-          } else if is_id(name) {
-            selectors.push(NameSelector::Name(name.to_string()));
-          } else {
-            return Err(ModuleError::Directive {
-              line,
-              message: format!("\"{}\" is not a valid rule name", name),
-            });
-          }
+        let name = token.strip_suffix(',').unwrap_or(token);
+        if name == "*" {
+          selectors.push(NameSelector::All);
+        } else if is_id(name) {
+          selectors.push(NameSelector::Name(name.to_string()));
+        } else {
+          return Err(ModuleError::Directive {
+            line,
+            message: format!("\"{}\" is not a valid rule name", name),
+          });
         }
       }
 
@@ -281,6 +280,48 @@ mod tests {
   }
 
   #[test]
+  fn from_can_be_a_selector_filename_or_alias() {
+    for input in [
+      ";# include from from module\n",
+      ";# include from from from\n",
+      ";# include from from module as from\n",
+    ] {
+      assert_eq!(
+        one(input).names,
+        Some(vec![NameSelector::Name("from".to_string())])
+      );
+    }
+    assert_eq!(one(";# import from\n").filename, "from");
+    assert_eq!(
+      one(";# import module as from\n").alias.as_deref(),
+      Some("from")
+    );
+    assert_eq!(
+      one(";# include label from from module\n").names,
+      Some(vec![
+        NameSelector::Name("label".to_string()),
+        NameSelector::Name("from".to_string())
+      ])
+    );
+  }
+
+  #[test]
+  fn selectors_use_spaces_with_optional_trailing_commas() {
+    for input in [
+      ";# include label values from module\n",
+      ";#  include  label,  values,  from  module\r\n",
+    ] {
+      assert_eq!(
+        one(input).names,
+        Some(vec![
+          NameSelector::Name("label".to_string()),
+          NameSelector::Name("values".to_string())
+        ])
+      );
+    }
+  }
+
+  #[test]
   fn ordinary_comments_are_not_directives() {
     assert!(parse_directives("; import rfc9052\na = int\n")
       .unwrap()
@@ -297,6 +338,14 @@ mod tests {
       ";# import rfc9052 as cose extra\n",
       ";# import ../etc/passwd\n",
       ";# include from rfc9052\n",
+      ";#\timport rfc9052\n",
+      ";# import\trfc9052\n",
+      ";# import rfc9052\t\n",
+      ";# import\u{a0}rfc9052\n",
+      ";# include label,values from rfc9052\n",
+      ";# include label,, values from rfc9052\n",
+      ";# include , label from rfc9052\n",
+      ";# include label , values from rfc9052\n",
     ] {
       assert!(
         matches!(parse_directives(input), Err(ModuleError::Directive { .. })),

@@ -28,8 +28,10 @@ pub(crate) enum IdentRole {
   Reference,
   /// The name of a control operator, e.g. the `size` in `.size`.
   ControlName,
-  /// A generic parameter in a rule head, which is local to that rule.
+  /// A generic parameter declaration or use, which is local to that rule.
   GenericParam,
+  /// A literal bareword member key before `:`, not a rule reference.
+  BarewordKey,
 }
 
 /// A single identifier occurrence, as a byte range into the scanned source.
@@ -73,18 +75,49 @@ fn is_ident_continue(b: u8) -> bool {
   is_ident_start(b) || b.is_ascii_digit()
 }
 
+fn skip_spacing(bytes: &[u8], mut i: usize) -> usize {
+  loop {
+    match bytes.get(i) {
+      Some(b' ' | b'\t' | b'\r' | b'\n') => i += 1,
+      Some(b';') => {
+        while i < bytes.len() && bytes[i] != b'\n' {
+          i += 1;
+        }
+      }
+      _ => return i,
+    }
+  }
+}
+
+fn ident_end(bytes: &[u8], mut i: usize) -> usize {
+  while i < bytes.len() {
+    let c = bytes[i];
+    if is_ident_continue(c) || c == b'-' {
+      i += 1;
+    } else if c == b'.'
+      && i + 1 < bytes.len()
+      && (is_ident_continue(bytes[i + 1]) || bytes[i + 1] == b'-')
+    {
+      i += 2;
+    } else {
+      break;
+    }
+  }
+  i
+}
+
 /// If the `<` at `open` begins a generic *parameter* list — that is, if the
 /// group it opens is followed by an assignment operator — return the byte
 /// offset of its closing `>`.
 fn generic_params_end(bytes: &[u8], open: usize) -> Option<usize> {
-  let mut i = open + 1;
+  let mut i = skip_spacing(bytes, open + 1);
   while i < bytes.len() && bytes[i] != b'>' {
     // Parameters are plain identifiers separated by commas and whitespace;
     // anything structural means this is not a parameter list.
-    if matches!(bytes[i], b'(' | b'[' | b'{' | b'<' | b'"' | b'\'' | b';') {
+    if matches!(bytes[i], b'(' | b'[' | b'{' | b'<' | b'"' | b'\'') {
       return None;
     }
-    i += 1;
+    i = skip_spacing(bytes, i + 1);
   }
 
   if i >= bytes.len() {
@@ -92,10 +125,7 @@ fn generic_params_end(bytes: &[u8], open: usize) -> Option<usize> {
   }
 
   let close = i;
-  let mut j = close + 1;
-  while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\r' | b'\n') {
-    j += 1;
-  }
+  let mut j = skip_spacing(bytes, close + 1);
 
   while j < bytes.len() && bytes[j] == b'/' {
     j += 1;
@@ -213,13 +243,11 @@ pub(crate) fn scan(src: &str) -> Scan {
       b'<' if depth == 0 => {
         match generic_params_end(bytes, i) {
           Some(close) => {
-            i += 1;
+            i = skip_spacing(bytes, i + 1);
             while i < close {
               if is_ident_start(bytes[i]) {
                 let start = i;
-                while i < close && (is_ident_continue(bytes[i]) || bytes[i] == b'-') {
-                  i += 1;
-                }
+                i = ident_end(bytes, i);
                 idents.push(IdentToken {
                   start,
                   end: i,
@@ -229,6 +257,7 @@ pub(crate) fn scan(src: &str) -> Scan {
               } else {
                 i += 1;
               }
+              i = skip_spacing(bytes, i);
             }
             i = close + 1;
           }
@@ -250,26 +279,16 @@ pub(crate) fn scan(src: &str) -> Scan {
 
       _ if is_ident_start(b) => {
         let start = i;
-        while i < bytes.len() {
-          let c = bytes[i];
-          if is_ident_continue(c) || c == b'-' {
-            i += 1;
-          } else if c == b'.'
-            && i + 1 < bytes.len()
-            && (is_ident_continue(bytes[i + 1]) || bytes[i + 1] == b'-')
-          {
-            // A namespaced name such as `cose.label`: the dot binds tightly to
-            // the surrounding identifier characters.
-            i += 2;
-          } else {
-            break;
-          }
-        }
+        i = ident_end(bytes, i);
         idents.push(IdentToken {
           start,
           end: i,
           text: src[start..i].to_string(),
-          role: IdentRole::Reference,
+          role: if bytes.get(skip_spacing(bytes, i)) == Some(&b':') {
+            IdentRole::BarewordKey
+          } else {
+            IdentRole::Reference
+          },
         });
         prev_was_ident_end = true;
       }
@@ -306,6 +325,18 @@ pub(crate) fn scan(src: &str) -> Scan {
 
   let mut rules: Vec<RuleSpan> = Vec::new();
   for (n, idx) in head_indices.iter().enumerate() {
+    let next = head_indices.get(n + 1).copied().unwrap_or(idents.len());
+    let params: Vec<String> = idents[*idx..next]
+      .iter()
+      .filter(|ident| ident.role == IdentRole::GenericParam)
+      .map(|ident| ident.text.clone())
+      .collect();
+    for ident in &mut idents[*idx..next] {
+      if ident.role == IdentRole::Reference && params.contains(&ident.text) {
+        ident.role = IdentRole::GenericParam;
+      }
+    }
+
     let start = idents[*idx].start;
     let end = match head_indices.get(n + 1) {
       Some(next) => idents[*next].start,
@@ -375,7 +406,50 @@ mod tests {
       .idents
       .iter()
       .filter(|i| i.text == "a")
-      .any(|i| i.role == IdentRole::GenericParam));
+      .all(|i| i.role == IdentRole::GenericParam));
+  }
+
+  #[test]
+  fn generic_parameters_are_scoped_to_each_rule() {
+    let scan =
+      scan("a = int\nmessages<a, ; parameter comment\n b.c> = [a, b.c]\nother = [a, b.c]\n");
+    let roles: Vec<_> = scan
+      .idents
+      .iter()
+      .filter(|i| i.text == "a" || i.text == "b.c")
+      .map(|i| i.role)
+      .collect();
+    assert_eq!(
+      roles,
+      [
+        IdentRole::RuleHead,
+        IdentRole::GenericParam,
+        IdentRole::GenericParam,
+        IdentRole::GenericParam,
+        IdentRole::GenericParam,
+        IdentRole::Reference,
+        IdentRole::Reference,
+      ]
+    );
+  }
+
+  #[test]
+  fn bareword_keys_are_not_references() {
+    let scan = scan("m = {label: tstr, ? label ; comment\n : int, * label => tstr}\n");
+    let roles: Vec<_> = scan
+      .idents
+      .iter()
+      .filter(|i| i.text == "label")
+      .map(|i| i.role)
+      .collect();
+    assert_eq!(
+      roles,
+      [
+        IdentRole::BarewordKey,
+        IdentRole::BarewordKey,
+        IdentRole::Reference
+      ]
+    );
   }
 
   #[test]

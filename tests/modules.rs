@@ -111,6 +111,76 @@ fn import_as_namespaces_module_rules_but_not_the_prelude() {
 }
 
 #[test]
+fn generic_parameters_shadow_rules_only_within_their_own_rule() {
+  let mut source = MemoryModuleSource::new();
+  source.insert(
+    "generic",
+    "a = int\nb = bool\nmessages<a, b> = [a, b]\nother = a\n",
+  );
+  for (directive, prefix) in [("import generic", ""), ("import generic as ns", "ns.")] {
+    let output = resolve_modules(
+      &format!("start = {}messages<tstr, uint>\n;# {}\n", prefix, directive),
+      &source,
+      &ResolveOptions::default(),
+    )
+    .unwrap();
+    assert!(output.contains(&format!("{}messages<a, b> = [a, b]", prefix)));
+    assert!(!output.contains("a = int"));
+    assert!(!output.contains("b = bool"));
+    assert_parses(&output);
+  }
+
+  let output = resolve_modules(
+    "start = [ns.messages<tstr, uint>, ns.other]\n;# import generic as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(output.contains("ns.other = ns.a"));
+  assert!(output.contains("ns.a = int"));
+  assert!(!output.contains("ns.b"));
+  assert_parses(&output);
+}
+
+#[test]
+fn bareword_keys_are_preserved_and_do_not_add_dependencies() {
+  let mut source = MemoryModuleSource::new();
+  source.insert(
+    "keys",
+    "label = int\nrecord = {label: tstr}\ncomputed = {* label => tstr}\n",
+  );
+  let output = resolve_modules(
+    "start = ns.record\n;# import keys as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert_eq!(defined_order(&output), ["start", "ns.record"]);
+  assert!(output.contains("ns.record = {label: tstr}"));
+  assert_parses(&output);
+
+  let output = resolve_modules(
+    "start = [ns.record, ns.computed]\n;# import keys as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(output.contains("ns.record = {label: tstr}"));
+  assert!(output.contains("ns.computed = {* ns.label => tstr}"));
+  assert!(output.contains("ns.label = int"));
+  assert_parses(&output);
+
+  let output = resolve_modules(
+    "start<a> = {label: a}\n;# import keys\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert_eq!(output, "start<a> = {label: a}\n");
+  assert_parses(&output);
+}
+
+#[test]
 fn include_from_takes_exactly_the_rules_named() {
   let output = resolve("mydata = {* label => values}\n;# include label, values from rfc9052\n");
 
@@ -173,6 +243,90 @@ fn import_from_without_the_prefix_also_defines_an_alias() {
     ]
   );
   assert_parses(&output);
+}
+
+#[test]
+fn import_aliases_are_emitted_only_once() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("module", "item = int\n");
+  for directives in [
+    ";# import item item from module as ns\n",
+    ";# import item from module as ns\n;# import item from module as ns\n",
+    ";# import item from module as ns\n;# include module\n",
+    ";# import item from module as ns\n;# import item from module as other\n",
+  ] {
+    let output = resolve_modules(
+      &format!("start = item\n{}", directives),
+      &source,
+      &ResolveOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(
+      defined_order(&output)
+        .iter()
+        .filter(|n| *n == "item")
+        .count(),
+      1
+    );
+    assert!(output.contains("item = ns.item"));
+    assert_parses(&output);
+  }
+}
+
+#[cfg(all(feature = "json", feature = "cbor", feature = "csv-validate"))]
+#[test]
+fn filesystem_imports_validate_names_and_respect_empty_environment() {
+  use cddl::modules::{FsModuleSource, ModuleSource, INCLUDE_PATH_VAR};
+  use std::{fs, process::Command};
+
+  let directory = std::env::temp_dir().join(format!("cddl-modules-{}", std::process::id()));
+  fs::create_dir(&directory).unwrap();
+  fs::create_dir(directory.join("modules")).unwrap();
+  fs::write(directory.join("module.cddl"), "root = int\n").unwrap();
+
+  let source = FsModuleSource::from_include_path(directory.to_str().unwrap());
+  assert_eq!(
+    source.load("module").unwrap().as_deref(),
+    Some("root = int\n")
+  );
+  assert_eq!(
+    source.load("module.cddl").unwrap().as_deref(),
+    Some("root = int\n")
+  );
+  let restricted = FsModuleSource::from_include_path(directory.join("modules").to_str().unwrap());
+  for name in [
+    "../module".to_string(),
+    directory.join("module.cddl").to_str().unwrap().to_string(),
+  ] {
+    let error = resolve_modules(
+      "",
+      &restricted,
+      &ResolveOptions {
+        start_rule: Some("ns.root".to_string()),
+        command_line_imports: vec![("ns".to_string(), name)],
+      },
+    )
+    .unwrap_err();
+    assert!(matches!(error, ModuleError::ModuleUnreadable { .. }));
+  }
+
+  let mut command = Command::new(env!("CARGO_BIN_EXE_cddl"));
+  command
+    .current_dir(&directory)
+    .args(["resolve-modules", "-ins=module", "-sns.root"])
+    .env_remove(INCLUDE_PATH_VAR);
+  let unset = command.output().unwrap();
+  assert!(unset.status.success(), "{:?}", unset);
+  let empty = command.env(INCLUDE_PATH_VAR, "").output().unwrap();
+  assert!(!empty.status.success(), "{:?}", empty);
+  let unsafe_name = Command::new(env!("CARGO_BIN_EXE_cddl"))
+    .current_dir(directory.join("modules"))
+    .args(["resolve-modules", "-ins=../module", "-sns.root"])
+    .env(INCLUDE_PATH_VAR, ".")
+    .output()
+    .unwrap();
+  assert!(!unsafe_name.status.success(), "{:?}", unsafe_name);
+  fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
