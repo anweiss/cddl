@@ -2,7 +2,7 @@
 #![cfg(not(feature = "lsp"))]
 
 use crate::{
-  ast::{GroupEntry, Identifier, MemberKey, Operator, RangeCtlOp, Rule, Type2, CDDL},
+  ast::{GroupEntry, Identifier, MemberKey, Operator, RangeCtlOp, Rule, Type2, TypeChoice, CDDL},
   token::ControlOperator,
 };
 
@@ -20,17 +20,45 @@ pub fn string_literals_from_ident<'a>(
   ident: &Identifier,
 ) -> Vec<&'a Type2<'a>> {
   let mut literals = Vec::new();
+  collect_string_literals_from_ident(cddl, ident, &mut Vec::new(), &mut literals);
+  literals
+}
+
+fn collect_string_literals_from_ident<'a>(
+  cddl: &'a CDDL<'a>,
+  ident: &Identifier,
+  visited: &mut Vec<&'a str>,
+  literals: &mut Vec<&'a Type2<'a>>,
+) {
+  // The cycle guard is per resolution, not per rule entry: `/=`
+  // choice-extension siblings share the rule name and must all contribute.
+  if visited.contains(&ident.ident) {
+    return;
+  }
+  let mut pushed = false;
   for r in cddl.rules.iter() {
     if let Rule::Type { rule, .. } = r {
       if rule.name == *ident {
+        if !pushed {
+          visited.push(rule.name.ident);
+          pushed = true;
+        }
         for tc in rule.value.type_choices.iter() {
+          // A choice carrying a range/control operator denotes a computed
+          // value, not the literal on its left-hand side; contributing that
+          // operand alone would silently collapse the computation. Skip the
+          // choice so resolution fails closed until composed operands are
+          // computed here.
+          if tc.type1.operator.is_some() {
+            continue;
+          }
           match &tc.type1.type2 {
             t @ Type2::TextValue { .. }
             | t @ Type2::UTF8ByteString { .. }
             | t @ Type2::B16ByteString { .. }
             | t @ Type2::B64ByteString { .. } => literals.push(t),
             Type2::Typename { ident, .. } => {
-              literals.append(&mut string_literals_from_ident(cddl, ident))
+              collect_string_literals_from_ident(cddl, ident, visited, literals)
             }
             _ => continue,
           }
@@ -38,8 +66,6 @@ pub fn string_literals_from_ident<'a>(
       }
     }
   }
-
-  literals
 }
 
 /// Retrieve all numeric values from a given rule identifier. Used for
@@ -65,6 +91,40 @@ pub fn numeric_values_from_ident<'a>(cddl: &'a CDDL<'a>, ident: &Identifier) -> 
   }
 
   literals
+}
+
+#[cfg(feature = "additional-controls")]
+#[derive(Clone, Copy)]
+enum ByteStringKind {
+  Utf8,
+  B16,
+  B64,
+}
+
+#[cfg(feature = "additional-controls")]
+fn concatenate_byte_literals<'a>(
+  target: &[u8],
+  controller: &[u8],
+  is_dedent: bool,
+  kind: ByteStringKind,
+) -> Type2<'a> {
+  let target = if is_dedent {
+    dedent_bytes(target)
+  } else {
+    target.to_vec()
+  };
+  let controller = if is_dedent {
+    dedent_bytes(controller)
+  } else {
+    controller.to_vec()
+  };
+  let value = [target, controller].concat();
+
+  match kind {
+    ByteStringKind::Utf8 => ByteValue::UTF8(value.into()).into(),
+    ByteStringKind::B16 => ByteValue::B16(value.into()).into(),
+    ByteStringKind::B64 => ByteValue::B64(value.into()).into(),
+  }
 }
 
 #[cfg(feature = "additional-controls")]
@@ -113,8 +173,6 @@ pub fn cat_operation<'a>(
         value: controller, ..
       } => match std::str::from_utf8(controller) {
         Ok(controller) => {
-          let controller = controller.trim_start_matches('\'').trim_end_matches('\'');
-
           if is_dedent {
             literals.push(format!("{}{}", dedent_str(value), dedent_str(controller)).into())
           } else {
@@ -126,39 +184,28 @@ pub fn cat_operation<'a>(
       // "testing" .cat h'313233'
       Type2::B16ByteString {
         value: controller, ..
-      } => match base16::decode(controller) {
-        Ok(controller) => match String::from_utf8(controller) {
-          Ok(controller) => {
-            if is_dedent {
-              literals.push(format!("{}{}", dedent_str(value), dedent_str(&controller)).into())
-            } else {
-              literals.push(format!("{}{}", value, controller).into())
-            }
+      } => match std::str::from_utf8(controller) {
+        Ok(controller) => {
+          if is_dedent {
+            literals.push(format!("{}{}", dedent_str(value), dedent_str(controller)).into())
+          } else {
+            literals.push(format!("{}{}", value, controller).into())
           }
-          Err(e) => return Err(format!("error decoding utf-8: {}", e)),
-        },
-        Err(e) => return Err(format!("error decoding base16 byte string literal: {}", e)),
+        }
+        Err(e) => return Err(format!("error decoding utf-8: {}", e)),
       },
       // "testing" .cat b64'MTIz'
       Type2::B64ByteString {
         value: controller, ..
-      } => match data_encoding::BASE64URL.decode(controller) {
-        Ok(controller) => match String::from_utf8(controller) {
-          Ok(controller) => {
-            if is_dedent {
-              literals.push(format!("{}{}", dedent_str(value), dedent_str(&controller)).into())
-            } else {
-              literals.push(format!("{}{}", value, controller).into())
-            }
+      } => match std::str::from_utf8(controller) {
+        Ok(controller) => {
+          if is_dedent {
+            literals.push(format!("{}{}", dedent_str(value), dedent_str(controller)).into())
+          } else {
+            literals.push(format!("{}{}", value, controller).into())
           }
-          Err(e) => return Err(format!("error decoding utf-8: {}", e)),
-        },
-        Err(e) => {
-          return Err(format!(
-            "error decoding base64 encoded byte string literal: {}",
-            e
-          ))
         }
+        Err(e) => return Err(format!("error decoding utf-8: {}", e)),
       },
       // "testing" .cat ( "123" / "1234" )
       Type2::ParenthesizedType { pt: controller, .. } => {
@@ -203,128 +250,80 @@ pub fn cat_operation<'a>(
 
       return Err(format!("invalid target type in {} control operator", ctrl));
     }
-    Type2::UTF8ByteString { value, .. } => match std::str::from_utf8(value) {
-      Ok(value) => match controller {
-        // 'testing' .cat "123"
-        Type2::TextValue {
-          value: controller, ..
-        } => {
-          let value = value.trim_start_matches('\'').trim_end_matches('\'');
-
-          if is_dedent {
-            literals.push(format!("{}{}", dedent_str(value), dedent_str(controller)).into())
-          } else {
-            literals.push(format!("{}{}", value, controller).into())
+    Type2::UTF8ByteString { value, .. } => match controller {
+      // 'testing' .cat "123"
+      Type2::TextValue {
+        value: controller, ..
+      } => literals.push(concatenate_byte_literals(
+        value,
+        controller.as_bytes(),
+        is_dedent,
+        ByteStringKind::Utf8,
+      )),
+      Type2::Typename { ident, .. } => {
+        let sl = string_literals_from_ident(cddl, ident);
+        if sl.is_empty() {
+          return Err(format!(
+            "controller of type rule {} is not a string literal",
+            ident
+          ));
+        }
+        for controller in sl.iter() {
+          literals.append(&mut cat_operation(cddl, target, controller, is_dedent)?)
+        }
+      }
+      // 'testing' .cat '123
+      Type2::UTF8ByteString {
+        value: controller, ..
+      } => literals.push(concatenate_byte_literals(
+        value,
+        controller,
+        is_dedent,
+        ByteStringKind::Utf8,
+      )),
+      // 'testing' .cat h'313233'
+      Type2::B16ByteString {
+        value: controller, ..
+      } => literals.push(concatenate_byte_literals(
+        value,
+        controller,
+        is_dedent,
+        ByteStringKind::Utf8,
+      )),
+      // 'testing' .cat b64'MTIz'
+      Type2::B64ByteString {
+        value: controller, ..
+      } => literals.push(concatenate_byte_literals(
+        value,
+        controller,
+        is_dedent,
+        ByteStringKind::Utf8,
+      )),
+      // 'testing' .cat ( "123" / "1234" )
+      Type2::ParenthesizedType { pt: controller, .. } => {
+        for controller in controller.type_choices.iter() {
+          if controller.type1.operator.is_none() {
+            literals.append(&mut cat_operation(
+              cddl,
+              target,
+              &controller.type1.type2,
+              is_dedent,
+            )?);
           }
         }
-        Type2::Typename { ident, .. } => {
-          let sl = string_literals_from_ident(cddl, ident);
-          if sl.is_empty() {
-            return Err(format!(
-              "controller of type rule {} is not a string literal",
-              ident
-            ));
-          }
-          for controller in sl.iter() {
-            literals.append(&mut cat_operation(cddl, target, controller, is_dedent)?)
-          }
-        }
-        // 'testing' .cat '123
-        Type2::UTF8ByteString {
-          value: controller, ..
-        } => match std::str::from_utf8(controller) {
-          Ok(controller) => {
-            let value = value.trim_start_matches('\'').trim_end_matches('\'');
-            let controller = controller.trim_start_matches('\'').trim_end_matches('\'');
-
-            if is_dedent {
-              literals.push(format!("{}{}", dedent_str(value), dedent_str(controller)).into())
-            } else {
-              literals.push(format!("{}{}", value, controller).into())
-            }
-          }
-          Err(e) => return Err(format!("error parsing byte string: {}", e)),
-        },
-        // 'testing' .cat h'313233'
-        Type2::B16ByteString {
-          value: controller, ..
-        } => match base16::decode(controller) {
-          Ok(controller) => match String::from_utf8(controller) {
-            Ok(controller) => {
-              let value = value.trim_start_matches('\'').trim_end_matches('\'');
-
-              if is_dedent {
-                literals.push(format!("{}{}", dedent_str(value), dedent_str(&controller)).into())
-              } else {
-                literals.push(format!("{}{}", value, controller).into())
-              }
-            }
-            Err(e) => return Err(format!("error decoding utf-8: {}", e)),
-          },
-          Err(e) => return Err(format!("error decoding base16 byte string literal: {}", e)),
-        },
-        // 'testing' .cat b64'MTIz'
-        Type2::B64ByteString {
-          value: controller, ..
-        } => match data_encoding::BASE64URL.decode(controller) {
-          Ok(controller) => match String::from_utf8(controller) {
-            Ok(controller) => {
-              let value = value.trim_start_matches('\'').trim_end_matches('\'');
-
-              if is_dedent {
-                literals.push(format!("{}{}", dedent_str(value), dedent_str(&controller)).into())
-              } else {
-                literals.push(format!("{}{}", value, controller).into())
-              }
-            }
-            Err(e) => return Err(format!("error decoding utf-8: {}", e)),
-          },
-          Err(e) => {
-            return Err(format!(
-              "error decoding base64 encoded byte string literal: {}",
-              e
-            ))
-          }
-        },
-        // 'testing' .cat ( "123" / "1234" )
-        Type2::ParenthesizedType { pt: controller, .. } => {
-          for controller in controller.type_choices.iter() {
-            if controller.type1.operator.is_none() {
-              literals.append(&mut cat_operation(
-                cddl,
-                target,
-                &controller.type1.type2,
-                is_dedent,
-              )?);
-            }
-          }
-        }
-        _ => return Err(format!("invalid controller used for {} operation", ctrl)),
-      },
-      Err(e) => return Err(format!("error parsing byte string: {}", e)),
+      }
+      _ => return Err(format!("invalid controller used for {} operation", ctrl)),
     },
     Type2::B16ByteString { value, .. } => match controller {
       // h'74657374696E67' .cat "123"
       Type2::TextValue {
         value: controller, ..
-      } => {
-        let controller = if is_dedent {
-          base16::encode_lower(dedent_str(controller).as_bytes())
-        } else {
-          base16::encode_lower(controller.as_bytes())
-        };
-
-        let concat = if is_dedent {
-          [&dedent_bytes(value, false)?[..], controller.as_bytes()].concat()
-        } else {
-          [&value[..], controller.as_bytes()].concat()
-        };
-        match base16::decode(&concat) {
-          // Ignore the decoded value
-          Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
-          Err(e) => return Err(format!("concatenated value is invalid base16: {}", e)),
-        }
-      }
+      } => literals.push(concatenate_byte_literals(
+        value,
+        controller.as_bytes(),
+        is_dedent,
+        ByteStringKind::B16,
+      )),
       // h'74657374696E67' .cat b
       Type2::Typename { ident, .. } => {
         let sl = string_literals_from_ident(cddl, ident);
@@ -341,67 +340,30 @@ pub fn cat_operation<'a>(
       // h'74657374696E67' .cat '123'
       Type2::UTF8ByteString {
         value: controller, ..
-      } => {
-        let controller = if is_dedent {
-          base16::encode_lower(&dedent_bytes(controller, true)?)
-        } else {
-          base16::encode_lower(&controller[..])
-        };
-
-        let concat = if is_dedent {
-          [&dedent_bytes(value, false)?[..], controller.as_bytes()].concat()
-        } else {
-          [&value[..], controller.as_bytes()].concat()
-        };
-
-        match base16::decode(&concat) {
-          // Ignore the decoded value
-          Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
-          Err(e) => return Err(format!("concatenated value is invalid base16: {}", e)),
-        }
-      }
+      } => literals.push(concatenate_byte_literals(
+        value,
+        controller,
+        is_dedent,
+        ByteStringKind::B16,
+      )),
       // h'74657374696E67' .cat h'313233'
       Type2::B16ByteString {
         value: controller, ..
-      } => {
-        let concat = if is_dedent {
-          [
-            &dedent_bytes(value, false)?[..],
-            &dedent_bytes(controller, false)?[..],
-          ]
-          .concat()
-        } else {
-          [&value[..], &controller[..]].concat()
-        };
-        match base16::decode(&concat) {
-          // Ignore the decoded value
-          Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
-          Err(e) => return Err(format!("concatenated value is invalid base16: {}", e)),
-        }
-      }
+      } => literals.push(concatenate_byte_literals(
+        value,
+        controller,
+        is_dedent,
+        ByteStringKind::B16,
+      )),
       // h'74657374696E67' .cat b64'MTIz'
       Type2::B64ByteString {
         value: controller, ..
-      } => match data_encoding::BASE64URL.decode(controller) {
-        Ok(controller) => {
-          let controller = base16::encode_lower(&controller);
-          let concat = if is_dedent {
-            [
-              &dedent_bytes(value, false)?[..],
-              dedent_str(&controller).as_bytes(),
-            ]
-            .concat()
-          } else {
-            [&value[..], controller.as_bytes()].concat()
-          };
-          match base16::decode(&concat) {
-            // Ignore the decoded value
-            Ok(_) => literals.push(ByteValue::B16(concat.into()).into()),
-            Err(e) => return Err(format!("concatenated value is invalid base16: {}", e)),
-          }
-        }
-        Err(e) => return Err(format!("controller is invalid base64: {}", e)),
-      },
+      } => literals.push(concatenate_byte_literals(
+        value,
+        controller,
+        is_dedent,
+        ByteStringKind::B16,
+      )),
       // h'74657374696E67' .cat ( "123" / "1234" )
       Type2::ParenthesizedType { pt: controller, .. } => {
         for controller in controller.type_choices.iter() {
@@ -421,24 +383,12 @@ pub fn cat_operation<'a>(
       // b64'dGVzdGluZw==' .cat "123"
       Type2::TextValue {
         value: controller, ..
-      } => match data_encoding::BASE64URL.decode(value) {
-        Ok(value) => {
-          let concat = if is_dedent {
-            [
-              &dedent_bytes(&value, false)?[..],
-              dedent_str(controller).as_bytes(),
-            ]
-            .concat()
-          } else {
-            [&value[..], controller.as_bytes()].concat()
-          };
-
-          literals.push(
-            ByteValue::B64(data_encoding::BASE64URL.encode(&concat).into_bytes().into()).into(),
-          )
-        }
-        Err(e) => return Err(format!("target is invalid base64: {}", e)),
-      },
+      } => literals.push(concatenate_byte_literals(
+        value,
+        controller.as_bytes(),
+        is_dedent,
+        ByteStringKind::B64,
+      )),
       // b64'dGVzdGluZw==' .cat b
       Type2::Typename { ident, .. } => {
         let sl = string_literals_from_ident(cddl, ident);
@@ -455,70 +405,30 @@ pub fn cat_operation<'a>(
       // b64'dGVzdGluZw==' .cat '123'
       Type2::UTF8ByteString {
         value: controller, ..
-      } => match data_encoding::BASE64URL.decode(value) {
-        Ok(value) => {
-          let concat = if is_dedent {
-            [
-              &dedent_bytes(&value, false)?[..],
-              &dedent_bytes(controller, true)?[..],
-            ]
-            .concat()
-          } else {
-            [&value[..], &controller[..]].concat()
-          };
-
-          literals.push(
-            ByteValue::B64(data_encoding::BASE64URL.encode(&concat).into_bytes().into()).into(),
-          )
-        }
-        Err(e) => return Err(format!("target is invalid base64: {}", e)),
-      },
+      } => literals.push(concatenate_byte_literals(
+        value,
+        controller,
+        is_dedent,
+        ByteStringKind::B64,
+      )),
       // b64'dGVzdGluZw==' .cat h'313233'
       Type2::B16ByteString {
         value: controller, ..
-      } => match data_encoding::BASE64URL.decode(value) {
-        Ok(value) => match base16::decode(controller) {
-          Ok(controller) => {
-            let concat = if is_dedent {
-              [
-                &dedent_bytes(&value, false)?[..],
-                &dedent_bytes(&controller, false)?[..],
-              ]
-              .concat()
-            } else {
-              [&value[..], &controller[..]].concat()
-            };
-            literals.push(
-              ByteValue::B64(data_encoding::BASE64URL.encode(&concat).into_bytes().into()).into(),
-            )
-          }
-          Err(e) => return Err(format!("controller is invalid base16: {}", e)),
-        },
-        Err(e) => return Err(format!("target is invalid base64: {}", e)),
-      },
+      } => literals.push(concatenate_byte_literals(
+        value,
+        controller,
+        is_dedent,
+        ByteStringKind::B64,
+      )),
       // b64'dGVzdGluZw==' .cat b64'MTIz'
       Type2::B64ByteString {
         value: controller, ..
-      } => match data_encoding::BASE64URL.decode(value) {
-        Ok(value) => match data_encoding::BASE64URL.decode(controller) {
-          Ok(controller) => {
-            let concat = if is_dedent {
-              [
-                &dedent_bytes(&value, false)?[..],
-                &dedent_bytes(&controller, false)?[..],
-              ]
-              .concat()
-            } else {
-              [&value[..], &controller[..]].concat()
-            };
-            literals.push(
-              ByteValue::B64(data_encoding::BASE64URL.encode(&concat).into_bytes().into()).into(),
-            )
-          }
-          Err(e) => return Err(format!("controller is invalid base64: {}", e)),
-        },
-        Err(e) => return Err(format!("target is invalid base64: {}", e)),
-      },
+      } => literals.push(concatenate_byte_literals(
+        value,
+        controller,
+        is_dedent,
+        ByteStringKind::B64,
+      )),
       // b64'dGVzdGluZw==' .cat ( "123" / "1234" )
       Type2::ParenthesizedType { pt: controller, .. } => {
         for controller in controller.type_choices.iter() {
@@ -559,33 +469,20 @@ fn dedent_str(source: &str) -> String {
 }
 
 #[cfg(feature = "additional-controls")]
-fn dedent_bytes(source: &[u8], is_utf8_byte_string: bool) -> Result<Vec<u8>, String> {
-  #[cfg(windows)]
-  let line_ending = "\r\n";
-  #[cfg(not(windows))]
-  let line_ending = "\n";
-
-  if is_utf8_byte_string {
-    return Ok(
-      std::str::from_utf8(source)
-        .map_err(|e| e.to_string())?
-        .trim_start_matches('\'')
-        .trim_end_matches('\'')
-        .split(line_ending)
-        .map(|l| l.trim_start())
-        .join(line_ending)
-        .into_bytes(),
-    );
+fn dedent_bytes(source: &[u8]) -> Vec<u8> {
+  let mut dedented = Vec::with_capacity(source.len());
+  for (index, line) in source.split(|byte| *byte == b'\n').enumerate() {
+    if index > 0 {
+      dedented.push(b'\n');
+    }
+    let content = line
+      .iter()
+      .position(|byte| !byte.is_ascii_whitespace())
+      .map(|start| &line[start..])
+      .unwrap_or_default();
+    dedented.extend_from_slice(content);
   }
-
-  Ok(
-    std::str::from_utf8(source)
-      .map_err(|e| e.to_string())?
-      .split(line_ending)
-      .map(|l| l.trim_start())
-      .join(line_ending)
-      .into_bytes(),
-  )
+  dedented
 }
 
 /// Numeric addition of target and controller. The Vec return type is to
@@ -866,12 +763,9 @@ mod tests {
       cat_operation(
         &cddl,
         &Type2::from("foo".to_string()),
-        &Type2::from(indoc!(
-          r#"'
-            bar
-            baz
-          '"#,
-        )),
+        // The byte-string payload holds decoded bytes, without the source
+        // literal's surrounding apostrophes.
+        &Type2::from("\n  bar\n  baz\n"),
         false,
       )?,
       vec![Type2::TextValue {
@@ -916,6 +810,31 @@ mod tests {
         #[cfg(feature = "ast-span")]
         span: Span::default(),
       }]
+    );
+
+    Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn test_cat_preserves_apostrophes_in_decoded_byte_controllers(
+  ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let cddl = cddl_from_str("a = \"x\" .cat 'y'", true)?;
+
+    // Byte-string payloads hold decoded bytes; apostrophes in them are
+    // content, not source quoting.
+    assert_eq!(
+      cat_operation(
+        &cddl,
+        &Type2::from("x".to_string()),
+        &Type2::from("'y'"),
+        false,
+      )?,
+      vec![Type2::TextValue {
+        value: "x'y'".into(),
+        #[cfg(feature = "ast-span")]
+        span: Span::default(),
+      }],
     );
 
     Ok(())
@@ -976,8 +895,20 @@ mod tests {
     };
 
     // "hello" in base64url is "aGVsbG8"
-    assert!(validate_b64u_text(&target, &controller, "aGVsbG8", false)?);
-    assert!(!validate_b64u_text(&target, &controller, "invalid", false)?);
+    assert!(validate_b64u_text(
+      &target,
+      &controller,
+      "aGVsbG8",
+      false,
+      None
+    )?);
+    assert!(!validate_b64u_text(
+      &target,
+      &controller,
+      "invalid",
+      false,
+      None
+    )?);
 
     Ok(())
   }
@@ -1005,31 +936,36 @@ mod tests {
       &target,
       &controller,
       "68656c6c6f",
-      HexCase::Any
+      HexCase::Any,
+      None
     )?);
     assert!(validate_hex_text(
       &target,
       &controller,
       "68656c6c6f",
-      HexCase::Lower
+      HexCase::Lower,
+      None
     )?);
     assert!(!validate_hex_text(
       &target,
       &controller,
       "68656C6C6F",
-      HexCase::Lower
+      HexCase::Lower,
+      None
     )?);
     assert!(validate_hex_text(
       &target,
       &controller,
       "68656C6C6F",
-      HexCase::Upper
+      HexCase::Upper,
+      None
     )?);
     assert!(!validate_hex_text(
       &target,
       &controller,
       "invalid",
-      HexCase::Any
+      HexCase::Any,
+      None
     )?);
 
     Ok(())
@@ -1261,55 +1197,180 @@ mod tests {
 }
 
 #[cfg(feature = "additional-controls")]
+fn byte_string_controller_matches<'a, F>(
+  cddl: Option<&'a CDDL<'a>>,
+  controller: &Type2<'a>,
+  predicate: &F,
+) -> Option<bool>
+where
+  F: Fn(&[u8]) -> bool,
+{
+  byte_string_controller_matches_impl(cddl, controller, predicate, &mut Vec::new())
+}
+
+#[cfg(feature = "additional-controls")]
+fn byte_string_controller_matches_impl<'a, F>(
+  cddl: Option<&'a CDDL<'a>>,
+  controller: &Type2<'a>,
+  predicate: &F,
+  visited: &mut Vec<&'a str>,
+) -> Option<bool>
+where
+  F: Fn(&[u8]) -> bool,
+{
+  match controller {
+    Type2::UTF8ByteString { value, .. }
+    | Type2::B16ByteString { value, .. }
+    | Type2::B64ByteString { value, .. } => Some(predicate(value)),
+    Type2::Typename { ident, .. } => {
+      let cddl = cddl?;
+      // Per-resolution cycle guard; `/=` choice-extension siblings share the
+      // rule name and must all be examined.
+      if visited.contains(&ident.ident) {
+        return None;
+      }
+      let mut found = false;
+      let mut pushed = false;
+      for r in cddl.rules.iter() {
+        if let Rule::Type { rule, .. } = r {
+          if rule.name == *ident {
+            if !pushed {
+              visited.push(rule.name.ident);
+              pushed = true;
+            }
+            if let Some(matches) =
+              byte_string_choices_match(Some(cddl), &rule.value.type_choices, predicate, visited)
+            {
+              found = true;
+              if matches {
+                return Some(true);
+              }
+            }
+          }
+        }
+      }
+      found.then_some(false)
+    }
+    Type2::ParenthesizedType { pt, .. } => {
+      byte_string_choices_match(cddl, &pt.type_choices, predicate, visited)
+    }
+    _ => None,
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+fn byte_string_choices_match<'a, F>(
+  cddl: Option<&'a CDDL<'a>>,
+  choices: &[TypeChoice<'a>],
+  predicate: &F,
+  visited: &mut Vec<&'a str>,
+) -> Option<bool>
+where
+  F: Fn(&[u8]) -> bool,
+{
+  let mut found = false;
+  for choice in choices {
+    let result = match &choice.type1.operator {
+      None => byte_string_controller_matches_impl(cddl, &choice.type1.type2, predicate, visited),
+      // A .cat/.det choice matches through its computed value.
+      Some(operator) => match operator.operator {
+        RangeCtlOp::CtlOp {
+          ctrl: ControlOperator::CAT,
+          ..
+        }
+        | RangeCtlOp::CtlOp {
+          ctrl: ControlOperator::DET,
+          ..
+        } => cddl.and_then(|cddl| {
+          let is_dedent = matches!(
+            operator.operator,
+            RangeCtlOp::CtlOp {
+              ctrl: ControlOperator::DET,
+              ..
+            }
+          );
+          match cat_operation(cddl, &choice.type1.type2, &operator.type2, is_dedent) {
+            Ok(computed) => {
+              let mut found = false;
+              for value in &computed {
+                if let Some(matches) =
+                  byte_string_controller_matches_impl(Some(cddl), value, predicate, visited)
+                {
+                  found = true;
+                  if matches {
+                    return Some(true);
+                  }
+                }
+              }
+              found.then_some(false)
+            }
+            Err(_) => None,
+          }
+        }),
+        _ => None,
+      },
+    };
+    if let Some(matches) = result {
+      found = true;
+      if matches {
+        return Some(true);
+      }
+    }
+  }
+  found.then_some(false)
+}
+
+#[cfg(feature = "additional-controls")]
+/// Decode base64 text per the RFC 9741 "sloppy" variants: the alphabet and
+/// padding rules of the underlying RFC 4648 encoding still apply, but
+/// non-zero trailing (padding) bits are tolerated.
+fn sloppy_base64_decode(text_value: &str, is_classic: bool) -> Option<Vec<u8>> {
+  let mut spec = data_encoding::Specification::new();
+  spec
+    .symbols
+    .push_str("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
+  spec.symbols.push_str(if is_classic { "+/" } else { "-_" });
+  spec.check_trailing_bits = false;
+  if is_classic {
+    spec.padding = Some('=');
+  }
+
+  let encoding = spec.encoding().ok()?;
+  encoding.decode(text_value.as_bytes()).ok()
+}
+
+#[cfg(feature = "additional-controls")]
 /// Validate base64url encoded text string against byte string
 pub fn validate_b64u_text<'a>(
   __target: &Type2<'a>,
   controller: &Type2<'a>,
   text_value: &str,
   is_sloppy: bool,
+  cddl: Option<&'a CDDL<'a>>,
 ) -> Result<bool, String> {
-  match controller {
-    Type2::UTF8ByteString { value, .. }
-    | Type2::B16ByteString { value, .. }
-    | Type2::B64ByteString { value, .. } => {
-      // Try strict decoding first
-      let decoded = data_encoding::BASE64URL_NOPAD.decode(text_value.as_bytes());
+  if byte_string_controller_matches(cddl, controller, &|_| false).is_some() {
+    // Try strict decoding first
+    let decoded = data_encoding::BASE64URL_NOPAD.decode(text_value.as_bytes());
 
-      match decoded {
-        Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
-        Err(_) if is_sloppy => {
-          // RFC 9741: Sloppy mode does not validate that additional trailing
-          // bits (beyond the encoded data) are zero. We try a more lenient
-          // decode that ignores trailing bit issues.
-          let cleaned = text_value.trim_end_matches('=');
-          match data_encoding::BASE64URL_NOPAD.decode(cleaned.as_bytes()) {
-            Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
-            Err(_) => {
-              // Try with lenient decoding: strip last char if we have trailing
-              // bits that would be non-zero
-              if !cleaned.is_empty() {
-                let without_last = &cleaned[..cleaned.len() - 1];
-                if let Ok(decoded_bytes) =
-                  data_encoding::BASE64URL_NOPAD.decode(without_last.as_bytes())
-                {
-                  // In sloppy mode, if the byte prefix matches, accept it
-                  Ok(value.as_ref().starts_with(&decoded_bytes[..]))
-                } else {
-                  Ok(false)
-                }
-              } else {
-                Ok(false)
-              }
-            }
-          }
-        }
-        Err(_) => Ok(false),
-      }
+    match decoded {
+      Ok(decoded_bytes) => Ok(
+        byte_string_controller_matches(cddl, controller, &|value| decoded_bytes == value)
+          .unwrap_or(false),
+      ),
+      Err(_) if is_sloppy => match sloppy_base64_decode(text_value, false) {
+        Some(decoded_bytes) => Ok(
+          byte_string_controller_matches(cddl, controller, &|value| decoded_bytes == value)
+            .unwrap_or(false),
+        ),
+        None => Ok(false),
+      },
+      Err(_) => Ok(false),
     }
-    _ => Err(format!(
+  } else {
+    Err(format!(
       "invalid controller type for .b64u operation: {}",
       controller
-    )),
+    ))
   }
 }
 
@@ -1320,46 +1381,31 @@ pub fn validate_b64c_text<'a>(
   controller: &Type2<'a>,
   text_value: &str,
   is_sloppy: bool,
+  cddl: Option<&'a CDDL<'a>>,
 ) -> Result<bool, String> {
-  match controller {
-    Type2::UTF8ByteString { value, .. }
-    | Type2::B16ByteString { value, .. }
-    | Type2::B64ByteString { value, .. } => {
-      // Try strict decoding first
-      let decoded = data_encoding::BASE64.decode(text_value.as_bytes());
+  if byte_string_controller_matches(cddl, controller, &|_| false).is_some() {
+    // Try strict decoding first
+    let decoded = data_encoding::BASE64.decode(text_value.as_bytes());
 
-      match decoded {
-        Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
-        Err(_) if is_sloppy => {
-          // RFC 9741: Sloppy mode does not validate that additional trailing
-          // bits are zero. Try without padding enforcement.
-          let cleaned = text_value.trim_end_matches('=');
-          match data_encoding::BASE64_NOPAD.decode(cleaned.as_bytes()) {
-            Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
-            Err(_) => {
-              // Try lenient: strip last char for non-zero trailing bits
-              if !cleaned.is_empty() {
-                let without_last = &cleaned[..cleaned.len() - 1];
-                if let Ok(decoded_bytes) =
-                  data_encoding::BASE64_NOPAD.decode(without_last.as_bytes())
-                {
-                  Ok(value.as_ref().starts_with(&decoded_bytes[..]))
-                } else {
-                  Ok(false)
-                }
-              } else {
-                Ok(false)
-              }
-            }
-          }
-        }
-        Err(_) => Ok(false),
-      }
+    match decoded {
+      Ok(decoded_bytes) => Ok(
+        byte_string_controller_matches(cddl, controller, &|value| decoded_bytes == value)
+          .unwrap_or(false),
+      ),
+      Err(_) if is_sloppy => match sloppy_base64_decode(text_value, true) {
+        Some(decoded_bytes) => Ok(
+          byte_string_controller_matches(cddl, controller, &|value| decoded_bytes == value)
+            .unwrap_or(false),
+        ),
+        None => Ok(false),
+      },
+      Err(_) => Ok(false),
     }
-    _ => Err(format!(
+  } else {
+    Err(format!(
       "invalid controller type for .b64c operation: {}",
       controller
-    )),
+    ))
   }
 }
 
@@ -1370,33 +1416,33 @@ pub fn validate_hex_text<'a>(
   controller: &Type2<'a>,
   text_value: &str,
   case_type: HexCase,
+  cddl: Option<&'a CDDL<'a>>,
 ) -> Result<bool, String> {
-  match controller {
-    Type2::UTF8ByteString { value, .. }
-    | Type2::B16ByteString { value, .. }
-    | Type2::B64ByteString { value, .. } => {
-      let decoded = hex::decode(text_value);
-      match decoded {
-        Ok(decoded_bytes) => {
-          let matches_bytes = decoded_bytes == value.as_ref();
-          let matches_case = match case_type {
-            HexCase::Any => true,
-            HexCase::Lower => text_value
-              .chars()
-              .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
-            HexCase::Upper => text_value
-              .chars()
-              .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
-          };
-          Ok(matches_bytes && matches_case)
-        }
-        Err(_) => Ok(false),
+  if byte_string_controller_matches(cddl, controller, &|_| false).is_some() {
+    let decoded = hex::decode(text_value);
+    match decoded {
+      Ok(decoded_bytes) => {
+        let matches_bytes =
+          byte_string_controller_matches(cddl, controller, &|value| decoded_bytes == value)
+            .unwrap_or(false);
+        let matches_case = match case_type {
+          HexCase::Any => true,
+          HexCase::Lower => text_value
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+          HexCase::Upper => text_value
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
+        };
+        Ok(matches_bytes && matches_case)
       }
+      Err(_) => Ok(false),
     }
-    _ => Err(format!(
+  } else {
+    Err(format!(
       "invalid controller type for .hex operation: {}",
       controller
-    )),
+    ))
   }
 }
 
@@ -1415,26 +1461,27 @@ pub fn validate_b32_text<'a>(
   controller: &Type2<'a>,
   text_value: &str,
   is_hex_variant: bool,
+  cddl: Option<&'a CDDL<'a>>,
 ) -> Result<bool, String> {
-  match controller {
-    Type2::UTF8ByteString { value, .. }
-    | Type2::B16ByteString { value, .. }
-    | Type2::B64ByteString { value, .. } => {
-      let decoded = if is_hex_variant {
-        data_encoding::BASE32HEX_NOPAD.decode(text_value.as_bytes())
-      } else {
-        data_encoding::BASE32_NOPAD.decode(text_value.as_bytes())
-      };
+  if byte_string_controller_matches(cddl, controller, &|_| false).is_some() {
+    let decoded = if is_hex_variant {
+      data_encoding::BASE32HEX_NOPAD.decode(text_value.as_bytes())
+    } else {
+      data_encoding::BASE32_NOPAD.decode(text_value.as_bytes())
+    };
 
-      match decoded {
-        Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
-        Err(_) => Ok(false),
-      }
+    match decoded {
+      Ok(decoded_bytes) => Ok(
+        byte_string_controller_matches(cddl, controller, &|value| decoded_bytes == value)
+          .unwrap_or(false),
+      ),
+      Err(_) => Ok(false),
     }
-    _ => Err(format!(
+  } else {
+    Err(format!(
       "invalid controller type for .b32/.h32 operation: {}",
       controller
-    )),
+    ))
   }
 }
 
@@ -1444,20 +1491,23 @@ pub fn validate_b45_text<'a>(
   _target: &Type2<'a>,
   controller: &Type2<'a>,
   text_value: &str,
+  cddl: Option<&'a CDDL<'a>>,
 ) -> Result<bool, String> {
   #[cfg(feature = "std")]
   {
-    match controller {
-      Type2::UTF8ByteString { value, .. }
-      | Type2::B16ByteString { value, .. }
-      | Type2::B64ByteString { value, .. } => match base45::decode(text_value) {
-        Ok(decoded_bytes) => Ok(decoded_bytes == value.as_ref()),
+    if byte_string_controller_matches(cddl, controller, &|_| false).is_some() {
+      match base45::decode(text_value) {
+        Ok(decoded_bytes) => Ok(
+          byte_string_controller_matches(cddl, controller, &|value| decoded_bytes == value)
+            .unwrap_or(false),
+        ),
         Err(_) => Ok(false),
-      },
-      _ => Err(format!(
+      }
+    } else {
+      Err(format!(
         "invalid controller type for .b45 operation: {}",
         controller
-      )),
+      ))
     }
   }
   #[cfg(not(feature = "std"))]

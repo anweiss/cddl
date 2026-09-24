@@ -508,7 +508,12 @@ pub enum ByteValue<'a> {
 impl fmt::Display for ByteValue<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      ByteValue::UTF8(b) => write!(f, "'{}'", core::str::from_utf8(b).map_err(|_| fmt::Error)?),
+      ByteValue::UTF8(b) => match core::str::from_utf8(b) {
+        Ok(s) => write!(f, "'{}'", s),
+        // Non-UTF-8 bytes cannot use the '…' notation; h'…' denotes the
+        // same byte string.
+        Err(_) => write!(f, "{}", ByteValue::B16(Cow::Borrowed(b))),
+      },
       ByteValue::B16(b) => {
         f.write_str("h'")?;
         data_encoding::HEXLOWER.encode_write(b, f)?;
