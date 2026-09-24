@@ -131,6 +131,10 @@
 //! `bstr` needs `serde_with` because serde encodes a bare `Vec<u8>` as an array
 //! of integers rather than as a CBOR byte string (major type 2). See
 //! <https://github.com/anweiss/cddl/issues/638>.
+//! This dependency also applies to other fields generated as `Vec<u8>`:
+//! byte-string literals, CBOR major type `#2`, `biguint`, `bignint`, and
+//! `bigint`, as well as byte-backed fields nested in containers. It also
+//! applies when an explicit substitution produces `Vec<u8>`.
 //!
 //! The tagged prelude types are CBOR tags wrapping a simpler value (RFC 8610
 //! Appendix D). The generated struct keeps the inner Rust type and applies the
