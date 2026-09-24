@@ -14,6 +14,8 @@ pub(crate) enum CodegenError {
   ParseError(String),
   /// A Rust type alias cycle cannot be emitted.
   AliasCycle(String),
+  /// An opt-in configuration has conflicting type names.
+  ConfigurationError(String),
   /// Formatting error.
   FmtError(std::fmt::Error),
 }
@@ -23,6 +25,7 @@ impl std::fmt::Display for CodegenError {
     match self {
       CodegenError::ParseError(msg) => write!(f, "CDDL parse error: {}", msg),
       CodegenError::AliasCycle(name) => write!(f, "cyclic type alias involving '{}'", name),
+      CodegenError::ConfigurationError(msg) => write!(f, "codegen configuration error: {}", msg),
       CodegenError::FmtError(e) => write!(f, "formatting error: {}", e),
     }
   }
@@ -1674,6 +1677,14 @@ fn append_fundamental_aliases(
       )
     })
     .collect();
+  for key in opts.substitutions.keys().filter(|key| !key.contains('.')) {
+    if available.contains_key(&to_pascal_case(key)) {
+      return Err(CodegenError::ConfigurationError(format!(
+        "cannot substitute fundamental type '{}'; substitute a schema field or a user-defined alias instead",
+        key
+      )));
+    }
+  }
   for def in defs.iter() {
     let name = match def {
       RustTypeDef::Struct { name, .. }
@@ -1681,7 +1692,7 @@ fn append_fundamental_aliases(
       | RustTypeDef::Enum { name, .. } => name,
     };
     if available.contains_key(name) {
-      return Err(CodegenError::ParseError(format!(
+      return Err(CodegenError::ConfigurationError(format!(
         "generated name '{}' conflicts with a fundamental alias; rename the rule or disable fundamental_aliases", name
       )));
     }
@@ -1690,7 +1701,7 @@ fn append_fundamental_aliases(
   for target in opts.substitutions.values().chain(opts.any_type.iter()) {
     for token in target.split(|c: char| !c.is_alphanumeric() && c != '_' && c != ':') {
       if available.contains_key(token) {
-        return Err(CodegenError::ParseError(format!(
+        return Err(CodegenError::ConfigurationError(format!(
           "custom type '{}' conflicts with a fundamental alias; use a qualified path such as crate::{}",
           token, token
         )));
@@ -2539,6 +2550,30 @@ mod tests {
     let generated = generate_all_types(&cddl, input, &opts).unwrap();
     assert!(generated.contains("pub hash: crate::Bstr,"));
     assert!(!generated.contains("pub type Bstr"));
+  }
+
+  #[test]
+  fn fundamental_substitution_keys_are_rejected_only_when_opted_in() {
+    let input = "record = { when: tdate }";
+    let cddl = cddl_from_str(input, true).unwrap();
+    let mut opts = CodegenOptions::default();
+    opts.substitutions.insert("tdate".into(), "u64".into());
+    assert_eq!(
+      generate_all_types(&cddl, input, &opts).unwrap(),
+      generate_all_types(&cddl, input, &CodegenOptions::default()).unwrap()
+    );
+    opts.fundamental_aliases = true;
+    assert!(matches!(
+      generate_all_types(&cddl, input, &opts),
+      Err(CodegenError::ConfigurationError(_))
+    ));
+    opts.substitutions.clear();
+    opts
+      .substitutions
+      .insert("record.when".into(), "u64".into());
+    let generated = generate_all_types(&cddl, input, &opts).unwrap();
+    assert!(generated.contains("pub when: u64,"));
+    assert!(!generated.contains("ciborium"));
   }
 
   fn gen(input: &str) -> String {

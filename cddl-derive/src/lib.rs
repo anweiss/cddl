@@ -110,13 +110,18 @@
 //! Aliases use the usual PascalCase conversion (`tdate` becomes `Tdate`,
 //! `float16-32` becomes `Float1632`). Only referenced aliases are emitted,
 //! once each in sorted name order, after the user-defined types. Generated
-//! rule names colliding with these reserved aliases produce a diagnostic;
-//! rename the rule or leave the option disabled. User-defined aliases retain
+//! rule names colliding with any of these 32 reserved aliases produce a
+//! diagnostic, even when that alias is unused or `#[cddl]` selects a different
+//! rule. Rename the rule or leave the option disabled. User-defined aliases retain
 //! their names and point to the fundamental alias rather than its primitive.
 //! Rule and field substitutions still take precedence.
 //! Qualify custom replacement types that use a reserved name (for example,
 //! `crate::Bstr`); ambiguous unqualified replacements produce a diagnostic
 //! rather than silently selecting the generated fundamental alias.
+//! This applies to all reserved names, including unused ones. Substitution
+//! keys must name user-defined rules or fields: a prelude-named rule key such
+//! as `substitute("tdate" = "u64")` is rejected when this option is enabled.
+//! Use a field key such as `"record.when"` to replace that representation.
 //!
 //! `cddl_typegen!` emits public aliases beside the generated types. For
 //! `#[cddl]`, aliases live in a public `__cddl_prelude_<struct_name>` module
