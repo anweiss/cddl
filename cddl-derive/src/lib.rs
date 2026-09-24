@@ -124,6 +124,8 @@
 //! Explicit type substitutions override inferred encoding, and cyclic Rust
 //! type aliases produce a code-generation error. A Rust type alias itself
 //! cannot customize serde; the annotations are applied to generated fields.
+//! Choice enums retain their existing representation; this field-encoding
+//! support does not add byte/tag adapters to enum variant payloads.
 
 extern crate proc_macro;
 
