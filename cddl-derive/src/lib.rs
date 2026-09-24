@@ -116,6 +116,14 @@
 //! while human-readable formats such as JSON keep the bare value, so the same
 //! type round-trips through both. Deserialization accepts tagged and untagged
 //! input alike. See <https://github.com/anweiss/cddl/issues/639>.
+//!
+//! Struct fields retain these encodings through direct and chained type aliases.
+//! Aliases to byte strings and tagged prelude types also work inside supported
+//! containers (`Option`, arrays, tuples, and maps). Containers carrying tagged
+//! aliases require both `ciborium` and `serde_with` with its `macros` feature.
+//! Explicit type substitutions override inferred encoding, and cyclic Rust
+//! type aliases produce a code-generation error. A Rust type alias itself
+//! cannot customize serde; the annotations are applied to generated fields.
 
 extern crate proc_macro;
 

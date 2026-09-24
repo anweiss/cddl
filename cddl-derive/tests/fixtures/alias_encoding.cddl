@@ -1,0 +1,21 @@
+digest = bstr
+hash = digest
+created = tdate
+timestamp = created
+link = uri
+links = [* link]
+
+record = {
+  hash: hash,
+  when: timestamp,
+  ? optional: timestamp,
+  hashes: [* digest],
+  links: links,
+  by-name: { * tstr => link },
+  maybe: created / null,
+}
+
+direct = {
+  hash: bstr,
+  when: tdate,
+}

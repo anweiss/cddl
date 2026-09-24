@@ -105,6 +105,145 @@ pub(crate) struct RustField {
   /// The CBOR tag this field's CDDL type carries, if any (see
   /// https://github.com/anweiss/cddl/issues/639).
   pub tag: Option<TaggedPrelude>,
+  /// Encoding inferred through aliases, without changing the public Rust type.
+  pub encoding: Option<Encoding>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Encoding {
+  Bytes,
+  Tag(TaggedPrelude),
+  Container(String, Vec<Option<Encoding>>),
+}
+
+impl Encoding {
+  fn spec(&self, tag_mod: &str) -> String {
+    match self {
+      Self::Bytes => "serde_with::Bytes".into(),
+      Self::Tag(tag) => format!("{}::{}::Adapter", tag_mod, tag.ident),
+      Self::Container(base, args) => {
+        let args = args
+          .iter()
+          .map(|arg| {
+            arg
+              .as_ref()
+              .map(|e| e.spec(tag_mod))
+              .unwrap_or_else(|| "_".into())
+          })
+          .collect::<Vec<_>>()
+          .join(", ");
+        if base.is_empty() {
+          format!("({})", args)
+        } else {
+          format!("{}<{}>", base, args)
+        }
+      }
+    }
+  }
+
+  fn tags(&self, tags: &mut Vec<TaggedPrelude>) {
+    match self {
+      Self::Tag(tag) if !tags.contains(tag) => tags.push(*tag),
+      Self::Container(_, args) => {
+        for arg in args.iter().flatten() {
+          arg.tags(tags);
+        }
+      }
+      _ => {}
+    }
+  }
+}
+
+type AliasMap = BTreeMap<String, (String, Option<TaggedPrelude>)>;
+
+fn alias_encoding(
+  ty: &str,
+  aliases: &AliasMap,
+  visiting: &mut Vec<String>,
+) -> Result<Option<Encoding>, CodegenError> {
+  let ty = ty.trim();
+  if let Some((target, tag)) = aliases.get(ty) {
+    if visiting.iter().any(|name| name == ty) {
+      return Err(CodegenError::ParseError(format!(
+        "cyclic type alias involving '{}'",
+        ty
+      )));
+    }
+    visiting.push(ty.into());
+    let encoding = if let Some(tag) = tag {
+      Some(Encoding::Tag(*tag))
+    } else {
+      alias_encoding(target, aliases, visiting)?
+    };
+    visiting.pop();
+    return Ok(encoding);
+  }
+  if ty == "Vec<u8>" {
+    return Ok(Some(Encoding::Bytes));
+  }
+  let (base, args) = if ty.starts_with('(') && ty.ends_with(')') {
+    ("", &ty[1..ty.len() - 1])
+  } else if let Some(open) = ty.find('<').filter(|_| ty.ends_with('>')) {
+    (&ty[..open], &ty[open + 1..ty.len() - 1])
+  } else {
+    return Ok(None);
+  };
+  let args = split_generic_args(args)
+    .iter()
+    .map(|arg| alias_encoding(arg, aliases, visiting))
+    .collect::<Result<Vec<_>, _>>()?;
+  Ok(
+    args
+      .iter()
+      .any(Option::is_some)
+      .then(|| Encoding::Container(base.into(), args)),
+  )
+}
+
+fn apply_alias_encodings(
+  cddl: &CDDL<'_>,
+  defs: &mut [RustTypeDef],
+  opts: &CodegenOptions,
+) -> Result<(), CodegenError> {
+  let tagged: BTreeMap<_, _> = cddl
+    .rules
+    .iter()
+    .filter_map(|rule| {
+      if let Rule::Type { rule, .. } = rule {
+        type_tagged_prelude(&rule.value).map(|tag| (to_pascal_case(rule.name.ident), tag))
+      } else {
+        None
+      }
+    })
+    .collect();
+  let aliases: AliasMap = defs
+    .iter()
+    .filter_map(|def| {
+      if let RustTypeDef::TypeAlias { name, target, .. } = def {
+        Some((name.clone(), (target.clone(), tagged.get(name).copied())))
+      } else {
+        None
+      }
+    })
+    .collect();
+  for name in aliases.keys() {
+    alias_encoding(name, &aliases, &mut Vec::new())?;
+  }
+  for def in defs {
+    if let RustTypeDef::Struct { name, fields, .. } = def {
+      for field in fields {
+        let key = format!("{}.{}", to_cddl_lookup_name(name), field.original_name);
+        if field.tag.is_some() || opts.substitutions.contains_key(&key) {
+          continue;
+        }
+        match alias_encoding(&field.rust_type, &aliases, &mut Vec::new())? {
+          Some(Encoding::Tag(tag)) => field.tag = Some(tag),
+          encoding => field.encoding = encoding,
+        }
+      }
+    }
+  }
+  Ok(())
 }
 
 /// A CDDL prelude type that is defined as a CBOR tag wrapping a simpler value.
@@ -455,6 +594,7 @@ pub(crate) fn generate_all_types(
   let comments = CommentMap::new(source);
   let mut type_defs = collect_type_defs(cddl, &comments)?;
   apply_options(&mut type_defs, opts);
+  apply_alias_encodings(cddl, &mut type_defs, opts)?;
   render_type_defs(&type_defs, opts)
 }
 
@@ -473,6 +613,7 @@ pub(crate) fn generate_single_type(
   let comments = CommentMap::new(source);
   let mut type_defs = collect_type_defs(cddl, &comments)?;
   apply_options(&mut type_defs, opts);
+  apply_alias_encodings(cddl, &mut type_defs, opts)?;
   let matching = type_defs
     .into_iter()
     .find(|d| match d {
@@ -495,7 +636,12 @@ pub(crate) fn generate_single_type(
       // invocations can coexist in one file without colliding.
       let tag_mod = format!("{}_{}", TAG_HELPER_MOD, to_snake_case(emit_name));
       let tags = collect_tags(std::slice::from_ref(&matching));
-      render_tag_helpers(&mut output, &tag_mod, &tags)?;
+      render_tag_helpers(
+        &mut output,
+        &tag_mod,
+        &tags,
+        needs_tag_adapters(std::slice::from_ref(&matching)),
+      )?;
       render_struct(&mut output, emit_name, fields, doc, &tag_mod, opts)?;
     }
     RustTypeDef::TypeAlias { name, target, doc } => {
@@ -1053,6 +1199,7 @@ fn group_entry_to_fields(
         doc,
         is_boxed: false,
         tag: tagged_prelude(ident),
+        encoding: None,
       }]))
     }
     GroupEntry::InlineGroup { group, occur, .. } => {
@@ -1097,6 +1244,7 @@ fn value_member_key_to_field(
         doc,
         is_boxed: false,
         tag: None,
+        encoding: None,
       }));
     }
     None => {
@@ -1109,6 +1257,7 @@ fn value_member_key_to_field(
         doc,
         is_boxed: false,
         tag: type_tagged_prelude(&vmke.entry_type),
+        encoding: None,
       }));
     }
     _ => return Ok(None),
@@ -1148,6 +1297,7 @@ fn value_member_key_to_field(
     } else {
       type_tagged_prelude(&vmke.entry_type)
     },
+    encoding: None,
   }))
 }
 
@@ -1162,6 +1312,7 @@ fn type_tagged_prelude(t: &Type<'_>) -> Option<TaggedPrelude> {
 
   match &t.type_choices[0].type1.type2 {
     Type2::Typename { ident, .. } => tagged_prelude(ident.ident),
+    Type2::ParenthesizedType { pt, .. } => type_tagged_prelude(pt),
     _ => None,
   }
 }
@@ -1455,6 +1606,7 @@ fn render_tag_helpers(
   output: &mut String,
   mod_name: &str,
   tags: &[TaggedPrelude],
+  adapters: bool,
 ) -> Result<(), CodegenError> {
   if tags.is_empty() {
     return Ok(());
@@ -1510,6 +1662,23 @@ fn render_tag_helpers(
     )?;
     writeln!(output, "            }}")?;
     writeln!(output, "        }}")?;
+    if adapters {
+      writeln!(output, "        pub struct Adapter;")?;
+      writeln!(
+        output,
+        "        impl serde_with::SerializeAs<{}> for Adapter {{",
+        inner
+      )?;
+      writeln!(output, "            fn serialize_as<S: Serializer>(v: &{}, s: S) -> Result<S::Ok, S::Error> {{ serialize(v, s) }}", inner)?;
+      writeln!(output, "        }}")?;
+      writeln!(
+        output,
+        "        impl<'de> serde_with::DeserializeAs<'de, {}> for Adapter {{",
+        inner
+      )?;
+      writeln!(output, "            fn deserialize_as<D: Deserializer<'de>>(d: D) -> Result<{}, D::Error> {{ deserialize(d) }}", inner)?;
+      writeln!(output, "        }}")?;
+    }
     writeln!(output, "    }}")?;
     writeln!(output)?;
 
@@ -1574,6 +1743,9 @@ fn collect_tags(defs: &[RustTypeDef]) -> Vec<TaggedPrelude> {
   for def in defs {
     if let RustTypeDef::Struct { fields, .. } = def {
       for field in fields {
+        if let Some(encoding) = &field.encoding {
+          encoding.tags(&mut tags);
+        }
         if let Some(t) = field.tag {
           if !tags.iter().any(|existing| existing.ident == t.ident) {
             tags.push(t);
@@ -1585,11 +1757,27 @@ fn collect_tags(defs: &[RustTypeDef]) -> Vec<TaggedPrelude> {
   tags
 }
 
+fn needs_tag_adapters(defs: &[RustTypeDef]) -> bool {
+  defs.iter().any(|def| {
+    if let RustTypeDef::Struct { fields, .. } = def {
+      fields.iter().any(|field| {
+        let mut tags = Vec::new();
+        if let Some(encoding) = &field.encoding {
+          encoding.tags(&mut tags);
+        }
+        !tags.is_empty()
+      })
+    } else {
+      false
+    }
+  })
+}
+
 fn render_type_defs(defs: &[RustTypeDef], opts: &CodegenOptions) -> Result<String, CodegenError> {
   let mut output = String::new();
 
   let tags = collect_tags(defs);
-  render_tag_helpers(&mut output, TAG_HELPER_MOD, &tags)?;
+  render_tag_helpers(&mut output, TAG_HELPER_MOD, &tags, needs_tag_adapters(defs))?;
 
   for (idx, def) in defs.iter().enumerate() {
     if idx > 0 {
@@ -1727,7 +1915,13 @@ fn render_struct(
   // than as an array of integers. The attribute must precede the derive.
   let field_specs = fields
     .iter()
-    .map(|field| serde_as_spec(&field.rust_type))
+    .map(|field| {
+      field
+        .encoding
+        .as_ref()
+        .map(|e| e.spec(tag_mod))
+        .or_else(|| serde_as_spec(&field.rust_type))
+    })
     .collect::<Vec<_>>();
 
   if field_specs.iter().any(Option::is_some) {
@@ -2104,6 +2298,29 @@ mod tests {
   fn gen(input: &str) -> String {
     let cddl = cddl_from_str(input, true).unwrap();
     generate_all_types(&cddl, input, &CodegenOptions::default()).unwrap()
+  }
+
+  #[test]
+  fn alias_cycles_report_an_error() {
+    let input = "first = second\nsecond = first";
+    let cddl = cddl_from_str(input, true).unwrap();
+    let error = generate_all_types(&cddl, input, &CodegenOptions::default()).unwrap_err();
+    assert!(error.to_string().contains("cyclic type alias"));
+  }
+
+  #[test]
+  fn alias_substitutions_do_not_retain_tags() {
+    let input = "created = tdate\nrecord = { when: created }";
+    let cddl = cddl_from_str(input, true).unwrap();
+    for key in ["created", "record.when"] {
+      let opts = CodegenOptions {
+        substitutions: [(key.into(), "String".into())].into(),
+        ..Default::default()
+      };
+      let output = generate_all_types(&cddl, input, &opts).unwrap();
+      assert!(!output.contains("serde(with"));
+      assert!(output.contains("pub when: String,"));
+    }
   }
 
   #[test]
