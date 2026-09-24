@@ -106,6 +106,67 @@ fn ident_end(bytes: &[u8], mut i: usize) -> usize {
   i
 }
 
+fn uint_end(bytes: &[u8], mut i: usize) -> (usize, u32) {
+  let radix = match (bytes[i], bytes.get(i + 1), bytes.get(i + 2)) {
+    (b'0', Some(b'x' | b'X'), Some(digit)) if digit.is_ascii_hexdigit() => 16,
+    (b'0', Some(b'b' | b'B'), Some(b'0' | b'1')) => 2,
+    _ => 10,
+  };
+  if radix != 10 {
+    i += 2;
+  }
+  if radix == 10 && bytes[i] == b'0' {
+    i += 1;
+  } else {
+    while bytes.get(i).is_some_and(|b| (*b as char).is_digit(radix)) {
+      i += 1;
+    }
+  }
+  (i, radix)
+}
+
+fn number_end(bytes: &[u8], start: usize) -> usize {
+  let (mut i, radix) = uint_end(bytes, start);
+  let integer_end = i;
+  if radix == 2 {
+    return i;
+  }
+  if bytes.get(i) == Some(&b'.')
+    && bytes
+      .get(i + 1)
+      .is_some_and(|b| (*b as char).is_digit(radix))
+  {
+    i += 1;
+    while bytes.get(i).is_some_and(|b| (*b as char).is_digit(radix)) {
+      i += 1;
+    }
+  }
+  let mantissa_end = i;
+  let exponent = if radix == 16 { b'p' } else { b'e' };
+  if bytes
+    .get(i)
+    .is_some_and(|b| b.to_ascii_lowercase() == exponent)
+  {
+    i += 1;
+    if matches!(bytes.get(i), Some(b'+' | b'-')) {
+      i += 1;
+    }
+    let digits = i;
+    while bytes.get(i).is_some_and(u8::is_ascii_digit) {
+      i += 1;
+    }
+    if i > digits {
+      return i;
+    }
+  }
+  // A hex fraction belongs to a number only when followed by a p exponent.
+  if radix == 16 {
+    integer_end
+  } else {
+    mantissa_end
+  }
+}
+
 /// If the `<` at `open` begins a generic *parameter* list — that is, if the
 /// group it opens is followed by an assignment operator — return the byte
 /// offset of its closing `>`.
@@ -169,11 +230,15 @@ pub(crate) fn scan(src: &str) -> Scan {
         }
       }
 
-      // Skip byte-string prefixes, leaving the quoted content to the string
-      // branches below rather than recording the prefix as a reference.
+      // Byte strings have raw content, with no backslash escapes.
       b'h' if matches!(bytes.get(i + 1), Some(b'\'' | b'"')) => {
         prev_was_ident_end = false;
-        i += 1;
+        let quote = bytes[i + 1];
+        i += 2;
+        while i < bytes.len() && bytes[i] != quote {
+          i += 1;
+        }
+        i += usize::from(i < bytes.len());
       }
       b'b' if bytes[i..].starts_with(b"b64'") => {
         prev_was_ident_end = false;
@@ -202,7 +267,6 @@ pub(crate) fn scan(src: &str) -> Scan {
         i += 1;
         while i < bytes.len() {
           match bytes[i] {
-            b'\\' => i += 2,
             b'\'' => {
               i += 1;
               break;
@@ -226,13 +290,14 @@ pub(crate) fn scan(src: &str) -> Scan {
 
       // A control operator: a `.` that does not directly follow an identifier
       // character. The name that follows is an operator name, not a reference.
-      b'.' if !prev_was_ident_end => {
+      b'.' if !prev_was_ident_end || bytes.get(i + 1) == Some(&b'.') => {
+        let start = i;
         i += 1;
         // `..` and `...` are range operators, not control operators.
         while i < bytes.len() && bytes[i] == b'.' {
           i += 1;
         }
-        if i < bytes.len() && is_ident_start(bytes[i]) {
+        if i == start + 1 && i < bytes.len() && is_ident_start(bytes[i]) {
           let start = i;
           while i < bytes.len() && (is_ident_continue(bytes[i]) || bytes[i] == b'-') {
             i += 1;
@@ -286,6 +351,26 @@ pub(crate) fn scan(src: &str) -> Scan {
         }
         prev_was_ident_end = false;
         i += 1;
+      }
+
+      // Keep a tag's separator out of decimal-fraction scanning.
+      b'#' => {
+        prev_was_ident_end = false;
+        i += 1;
+        if bytes.get(i).is_some_and(u8::is_ascii_digit) {
+          i += 1;
+          if bytes.get(i) == Some(&b'.') {
+            i += 1;
+            if bytes.get(i).is_some_and(u8::is_ascii_digit) {
+              i = uint_end(bytes, i).0;
+            }
+          }
+        }
+      }
+
+      b'0'..=b'9' => {
+        prev_was_ident_end = false;
+        i = number_end(bytes, i);
       }
 
       _ if is_ident_start(b) => {
@@ -505,5 +590,68 @@ mod tests {
       .map(|ident| ident.text.as_str())
       .collect();
     assert_eq!(references, ["h", "b64"]);
+  }
+
+  #[test]
+  fn numeric_tokens_leave_adjacent_references_and_controls_intact() {
+    for (number, rest) in [
+      ("0", "x"),
+      ("0", "b"),
+      ("0", "42"),
+      ("0", ""),
+      ("10", ""),
+      ("0xff", ""),
+      ("0b10", ""),
+      ("1.5", "e"),
+      ("1", "e+"),
+      ("0x1", ".ap"),
+      ("1e+5", ".eq limit"),
+      ("0x1.8p-1", "..limit"),
+      ("0b10", "...limit"),
+      ("1", "item"),
+    ] {
+      let input = format!("{}{}", number, rest);
+      assert_eq!(number_end(input.as_bytes(), 0), number.len(), "{}", input);
+    }
+    let scanned = scan("value = [1e+5 item, 0x10 other, 0b10 third]\n");
+    let references: Vec<_> = scanned
+      .idents
+      .iter()
+      .filter(|ident| ident.role == IdentRole::Reference)
+      .map(|ident| ident.text.as_str())
+      .collect();
+    assert_eq!(references, ["item", "other", "third"]);
+    let scan = scan("value = 1e+5.eq limit\n");
+    assert!(scan
+      .idents
+      .iter()
+      .any(|ident| ident.text == "eq" && ident.role == IdentRole::ControlName));
+    assert!(scan
+      .idents
+      .iter()
+      .any(|ident| ident.text == "limit" && ident.role == IdentRole::Reference));
+  }
+
+  #[test]
+  fn tag_numbers_leave_adjacent_references_intact() {
+    let scan = scan("value = [#7.32e5, #7.0x20p1, #7.0b100000e5]\n");
+    let references: Vec<_> = scan
+      .idents
+      .iter()
+      .filter(|ident| ident.role == IdentRole::Reference)
+      .map(|ident| ident.text.as_str())
+      .collect();
+    assert_eq!(references, ["e5", "p1", "e5"]);
+  }
+
+  #[test]
+  fn text_strings_still_honor_escaped_quotes() {
+    let scan = scan(
+      r#"value = "escaped \"not = a rule"
+following = int
+"#,
+    );
+    let names: Vec<_> = scan.rules.iter().map(|rule| rule.name.as_str()).collect();
+    assert_eq!(names, ["value", "following"]);
   }
 }

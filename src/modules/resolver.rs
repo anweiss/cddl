@@ -149,6 +149,12 @@ fn resolve(
   let mut references = referenced_names(&body);
 
   if let Some(start) = &options.start_rule {
+    if !is_id(start) {
+      return Err(ModuleError::Directive {
+        line: 0,
+        message: format!("\"{}\" is not a valid start rule", start),
+      });
+    }
     references.insert(start.clone());
   }
 

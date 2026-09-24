@@ -210,6 +210,111 @@ fn byte_string_prefixes_are_preserved_and_do_not_add_dependencies() {
 }
 
 #[test]
+fn byte_strings_with_trailing_backslashes_preserve_following_rules() {
+  for literal in [
+    r#"h"raw\""#,
+    r"'raw\'",
+    "h'00 ; raw\\'",
+    "b64'AA== ; raw\\'",
+  ] {
+    let mut source = MemoryModuleSource::new();
+    source.insert(
+      "literals",
+      format!("payload = {}\nfollowing = int\n", literal),
+    );
+    let output = resolve_modules(
+      "start = [ns.payload, ns.following]\n;# import literals as ns\n",
+      &source,
+      &ResolveOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(
+      defined_order(&output),
+      ["start", "ns.payload", "ns.following"]
+    );
+    assert!(output.contains(&format!("ns.payload = {}", literal)));
+    assert!(output.contains("ns.following = int"));
+    assert_parses(&output);
+  }
+}
+
+#[test]
+fn numeric_literals_are_preserved_and_do_not_add_dependencies() {
+  for literal in [
+    "1e+5",
+    "-1e-5",
+    "1E5",
+    "1.05e05",
+    "-0.5E+2",
+    "0x10",
+    "-0X10",
+    "0b10",
+    "-0B10",
+    "0x1.8p+1",
+    "-0X1.AP-1",
+    "0x1p1",
+    "#6.0x10(tstr)",
+    "#7.0b100000",
+  ] {
+    let mut source = MemoryModuleSource::new();
+    source.insert(
+      "literals",
+      format!(
+        "e = int\nE5 = int\ne05 = int\nE = int\nx10 = int\nX10 = int\nb10 = int\nB10 = int\nx1 = int\nX1 = int\np = int\np1 = int\nb100000 = int\nvalue = {}\n",
+        literal
+      ),
+    );
+    let output = resolve_modules(
+      "start = ns.value\n;# import literals as ns\n",
+      &source,
+      &ResolveOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(defined_order(&output), ["start", "ns.value"], "{}", literal);
+    assert!(output.contains(&format!("ns.value = {}", literal)));
+    assert_parses(&output);
+  }
+}
+
+#[test]
+fn range_endpoints_are_imported_and_namespaced() {
+  for (range, expected) in [
+    ("0..limit", "0..ns.limit"),
+    ("0...limit", "0...ns.limit"),
+    ("lower..limit", "ns.lower..ns.limit"),
+    ("lower...limit", "ns.lower...ns.limit"),
+    ("0x0..limit", "0x0..ns.limit"),
+    ("0.5...limit", "0.5...ns.limit"),
+    ("lower .. bounds.limit", "ns.lower .. ns.bounds.limit"),
+    ("lower..bounds.limit", "ns.lower..ns.bounds.limit"),
+  ] {
+    let mut source = MemoryModuleSource::new();
+    source.insert(
+      "ranges",
+      format!(
+        "lower = 0\nlimit = 10\nbounds.limit = 10\nvalue = {}\n",
+        range
+      ),
+    );
+    let output = resolve_modules(
+      "start = ns.value\n;# import ranges as ns\n",
+      &source,
+      &ResolveOptions::default(),
+    )
+    .unwrap();
+    assert!(output.contains(&format!("ns.value = {}", expected)));
+    let upper = if range.contains("bounds.limit") {
+      "bounds.limit"
+    } else {
+      "limit"
+    };
+    assert!(output.contains(&format!("ns.{} = 10", upper)));
+    assert_eq!(output.contains("ns.lower = 0"), range.contains("lower"));
+    assert_parses(&output);
+  }
+}
+
+#[test]
 fn include_from_takes_exactly_the_rules_named() {
   let output = resolve("mydata = {* label => values}\n;# include label, values from rfc9052\n");
 
@@ -355,6 +460,17 @@ fn filesystem_imports_validate_names_and_respect_empty_environment() {
     .output()
     .unwrap();
   assert!(!unsafe_name.status.success(), "{:?}", unsafe_name);
+  for start in ["", "ns.root other", "ns.root\ninjected = int"] {
+    let invalid_start = Command::new(env!("CARGO_BIN_EXE_cddl"))
+      .current_dir(&directory)
+      .args(["resolve-modules", "-ins=module", "-s", start])
+      .env(INCLUDE_PATH_VAR, ".")
+      .output()
+      .unwrap();
+    assert!(!invalid_start.status.success(), "{:?}", invalid_start);
+    assert!(invalid_start.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&invalid_start.stderr).contains("not a valid start rule"));
+  }
   fs::remove_dir_all(directory).unwrap();
 }
 
@@ -398,6 +514,59 @@ fn command_line_import_and_start_rule() {
     defined_order(&output),
     ["$.start.$", "cose.COSE_Key", "cose.label", "cose.values"]
   );
+}
+
+#[test]
+fn start_rules_use_identifier_validation() {
+  for name in [
+    "",
+    " ",
+    "root name",
+    "root\ninjected = int",
+    "root; comment",
+    "0root",
+    "root..name",
+    "root--name",
+    "root.",
+    "root-",
+  ] {
+    let error = resolve_modules(
+      "root = int\n",
+      &cose(),
+      &ResolveOptions {
+        start_rule: Some(name.to_string()),
+        ..ResolveOptions::default()
+      },
+    )
+    .unwrap_err();
+    assert_eq!(
+      error,
+      ModuleError::Directive {
+        line: 0,
+        message: format!("\"{}\" is not a valid start rule", name),
+      }
+    );
+  }
+  for name in [
+    "root",
+    "ns.root",
+    "root-name",
+    "ns.0",
+    "$socket",
+    "@root",
+    "_root",
+  ] {
+    let output = resolve_modules(
+      &format!("{} = int\n", name),
+      &cose(),
+      &ResolveOptions {
+        start_rule: Some(name.to_string()),
+        ..ResolveOptions::default()
+      },
+    )
+    .unwrap();
+    assert!(output.starts_with(&format!("$.start.$ = {}\n", name)));
+  }
 }
 
 #[test]
