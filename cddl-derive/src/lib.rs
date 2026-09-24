@@ -118,6 +118,8 @@
 //! Qualify custom replacement types that use a reserved name (for example,
 //! `crate::Bstr`); ambiguous unqualified replacements produce a diagnostic
 //! rather than silently selecting the generated fundamental alias.
+//! The root must be qualified too: `Bstr::Item` is ambiguous, while
+//! `crate::Bstr::Item` is explicit.
 //! This applies to all reserved names, including unused ones. Substitution
 //! keys must name user-defined rules or fields: a prelude-named rule key such
 //! as `substitute("tdate" = "u64")` is rejected when this option is enabled.

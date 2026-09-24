@@ -589,7 +589,7 @@ fn rewrite_type(ty: &mut String, rule_subs: &BTreeMap<String, String>, any_type:
   };
 
   for c in ty.chars() {
-    if c.is_alphanumeric() || c == '_' || c == ':' {
+    if c.is_alphanumeric() || c == '_' || c == ':' || c == '#' {
       token.push(c);
     } else {
       flush(&mut token, &mut out);
@@ -673,7 +673,7 @@ pub(crate) fn generate_single_type(
       if let RustTypeDef::TypeAlias { name, target, doc } = def {
         // A helper module is one level below the caller's configured paths.
         let paths: BTreeMap<_, _> = target
-          .split(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
+          .split(|c: char| !c.is_alphanumeric() && c != '_' && c != ':' && c != '#')
           .filter_map(|token| {
             if let Some(path) = token.strip_prefix("self::") {
               Some((token.into(), format!("super::{}", path)))
@@ -1671,7 +1671,7 @@ fn referenced_fundamental_aliases(defs: &[RustTypeDef]) -> std::collections::BTr
     };
     for ty in types {
       used.extend(
-        ty.split(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
+        ty.split(|c: char| !c.is_alphanumeric() && c != '_' && c != ':' && c != '#')
           .map(str::to_owned),
       );
     }
@@ -1721,8 +1721,10 @@ fn append_fundamental_aliases(
   }
   let used = referenced_fundamental_aliases(defs);
   for target in opts.substitutions.values().chain(opts.any_type.iter()) {
-    for token in target.split(|c: char| !c.is_alphanumeric() && c != '_' && c != ':') {
-      if available.contains_key(token) {
+    for token in target.split(|c: char| !c.is_alphanumeric() && c != '_' && c != ':' && c != '#') {
+      let root = token.split("::").next().unwrap_or_default();
+      let root = root.strip_prefix("r#").unwrap_or(root);
+      if available.contains_key(root) {
         return Err(CodegenError::ConfigurationError(format!(
           "custom type '{}' conflicts with a fundamental alias; use a qualified path such as crate::{}",
           token, token
@@ -2566,12 +2568,14 @@ mod tests {
       .insert("record.hash".into(), "Bstr".into());
     let error = generate_all_types(&cddl, input, &opts).unwrap_err();
     assert!(error.to_string().contains("use a qualified path"));
-    opts
-      .substitutions
-      .insert("record.hash".into(), "crate::Bstr".into());
-    let generated = generate_all_types(&cddl, input, &opts).unwrap();
-    assert!(generated.contains("pub hash: crate::Bstr,"));
-    assert!(!generated.contains("pub type Bstr"));
+    for target in ["crate::Bstr", "crate::r#Bstr", "other::r#Bstr::Item"] {
+      opts
+        .substitutions
+        .insert("record.hash".into(), target.into());
+      let generated = generate_all_types(&cddl, input, &opts).unwrap();
+      assert!(generated.contains(&format!("pub hash: {target},")));
+      assert!(!generated.contains("pub type Bstr"));
+    }
   }
 
   #[test]
@@ -2596,6 +2600,42 @@ mod tests {
     let generated = generate_all_types(&cddl, input, &opts).unwrap();
     assert!(generated.contains("pub when: u64,"));
     assert!(!generated.contains("ciborium"));
+  }
+
+  #[test]
+  fn fundamental_alias_paths_require_qualified_roots() {
+    let input = "record = { hash: uint, raw: bstr }";
+    let cddl = cddl_from_str(input, true).unwrap();
+    let mut opts = CodegenOptions {
+      fundamental_aliases: true,
+      ..CodegenOptions::default()
+    };
+    for target in ["Bstr::Item", "Vec<Bstr::Item>", "r#Bstr::Item"] {
+      opts
+        .substitutions
+        .insert("record.hash".into(), target.into());
+      assert!(
+        matches!(
+          generate_all_types(&cddl, input, &opts),
+          Err(CodegenError::ConfigurationError(_))
+        ),
+        "unqualified reserved root accepted: {target}"
+      );
+    }
+    for target in [
+      "crate::Bstr::Item",
+      "self::Bstr::Item",
+      "super::Bstr::Item",
+      "::Bstr::Item",
+      "other::Bstr::Item",
+      "other::r#Bstr::Item",
+    ] {
+      opts
+        .substitutions
+        .insert("record.hash".into(), target.into());
+      let generated = generate_all_types(&cddl, input, &opts).unwrap();
+      assert!(generated.contains(&format!("pub hash: {target},")));
+    }
   }
 
   fn gen(input: &str) -> String {
