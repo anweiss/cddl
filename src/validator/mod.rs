@@ -271,6 +271,7 @@ impl<'a> ValidationState<'a> {
 }
 
 impl CDDL<'_> {
+  #[cfg(feature = "json")]
   /// Validate the given document against the CDDL definition
   fn validate_json(
     &self,
@@ -293,6 +294,7 @@ impl CDDL<'_> {
     jv.validate().map_err(|e| e.into())
   }
 
+  #[cfg(feature = "cbor")]
   fn validate_cbor(
     &self,
     document: &[u8],
