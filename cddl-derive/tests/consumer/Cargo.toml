@@ -1,0 +1,16 @@
+[package]
+name = "cddl-derive-consumer"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+cddl-derive = { path = "../.." }
+serde = { version = "1", features = ["derive"] }
+serde_with = { version = "3", features = ["macros"] }
+ciborium = "0.2"
+serde_json = "1"
