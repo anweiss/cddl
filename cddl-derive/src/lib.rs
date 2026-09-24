@@ -112,7 +112,8 @@
 //! once each in sorted name order, after the user-defined types. Generated
 //! rule names colliding with any of these 32 reserved aliases produce a
 //! diagnostic, even when that alias is unused or `#[cddl]` selects a different
-//! rule. Rename the rule or leave the option disabled. User-defined aliases retain
+//! rule. All source rules are checked, including rules omitted during lowering.
+//! Rename the rule or leave the option disabled. User-defined aliases retain
 //! their names and point to the fundamental alias rather than its primitive.
 //! Rule and field substitutions still take precedence.
 //! Qualify custom replacement types that use a reserved name (for example,
@@ -120,6 +121,11 @@
 //! rather than silently selecting the generated fundamental alias.
 //! The root must be qualified too: `Bstr::Item` is ambiguous, while
 //! `crate::Bstr::Item` is explicit.
+//! For `cddl_typegen!`, `self::Any` and other self-qualified reserved roots are
+//! rejected because they refer to the namespace occupied by generated aliases.
+//! `#[cddl]` can use these paths because its aliases occupy a separate module.
+//! Other qualified custom paths must also resolve to independent types, not
+//! back to an alias being generated.
 //! This applies to all reserved names, including unused ones. Substitution
 //! keys must name user-defined rules or fields: a prelude-named rule key such
 //! as `substitute("tdate" = "u64")` is rejected when this option is enabled.

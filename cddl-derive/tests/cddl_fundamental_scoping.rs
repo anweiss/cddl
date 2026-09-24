@@ -43,6 +43,17 @@ mod relative {
   struct SelfPath;
 }
 
+mod whole_file {
+  pub mod external {
+    pub type Any = serde_json::Value;
+  }
+  cddl_derive::cddl_typegen!(
+    "tests/fixtures/fundamental_scoping.cddl",
+    fundamental_aliases = true,
+    any_type = "self::external::Any"
+  );
+}
+
 fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned>() {
   let json = serde_json::json!({
     "name": "test", "when": "2026-09-24T00:00:00Z", "payload": 7
@@ -65,4 +76,5 @@ fn distinct_and_raw_struct_names_have_distinct_valid_helper_modules() {
 fn configured_relative_paths_keep_the_callers_scope() {
   round_trip::<relative::ParentPath>();
   round_trip::<relative::SelfPath>();
+  round_trip::<whole_file::Scoped>();
 }

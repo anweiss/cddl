@@ -617,7 +617,7 @@ pub(crate) fn generate_all_types(
   let comments = CommentMap::new(source);
   let mut type_defs = collect_type_defs(cddl, &comments, opts)?;
   apply_options(&mut type_defs, opts);
-  append_fundamental_aliases(&mut type_defs, opts)?;
+  append_fundamental_aliases(cddl, &mut type_defs, opts, true)?;
   apply_alias_encodings(cddl, &mut type_defs, opts, None)?;
   render_type_defs(&type_defs, opts)
 }
@@ -637,7 +637,7 @@ pub(crate) fn generate_single_type(
   let comments = CommentMap::new(source);
   let mut type_defs = collect_type_defs(cddl, &comments, opts)?;
   apply_options(&mut type_defs, opts);
-  let fundamental_aliases = append_fundamental_aliases(&mut type_defs, opts)?;
+  let fundamental_aliases = append_fundamental_aliases(cddl, &mut type_defs, opts, false)?;
   apply_alias_encodings(cddl, &mut type_defs, opts, Some(rule_name))?;
   let mut matching = type_defs
     .into_iter()
@@ -1680,8 +1680,10 @@ fn referenced_fundamental_aliases(defs: &[RustTypeDef]) -> std::collections::BTr
 }
 
 fn append_fundamental_aliases(
+  cddl: &CDDL<'_>,
   defs: &mut Vec<RustTypeDef>,
   opts: &CodegenOptions,
+  same_scope: bool,
 ) -> Result<Vec<RustTypeDef>, CodegenError> {
   if !opts.fundamental_aliases {
     return Ok(Vec::new());
@@ -1707,13 +1709,13 @@ fn append_fundamental_aliases(
       )));
     }
   }
-  for def in defs.iter() {
-    let name = match def {
-      RustTypeDef::Struct { name, .. }
-      | RustTypeDef::TypeAlias { name, .. }
-      | RustTypeDef::Enum { name, .. } => name,
+  for rule in &cddl.rules {
+    let ident = match rule {
+      Rule::Type { rule, .. } => rule.name.ident,
+      Rule::Group { rule, .. } => rule.name.ident,
     };
-    if available.contains_key(name) {
+    let name = to_pascal_case(ident);
+    if available.contains_key(&name) {
       return Err(CodegenError::ConfigurationError(format!(
         "generated name '{}' conflicts with a fundamental alias; rename the rule or disable fundamental_aliases", name
       )));
@@ -1722,8 +1724,19 @@ fn append_fundamental_aliases(
   let used = referenced_fundamental_aliases(defs);
   for target in opts.substitutions.values().chain(opts.any_type.iter()) {
     for token in target.split(|c: char| !c.is_alphanumeric() && c != '_' && c != ':' && c != '#') {
-      let root = token.split("::").next().unwrap_or_default();
+      let mut segments = token.split("::");
+      let root = segments.next().unwrap_or_default();
       let root = root.strip_prefix("r#").unwrap_or(root);
+      if same_scope && root == "self" {
+        let next = segments.next().unwrap_or_default();
+        let next = next.strip_prefix("r#").unwrap_or(next);
+        if available.contains_key(next) {
+          return Err(CodegenError::ConfigurationError(format!(
+            "custom type '{}' refers to a reserved alias in the generated module; use an independent type outside that alias namespace",
+            token
+          )));
+        }
+      }
       if available.contains_key(root) {
         return Err(CodegenError::ConfigurationError(format!(
           "custom type '{}' conflicts with a fundamental alias; use a qualified path such as crate::{}",
@@ -2610,7 +2623,12 @@ mod tests {
       fundamental_aliases: true,
       ..CodegenOptions::default()
     };
-    for target in ["Bstr::Item", "Vec<Bstr::Item>", "r#Bstr::Item"] {
+    for target in [
+      "Bstr::Item",
+      "Vec<Bstr::Item>",
+      "r#Bstr::Item",
+      "self::Bstr::Item",
+    ] {
       opts
         .substitutions
         .insert("record.hash".into(), target.into());
@@ -2624,7 +2642,7 @@ mod tests {
     }
     for target in [
       "crate::Bstr::Item",
-      "self::Bstr::Item",
+      "self::other::Bstr::Item",
       "super::Bstr::Item",
       "::Bstr::Item",
       "other::Bstr::Item",
@@ -2636,6 +2654,54 @@ mod tests {
       let generated = generate_all_types(&cddl, input, &opts).unwrap();
       assert!(generated.contains(&format!("pub hash: {target},")));
     }
+    opts
+      .substitutions
+      .insert("record.hash".into(), "self::Bstr::Item".into());
+    let generated = generate_single_type(&cddl, "Record", None, input, &opts).unwrap();
+    assert!(generated.contains("pub hash: self::Bstr::Item,"));
+  }
+
+  #[test]
+  fn whole_file_aliases_cannot_refer_to_self_qualified_reserved_names() {
+    let input = "record = { value: any }";
+    let cddl = cddl_from_str(input, true).unwrap();
+    for target in [
+      "self::Any",
+      "self::r#Any",
+      "Vec<self::Any>",
+      "self::Any::Item",
+    ] {
+      let opts = CodegenOptions {
+        fundamental_aliases: true,
+        any_type: Some(target.into()),
+        ..CodegenOptions::default()
+      };
+      assert!(
+        matches!(
+          generate_all_types(&cddl, input, &opts),
+          Err(CodegenError::ConfigurationError(_))
+        ),
+        "self-qualified reserved target accepted: {target}"
+      );
+    }
+  }
+
+  #[test]
+  fn omitted_source_rules_still_reserve_their_names() {
+    let input = "Bstr = #\nrecord = { value: Bstr }";
+    let cddl = cddl_from_str(input, true).unwrap();
+    let opts = CodegenOptions {
+      fundamental_aliases: true,
+      ..CodegenOptions::default()
+    };
+    assert!(matches!(
+      generate_all_types(&cddl, input, &opts),
+      Err(CodegenError::ConfigurationError(_))
+    ));
+    assert!(matches!(
+      generate_single_type(&cddl, "Record", None, input, &opts),
+      Err(CodegenError::ConfigurationError(_))
+    ));
   }
 
   fn gen(input: &str) -> String {
