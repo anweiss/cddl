@@ -196,7 +196,7 @@ fn parse_line(rest: &str, line: usize) -> Result<Directive, ModuleError> {
 /// document writes namespaced selectors such as `cose.label`, and RFC 8610
 /// names admit both characters internally. Both are accepted here so that the
 /// specification's own examples parse.
-fn is_id(name: &str) -> bool {
+pub(super) fn is_id(name: &str) -> bool {
   let mut chars = name.chars();
 
   match chars.next() {
@@ -204,15 +204,26 @@ fn is_id(name: &str) -> bool {
     _ => return false,
   }
 
-  chars
-    .all(|c| c == '$' || c == '@' || c == '_' || c == '.' || c == '-' || c.is_ascii_alphanumeric())
-    && !name.ends_with(['.', '-'])
+  let mut separator = false;
+  for c in chars {
+    if c == '.' || c == '-' {
+      if separator {
+        return false;
+      }
+      separator = true;
+    } else if c == '$' || c == '@' || c == '_' || c.is_ascii_alphanumeric() {
+      separator = false;
+    } else {
+      return false;
+    }
+  }
+  !separator
 }
 
 /// Whether `name` matches the `filename` production. Note that the production
 /// admits no path separator, so a module name can never escape a configured
 /// source directory; `.` and `..` are rejected explicitly all the same.
-fn is_filename(name: &str) -> bool {
+pub(super) fn is_filename(name: &str) -> bool {
   !name.is_empty()
     && name != "."
     && name != ".."
@@ -245,6 +256,29 @@ mod tests {
   fn import_with_alias() {
     let directive = one(";# import rfc9052 as cose\n");
     assert_eq!(directive.alias.as_deref(), Some("cose"));
+  }
+
+  #[test]
+  fn identifiers_require_a_character_after_each_separator() {
+    for name in ["bad..ns", "bad--ns", "bad.-ns", "bad-.ns", "bad.", "bad-"] {
+      for input in [
+        format!(";# import module as {}\n", name),
+        format!(";# import {} from module\n", name),
+      ] {
+        assert!(matches!(
+          parse_directives(&input),
+          Err(ModuleError::Directive { .. })
+        ));
+      }
+    }
+    for name in ["good.ns", "good-ns", "good.ns-name", "$.start.$", "ns.0"] {
+      assert_eq!(
+        one(&format!(";# import module as {}\n", name))
+          .alias
+          .as_deref(),
+        Some(name)
+      );
+    }
   }
 
   #[test]

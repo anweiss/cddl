@@ -181,6 +181,35 @@ fn bareword_keys_are_preserved_and_do_not_add_dependencies() {
 }
 
 #[test]
+fn byte_string_prefixes_are_preserved_and_do_not_add_dependencies() {
+  let mut source = MemoryModuleSource::new();
+  source.insert(
+    "literals",
+    "h = int\nb64 = int\npayload = [h'00', b64'AA==', h\"00\"]\nreferences = [h, b64]\n",
+  );
+  let output = resolve_modules(
+    "start = ns.payload\n;# import literals as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert_eq!(defined_order(&output), ["start", "ns.payload"]);
+  assert!(output.contains("ns.payload = [h'00', b64'AA==', h\"00\"]"));
+  assert_parses(&output);
+
+  let output = resolve_modules(
+    "start = [ns.payload, ns.references]\n;# import literals as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(output.contains("ns.references = [ns.h, ns.b64]"));
+  assert!(output.contains("ns.h = int"));
+  assert!(output.contains("ns.b64 = int"));
+  assert_parses(&output);
+}
+
+#[test]
 fn include_from_takes_exactly_the_rules_named() {
   let output = resolve("mydata = {* label => values}\n;# include label, values from rfc9052\n");
 
@@ -307,7 +336,7 @@ fn filesystem_imports_validate_names_and_respect_empty_environment() {
       },
     )
     .unwrap_err();
-    assert!(matches!(error, ModuleError::ModuleUnreadable { .. }));
+    assert!(matches!(error, ModuleError::Directive { line: 0, .. }));
   }
 
   let mut command = Command::new(env!("CARGO_BIN_EXE_cddl"));
@@ -369,6 +398,48 @@ fn command_line_import_and_start_rule() {
     defined_order(&output),
     ["$.start.$", "cose.COSE_Key", "cose.label", "cose.values"]
   );
+}
+
+#[test]
+fn command_line_imports_use_directive_validation() {
+  for (namespace, module) in [
+    ("bad..ns", "rfc9052"),
+    ("bad--ns", "rfc9052"),
+    ("bad.-ns", "rfc9052"),
+    ("bad-.ns", "rfc9052"),
+    ("bad.", "rfc9052"),
+    ("bad-", "rfc9052"),
+    ("", "rfc9052"),
+    ("ns as other", "rfc9052"),
+    ("ns\n;# include other", "rfc9052"),
+    ("ns", ""),
+    ("ns", "../rfc9052"),
+    ("ns", "rfc9052 as other"),
+    ("ns", "rfc9052\n;# include other"),
+  ] {
+    let options = ResolveOptions {
+      command_line_imports: vec![(namespace.to_string(), module.to_string())],
+      ..ResolveOptions::default()
+    };
+    assert!(matches!(
+      resolve_modules("", &cose(), &options),
+      Err(ModuleError::Directive { line: 0, .. })
+    ));
+  }
+
+  for namespace in ["cose", "cose.ns", "cose-ns", "cose.ns-name"] {
+    let input = format!("start = {}.COSE_Key\n", namespace);
+    let options = ResolveOptions {
+      command_line_imports: vec![(namespace.to_string(), "rfc9052".to_string())],
+      ..ResolveOptions::default()
+    };
+    let output = resolve_modules(&input, &cose(), &options).unwrap();
+    assert_eq!(
+      output,
+      resolve(&format!("{};# import rfc9052 as {}\n", input, namespace))
+    );
+    assert_parses(&output);
+  }
 }
 
 #[test]

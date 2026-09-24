@@ -19,7 +19,7 @@ use alloc::{
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-  directive::{parse_directives, Directive, DirectiveKind, NameSelector},
+  directive::{is_filename, is_id, parse_directives, Directive, DirectiveKind, NameSelector},
   scan::{scan, IdentRole},
   ModuleError, ModuleSource,
 };
@@ -117,14 +117,28 @@ fn resolve(
   let mut directives: Vec<Directive> = options
     .command_line_imports
     .iter()
-    .map(|(namespace, module)| Directive {
-      kind: DirectiveKind::Import,
-      names: None,
-      filename: module.clone(),
-      alias: Some(namespace.clone()),
-      line: 0,
+    .map(|(namespace, module)| {
+      if !is_filename(module) {
+        return Err(ModuleError::Directive {
+          line: 0,
+          message: format!("\"{}\" is not a valid module name", module),
+        });
+      }
+      if !is_id(namespace) {
+        return Err(ModuleError::Directive {
+          line: 0,
+          message: format!("\"{}\" is not a valid namespace", namespace),
+        });
+      }
+      Ok(Directive {
+        kind: DirectiveKind::Import,
+        names: None,
+        filename: module.clone(),
+        alias: Some(namespace.clone()),
+        line: 0,
+      })
     })
-    .collect();
+    .collect::<Result<_, _>>()?;
 
   directives.extend(parse_directives(input)?);
 

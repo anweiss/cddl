@@ -169,6 +169,17 @@ pub(crate) fn scan(src: &str) -> Scan {
         }
       }
 
+      // Skip byte-string prefixes, leaving the quoted content to the string
+      // branches below rather than recording the prefix as a reference.
+      b'h' if matches!(bytes.get(i + 1), Some(b'\'' | b'"')) => {
+        prev_was_ident_end = false;
+        i += 1;
+      }
+      b'b' if bytes[i..].starts_with(b"b64'") => {
+        prev_was_ident_end = false;
+        i += 3;
+      }
+
       // Text string.
       b'"' => {
         prev_was_ident_end = false;
@@ -482,5 +493,17 @@ mod tests {
     let scan = scan("a = \"not_a_rule = x\" ; nor = this\nb = int\n");
     let names: Vec<_> = scan.rules.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(names, ["a", "b"]);
+  }
+
+  #[test]
+  fn byte_string_prefixes_are_not_references() {
+    let scan = scan("a = [h'00', b64'AA==', h\"00\", h, b64]\n");
+    let references: Vec<_> = scan
+      .idents
+      .iter()
+      .filter(|ident| ident.role == IdentRole::Reference)
+      .map(|ident| ident.text.as_str())
+      .collect();
+    assert_eq!(references, ["h", "b64"]);
   }
 }

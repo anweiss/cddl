@@ -15,7 +15,7 @@
 //! # fn main() -> Result<(), cddl::modules::ModuleError> {
 //! use cddl::modules::{resolve_modules, ResolveOptions};
 //!
-//! let input = "start = COSE_Key\n;# import rfc9052 as cose\n";
+//! let input = "start = cose.COSE_Key\n;# import rfc9052 as cose\n";
 //! let source = cddl::modules::FsModuleSource::from_env();
 //! let basic_cddl = resolve_modules(input, &source, &ResolveOptions::default())?;
 //! let _ast = cddl::parser::cddl_from_str(&basic_cddl, false);
