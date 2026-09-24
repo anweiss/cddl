@@ -1,0 +1,5 @@
+digest = bstr
+hash = digest
+created = tdate
+timestamp = created
+record = { hash: hash, when: timestamp }
