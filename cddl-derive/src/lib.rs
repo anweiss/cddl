@@ -152,6 +152,11 @@
 //! cannot customize serde; the annotations are applied to generated fields.
 //! Choice enums retain their existing representation; this field-encoding
 //! support does not add byte/tag adapters to enum variant payloads.
+//!
+//! This also corrects direct tagged-prelude references in containers (for
+//! example, `[* tdate]` and `tdate / null`): CBOR output now carries the tag
+//! even without an intervening alias. Decoding still accepts the formerly
+//! emitted untagged values.
 
 extern crate proc_macro;
 

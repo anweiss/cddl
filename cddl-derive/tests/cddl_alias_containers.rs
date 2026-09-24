@@ -20,6 +20,7 @@ mod attribute {
 fn assert_round_trip<T: serde::Serialize + serde::de::DeserializeOwned>() {
   let json = serde_json::json!({
     "count": 7,
+    "direct-times": ["2026-09-24T00:00:00Z"],
     "times": ["2026-09-24T00:00:00Z"],
     "pairs": [[[1, 2], "2026-09-24T00:00:00Z"]]
   });
@@ -42,11 +43,38 @@ fn assert_round_trip<T: serde::Serialize + serde::de::DeserializeOwned>() {
     value("times").as_array().unwrap()[0],
     ciborium::Value::Tag(0, _)
   ));
+  assert!(matches!(
+    value("direct-times").as_array().unwrap()[0],
+    ciborium::Value::Tag(0, _)
+  ));
   let pair = value("pairs").as_array().unwrap()[0].as_array().unwrap();
   assert!(matches!(&pair[0], ciborium::Value::Bytes(b) if b == &[1, 2]));
   assert!(matches!(pair[1], ciborium::Value::Tag(0, _)));
   let decoded: T = ciborium::from_reader(bytes.as_slice()).unwrap();
   assert_eq!(serde_json::to_value(decoded).unwrap(), json);
+  let mut untagged = wire;
+  strip_tags(&mut untagged);
+  let mut bytes = Vec::new();
+  ciborium::into_writer(&untagged, &mut bytes).unwrap();
+  let decoded: T = ciborium::from_reader(bytes.as_slice()).unwrap();
+  assert_eq!(serde_json::to_value(decoded).unwrap(), json);
+}
+
+fn strip_tags(value: &mut ciborium::Value) {
+  match value {
+    ciborium::Value::Tag(_, inner) => {
+      *value = (**inner).clone();
+      strip_tags(value);
+    }
+    ciborium::Value::Array(values) => values.iter_mut().for_each(strip_tags),
+    ciborium::Value::Map(entries) => {
+      for (key, value) in entries {
+        strip_tags(key);
+        strip_tags(value);
+      }
+    }
+    _ => {}
+  }
 }
 
 #[test]
