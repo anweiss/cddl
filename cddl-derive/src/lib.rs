@@ -53,6 +53,7 @@
 //! | `any_type = "<path>"` | `serde_json::Value` | Rust type generated for CDDL `any`. Set to `ciborium::Value` for a CBOR-first schema. |
 //! | `non_exhaustive = true` | `false` | Emit `#[non_exhaustive]` on generated structs and enums, so adding a field or variant later is not a breaking change downstream. |
 //! | `other_variant = true` | `false` | Append an `Other(String)` catch-all to generated enums, so a value added to the schema later still deserializes. |
+//! | `fundamental_aliases = true` | `false` | Name fundamental types through aliases such as `Tstr`, `Tdate`, and `Bstr`. |
 //! | `substitute("k" = "<path>")` | none | Replace generated types with hand-written ones. |
 //!
 //! A `substitute` key is either a CDDL rule name, which replaces every
@@ -84,6 +85,65 @@
 //! substituting `label` rewrites `Vec<Label>` but leaves `LabelSet` alone. An
 //! explicit substitution replaces the type outright, which also drops any CBOR
 //! tag that had been inferred from the original prelude type.
+//!
+//! ## Fundamental type aliases
+//!
+//! With `fundamental_aliases = true`, named prelude types remain visible in
+//! the generated API: `created = tdate` becomes `pub type Created = Tdate`,
+//! and a `bstr` field uses `Bstr`. With the option omitted or false, output
+//! is unchanged. Literals and raw CBOR major-type syntax keep their existing
+//! representations; this setting names prelude identifiers, not constraints.
+//!
+//! Supported names and their existing Rust representations are:
+//!
+//! | CDDL identifiers | Rust representation |
+//! |---|---|
+//! | `bool`, `true`, `false` | `bool` |
+//! | `uint`, `unsigned` | `u64` |
+//! | `int`, `integer`, `nint`, `time` | `i64` |
+//! | `float16`, `float32`, `float64`, `float16-32`, `float32-64`, `float`, `number` | `f64` |
+//! | `tstr`, `text`, `tdate`, `uri`, `b64url`, `b64legacy`, `regexp` | `String` |
+//! | `bstr`, `bytes`, `biguint`, `bignint`, `bigint` | `Vec<u8>` |
+//! | `null`, `nil`, `undefined` | `()` |
+//! | `any` | the configured `any_type` |
+//!
+//! Aliases use the usual PascalCase conversion (`tdate` becomes `Tdate`,
+//! `float16-32` becomes `Float1632`). Only referenced aliases are emitted,
+//! once each in sorted name order, after the user-defined types. Generated
+//! rule names colliding with any of these 32 reserved aliases produce a
+//! diagnostic, even when that alias is unused or `#[cddl]` selects a different
+//! rule. All source rules are checked, including rules omitted during lowering.
+//! Rename the rule or leave the option disabled. User-defined aliases retain
+//! their names and point to the fundamental alias rather than its primitive.
+//! Rule and field substitutions still take precedence.
+//! Qualify custom replacement types that use a reserved name (for example,
+//! `crate::Bstr`); ambiguous unqualified replacements produce a diagnostic
+//! rather than silently selecting the generated fundamental alias.
+//! The root must be qualified too: `Bstr::Item` is ambiguous, while
+//! `crate::Bstr::Item` is explicit.
+//! For `cddl_typegen!`, `self::Any` and other self-qualified reserved roots are
+//! rejected because they refer to the namespace occupied by generated aliases.
+//! `#[cddl]` can use these paths because its aliases occupy a separate module.
+//! Other qualified custom paths must also resolve to independent types, not
+//! back to an alias being generated.
+//! This applies to all reserved names, including unused ones. Substitution
+//! keys must name user-defined rules or fields: a prelude-named rule key such
+//! as `substitute("tdate" = "u64")` is rejected when this option is enabled.
+//! Use a field key such as `"record.when"` to replace that representation.
+//!
+//! `cddl_typegen!` emits public aliases beside the generated types. For
+//! `#[cddl]`, aliases live in a public `__cddl_prelude_<struct_name>` module
+//! (preserving the exact struct identifier's case, without a raw `r#` prefix)
+//! and fields use qualified paths. For example, `First` uses
+//! `__cddl_prelude_First`. Configured `self::` and `super::` paths retain their
+//! caller-module meaning.
+//! This allows multiple attribute invocations in the same Rust module.
+//! Referenced user-defined types still need their own definitions, as usual.
+//!
+//! These are Rust type aliases, not newtypes. They add no validation or
+//! encoding behavior on their own. Generated struct fields retain byte/tag
+//! annotations through these aliases and their chains, just as for
+//! user-defined aliases; the same downstream serde dependencies apply.
 //!
 //! # Enums of string literals
 //!
@@ -188,6 +248,10 @@ fn parse_codegen_option(
     "other_variant" => {
       input.parse::<Token![=]>()?;
       opts.other_variant = input.parse::<LitBool>()?.value();
+    }
+    "fundamental_aliases" => {
+      input.parse::<Token![=]>()?;
+      opts.fundamental_aliases = input.parse::<LitBool>()?.value();
     }
     "substitute" => {
       // substitute("rule" = "path::To::Type", "rule.field" = "OtherType")
@@ -304,7 +368,8 @@ impl Parse for TypegenArgs {
 /// - `path` (required) — path to the CDDL file, relative to the crate root.
 /// - `rule` (optional) — explicit CDDL rule name to use instead of deriving it
 ///   from the struct name.
-/// - `any_type`, `non_exhaustive`, `other_variant`, `substitute` (optional) —
+/// - `any_type`, `non_exhaustive`, `other_variant`, `fundamental_aliases`,
+///   `substitute` (optional) —
 ///   see the crate-level documentation.
 ///
 /// # Example

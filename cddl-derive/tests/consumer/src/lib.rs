@@ -1,6 +1,10 @@
 // An independent workspace: cddl-derive's dev-dependencies cannot satisfy these paths.
 cddl_derive::cddl_typegen!("schema.cddl");
 
+pub mod fundamental {
+  cddl_derive::cddl_typegen!("schema.cddl", fundamental_aliases = true);
+}
+
 #[cfg(test)]
 mod tests {
   #[test]
@@ -19,5 +23,11 @@ mod tests {
     let json = serde_json::to_string(&record).unwrap();
     let decoded: super::Record = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded.hash, record.hash);
+    let aliased: super::fundamental::Record = serde_json::from_str(&json).unwrap();
+    let mut aliased_bytes = Vec::new();
+    ciborium::into_writer(&aliased, &mut aliased_bytes).unwrap();
+    assert_eq!(aliased_bytes, bytes);
+    let decoded: super::fundamental::Record = ciborium::from_reader(bytes.as_slice()).unwrap();
+    assert_eq!(decoded.when, record.when);
   }
 }
