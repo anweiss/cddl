@@ -6,13 +6,13 @@ fn main() -> Result<(), Box<dyn Error>> {
   let output = PathBuf::from(env::var_os("OUT_DIR").ok_or("OUT_DIR not set")?);
   fs::write(
     output.join("generated.rs"),
-    cddl_codegen::generate_rust_code(&schema)?,
+    cddl_codegen_rust::generate_rust_code(&schema)?,
   )?;
-  let mut options = cddl_codegen::CodegenOptions::default();
+  let mut options = cddl_codegen_rust::CodegenOptions::default();
   options.fundamental_aliases = true;
   fs::write(
     output.join("fundamental.rs"),
-    cddl_codegen::generate_rust_code_with_options(&schema, &options)?,
+    cddl_codegen_rust::generate_rust_code_with_options(&schema, &options)?,
   )?;
   Ok(())
 }

@@ -1,5 +1,5 @@
 [workspace]
-members = ["cddl-codegen", "cddl-derive"]
+members = ["cddl-codegen-rust", "cddl-derive"]
 resolver = "2"
 
 [package]
@@ -16,7 +16,7 @@ edition = "2018"
 rust-version = "1.88.0"
 exclude = [
     "cddl-lsp/**/*",
-    "cddl-codegen/**/*",
+    "cddl-codegen-rust/**/*",
     "cddl-derive/**/*",
     "www/**/*",
     ".github/**/*",

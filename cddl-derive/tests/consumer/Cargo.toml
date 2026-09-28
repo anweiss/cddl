@@ -9,7 +9,7 @@ publish = false
 resolver = "3"
 
 [build-dependencies]
-cddl-codegen = { path = "../../../cddl-codegen" }
+cddl-codegen-rust = { path = "../../../cddl-codegen-rust" }
 
 [dependencies]
 cddl-derive = { path = "../.." }

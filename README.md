@@ -224,16 +224,16 @@ assert!(cddl_from_str(input, true).is_ok())
 
 ### Generating Rust types from CDDL
 
-The [`cddl-codegen`](cddl-codegen/) library generates Rust source at runtime or
+The [`cddl-codegen-rust`](cddl-codegen-rust/) library generates Rust source at runtime or
 from build scripts:
 
 ```toml
 [dependencies]
-cddl-codegen = "0.1"
+cddl-codegen-rust = "0.1"
 ```
 
 ```rust
-use cddl_codegen::{generate_rust_code, CodegenError};
+use cddl_codegen_rust::{generate_rust_code, CodegenError};
 
 fn generate(schema: &str) -> Result<String, CodegenError> {
   generate_rust_code(schema)
@@ -241,7 +241,7 @@ fn generate(schema: &str) -> Result<String, CodegenError> {
 ```
 
 For tools that combine or transform schemas, parse them with the re-exported
-`cddl_codegen::cddl`, then pass the resulting AST to
+`cddl_codegen_rust::cddl`, then pass the resulting AST to
 `generate_rust_code_from_ast`. Pass the original source
 for an unchanged AST, or `""` for ASTs combined from multiple documents (using
 AST-attached documentation only). The caller chooses conflict and merge

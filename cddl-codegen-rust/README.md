@@ -1,14 +1,14 @@
-# cddl-codegen
+# cddl-codegen-rust
 
-`cddl-codegen` generates Rust source code from CDDL definitions. It is the
+`cddl-codegen-rust` generates Rust source code from CDDL definitions. It is the
 regular-library counterpart to the `cddl-derive` procedural macros and uses the
 same generation engine and options.
 
-Add `cddl-codegen = "0.1"` to `[dependencies]` for an application, or to
+Add `cddl-codegen-rust = "0.1"` to `[dependencies]` for an application, or to
 `[build-dependencies]` for a build script.
 
 ```rust
-use cddl_codegen::{generate_rust_code, CodegenError};
+use cddl_codegen_rust::{generate_rust_code, CodegenError};
 
 fn generate(schema: &str) -> Result<String, CodegenError> {
   generate_rust_code(schema)
@@ -18,7 +18,7 @@ fn generate(schema: &str) -> Result<String, CodegenError> {
 Customize output with `CodegenOptions`:
 
 ```rust
-use cddl_codegen::{generate_rust_code_with_options, CodegenOptions};
+use cddl_codegen_rust::{generate_rust_code_with_options, CodegenOptions};
 
 let mut options = CodegenOptions::default();
 options.non_exhaustive = true;
@@ -28,7 +28,7 @@ let generated = generate_rust_code_with_options(
   r#"person = { name: tstr, ? email: tstr }"#,
   &options,
 )?;
-# Ok::<(), cddl_codegen::CodegenError>(())
+# Ok::<(), cddl_codegen_rust::CodegenError>(())
 ```
 
 All five macro options are available on `CodegenOptions`: `any_type`,
@@ -40,7 +40,7 @@ Rust output name. Referenced user-defined types must be generated separately.
 
 ## Transforming or combining schemas
 
-Use the re-exported `cddl_codegen::cddl` parser and AST, then pass the AST to
+Use the re-exported `cddl_codegen_rust::cddl` parser and AST, then pass the AST to
 `generate_rust_code_from_ast`. This ensures the AST matches the engine's
 dependency version without adding a separate `cddl` dependency. No procedural
 macros or `CARGO_MANIFEST_DIR` are needed by the library.
@@ -49,9 +49,9 @@ For example, a tool can combine compatible, non-overlapping fields from two
 versions of a map rule before generating Rust:
 
 ```rust
-use cddl_codegen::cddl::ast::{Rule, Type2};
-use cddl_codegen::cddl::pest_bridge::cddl_from_pest_str;
-use cddl_codegen::{generate_rust_code_from_ast, CodegenOptions};
+use cddl_codegen_rust::cddl::ast::{Rule, Type2};
+use cddl_codegen_rust::cddl::pest_bridge::cddl_from_pest_str;
+use cddl_codegen_rust::{generate_rust_code_from_ast, CodegenOptions};
 
 let mut first = cddl_from_pest_str(
   "person = {\n; Display name\nname: tstr\n}",

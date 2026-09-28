@@ -1,5 +1,5 @@
-use cddl_codegen::cddl::parser::cddl_from_str;
-use cddl_codegen::{
+use cddl_codegen_rust::cddl::parser::cddl_from_str;
+use cddl_codegen_rust::{
   generate_rust_code, generate_rust_code_for_rule, generate_rust_code_for_rule_from_ast,
   generate_rust_code_from_ast, generate_rust_code_with_options, CodegenError, CodegenOptions,
 };

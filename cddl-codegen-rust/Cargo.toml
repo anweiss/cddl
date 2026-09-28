@@ -1,5 +1,5 @@
 [package]
-name = "cddl-codegen"
+name = "cddl-codegen-rust"
 description = "Rust source code generation from CDDL definitions"
 repository = "https://github.com/anweiss/cddl"
 license = "MIT"
