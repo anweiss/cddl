@@ -7,6 +7,9 @@
 //! - [`cddl_typegen`] — a function-like macro that generates all Rust types
 //!   from a CDDL file.
 //!
+//! For runtime or build-script generation without macros, use the
+//! [`cddl_codegen`] library. Both crates share the same generation engine.
+//!
 //! # Examples
 //!
 //! ## Attribute macro on a single struct
@@ -220,9 +223,7 @@
 
 extern crate proc_macro;
 
-mod codegen;
-
-use codegen::CodegenOptions;
+use cddl_codegen::CodegenOptions;
 use proc_macro::TokenStream;
 use syn::parse::{Parse, ParseStream};
 use syn::{parenthesized, parse_macro_input, Ident, LitBool, LitStr, Token};
@@ -393,8 +394,7 @@ pub fn cddl(attr: TokenStream, item: TokenStream) -> TokenStream {
   // Determine which CDDL rule to look up
   let rule_name = args
     .rule
-    .unwrap_or_else(|| codegen::pascal_to_cddl_name(&struct_name));
-  let pascal_rule = codegen::to_pascal_case(&rule_name);
+    .unwrap_or_else(|| cddl_codegen::pascal_to_cddl_name(&struct_name));
 
   // Resolve the CDDL file path relative to CARGO_MANIFEST_DIR
   let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -409,8 +409,8 @@ pub fn cddl(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
   };
 
-  // Parse the CDDL
-  let cddl_ast = match cddl::parser::cddl_from_str(&cddl_content, true) {
+  // Keep the macro's source-snippet diagnostics; runtime generation is silent.
+  let cddl_ast = match cddl_codegen::cddl::parser::cddl_from_str(&cddl_content, true) {
     Ok(ast) => ast,
     Err(e) => {
       let msg = format!("failed to parse CDDL: {}", e);
@@ -421,11 +421,11 @@ pub fn cddl(attr: TokenStream, item: TokenStream) -> TokenStream {
   };
 
   // Generate code for the single rule, using the user's struct name
-  let generated = match codegen::generate_single_type(
+  let generated = match cddl_codegen::generate_rust_code_for_rule_from_ast(
     &cddl_ast,
-    &pascal_rule,
-    Some(&struct_name),
     &cddl_content,
+    &rule_name,
+    Some(&struct_name),
     &args.opts,
   ) {
     Ok(code) => code,
@@ -499,8 +499,7 @@ pub fn cddl_typegen(input: TokenStream) -> TokenStream {
     }
   };
 
-  // Parse the CDDL
-  let cddl_ast = match cddl::parser::cddl_from_str(&cddl_content, true) {
+  let cddl_ast = match cddl_codegen::cddl::parser::cddl_from_str(&cddl_content, true) {
     Ok(ast) => ast,
     Err(e) => {
       let msg = format!("failed to parse CDDL: {}", e);
@@ -511,15 +510,16 @@ pub fn cddl_typegen(input: TokenStream) -> TokenStream {
   };
 
   // Generate all types
-  let generated = match codegen::generate_all_types(&cddl_ast, &cddl_content, &args.opts) {
-    Ok(code) => code,
-    Err(e) => {
-      let msg = format!("codegen error: {}", e);
-      return syn::Error::new(path_lit.span(), msg)
-        .to_compile_error()
-        .into();
-    }
-  };
+  let generated =
+    match cddl_codegen::generate_rust_code_from_ast(&cddl_ast, &cddl_content, &args.opts) {
+      Ok(code) => code,
+      Err(e) => {
+        let msg = format!("codegen error: {}", e);
+        return syn::Error::new(path_lit.span(), msg)
+          .to_compile_error()
+          .into();
+      }
+    };
 
   // Parse the generated code as a token stream
   let tokens: proc_macro2::TokenStream = match generated.parse() {
