@@ -27,9 +27,9 @@ jobs:
         run: |
           rustup update
 
-      - name: cargo publish --dry-run
+      - name: cargo publish --workspace --dry-run
         run: |
-          cargo publish --dry-run
+          cargo publish --workspace --dry-run
 
   wasm-compilation-check:
     name: Compilation check for wasm target and npm publishing
