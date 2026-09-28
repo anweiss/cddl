@@ -254,10 +254,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "cddl-derive"
+name = "cddl-codegen-rust"
 version = "0.1.0"
 dependencies = [
  "cddl",
+]
+
+[[package]]
+name = "cddl-derive"
+version = "0.1.0"
+dependencies = [
+ "cddl-codegen-rust",
  "ciborium",
  "proc-macro2",
  "quote",

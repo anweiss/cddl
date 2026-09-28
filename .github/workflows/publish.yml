@@ -211,17 +211,21 @@ jobs:
         run: |
           cargo login ${{ secrets.CratesIOToken }}
 
-      - name: Publish crate
+      - name: Publish workspace crates
         run: |
-          # Extract version from Cargo.toml
-          VERSION=$(grep -m 1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          # Publish in dependency order, including on retries after a partial release.
+          for MANIFEST in Cargo.toml cddl-codegen-rust/Cargo.toml cddl-derive/Cargo.toml; do
+            PACKAGE=$(grep -m 1 '^name' "$MANIFEST" | sed 's/.*"\(.*\)".*/\1/')
+            VERSION=$(grep -m 1 '^version' "$MANIFEST" | sed 's/.*"\(.*\)".*/\1/')
+            STATUS=$(curl --silent --show-error --location --output /dev/null --write-out '%{http_code}' \
+              "https://crates.io/api/v1/crates/$PACKAGE/$VERSION")
 
-          # Check if version already exists
-          if cargo search cddl --limit 1 | grep -q "cddl = \"$VERSION\""; then
-            echo "Version $VERSION already exists on crates.io, skipping publish"
-          else
-            cargo publish
-          fi
+            case "$STATUS" in
+              200) echo "$PACKAGE@$VERSION already exists on crates.io, skipping publish" ;;
+              404) cargo publish --manifest-path "$MANIFEST" ;;
+              *) echo "Failed to check $PACKAGE@$VERSION on crates.io (HTTP $STATUS)" >&2; exit 1 ;;
+            esac
+          done
 
   publish-website:
     name: Publish website

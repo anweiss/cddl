@@ -8,6 +8,9 @@ publish = false
 [workspace]
 resolver = "3"
 
+[build-dependencies]
+cddl-codegen-rust = { path = "../../../cddl-codegen-rust" }
+
 [dependencies]
 cddl-derive = { path = "../.." }
 serde = { version = "1", features = ["derive"] }
