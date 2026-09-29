@@ -415,7 +415,7 @@
 //! You can activate features during validation as follows:
 //!
 //! ```rust
-//! # #[cfg(all(feature = "json", feature = "additional-controls"))] {
+//! # #[cfg(feature = "json")] {
 //! use cddl::validate_json_from_str;
 //!
 //! let cddl = r#"
@@ -425,7 +425,7 @@
 //!
 //! let json = r#""v""#;
 //!
-//! #[cfg(not(feature = "additional-controls"))]
+//! #[cfg(feature = "additional-controls")]
 //! assert!(validate_json_from_str(cddl, json, Some(&["json"])).is_ok())
 //! # }
 //! ```
