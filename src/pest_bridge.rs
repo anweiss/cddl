@@ -980,6 +980,9 @@ fn push_error(
     msg,
   } = error
   {
+    #[cfg(not(feature = "ast-span"))]
+    let position = &Position::default();
+
     let key = format!("{}:{}:{}", position.line, position.column, msg.short);
     if seen.insert(key) {
       errors.push(CollectedError {
@@ -1021,6 +1024,9 @@ fn push_error_with_offset(
     msg,
   } = error
   {
+    #[cfg(not(feature = "ast-span"))]
+    let position = &Position::default();
+
     let adjusted = Position {
       line: position.line + block.start_line - 1,
       column: position.column,
