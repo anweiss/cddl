@@ -11,7 +11,7 @@ use indoc::indoc;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 
-#[rustfmt::skip] 
+#[rustfmt::skip]
 pub mod cbor {
     // example values from rfc7049 appendix A
     pub const BOOL_FALSE:   &[u8] = b"\xF4";

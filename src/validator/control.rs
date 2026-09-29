@@ -1442,7 +1442,7 @@ pub fn validate_b32_text<'a>(
 }
 
 #[cfg(feature = "additional-controls")]
-/// Validate base45 encoded text string against byte string  
+/// Validate base45 encoded text string against byte string
 pub fn validate_b45_text<'a>(
   _target: &Type2<'a>,
   controller: &Type2<'a>,
