@@ -289,7 +289,7 @@ impl CDDL<'_> {
     #[cfg(feature = "additional-controls")]
     let mut jv = JSONValidator::new(self, json, enabled_features);
     #[cfg(not(feature = "additional-controls"))]
-    let mut jv = JSONValidator::new(&cddl, json);
+    let mut jv = JSONValidator::new(self, json);
 
     jv.validate().map_err(|e| e.into())
   }
@@ -307,7 +307,11 @@ impl CDDL<'_> {
   ) -> Result<(), Box<dyn Error>> {
     let cbor = decode_cbor(document).map_err(|e| e.to_string())?;
 
+    #[cfg(feature = "additional-controls")]
     let mut cv = CBORValidator::new(self, cbor, enabled_features);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(self, cbor);
+
     cv.validate().map_err(|e| e.into())
   }
 }
