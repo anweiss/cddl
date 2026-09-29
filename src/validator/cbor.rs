@@ -5059,7 +5059,7 @@ mod tests {
       "#
     );
 
-    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    let cddl = cddl_from_str(cddl, true);
     if let Err(e) = &cddl {
       println!("{}", e);
     }
@@ -5084,7 +5084,7 @@ mod tests {
       "#
     );
 
-    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    let cddl = cddl_from_str(cddl, true);
     if let Err(e) = &cddl {
       println!("{}", e);
     }
@@ -5116,7 +5116,7 @@ mod tests {
       "#
     );
 
-    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    let cddl = cddl_from_str(cddl, true);
     if let Err(e) = &cddl {
       println!("{}", e);
     }
@@ -5139,7 +5139,7 @@ mod tests {
       "#
     );
 
-    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    let cddl = cddl_from_str(cddl, true);
     if let Err(e) = &cddl {
       println!("{}", e);
     }
@@ -5179,7 +5179,7 @@ mod tests {
       "#
     );
 
-    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    let cddl = cddl_from_str(cddl, true);
     if let Err(e) = &cddl {
       println!("{}", e);
     }
@@ -5217,7 +5217,7 @@ mod tests {
       "#
     );
 
-    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    let cddl = cddl_from_str(cddl, true);
     if let Err(e) = &cddl {
       println!("{}", e);
     }
@@ -5248,7 +5248,7 @@ mod tests {
       "#
     );
 
-    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing);
+    let cddl = cddl_from_str(cddl, true);
     if let Err(e) = &cddl {
       println!("{}", e);
     }
@@ -5571,7 +5571,7 @@ mod tests {
     );
 
     let cbor = Value::from(ciborium::cbor!([0, [1, 2]]).unwrap());
-    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+    let cddl = cddl_from_str(cddl, true)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor, None);
     cv.validate()?;
@@ -5585,7 +5585,7 @@ mod tests {
     );
 
     let cbor = Value::from(ciborium::cbor!([0, [1, 2]]).unwrap());
-    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+    let cddl = cddl_from_str(cddl, true)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor, None);
     cv.validate()?;
@@ -5598,7 +5598,7 @@ mod tests {
     );
 
     let cbor = Value::from(ciborium::cbor!([1, [2, 3]]).unwrap());
-    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+    let cddl = cddl_from_str(cddl, true)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor, None);
     cv.validate()?; // If this passes, our fix works
@@ -5616,7 +5616,7 @@ mod tests {
     );
 
     let cbor = Value::from(ciborium::cbor!([1, [2, 3]]).unwrap());
-    let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
+    let cddl = cddl_from_str(cddl, true)?;
 
     let mut cv = CBORValidator::new(&cddl, cbor, None);
 
