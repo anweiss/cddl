@@ -410,7 +410,8 @@ impl<'a> JSONValidator<'a> {
         {
           self.state.advance_to_next_entry = true;
           return Ok(());
-        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.state.ctrl {
+        } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.state.ctrl
+        {
           return Ok(());
         } else {
           self.add_error(format!("object missing key: {}", t))

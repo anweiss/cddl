@@ -4855,7 +4855,8 @@ where
         {
           self.state.advance_to_next_entry = true;
           None
-        } else if let Some(Token::NE) | Some(Token::DEFAULT) = &self.state.ctrl {
+        } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.state.ctrl
+        {
           None
         } else {
           Some(format!("object missing key: {}", value))
