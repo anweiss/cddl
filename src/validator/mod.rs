@@ -46,6 +46,7 @@ struct ParserError {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(feature = "json", feature = "cbor", test))]
 use crate::cddl_from_str;
 
 /// Validator trait. Implemented for JSON documents and CBOR binaries
