@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::fmt::Write;
 
 #[cfg(feature = "json")]
+#[cfg(feature = "additional-controls")]
 use cddl::validator::validate_json_from_str;
 use cddl::{
   ast::Type2, parser::cddl_from_str, token::ByteValue, validator::validate_cbor_from_slice,
@@ -180,7 +181,8 @@ fn base64_literals_mixing_both_rfc_4648_alphabets_are_rejected() {
   }
 }
 
-#[cfg(all(feature = "json", feature = "additional-controls"))]
+#[cfg(feature = "json")]
+#[cfg(feature = "additional-controls")]
 #[test]
 fn mixed_alphabet_rejection_is_shared_by_the_json_validator() {
   // The alphabet check lives in the parser, so CBOR and JSON validation
