@@ -5043,7 +5043,12 @@ mod tests {
 
     let cddl = cddl_from_str(cddl, true)?;
 
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     cv.validate()?;
 
     Ok(())
@@ -5093,7 +5098,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     cv.validate()?;
 
     Ok(())
@@ -5125,7 +5135,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     cv.validate()?;
 
     Ok(())
@@ -5148,7 +5163,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     cv.validate()?;
 
     Ok(())
@@ -5194,7 +5214,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     cv.validate()?;
 
     Ok(())
@@ -5232,7 +5257,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     cv.validate()?;
 
     Ok(())
@@ -5260,7 +5290,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     cv.validate()?;
 
     Ok(())
@@ -5296,12 +5331,12 @@ mod tests {
       Value::Bytes(b"hello world".to_vec()), // content: bstr
     ]);
 
-    #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
-    #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut validator = CBORValidator::new(&cddl, cbor_data);
+    let mut validator = CBORValidator::new(
+      &cddl,
+      cbor_data,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     let result = validator.validate();
 
     // This should pass but currently fails
@@ -5316,7 +5351,12 @@ mod tests {
   fn extract_cbor() {
     let cbor = Value::Float(1.23);
     let cddl = cddl_from_str("start = any", true).unwrap();
-    let cv = CBORValidator::new(&cddl, cbor, None);
+    let cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert_eq!(cv.extract_cbor(), Value::Float(1.23));
   }
 
@@ -5330,10 +5370,12 @@ mod tests {
       ("x = number .ge 1.0", Value::Float(2.5)),
     ] {
       let cddl_ast = cddl_from_str(cddl, true)?;
-      #[cfg(feature = "additional-controls")]
-      let mut cv = CBORValidator::new(&cddl_ast, cbor.clone(), None);
-      #[cfg(not(feature = "additional-controls"))]
-      let mut cv = CBORValidator::new(&cddl_ast, cbor.clone());
+      let mut cv = CBORValidator::new(
+        &cddl_ast,
+        cbor.clone(),
+        #[cfg(feature = "additional-controls")]
+        None,
+      );
       assert!(cv.validate().is_ok(), "{} should accept {:?}", cddl, cbor);
     }
 
@@ -5357,10 +5399,12 @@ mod tests {
       Value::Bytes(valid_bytes),
     )]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, valid_cbor, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, valid_cbor);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      valid_cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(cv.validate().is_ok());
 
     // Test byte string that's too short
@@ -5370,10 +5414,12 @@ mod tests {
       Value::Bytes(short_bytes),
     )]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, short_cbor, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, short_cbor);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      short_cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(cv.validate().is_err());
 
     // Test byte string that's too long
@@ -5383,10 +5429,12 @@ mod tests {
       Value::Bytes(long_bytes),
     )]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, long_cbor, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, long_cbor);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      long_cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(cv.validate().is_err());
 
     Ok(())
@@ -5409,10 +5457,12 @@ mod tests {
       Value::Bytes(valid_bytes),
     )]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, valid_cbor, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, valid_cbor);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      valid_cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(cv.validate().is_ok());
 
     // Test boundary case (16 bytes - should pass)
@@ -5422,10 +5472,12 @@ mod tests {
       Value::Bytes(boundary_bytes),
     )]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, boundary_cbor, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, boundary_cbor);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      boundary_cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(cv.validate().is_ok());
 
     Ok(())
@@ -5467,10 +5519,12 @@ mod tests {
     )]);
 
     // Test valid case
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, outer_cbor.clone(), None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, outer_cbor.clone());
+    let mut cv = CBORValidator::new(
+      &cddl,
+      outer_cbor.clone(),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(cv.validate().is_ok());
 
     // Test invalid inner CBOR (missing required field)
@@ -5488,10 +5542,12 @@ mod tests {
       Value::Bytes(invalid_bytes),
     )]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, invalid_outer, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, invalid_outer);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      invalid_outer,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(cv.validate().is_err());
 
     Ok(())
@@ -5530,10 +5586,12 @@ mod tests {
     let outer_cbor = Value::Array(vec![Value::Bytes(inner_bytes)]);
 
     // Test valid case
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, outer_cbor.clone(), None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, outer_cbor.clone());
+    let mut cv = CBORValidator::new(
+      &cddl,
+      outer_cbor.clone(),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     cv.validate()?;
     assert!(
       cv.validate().is_ok(),
@@ -5552,10 +5610,12 @@ mod tests {
 
     let invalid_outer = Value::Array(vec![Value::Bytes(invalid_bytes)]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, invalid_outer, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, invalid_outer);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      invalid_outer,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(cv.validate().is_err());
 
     Ok(())
@@ -5573,7 +5633,12 @@ mod tests {
     let cbor = Value::from(ciborium::cbor!([0, [1, 2]]).unwrap());
     let cddl = cddl_from_str(cddl, true)?;
 
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     cv.validate()?;
 
     // Test with named arrays
@@ -5587,7 +5652,12 @@ mod tests {
     let cbor = Value::from(ciborium::cbor!([0, [1, 2]]).unwrap());
     let cddl = cddl_from_str(cddl, true)?;
 
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     cv.validate()?;
 
     // Test with explicit array literals
@@ -5600,7 +5670,12 @@ mod tests {
     let cbor = Value::from(ciborium::cbor!([1, [2, 3]]).unwrap());
     let cddl = cddl_from_str(cddl, true)?;
 
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     cv.validate()?; // If this passes, our fix works
 
     Ok(())
@@ -5618,7 +5693,12 @@ mod tests {
     let cbor = Value::from(ciborium::cbor!([1, [2, 3]]).unwrap());
     let cddl = cddl_from_str(cddl, true)?;
 
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
 
     // Print detailed information for debugging
     match cv.validate() {
@@ -5661,10 +5741,12 @@ mod tests {
     })?);
 
     // This should not cause a stack overflow
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, cbor);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
 
     // The validation should complete without stack overflow
     let result = cv.validate();
@@ -5694,10 +5776,12 @@ mod tests {
       Value::Text("y".to_string()),
     )]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut validator = CBORValidator::new(&cddl, cbor_data);
+    let mut validator = CBORValidator::new(
+      &cddl,
+      cbor_data,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
 
     // This should fail but currently passes (the bug)
     let result = validator.validate();
@@ -5725,10 +5809,12 @@ mod tests {
     // Create an empty CBOR map
     let cbor_data = Value::Map(vec![]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut validator = CBORValidator::new(&cddl, cbor_data);
+    let mut validator = CBORValidator::new(
+      &cddl,
+      cbor_data,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
 
     let result = validator.validate();
     assert!(
@@ -5752,10 +5838,12 @@ mod tests {
       Value::Text("y".to_string()),
     )]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut validator = CBORValidator::new(&cddl, cbor_data, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut validator = CBORValidator::new(&cddl, cbor_data);
+    let mut validator = CBORValidator::new(
+      &cddl,
+      cbor_data,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
 
     let result = validator.validate();
 
@@ -5808,12 +5896,22 @@ mod tests {
 
     let cbor = Value::Text("1985-04-12T23:20:50.52Z".to_string());
     let cddl = cddl_from_str(cddl_str, true)?;
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     cv.validate()?;
 
     // Also test that an invalid datetime is correctly rejected
     let cbor_invalid = Value::Text("not-a-date".to_string());
-    let mut cv_invalid = CBORValidator::new(&cddl, cbor_invalid, None);
+    let mut cv_invalid = CBORValidator::new(
+      &cddl,
+      cbor_invalid,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(
       cv_invalid.validate().is_err(),
       "Expected validation to fail for invalid datetime value"
@@ -5832,18 +5930,18 @@ mod tests {
     let cbor = Value::Array(vec![Value::Integer(42.into())]);
     let cbor1 = Value::Array(vec![Value::Text(String::from("test-string"))]);
 
-    #[cfg(feature = "additional-controls")]
-    let (mut cv, mut cv1) = {
-      let cv = CBORValidator::new(&cddl, cbor, None);
-      let cv1 = CBORValidator::new(&cddl, cbor1, None);
-      (cv, cv1)
-    };
-    #[cfg(not(feature = "additional-controls"))]
-    let (mut cv, mut cv1) = {
-      let cv = CBORValidator::new(&cddl, cbor);
-      let cv1 = CBORValidator::new(&cddl, cbor1);
-      (cv, cv1)
-    };
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    let mut cv1 = CBORValidator::new(
+      &cddl,
+      cbor1,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
 
     assert!(
       cv.validate().is_ok(),
@@ -5868,18 +5966,19 @@ mod tests {
     ]);
     let cbor_empty = Value::Array(vec![]);
 
-    #[cfg(feature = "additional-controls")]
-    let (mut cv, mut cv_empty) = {
-      let cv = CBORValidator::new(&cddl, cbor, None);
-      let cv_empty = CBORValidator::new(&cddl, cbor_empty, None);
-      (cv, cv_empty)
-    };
-    #[cfg(not(feature = "additional-controls"))]
-    let (mut cv, mut cv_empty) = {
-      let cv = CBORValidator::new(&cddl, cbor);
-      let cv_empty = CBORValidator::new(&cddl, cbor_empty);
-      (cv, cv_empty)
-    };
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    let mut cv_empty = CBORValidator::new(
+      &cddl,
+      cbor_empty,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+
     assert!(
       cv.validate().is_ok(),
       "Zero-or-more multi-type-choice should pass for valid elements"
@@ -5899,10 +5998,12 @@ mod tests {
     let cddl = cddl_from_str(cddl_str, true).unwrap();
     let cbor = Value::Array(vec![]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, cbor);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(
       cv.validate().is_err(),
       "One-or-more with empty array should fail validation"
@@ -5918,10 +6019,12 @@ mod tests {
     let cddl = cddl_from_str(cddl_str, true).unwrap();
     let cbor = Value::Array(vec![Value::Integer(1.into()), Value::Integer(2.into())]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, cbor);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(
       cv.validate().is_ok(),
       "One-or-more with matching uint elements should pass"
@@ -5937,10 +6040,12 @@ mod tests {
     let cddl = cddl_from_str(cddl_str, true).unwrap();
     let cbor = Value::Array(vec![Value::Text("not a uint".to_string())]);
 
-    #[cfg(feature = "additional-controls")]
-    let mut cv = CBORValidator::new(&cddl, cbor, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut cv = CBORValidator::new(&cddl, cbor);
+    let mut cv = CBORValidator::new(
+      &cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(
       cv.validate().is_err(),
       "Array with non-matching type should fail validation"

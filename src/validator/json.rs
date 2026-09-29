@@ -3487,10 +3487,12 @@ mod tests {
 
     for json in ["2.5", "5"] {
       let json = serde_json::from_str::<serde_json::Value>(json)?;
-      #[cfg(feature = "additional-controls")]
-      let mut jv = JSONValidator::new(&cddl, json.clone(), None);
-      #[cfg(not(feature = "additional-controls"))]
-      let mut jv = JSONValidator::new(&cddl, json.clone());
+      let mut jv = JSONValidator::new(
+        &cddl,
+        json.clone(),
+        #[cfg(feature = "additional-controls")]
+        None,
+      );
       assert!(jv.validate().is_ok(), "number should accept {}", json);
     }
 
@@ -3523,7 +3525,12 @@ mod tests {
     let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
     let cddl = cddl.unwrap();
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     jv.validate()?;
 
     Ok(())
@@ -3577,7 +3584,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     jv.validate()?;
 
     Ok(())
@@ -3604,7 +3616,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     jv.validate()?;
 
     Ok(())
@@ -3639,7 +3656,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     jv.validate()?;
 
     Ok(())
@@ -3672,7 +3694,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     jv.validate()?;
 
     Ok(())
@@ -3701,7 +3728,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     jv.validate()?;
 
     Ok(())
@@ -3726,7 +3758,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     jv.validate().unwrap();
 
     Ok(())
@@ -3758,7 +3795,12 @@ mod tests {
 
     let cddl = cddl.unwrap();
 
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     jv.validate().unwrap();
 
     Ok(())
@@ -3775,19 +3817,39 @@ mod tests {
 
     let json = serde_json::json!(5); // Should pass
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_ok());
 
     let json = serde_json::json!(10); // Should pass
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_ok());
 
     let json = serde_json::json!(4); // Should fail
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_err());
 
     let json = serde_json::json!(11); // Should fail
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_err());
 
     // Test inclusive-exclusive range (...)
@@ -3799,19 +3861,39 @@ mod tests {
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
 
     let json = serde_json::json!(5); // Should pass
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_ok());
 
     let json = serde_json::json!(9); // Should pass
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_ok());
 
     let json = serde_json::json!(10); // Should fail (exclusive upper bound)
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_err());
 
     let json = serde_json::json!(4); // Should fail
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_err());
 
     // Test inclusive-exclusive range with floats
@@ -3823,19 +3905,39 @@ mod tests {
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
 
     let json = serde_json::json!(1.5); // Should pass
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_ok());
 
     let json = serde_json::json!(2.5); // Should pass
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_ok());
 
     let json = serde_json::json!(3.5); // Should fail (exclusive upper bound)
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_err());
 
     let json = serde_json::json!(1.0); // Should fail
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_err());
 
     // Test range with string length using .size control
@@ -3847,19 +3949,39 @@ mod tests {
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
 
     let json = serde_json::json!("ab"); // Length 2 - should pass
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_ok());
 
     let json = serde_json::json!("abcd"); // Length 4 - should pass
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_ok());
 
     let json = serde_json::json!("abcde"); // Length 5 - should fail (exclusive)
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_err());
 
     let json = serde_json::json!("a"); // Length 1 - should fail
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(jv.validate().is_err());
 
     Ok(())
@@ -3878,7 +4000,12 @@ mod tests {
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
     let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     jv.validate()?;
 
     // Test with named arrays
@@ -3893,7 +4020,12 @@ mod tests {
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
     let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     jv.validate()?;
 
     // Test with explicit array literals
@@ -3907,7 +4039,12 @@ mod tests {
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
     let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     jv.validate()?; // If this passes, our fix works
 
     Ok(())
@@ -3926,7 +4063,12 @@ mod tests {
     let cddl = cddl_from_str(cddl, true).map_err(json::Error::CDDLParsing)?;
     let json = serde_json::from_str::<serde_json::Value>(json).map_err(json::Error::JSONParsing)?;
 
-    let mut jv = JSONValidator::new(&cddl, json, None);
+    let mut jv = JSONValidator::new(
+      &cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
 
     // Print detailed information for debugging
     match jv.validate() {

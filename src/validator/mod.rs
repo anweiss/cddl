@@ -1474,9 +1474,15 @@ mod tests {
 
     let documents = [r#"{ "bar": "foo" }"#, r#"{ "bar": "foo2" }"#];
 
-    documents
-      .iter()
-      .all(|doc| cddl_schema.validate_json(doc.as_bytes(), None).is_ok());
+    documents.iter().all(|doc| {
+      cddl_schema
+        .validate_json(
+          doc.as_bytes(),
+          #[cfg(feature = "additional-controls")]
+          None,
+        )
+        .is_ok()
+    });
   }
 
   #[test]
