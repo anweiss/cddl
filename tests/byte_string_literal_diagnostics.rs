@@ -155,8 +155,7 @@ fn base64_literals_mixing_both_rfc_4648_alphabets_are_rejected() {
   }
 }
 
-#[cfg(feature = "json")]
-#[cfg(feature = "additional-controls")]
+#[cfg(all(feature = "json", feature = "additional-controls"))]
 #[test]
 fn mixed_alphabet_rejection_is_shared_by_the_json_validator() {
   // The alphabet check lives in the parser, so CBOR and JSON validation

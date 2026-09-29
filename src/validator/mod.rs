@@ -1459,6 +1459,7 @@ mod tests {
 
   use super::*;
 
+  #[cfg(feature = "json")]
   #[test]
   fn validate_json() {
     let cddl_schema = cddl_from_str(

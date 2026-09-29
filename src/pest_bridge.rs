@@ -4516,8 +4516,12 @@ person = {
     if let Err(e) = cddl_from_pest_str(input) {
       let error_str = format!("{:?}", e);
       // Should have line 2 information
+      #[cfg(feature = "ast-span")]
+      let expected_needle = "line: 2";
+      #[cfg(not(feature = "ast-span"))]
+      let expected_needle = "line 2";
       assert!(
-        error_str.contains("line: 2"),
+        error_str.contains(expected_needle),
         "Error should have correct line number, got: {}",
         error_str
       );

@@ -5154,6 +5154,7 @@ mod tests {
     Ok(())
   }
 
+  #[cfg(feature = "additional-controls")]
   #[test]
   fn validate_abnfb_2() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cddl = indoc!(

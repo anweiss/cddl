@@ -64,6 +64,7 @@ fn arrow_form_preserves_the_cut_indicator() {
 
 /// Collapsing the arrow form into `MemberKey::Value` would also rewrite the
 /// source, since `MemberKey::Value` renders with a trailing colon.
+#[cfg(feature = "ast-comments")]
 #[test]
 fn member_key_forms_round_trip_unchanged() {
   for src in [
