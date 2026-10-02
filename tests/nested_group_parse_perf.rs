@@ -409,6 +409,7 @@ fn parenthesised_group_entries_are_still_groups() {
 /// of this fix placed the lookahead after the closing `)`, which let pest's
 /// implicit whitespace skip run first and silently extended the enclosing
 /// rule's span over the trailing newline.
+#[cfg(feature = "ast-span")]
 #[test]
 fn guard_lookahead_does_not_extend_rule_spans() {
   let src = "b = ( x: int ) \n a = { b }";

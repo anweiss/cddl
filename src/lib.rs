@@ -249,6 +249,7 @@
 //! ### Validating JSON
 //!
 //! ```rust
+//! # #[cfg(feature = "json")] {
 //! use cddl::validate_json_from_str;
 //!
 //! let cddl = r#"person = {
@@ -265,6 +266,7 @@
 //!
 //! #[cfg(not(feature = "additional-controls"))]
 //! assert!(validate_json_from_str(cddl, json).is_ok())
+//! # }
 //! ```
 //!
 //! This crate uses the [Serde](https://serde.rs/) framework, and more
@@ -413,6 +415,7 @@
 //! You can activate features during validation as follows:
 //!
 //! ```rust
+//! # #[cfg(feature = "json")] {
 //! use cddl::validate_json_from_str;
 //!
 //! let cddl = r#"
@@ -422,8 +425,9 @@
 //!
 //! let json = r#""v""#;
 //!
-//! #[cfg(not(feature = "additional-controls"))]
+//! #[cfg(feature = "additional-controls")]
 //! assert!(validate_json_from_str(cddl, json, Some(&["json"])).is_ok())
+//! # }
 //! ```
 //!
 //! #### Comparing with JSON schema and JSON schema language
@@ -442,6 +446,7 @@
 //! ### Validating CBOR
 //!
 //! ```rust
+//! # #[cfg(feature = "cbor")] {
 //! use cddl::validate_cbor_from_slice;
 //!
 //! let cddl = r#"rule = false"#;
@@ -450,6 +455,7 @@
 //!
 //! #[cfg(not(feature = "additional-controls"))]
 //! assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
+//! # }
 //! ```
 //!
 //! This crate also uses [Serde](https://serde.rs/) and
@@ -499,6 +505,7 @@
 //! strings as follows:
 //!
 //! ```rust
+//! # #[cfg(all(feature = "cbor", feature = "additional-controls"))] {
 //! use cddl::validate_cbor_from_slice;
 //!
 //! let cddl = r#"
@@ -509,6 +516,7 @@
 //! let cbor = b"\x02";
 //!
 //! assert!(validate_cbor_from_slice(cddl, cbor, Some(&["cbor"])).is_ok())
+//! # }
 //! ```
 //!
 //! ## Projects using this crate

@@ -980,6 +980,9 @@ fn push_error(
     msg,
   } = error
   {
+    #[cfg(not(feature = "ast-span"))]
+    let position = &Position::default();
+
     let key = format!("{}:{}:{}", position.line, position.column, msg.short);
     if seen.insert(key) {
       errors.push(CollectedError {
@@ -1021,6 +1024,9 @@ fn push_error_with_offset(
     msg,
   } = error
   {
+    #[cfg(not(feature = "ast-span"))]
+    let position = &Position::default();
+
     let adjusted = Position {
       line: position.line + block.start_line - 1,
       column: position.column,
@@ -4510,8 +4516,12 @@ person = {
     if let Err(e) = cddl_from_pest_str(input) {
       let error_str = format!("{:?}", e);
       // Should have line 2 information
+      #[cfg(feature = "ast-span")]
+      let expected_needle = "line: 2";
+      #[cfg(not(feature = "ast-span"))]
+      let expected_needle = "line 2";
       assert!(
-        error_str.contains("line: 2"),
+        error_str.contains(expected_needle),
         "Error should have correct line number, got: {}",
         error_str
       );

@@ -5,14 +5,25 @@
 use cddl::validate_cbor_from_slice;
 
 fn assert_valid(name: &str, cddl: &str, cbor: &[u8]) {
-  if let Err(e) = validate_cbor_from_slice(cddl, cbor, None) {
+  if let Err(e) = validate_cbor_from_slice(
+    cddl,
+    cbor,
+    #[cfg(feature = "additional-controls")]
+    None,
+  ) {
     panic!("{}: expected valid, got error: {:?}", name, e);
   }
 }
 
 fn assert_invalid(name: &str, cddl: &str, cbor: &[u8]) {
   assert!(
-    validate_cbor_from_slice(cddl, cbor, None).is_err(),
+    validate_cbor_from_slice(
+      cddl,
+      cbor,
+      #[cfg(feature = "additional-controls")]
+      None
+    )
+    .is_err(),
     "{}: expected invalid, but it validated",
     name
   );

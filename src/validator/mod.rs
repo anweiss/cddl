@@ -46,6 +46,7 @@ struct ParserError {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(feature = "json", feature = "cbor", test))]
 use crate::cddl_from_str;
 
 /// Validator trait. Implemented for JSON documents and CBOR binaries
@@ -271,6 +272,7 @@ impl<'a> ValidationState<'a> {
 }
 
 impl CDDL<'_> {
+  #[cfg(feature = "json")]
   /// Validate the given document against the CDDL definition
   fn validate_json(
     &self,
@@ -288,11 +290,12 @@ impl CDDL<'_> {
     #[cfg(feature = "additional-controls")]
     let mut jv = JSONValidator::new(self, json, enabled_features);
     #[cfg(not(feature = "additional-controls"))]
-    let mut jv = JSONValidator::new(&cddl, json);
+    let mut jv = JSONValidator::new(self, json);
 
     jv.validate().map_err(|e| e.into())
   }
 
+  #[cfg(feature = "cbor")]
   fn validate_cbor(
     &self,
     document: &[u8],
@@ -305,7 +308,11 @@ impl CDDL<'_> {
   ) -> Result<(), Box<dyn Error>> {
     let cbor = decode_cbor(document).map_err(|e| e.to_string())?;
 
+    #[cfg(feature = "additional-controls")]
     let mut cv = CBORValidator::new(self, cbor, enabled_features);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut cv = CBORValidator::new(self, cbor);
+
     cv.validate().map_err(|e| e.into())
   }
 }
@@ -1452,6 +1459,7 @@ mod tests {
 
   use super::*;
 
+  #[cfg(feature = "json")]
   #[test]
   fn validate_json() {
     let cddl_schema = cddl_from_str(
@@ -1466,9 +1474,15 @@ mod tests {
 
     let documents = [r#"{ "bar": "foo" }"#, r#"{ "bar": "foo2" }"#];
 
-    documents
-      .iter()
-      .all(|doc| cddl_schema.validate_json(doc.as_bytes(), None).is_ok());
+    documents.iter().all(|doc| {
+      cddl_schema
+        .validate_json(
+          doc.as_bytes(),
+          #[cfg(feature = "additional-controls")]
+          None,
+        )
+        .is_ok()
+    });
   }
 
   #[test]

@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::fmt::Write;
 
 #[cfg(feature = "json")]
+#[cfg(feature = "additional-controls")]
 use cddl::validator::validate_json_from_str;
 use cddl::{
   ast::Type2, parser::cddl_from_str, token::ByteValue, validator::validate_cbor_from_slice,
@@ -74,9 +75,14 @@ fn comments_inside_prefixed_byte_strings_are_ignored() {
 #[test]
 fn non_utf8_byte_literal_mismatches_return_diagnostics() {
   for (literal, rendered) in [("h'AA'", "h'aa'"), ("b64'qg=='", "b64'qg'")] {
-    let error = validate_cbor_from_slice(&format!("m = {}", literal), b"\x01", None)
-      .expect_err("an integer must not match a byte-string literal")
-      .to_string();
+    let error = validate_cbor_from_slice(
+      &format!("m = {}", literal),
+      b"\x01",
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .expect_err("an integer must not match a byte-string literal")
+    .to_string();
 
     assert!(
       error.contains(&format!("expected {}", rendered)) && error.contains("got"),
@@ -95,10 +101,20 @@ fn decoded_byte_literal_accepting_and_rejecting_controls() {
     ("b64'qg'", b"\x41\xaa"),
   ] {
     let schema = format!("m = {}", literal);
-    validate_cbor_from_slice(&schema, matching_cbor, None)
-      .unwrap_or_else(|error| panic!("{} rejected matching bytes: {}", literal, error));
-    validate_cbor_from_slice(&schema, b"\x41\xab", None)
-      .expect_err("a distinct byte string must not match the literal");
+    validate_cbor_from_slice(
+      &schema,
+      matching_cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_or_else(|error| panic!("{} rejected matching bytes: {}", literal, error));
+    validate_cbor_from_slice(
+      &schema,
+      b"\x41\xab",
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .expect_err("a distinct byte string must not match the literal");
   }
 }
 
@@ -106,10 +122,20 @@ fn decoded_byte_literal_accepting_and_rejecting_controls() {
 fn base64_alphabet_and_padding_variants_decode_identically() {
   for literal in ["b64'-_8='", "b64'-_8'", "b64'+/8='", "b64'+/8'"] {
     let schema = format!("m = {}", literal);
-    validate_cbor_from_slice(&schema, b"\x42\xfb\xff", None)
-      .unwrap_or_else(|error| panic!("{} rejected matching bytes: {}", literal, error));
-    validate_cbor_from_slice(&schema, b"\x42\xfb\xfe", None)
-      .expect_err("a distinct byte string must not match the literal");
+    validate_cbor_from_slice(
+      &schema,
+      b"\x42\xfb\xff",
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_or_else(|error| panic!("{} rejected matching bytes: {}", literal, error));
+    validate_cbor_from_slice(
+      &schema,
+      b"\x42\xfb\xfe",
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .expect_err("a distinct byte string must not match the literal");
   }
 }
 

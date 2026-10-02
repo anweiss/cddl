@@ -21,7 +21,12 @@ struct Claim {
 
 fn check(claims: &[Claim]) {
   for claim in claims {
-    let result = validate_cbor_from_slice(claim.cddl, claim.cbor, None);
+    let result = validate_cbor_from_slice(
+      claim.cddl,
+      claim.cbor,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert_eq!(
       result.is_ok(),
       claim.accept,
