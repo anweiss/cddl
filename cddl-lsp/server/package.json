@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "vscode-languageserver": "^10.1.1",
-    "vscode-languageserver-protocol": "^3.18.3",
+    "vscode-languageserver-protocol": "^3.18.4",
     "vscode-languageserver-textdocument": "^1.0.15"
   },
   "scripts": {},
