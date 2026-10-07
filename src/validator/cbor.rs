@@ -2491,12 +2491,18 @@ where
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
-                match crate::validator::control::validate_b64u_text(target, controller, s, false) {
+                match crate::validator::control::validate_b64u_text(
+                  target,
+                  controller,
+                  s,
+                  false,
+                  Some(self.state.cddl),
+                ) {
                   Ok(is_valid) => {
                     if !is_valid {
                       self.add_error(format!(
-                        "text string \"{}\" does not match .b64u encoded bytes",
-                        s
+                        "text string \"{}\" does not match .b64u encoded bytes of {}",
+                        s, controller
                       ));
                     }
                   }
@@ -2523,12 +2529,18 @@ where
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
-                match crate::validator::control::validate_b64c_text(target, controller, s, false) {
+                match crate::validator::control::validate_b64c_text(
+                  target,
+                  controller,
+                  s,
+                  false,
+                  Some(self.state.cddl),
+                ) {
                   Ok(is_valid) => {
                     if !is_valid {
                       self.add_error(format!(
-                        "text string \"{}\" does not match .b64c encoded bytes",
-                        s
+                        "text string \"{}\" does not match .b64c encoded bytes of {}",
+                        s, controller
                       ));
                     }
                   }
@@ -2555,12 +2567,18 @@ where
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
-                match crate::validator::control::validate_b64u_text(target, controller, s, true) {
+                match crate::validator::control::validate_b64u_text(
+                  target,
+                  controller,
+                  s,
+                  true,
+                  Some(self.state.cddl),
+                ) {
                   Ok(is_valid) => {
                     if !is_valid {
                       self.add_error(format!(
-                        "text string \"{}\" does not match .b64u-sloppy encoded bytes",
-                        s
+                        "text string \"{}\" does not match .b64u-sloppy encoded bytes of {}",
+                        s, controller
                       ));
                     }
                   }
@@ -2587,12 +2605,18 @@ where
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
-                match crate::validator::control::validate_b64c_text(target, controller, s, true) {
+                match crate::validator::control::validate_b64c_text(
+                  target,
+                  controller,
+                  s,
+                  true,
+                  Some(self.state.cddl),
+                ) {
                   Ok(is_valid) => {
                     if !is_valid {
                       self.add_error(format!(
-                        "text string \"{}\" does not match .b64c-sloppy encoded bytes",
-                        s
+                        "text string \"{}\" does not match .b64c-sloppy encoded bytes of {}",
+                        s, controller
                       ));
                     }
                   }
@@ -2624,12 +2648,13 @@ where
                   controller,
                   s,
                   crate::validator::control::HexCase::Any,
+                  Some(self.state.cddl),
                 ) {
                   Ok(is_valid) => {
                     if !is_valid {
                       self.add_error(format!(
-                        "text string \"{}\" does not match .hex encoded bytes",
-                        s
+                        "text string \"{}\" does not match .hex encoded bytes of {}",
+                        s, controller
                       ));
                     }
                   }
@@ -2661,12 +2686,13 @@ where
                   controller,
                   s,
                   crate::validator::control::HexCase::Lower,
+                  Some(self.state.cddl),
                 ) {
                   Ok(is_valid) => {
                     if !is_valid {
                       self.add_error(format!(
-                        "text string \"{}\" does not match .hexlc encoded bytes",
-                        s
+                        "text string \"{}\" does not match .hexlc encoded bytes of {}",
+                        s, controller
                       ));
                     }
                   }
@@ -2698,12 +2724,13 @@ where
                   controller,
                   s,
                   crate::validator::control::HexCase::Upper,
+                  Some(self.state.cddl),
                 ) {
                   Ok(is_valid) => {
                     if !is_valid {
                       self.add_error(format!(
-                        "text string \"{}\" does not match .hexuc encoded bytes",
-                        s
+                        "text string \"{}\" does not match .hexuc encoded bytes of {}",
+                        s, controller
                       ));
                     }
                   }
@@ -2730,12 +2757,18 @@ where
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
-                match crate::validator::control::validate_b32_text(target, controller, s, false) {
+                match crate::validator::control::validate_b32_text(
+                  target,
+                  controller,
+                  s,
+                  false,
+                  Some(self.state.cddl),
+                ) {
                   Ok(is_valid) => {
                     if !is_valid {
                       self.add_error(format!(
-                        "text string \"{}\" does not match .b32 encoded bytes",
-                        s
+                        "text string \"{}\" does not match .b32 encoded bytes of {}",
+                        s, controller
                       ));
                     }
                   }
@@ -2762,12 +2795,18 @@ where
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
-                match crate::validator::control::validate_b32_text(target, controller, s, true) {
+                match crate::validator::control::validate_b32_text(
+                  target,
+                  controller,
+                  s,
+                  true,
+                  Some(self.state.cddl),
+                ) {
                   Ok(is_valid) => {
                     if !is_valid {
                       self.add_error(format!(
-                        "text string \"{}\" does not match .h32 encoded bytes",
-                        s
+                        "text string \"{}\" does not match .h32 encoded bytes of {}",
+                        s, controller
                       ));
                     }
                   }
@@ -2794,12 +2833,17 @@ where
           Type2::Typename { ident, .. } if is_ident_string_data_type(self.state.cddl, ident) => {
             match &self.cbor {
               Value::Text(s) => {
-                match crate::validator::control::validate_b45_text(target, controller, s) {
+                match crate::validator::control::validate_b45_text(
+                  target,
+                  controller,
+                  s,
+                  Some(self.state.cddl),
+                ) {
                   Ok(is_valid) => {
                     if !is_valid {
                       self.add_error(format!(
-                        "text string \"{}\" does not match .b45 encoded bytes",
-                        s
+                        "text string \"{}\" does not match .b45 encoded bytes of {}",
+                        s, controller
                       ));
                     }
                   }
@@ -4702,7 +4746,21 @@ where
             }
           }
         },
-        token::Value::BYTE(bv) if self.state.ctrl.is_none() => {
+        token::Value::BYTE(bv)
+          if self.state.ctrl.is_none() || {
+            #[cfg(feature = "additional-controls")]
+            {
+              matches!(
+                self.state.ctrl,
+                Some(ControlOperator::CAT | ControlOperator::DET)
+              )
+            }
+            #[cfg(not(feature = "additional-controls"))]
+            {
+              false
+            }
+          } =>
+        {
           let expected = match bv {
             ByteValue::UTF8(value) | ByteValue::B16(value) | ByteValue::B64(value) => value,
           };
@@ -4735,36 +4793,8 @@ where
         #[cfg(feature = "additional-controls")]
         token::Value::BYTE(bv) => match &self.state.ctrl {
           Some(ControlOperator::ABNFB) => match bv {
-            ByteValue::UTF8(utf8bv) => validate_abnf(
-              std::str::from_utf8(utf8bv).map_err(Error::UTF8Parsing)?,
-              std::str::from_utf8(b).map_err(Error::UTF8Parsing)?,
-            )
-            .err()
-            .map(|e| {
-              format!(
-                "cbor bytes \"{:?}\" are not valid against abnf {}: {}",
-                b, bv, e
-              )
-            }),
-            ByteValue::B16(b16bv) => validate_abnf(
-              std::str::from_utf8(&base16::decode(b16bv).map_err(Error::Base16Decoding)?)
-                .map_err(Error::UTF8Parsing)?,
-              std::str::from_utf8(b).map_err(Error::UTF8Parsing)?,
-            )
-            .err()
-            .map(|e| {
-              format!(
-                "cbor bytes \"{:?}\" are not valid against abnf {}: {}",
-                b, bv, e
-              )
-            }),
-            ByteValue::B64(b64bv) => validate_abnf(
-              std::str::from_utf8(
-                &data_encoding::BASE64URL
-                  .decode(b64bv)
-                  .map_err(Error::Base64Decoding)?,
-              )
-              .map_err(Error::UTF8Parsing)?,
+            ByteValue::UTF8(abnf) | ByteValue::B16(abnf) | ByteValue::B64(abnf) => validate_abnf(
+              std::str::from_utf8(abnf).map_err(Error::UTF8Parsing)?,
               std::str::from_utf8(b).map_err(Error::UTF8Parsing)?,
             )
             .err()
