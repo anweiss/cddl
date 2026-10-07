@@ -11,7 +11,7 @@ use indoc::indoc;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 
-#[rustfmt::skip] 
+#[rustfmt::skip]
 pub mod cbor {
     // example values from rfc7049 appendix A
     pub const BOOL_FALSE:   &[u8] = b"\xF4";
@@ -74,36 +74,114 @@ struct KitchenSink(String, u32, f64, bool);
 #[test]
 fn validate_cbor_bool() {
   let cddl_input = r#"thing = true"#;
-  validate_cbor_from_slice(cddl_input, cbor::BOOL_TRUE, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::BOOL_FALSE, None).unwrap_err();
-  validate_cbor_from_slice(cddl_input, cbor::NULL, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BOOL_TRUE,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BOOL_FALSE,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::NULL,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
 fn validate_cbor_float() {
   let cddl_input = r#"thing = 0.0"#;
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_0_0, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_0_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_1_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let cddl_input = r#"thing = float"#;
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1E5, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1E300, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_1_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_1E5,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_1E300,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   let cddl_input = r#"thing = float16"#;
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_1_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // "Too small" floats should not cause a validation error.
   // "Canonical CBOR" suggests that floats should be shrunk to the smallest
   // size that can represent the value.  So 1.0 can be stored in 16 bits,
   // even if the CDDL specifies float64.
   let cddl_input = r#"thing = float32"#;
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1E5, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_1_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_1E5,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   let cddl_input = r#"thing = float64"#;
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1E300, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_1_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_1E300,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // TODO: check that large floats don't validate against a smaller size.
   // E.g. CBOR #7.27 (64-bit) shouldn't validate against "float16" or "float32".
@@ -112,21 +190,93 @@ fn validate_cbor_float() {
 #[test]
 fn validate_cbor_integer() {
   let cddl_input = r#"thing = 23 / 24"#;
-  validate_cbor_from_slice(cddl_input, cbor::INT_23, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::INT_24, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::INT_23,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::INT_24,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
   let cddl_input = r#"thing = 1"#;
-  validate_cbor_from_slice(cddl_input, cbor::NULL, None).unwrap_err();
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0, None).unwrap_err();
-  validate_cbor_from_slice(cddl_input, cbor::BOOL_TRUE, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::NULL,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_1_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BOOL_TRUE,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
   let cddl_input = r#"thing = int"#;
-  validate_cbor_from_slice(cddl_input, cbor::INT_0, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::INT_24, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::NINT_1000, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::INT_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::INT_24,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::NINT_1000,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_1_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
   let cddl_input = r#"thing = uint"#;
-  validate_cbor_from_slice(cddl_input, cbor::INT_0, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::INT_24, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::NINT_1000, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::INT_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::INT_24,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::NINT_1000,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
@@ -145,122 +295,344 @@ fn validate_cbor_uint_control_ops() {
     ("thing = uint .size 1", INT_255, INT_256),
     ("thing = uint .bits 3", INT_8, cbor::INT_23),
   ] {
-    validate_cbor_from_slice(cddl_input, accept, None).unwrap();
-    validate_cbor_from_slice(cddl_input, reject, None).unwrap_err();
-    validate_cbor_from_slice(cddl_input, cbor::NINT_1000, None).unwrap_err();
+    validate_cbor_from_slice(
+      cddl_input,
+      accept,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap();
+    validate_cbor_from_slice(
+      cddl_input,
+      reject,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
+    validate_cbor_from_slice(
+      cddl_input,
+      cbor::NINT_1000,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
   }
 }
 
 #[test]
 fn validate_cbor_textstring() {
   let cddl_input = r#"thing = tstr"#;
-  validate_cbor_from_slice(cddl_input, cbor::TEXT_EMPTY, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::TEXT_IETF, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::TEXT_CJK, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::BYTES_EMPTY, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::TEXT_EMPTY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::TEXT_IETF,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::TEXT_CJK,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BYTES_EMPTY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
 fn validate_cbor_bytestring() {
   let cddl_input = r#"thing = bstr"#;
-  validate_cbor_from_slice(cddl_input, cbor::BYTES_EMPTY, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::BYTES_1234, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::TEXT_EMPTY, None).unwrap_err();
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BYTES_EMPTY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BYTES_1234,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::TEXT_EMPTY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
 fn validate_cbor_array() {
   let cddl_input = r#"thing = []"#;
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::NULL, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_EMPTY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::NULL,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let cddl_input = r#"thing = [1, 2, 3]"#;
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 }
 
 #[test]
 fn validate_cbor_group() {
   let cddl_input = r#"thing = (* int)"#;
-  validate_cbor_from_slice(cddl_input, cbor::INT_0, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::INT_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 }
 
 #[test]
 fn validate_cbor_homogenous_array() {
   let cddl_input = r#"thing = [* int]"#; // zero or more
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_EMPTY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
   let cddl_input = r#"thing = [+ int]"#; // one or more
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_EMPTY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
   let cddl_input = r#"thing = [? int]"#; // zero or one
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_EMPTY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&[42], &mut cbor_bytes).unwrap();
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let cddl_input = r#"thing = [* tstr]"#;
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   // Alias type.  Note the rule we want to validate must come first.
   let cddl_input = r#"thing = [* zipcode]  zipcode = int"#;
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_EMPTY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 }
 
 #[test]
 fn validate_cbor_array_groups() {
   let cddl_input = r#"thing = [int, (int, int)]"#;
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   let cddl_input = r#"thing = [(int, int, int)]"#;
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   let cddl_input = r#"thing = [* (int)]"#;
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Three elements cannot be consumed by repetitions of a two-entry group
   let cddl_input = r#"thing = [* (int, int)]"#;
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
 fn validate_cbor_array_record() {
   let cddl_input = r#"thing = [a: int, b: int, c: int]"#;
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_EMPTY, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_EMPTY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let cddl_input = r#"thing = [a: tstr, b: int]"#;
 
   let input = PersonTuple("Alice".to_string(), 42);
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   let input = BackwardsTuple(43, "Carol".to_string());
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let input = LongTuple("David".to_string(), 44, 45);
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let input = ShortTuple("Eve".to_string());
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let cddl_input = r#"thing = [a: tstr, b: uint, c: float32, d: bool]"#;
 
   let input = KitchenSink("xyz".to_string(), 17, 9.9, false);
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // FIXME: there isn't any way at present to serialize a struct
   // into a CBOR array. See https://github.com/pyfisch/cbor/issues/107
@@ -269,7 +641,13 @@ fn validate_cbor_array_record() {
   // ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
   // validate_cbor_from_slice(cddl_input, &cbor_bytes).unwrap();
 
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
@@ -281,51 +659,141 @@ fn validate_cbor_map() {
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
   let cddl_input = r#"thing = {name: tstr, age: int}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
   let cddl_input = r#"thing = {name: tstr, ? age: int}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Ensure that keys are optional if the occurrence is "?" or "*"
   // and required if the occurrence is "+"
   let cddl_input = r#"thing = {name: tstr, age: int, ? minor: bool}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
   let cddl_input = r#"thing = {name: tstr, age: int, * minor: bool}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
   let cddl_input = r#"thing = {name: tstr, age: int, + minor: bool}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let cddl_input = r#"thing = {name: tstr, age: tstr}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let cddl_input = r#"thing = {name: tstr}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   // "* keytype => valuetype" is the expected syntax for collecting
   // any remaining key/value pairs of the expected type.
   let cddl_input = r#"thing = {* tstr => any}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
   let cddl_input = r#"thing = {name: tstr, * tstr => any}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
   let cddl_input = r#"thing = {name: tstr, age: int, * tstr => any}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
   let cddl_input = r#"thing = {+ tstr => any}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Should fail because the CBOR input has one entry that can't be
   // collected because the value type doesn't match.
   let cddl_input = r#"thing = {* tstr => int}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   // Should fail because the CBOR input has two entries that can't be
   // collected because the key type doesn't match.
   let cddl_input = r#"thing = {* int => any}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let cddl_input = r#"thing = {name: tstr, age: int, minor: bool}"#;
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let cddl_input = r#"thing = {x: int, y: int, z: int}"#;
-  validate_cbor_from_slice(cddl_input, cbor::ARRAY_123, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::ARRAY_123,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
@@ -336,12 +804,36 @@ fn validate_cbor_map_float_key() {
   const MAP_NULL_KEY: &[u8] = b"\xa1\xf6\x01"; // {null: 1}
 
   let cddl_input = r#"m = { float => uint }"#;
-  validate_cbor_from_slice(cddl_input, MAP_FLOAT_KEY, None).unwrap();
-  validate_cbor_from_slice(cddl_input, MAP_NULL_KEY, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    MAP_FLOAT_KEY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    MAP_NULL_KEY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let cddl_input = r#"m = { ? float => uint }"#;
-  validate_cbor_from_slice(cddl_input, MAP_FLOAT_KEY, None).unwrap();
-  validate_cbor_from_slice(cddl_input, MAP_NULL_KEY, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    MAP_FLOAT_KEY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    MAP_NULL_KEY,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
@@ -355,7 +847,13 @@ fn verify_large_tag_values() -> Result<(), Box<dyn Error>> {
   let cbor = Value::Tag(42, Box::new(Value::Text(test_str.to_string())));
   let mut bytes = Vec::new();
   ciborium::ser::into_writer(&cbor, &mut bytes)?;
-  assert!(validate_cbor_from_slice(input, &bytes, None).is_ok());
+  assert!(validate_cbor_from_slice(
+    input,
+    &bytes,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_ok());
 
   // Test tag 8386104246373017956 (large tag value)
   let cbor = Value::Tag(
@@ -364,13 +862,25 @@ fn verify_large_tag_values() -> Result<(), Box<dyn Error>> {
   );
   let mut bytes = Vec::new();
   ciborium::ser::into_writer(&cbor, &mut bytes)?;
-  assert!(validate_cbor_from_slice(input, &bytes, None).is_ok());
+  assert!(validate_cbor_from_slice(
+    input,
+    &bytes,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_ok());
 
   // Test wrong tag value - should fail
   let cbor = Value::Tag(99, Box::new(Value::Text(test_str.to_string())));
   let mut bytes = Vec::new();
   ciborium::ser::into_writer(&cbor, &mut bytes)?;
-  assert!(validate_cbor_from_slice(input, &bytes, None).is_err());
+  assert!(validate_cbor_from_slice(
+    input,
+    &bytes,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
 
   Ok(())
 }
@@ -400,7 +910,10 @@ fn validate_range_operators() -> Result<(), Box<dyn Error>> {
     ),
   ]);
   let test: cbor_value::Value = test.into();
+  #[cfg(feature = "additional-controls")]
   let mut cv = CBORValidator::new(&cddl, test, None);
+  #[cfg(not(feature = "additional-controls"))]
+  let mut cv = CBORValidator::new(&cddl, test);
   cv.validate()?;
 
   let test = Value::Map(vec![
@@ -414,7 +927,11 @@ fn validate_range_operators() -> Result<(), Box<dyn Error>> {
     ),
   ]);
   let test: cbor_value::Value = test.into();
+
+  #[cfg(feature = "additional-controls")]
   let mut cv = CBORValidator::new(&cddl, test, None);
+  #[cfg(not(feature = "additional-controls"))]
+  let mut cv = CBORValidator::new(&cddl, test);
   cv.validate()?;
 
   // Test fail cases
@@ -429,7 +946,11 @@ fn validate_range_operators() -> Result<(), Box<dyn Error>> {
     ), // Should fail - 10 is exclusive
   ]);
   let test: cbor_value::Value = test.into();
+
+  #[cfg(feature = "additional-controls")]
   let mut cv = CBORValidator::new(&cddl, test, None);
+  #[cfg(not(feature = "additional-controls"))]
+  let mut cv = CBORValidator::new(&cddl, test);
   assert!(
     cv.validate().is_err(),
     "10 should fail inclusive-exclusive range 5...10"
@@ -446,7 +967,11 @@ fn validate_range_operators() -> Result<(), Box<dyn Error>> {
     ),
   ]);
   let test: cbor_value::Value = test.into();
+
+  #[cfg(feature = "additional-controls")]
   let mut cv = CBORValidator::new(&cddl, test, None);
+  #[cfg(not(feature = "additional-controls"))]
+  let mut cv = CBORValidator::new(&cddl, test);
   assert!(
     cv.validate().is_err(),
     "4 should fail inclusive range 5..10"
@@ -472,8 +997,13 @@ fn validate_cbor_size_range_with_constant() -> Result<(), Box<dyn Error>> {
   ]);
   let mut valid_cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&valid_person, &mut valid_cbor_bytes)?;
-  validate_cbor_from_slice(cddl_input, &valid_cbor_bytes, None)
-    .expect("Validation should succeed for name length within range");
+  validate_cbor_from_slice(
+    cddl_input,
+    &valid_cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .expect("Validation should succeed for name length within range");
 
   // --- Positive Test (name length at max boundary) ---
   let max_len_name = "a".repeat(100);
@@ -483,8 +1013,13 @@ fn validate_cbor_size_range_with_constant() -> Result<(), Box<dyn Error>> {
   ]);
   let mut valid_max_cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&valid_person_max, &mut valid_max_cbor_bytes)?;
-  validate_cbor_from_slice(cddl_input, &valid_max_cbor_bytes, None)
-    .expect("Validation should succeed for name length at max boundary");
+  validate_cbor_from_slice(
+    cddl_input,
+    &valid_max_cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .expect("Validation should succeed for name length at max boundary");
 
   // --- Negative Test (name length exceeds range) ---
   let long_name = "a".repeat(101);
@@ -494,8 +1029,13 @@ fn validate_cbor_size_range_with_constant() -> Result<(), Box<dyn Error>> {
   ]);
   let mut invalid_long_cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&invalid_person_long, &mut invalid_long_cbor_bytes)?;
-  validate_cbor_from_slice(cddl_input, &invalid_long_cbor_bytes, None)
-    .expect_err("Validation should fail for name length exceeding range");
+  validate_cbor_from_slice(
+    cddl_input,
+    &invalid_long_cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .expect_err("Validation should fail for name length exceeding range");
 
   // --- Negative Test (name length below range - zero length) ---
   let empty_name = "";
@@ -508,8 +1048,13 @@ fn validate_cbor_size_range_with_constant() -> Result<(), Box<dyn Error>> {
   ]);
   let mut invalid_empty_cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&invalid_person_empty, &mut invalid_empty_cbor_bytes)?;
-  validate_cbor_from_slice(cddl_input, &invalid_empty_cbor_bytes, None)
-    .expect_err("Validation should fail for zero-length name");
+  validate_cbor_from_slice(
+    cddl_input,
+    &invalid_empty_cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .expect_err("Validation should fail for zero-length name");
 
   Ok(())
 }
@@ -520,47 +1065,155 @@ fn validate_cbor_size_range_with_constant() -> Result<(), Box<dyn Error>> {
 fn validate_cbor_simple_values() {
   // Simple value 32 (unassigned, two-byte encoded as 0xf8 0x20)
   let cddl_input = r#"thing = #7.32"#;
-  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_32, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::SIMPLE_32,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Wrong simple value should fail
-  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_255, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::SIMPLE_255,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   // Simple value 0 (one-byte encoded)
   let cddl_input = r#"thing = #7.0"#;
-  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_0, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::SIMPLE_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Simple value 19 (one-byte encoded)
   let cddl_input = r#"thing = #7.19"#;
-  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_19, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::SIMPLE_19,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Simple value 255 (two-byte encoded)
   let cddl_input = r#"thing = #7.255"#;
-  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_255, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::SIMPLE_255,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Major type 7 without constraint should match any simple value
   let cddl_input = r#"thing = #7"#;
-  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_0, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_32, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::SIMPLE_255, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::SIMPLE_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::SIMPLE_32,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::SIMPLE_255,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // #7 should also match booleans, null, and floats
-  validate_cbor_from_slice(cddl_input, cbor::BOOL_TRUE, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::BOOL_FALSE, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::NULL, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::FLOAT_1_0, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BOOL_TRUE,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BOOL_FALSE,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::NULL,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::FLOAT_1_0,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Standard simple values via #7.N
   let cddl_input = r#"thing = #7.20"#;
-  validate_cbor_from_slice(cddl_input, cbor::BOOL_FALSE, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::BOOL_TRUE, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BOOL_FALSE,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BOOL_TRUE,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let cddl_input = r#"thing = #7.21"#;
-  validate_cbor_from_slice(cddl_input, cbor::BOOL_TRUE, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::BOOL_FALSE, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BOOL_TRUE,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BOOL_FALSE,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let cddl_input = r#"thing = #7.22"#;
-  validate_cbor_from_slice(cddl_input, cbor::NULL, None).unwrap();
-  validate_cbor_from_slice(cddl_input, cbor::BOOL_TRUE, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::NULL,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    cbor::BOOL_TRUE,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 /// Regression test for https://github.com/anweiss/cddl/issues/465
@@ -572,13 +1225,25 @@ fn validate_cbor_array_record_extra_elements() {
   let input = PersonTuple("testString".to_string(), 1);
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Extra element: ["testString", 1, 2] must fail
   let input = LongTuple("testString".to_string(), 1, 2);
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
-  validate_cbor_from_slice(cddl_input, &cbor_bytes, None).unwrap_err();
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
@@ -600,7 +1265,12 @@ fn validate_decfrac_and_bigfloat() -> Result<(), Box<dyn Error>> {
     ])),
   );
   let bytes = cbor_encode(&cbor_val);
-  validate_cbor_from_slice(cddl_input, &bytes, None)?;
+  validate_cbor_from_slice(
+    cddl_input,
+    &bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
 
   // Valid bigfloat: Tag(5, [int, integer]) e.g. 1.5 = 3 * 2^(-1)
   let cddl_input = r#"measurement = bigfloat"#;
@@ -612,7 +1282,12 @@ fn validate_decfrac_and_bigfloat() -> Result<(), Box<dyn Error>> {
     ])),
   );
   let bytes = cbor_encode(&cbor_val);
-  validate_cbor_from_slice(cddl_input, &bytes, None)?;
+  validate_cbor_from_slice(
+    cddl_input,
+    &bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
 
   // Invalid: wrong tag for decfrac (tag 5 instead of 4)
   let cddl_input = r#"temperature = decfrac"#;
@@ -624,7 +1299,13 @@ fn validate_decfrac_and_bigfloat() -> Result<(), Box<dyn Error>> {
     ])),
   );
   let bytes = cbor_encode(&cbor_val);
-  assert!(validate_cbor_from_slice(cddl_input, &bytes, None).is_err());
+  assert!(validate_cbor_from_slice(
+    cddl_input,
+    &bytes,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
 
   // Invalid: wrong tag for bigfloat (tag 4 instead of 5)
   let cddl_input = r#"measurement = bigfloat"#;
@@ -636,13 +1317,25 @@ fn validate_decfrac_and_bigfloat() -> Result<(), Box<dyn Error>> {
     ])),
   );
   let bytes = cbor_encode(&cbor_val);
-  assert!(validate_cbor_from_slice(cddl_input, &bytes, None).is_err());
+  assert!(validate_cbor_from_slice(
+    cddl_input,
+    &bytes,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
 
   // Invalid: not an array inside tag
   let cddl_input = r#"temperature = decfrac"#;
   let cbor_val = Value::Tag(4, Box::new(Value::Integer(42.into())));
   let bytes = cbor_encode(&cbor_val);
-  assert!(validate_cbor_from_slice(cddl_input, &bytes, None).is_err());
+  assert!(validate_cbor_from_slice(
+    cddl_input,
+    &bytes,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
 
   // Invalid: array with wrong types (float instead of int for exponent)
   let cddl_input = r#"temperature = decfrac"#;
@@ -654,7 +1347,13 @@ fn validate_decfrac_and_bigfloat() -> Result<(), Box<dyn Error>> {
     ])),
   );
   let bytes = cbor_encode(&cbor_val);
-  assert!(validate_cbor_from_slice(cddl_input, &bytes, None).is_err());
+  assert!(validate_cbor_from_slice(
+    cddl_input,
+    &bytes,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
 
   // Valid: using with explicit tag notation
   let cddl_input = r#"mytype = #6.4([int, integer])"#;
@@ -666,7 +1365,12 @@ fn validate_decfrac_and_bigfloat() -> Result<(), Box<dyn Error>> {
     ])),
   );
   let bytes = cbor_encode(&cbor_val);
-  validate_cbor_from_slice(cddl_input, &bytes, None)?;
+  validate_cbor_from_slice(
+    cddl_input,
+    &bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
 
   // Valid: bigfloat with bignum mantissa (tag 2 biguint)
   let cddl_input = r#"big_measurement = bigfloat"#;
@@ -678,7 +1382,12 @@ fn validate_decfrac_and_bigfloat() -> Result<(), Box<dyn Error>> {
     ])),
   );
   let bytes = cbor_encode(&cbor_val);
-  validate_cbor_from_slice(cddl_input, &bytes, None)?;
+  validate_cbor_from_slice(
+    cddl_input,
+    &bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
 
   Ok(())
 }
@@ -690,28 +1399,85 @@ fn validate_optional_type_domain_map_entry_absent() -> Result<(), Box<dyn Error>
   let empty_map = b"\xa0";
   let one_entry = b"\xa1\x61\x61\x01"; // {"a": 1}
 
-  validate_cbor_from_slice(r#"m = { ? tstr => uint }"#, empty_map, None)?;
+  validate_cbor_from_slice(
+    r#"m = { ? tstr => uint }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
   // present entry still validates
-  validate_cbor_from_slice(r#"m = { ? tstr => uint }"#, one_entry, None)?;
+  validate_cbor_from_slice(
+    r#"m = { ? tstr => uint }"#,
+    one_entry,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
   // present entry with a bad value type still fails
   let bad_value = b"\xa1\x61\x61\x61\x62"; // {"a": "b"}
-  assert!(validate_cbor_from_slice(r#"m = { ? tstr => uint }"#, bad_value, None).is_err());
+  assert!(validate_cbor_from_slice(
+    r#"m = { ? tstr => uint }"#,
+    bad_value,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
 
   // other key types take the same code path
-  validate_cbor_from_slice(r#"m = { ? int => uint }"#, empty_map, None)?;
-  validate_cbor_from_slice(r#"m = { ? bool => uint }"#, empty_map, None)?;
-  validate_cbor_from_slice(r#"m = { ? bytes => uint }"#, empty_map, None)?;
+  validate_cbor_from_slice(
+    r#"m = { ? int => uint }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
+  validate_cbor_from_slice(
+    r#"m = { ? bool => uint }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
+  validate_cbor_from_slice(
+    r#"m = { ? bytes => uint }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
 
   // an occurrence-less entry must still require a match
-  assert!(validate_cbor_from_slice(r#"m = { tstr => uint }"#, empty_map, None).is_err());
+  assert!(validate_cbor_from_slice(
+    r#"m = { tstr => uint }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
 
   // absent optional entry alongside other entries that do consume the keys
   let int_entry = b"\xa1\x01\x02"; // {1: 2}
   let text_and_int = b"\xa2\x61\x61\x01\x01\x02"; // {"a": 1, 1: 2}
-  validate_cbor_from_slice(r#"m = { ? tstr => uint, int => int }"#, int_entry, None)?;
-  validate_cbor_from_slice(r#"m = { ? tstr => uint, ? int => int }"#, int_entry, None)?;
-  validate_cbor_from_slice(r#"m = { ? tstr => uint, int => int }"#, text_and_int, None)?;
-  validate_cbor_from_slice(r#"m = { ? tstr => uint, ? int => int }"#, empty_map, None)?;
+  validate_cbor_from_slice(
+    r#"m = { ? tstr => uint, int => int }"#,
+    int_entry,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
+  validate_cbor_from_slice(
+    r#"m = { ? tstr => uint, ? int => int }"#,
+    int_entry,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
+  validate_cbor_from_slice(
+    r#"m = { ? tstr => uint, int => int }"#,
+    text_and_int,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
+  validate_cbor_from_slice(
+    r#"m = { ? tstr => uint, ? int => int }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
 
   Ok(())
 }
@@ -723,15 +1489,45 @@ fn validate_single_type_domain_map_entries_do_not_reuse_consumed_keys() {
   let name_and_bad_a = b"\xa2\x64name\x63bob\x61a\x63bad"; // {"name": "bob", "a": "bad"}
 
   let optional = r#"m = { name: tstr, ? tstr => uint }"#;
-  validate_cbor_from_slice(optional, name_only, None).unwrap();
-  validate_cbor_from_slice(optional, name_and_a, None).unwrap();
-  validate_cbor_from_slice(optional, name_and_bad_a, None).unwrap_err();
+  validate_cbor_from_slice(
+    optional,
+    name_only,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    optional,
+    name_and_a,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    optional,
+    name_and_bad_a,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   // Occurrence-less entries use the same finder, but must still require one
   // unconsumed matching key.
   let required = r#"m = { name: tstr, tstr => uint }"#;
-  validate_cbor_from_slice(required, name_and_a, None).unwrap();
-  validate_cbor_from_slice(required, name_only, None).unwrap_err();
+  validate_cbor_from_slice(
+    required,
+    name_and_a,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    required,
+    name_only,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
@@ -741,9 +1537,27 @@ fn validate_optional_type_domain_miss_skips_composite_value() {
 
   // A missing optional member skips the entire entry. Its value type must not
   // be evaluated against the enclosing map or a previously consumed value.
-  validate_cbor_from_slice(r#"m = { ? tstr => [uint] }"#, empty_map, None).unwrap();
-  validate_cbor_from_slice(r#"m = { ? any => [uint] }"#, empty_map, None).unwrap();
-  validate_cbor_from_slice(r#"m = { name: tstr, ? tstr => [uint] }"#, name_only, None).unwrap();
+  validate_cbor_from_slice(
+    r#"m = { ? tstr => [uint] }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { ? any => [uint] }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { name: tstr, ? tstr => [uint] }"#,
+    name_only,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 }
 
 #[test]
@@ -788,17 +1602,46 @@ fn validate_optional_primitive_domains_do_not_reuse_consumed_keys() {
     )
     .unwrap();
 
-    let result = validate_cbor_from_slice(schema, &bytes, None);
+    let result = validate_cbor_from_slice(
+      schema,
+      &bytes,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(result.is_ok(), "schema {} failed: {:?}", schema, result);
   }
 
   // Bignum finders must treat a genuine optional miss like every other
   // primitive domain; occurrence-less bignum entries remain required.
   let empty_map = b"\xa0";
-  validate_cbor_from_slice(r#"m = { ? biguint => uint }"#, empty_map, None).unwrap();
-  validate_cbor_from_slice(r#"m = { ? bignint => uint }"#, empty_map, None).unwrap();
-  validate_cbor_from_slice(r#"m = { biguint => uint }"#, empty_map, None).unwrap_err();
-  validate_cbor_from_slice(r#"m = { bignint => uint }"#, empty_map, None).unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { ? biguint => uint }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { ? bignint => uint }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { biguint => uint }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { bignint => uint }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
@@ -809,7 +1652,13 @@ fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
   // validity-boundary rejection, the second pair must remain uncovered rather
   // than disappear behind the first claim.
   let duplicate_text_keys = b"\xa2\x61a\x61x\x61a\x63bad";
-  let error = validate_cbor_from_slice(schema, duplicate_text_keys, None).unwrap_err();
+  let error = validate_cbor_from_slice(
+    schema,
+    duplicate_text_keys,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
   assert!(error.to_string().contains("unexpected key"));
 
   // A claim for the first text pair must not make an equivalent second pair
@@ -818,6 +1667,7 @@ fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
   let error = validate_cbor_from_slice(
     r#"m = { ? tstr => tstr, ? int => uint }"#,
     duplicate_text_keys,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
@@ -826,6 +1676,7 @@ fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
   let error = validate_cbor_from_slice(
     r#"m = { a: tstr, ? tstr => uint }"#,
     duplicate_text_keys,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
@@ -839,6 +1690,7 @@ fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
   let error = validate_cbor_from_slice(
     r#"m = { ? tstr => tstr, a: tstr, ? tstr => uint }"#,
     duplicate_after_prior_claim,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
@@ -851,6 +1703,7 @@ fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
   let error = validate_cbor_from_slice(
     "g<K, V> = (K => V)\nm = { g<tstr, tstr>, a: tstr, ? tstr => uint }",
     duplicate_after_prior_claim,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
@@ -862,12 +1715,14 @@ fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
   validate_cbor_from_slice(
     r#"m = { ? tstr => tstr, ? a: uint }"#,
     one_claimed_literal,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
   validate_cbor_from_slice(
     r#"m = { ? tstr => tstr, a: uint }"#,
     one_claimed_literal,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
@@ -878,6 +1733,7 @@ fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
   let error = validate_cbor_from_slice(
     r#"m = { ? float => tstr, ? float => uint }"#,
     equivalent_float_keys,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
@@ -888,6 +1744,7 @@ fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
   let error = validate_cbor_from_slice(
     "g<K, V> = (K => V)\nm = { ? tstr => tstr, g<tstr, tstr>, ? tstr => uint }",
     duplicate_after_prior_claim,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
@@ -912,22 +1769,42 @@ fn validate_nan_map_keys_have_physical_pair_identity() {
     b"\xa1\xfb\x7f\xf8\x00\x00\x00\x00\x00\x00\x61x",
   ];
   for encoded in nan_encodings {
-    validate_cbor_from_slice(r#"m = { ? float => tstr }"#, encoded, None).unwrap();
-    validate_cbor_from_slice(r#"m = { ? float => tstr, ? float => uint }"#, encoded, None).unwrap();
+    validate_cbor_from_slice(
+      r#"m = { ? float => tstr }"#,
+      encoded,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap();
+    validate_cbor_from_slice(
+      r#"m = { ? float => tstr, ? float => uint }"#,
+      encoded,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap();
   }
 
   // Repeating entries use the same ownership ledger. The first member owns
   // the only pair, leaving width zero for the following repetition.
-  validate_cbor_from_slice(r#"m = { * float => tstr }"#, one_nan_text, None).unwrap();
+  validate_cbor_from_slice(
+    r#"m = { * float => tstr }"#,
+    one_nan_text,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
   validate_cbor_from_slice(
     r#"m = { ? float => tstr, * float => uint }"#,
     one_nan_text,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
   validate_cbor_from_slice(
     r#"m = { ? float => tstr, + float => uint }"#,
     one_nan_text,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
@@ -936,13 +1813,20 @@ fn validate_nan_map_keys_have_physical_pair_identity() {
   // map keys. These two half-precision payloads therefore form a valid map
   // and must be counted as two physical occurrences.
   let two_distinct_nans = b"\xa2\xf9\x7e\x00\x01\xf9\x7e\x01\x02";
-  validate_cbor_from_slice(r#"m = { 2*2 float => uint }"#, two_distinct_nans, None).unwrap();
+  validate_cbor_from_slice(
+    r#"m = { 2*2 float => uint }"#,
+    two_distinct_nans,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Ordinary reflexive float keys remain a control for the same paths.
   let finite_float = b"\xa1\xf9\x3e\x00\x61x"; // {1.5: "x"}
   validate_cbor_from_slice(
     r#"m = { ? float => tstr, ? float => uint }"#,
     finite_float,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
@@ -950,8 +1834,13 @@ fn validate_nan_map_keys_have_physical_pair_identity() {
   // Owning the NaN pair must not hide a genuinely different, unclaimed pair
   // from the final closed-map check.
   let nan_and_integer = b"\xa2\xf9\x7e\x00\x61x\x01\x02";
-  let error =
-    validate_cbor_from_slice(r#"m = { ? float => tstr }"#, nan_and_integer, None).unwrap_err();
+  let error = validate_cbor_from_slice(
+    r#"m = { ? float => tstr }"#,
+    nan_and_integer,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
   assert!(error.to_string().contains("unexpected key Integer"));
 }
 
@@ -961,10 +1850,17 @@ fn validate_nan_composite_map_keys_have_physical_pair_identity() {
   // NaN. Ownership must therefore use the outer map entry index, not recursive
   // host-language value equality.
   let array_key = b"\xa1\x81\xf9\x7e\x00\x61x"; // {[NaN]: "x"}
-  validate_cbor_from_slice(r#"m = { ? [float] => tstr }"#, array_key, None).unwrap();
+  validate_cbor_from_slice(
+    r#"m = { ? [float] => tstr }"#,
+    array_key,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
   validate_cbor_from_slice(
     r#"m = { ? [float] => tstr, ? [float] => uint }"#,
     array_key,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
@@ -972,7 +1868,13 @@ fn validate_nan_composite_map_keys_have_physical_pair_identity() {
   // The index ledger is local to each decoded map. It must also account for
   // the NaN pair while validating a nested map used as the outer map's key.
   let map_key = b"\xa1\xa1\xf9\x7e\x00\x01\x61x"; // {{NaN: 1}: "x"}
-  validate_cbor_from_slice(r#"m = { ? { float => uint } => tstr }"#, map_key, None).unwrap();
+  validate_cbor_from_slice(
+    r#"m = { ? { float => uint } => tstr }"#,
+    map_key,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 }
 
 #[test]
@@ -984,8 +1886,20 @@ fn validate_generic_map_claims_share_parent_physical_ownership() {
   // A named group has the same matching semantics as its parenthesized
   // definition (RFC 8610 Appendix C). It must see the pair already claimed by
   // the preceding parent member: `*` can take width zero, while `+` cannot.
-  validate_cbor_from_slice(zero_or_more, one_text_pair, None).unwrap();
-  validate_cbor_from_slice(one_or_more, one_text_pair, None).unwrap_err();
+  validate_cbor_from_slice(
+    zero_or_more,
+    one_text_pair,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    one_or_more,
+    one_text_pair,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   // A generic child's successful NaN claim must be transferred by physical
   // index so the enclosing closed-map pass recognizes that exact pair.
@@ -993,6 +1907,7 @@ fn validate_generic_map_claims_share_parent_physical_ownership() {
   validate_cbor_from_slice(
     "g<K, V> = (? K => V)\nm = { g<float, tstr> }",
     one_nan_text,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
@@ -1004,21 +1919,34 @@ fn validate_repeating_map_entries_are_greedy() {
 
   // RFC 8610 Appendix A makes occurrences greedy and possessive. The first
   // entry consumes the only pair, so the required entry cannot match it.
-  validate_cbor_from_slice(r#"m = { * any => any, tstr => uint }"#, one_text_uint, None)
-    .unwrap_err();
-  validate_cbor_from_slice(r#"m = { tstr => uint, * any => any }"#, one_text_uint, None).unwrap();
+  validate_cbor_from_slice(
+    r#"m = { * any => any, tstr => uint }"#,
+    one_text_uint,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { tstr => uint, * any => any }"#,
+    one_text_uint,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // A positive lower bound also consumes the pair and therefore leaves no
   // distinct pair for the required entry.
   validate_cbor_from_slice(
     r#"m = { + any => uint, tstr => uint }"#,
     one_text_uint,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
   validate_cbor_from_slice(
     r#"m = { 1*1 any => uint, tstr => uint }"#,
     one_text_uint,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
@@ -1028,6 +1956,7 @@ fn validate_repeating_map_entries_are_greedy() {
   validate_cbor_from_slice(
     r#"m = { * any => any, ? tstr => uint }"#,
     one_text_uint,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
@@ -1046,36 +1975,150 @@ fn validate_repeating_map_entries_count_only_unconsumed_matches() {
   // The occurrence applies to this member's unconsumed matches, not to the
   // enclosing map's total size. This matters for both same-domain keys that
   // an earlier member consumed and disjoint keys left for a later member.
-  validate_cbor_from_slice(r#"m = { a: uint, * tstr => uint }"#, a_only, None).unwrap();
-  validate_cbor_from_slice(r#"m = { a: uint, + tstr => uint }"#, a_only, None).unwrap_err();
-  validate_cbor_from_slice(r#"m = { * tstr => uint, int => uint }"#, int_only, None).unwrap();
-  validate_cbor_from_slice(r#"m = { + tstr => uint, int => uint }"#, int_only, None).unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { a: uint, * tstr => uint }"#,
+    a_only,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { a: uint, + tstr => uint }"#,
+    a_only,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { * tstr => uint, int => uint }"#,
+    int_only,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { + tstr => uint, int => uint }"#,
+    int_only,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   // Preserve the original mixed-map reproduction for byte-string keys. A
   // zero-width repetition succeeds even though the map itself is nonempty;
   // adding a matching pair still validates and `+` still requires a match.
-  validate_cbor_from_slice(r#"m = { 1: uint, * bytes => any }"#, int_only, None).unwrap();
-  validate_cbor_from_slice(r#"m = { 1: uint, * bytes => any }"#, int_and_bytes, None).unwrap();
-  validate_cbor_from_slice(r#"m = { 1: uint, + bytes => any }"#, int_only, None).unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { 1: uint, * bytes => any }"#,
+    int_only,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { 1: uint, * bytes => any }"#,
+    int_and_bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { 1: uint, + bytes => any }"#,
+    int_only,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   // Bounded occurrences count only the pairs left after `a` is consumed.
   let bounded = r#"m = { a: uint, 2*3 tstr => uint }"#;
-  validate_cbor_from_slice(bounded, a_b, None).unwrap_err();
-  validate_cbor_from_slice(bounded, a_b_c, None).unwrap();
-  validate_cbor_from_slice(bounded, a_b_c_d, None).unwrap();
-  validate_cbor_from_slice(bounded, a_b_c_d_e, None).unwrap_err();
+  validate_cbor_from_slice(
+    bounded,
+    a_b,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    bounded,
+    a_b_c,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    bounded,
+    a_b_c_d,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    bounded,
+    a_b_c_d_e,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
-  validate_cbor_from_slice(r#"m = { a: uint, *2 tstr => uint }"#, a_only, None).unwrap();
-  validate_cbor_from_slice(r#"m = { a: uint, *2 tstr => uint }"#, a_b_c, None).unwrap();
-  validate_cbor_from_slice(r#"m = { a: uint, *2 tstr => uint }"#, a_b_c_d, None).unwrap_err();
-  validate_cbor_from_slice(r#"m = { a: uint, 2* tstr => uint }"#, a_b, None).unwrap_err();
-  validate_cbor_from_slice(r#"m = { a: uint, 2* tstr => uint }"#, a_b_c, None).unwrap();
+  validate_cbor_from_slice(
+    r#"m = { a: uint, *2 tstr => uint }"#,
+    a_only,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { a: uint, *2 tstr => uint }"#,
+    a_b_c,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { a: uint, *2 tstr => uint }"#,
+    a_b_c_d,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { a: uint, 2* tstr => uint }"#,
+    a_b,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { a: uint, 2* tstr => uint }"#,
+    a_b_c,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // A bounded repetition stops at its upper bound. It must not claim all
   // matching pairs and then reject before a later member can own the rest.
-  validate_cbor_from_slice(r#"m = { 1*1 tstr => uint, tstr => uint }"#, a_b, None).unwrap();
-  validate_cbor_from_slice(r#"m = { *2 tstr => uint, tstr => uint }"#, a_b_c, None).unwrap();
-  validate_cbor_from_slice(r#"m = { 2*3 tstr => uint, tstr => uint }"#, a_b_c_d, None).unwrap();
+  validate_cbor_from_slice(
+    r#"m = { 1*1 tstr => uint, tstr => uint }"#,
+    a_b,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { *2 tstr => uint, tstr => uint }"#,
+    a_b_c,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { 2*3 tstr => uint, tstr => uint }"#,
+    a_b_c_d,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 }
 
 #[test]
@@ -1089,18 +2132,21 @@ fn validate_repeating_map_member_candidates_are_entry_local() {
   validate_cbor_from_slice(
     r#"m = { * tstr => tstr, ? int => [uint] }"#,
     text_value,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
   validate_cbor_from_slice(
     r#"m = { + tstr => tstr, ? int => [uint] }"#,
     text_value,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
   validate_cbor_from_slice(
     r#"m = { 1*2 tstr => tstr, ? int => [uint] }"#,
     text_value,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
@@ -1110,25 +2156,34 @@ fn validate_repeating_map_member_candidates_are_entry_local() {
   validate_cbor_from_slice(
     r#"m = { * tstr => tstr, int => uint }"#,
     text_and_int_values,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
   validate_cbor_from_slice(
     r#"m = { + tstr => tstr, int => uint }"#,
     text_and_int_values,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
   validate_cbor_from_slice(
     r#"m = { 1*2 tstr => tstr, int => uint }"#,
     text_and_int_values,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
 
   // Candidate lifetime cleanup must not weaken the current key-first value
   // enforcement policy; complete-pair fallthrough is separate work.
-  validate_cbor_from_slice(r#"m = { * tstr => uint }"#, text_value, None).unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { * tstr => uint }"#,
+    text_value,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
@@ -1141,12 +2196,14 @@ fn validate_empty_repeating_map_member_candidate_batch_is_entry_local() {
   validate_cbor_from_slice(
     r#"m = { 0*2 int => tstr, ? tstr => uint }"#,
     bad_text_value,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
   validate_cbor_from_slice(
     r#"m = { 0*2 int => tstr, ? tstr => uint }"#,
     good_text_value,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
@@ -1156,6 +2213,7 @@ fn validate_empty_repeating_map_member_candidate_batch_is_entry_local() {
   validate_cbor_from_slice(
     r#"m = { * any => any, ? tstr => uint }"#,
     bad_text_value,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
@@ -1196,7 +2254,12 @@ fn validate_primitive_numeric_map_member_key_domains() {
   ];
   for (key_type, key) in rejected {
     let schema = format!("m = {{ ? {} => uint }}", key_type);
-    let result = validate_cbor_from_slice(&schema, &encode_one_pair(key), None);
+    let result = validate_cbor_from_slice(
+      &schema,
+      &encode_one_pair(key),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(
       result.is_err(),
       "single {} member accepted a key outside its domain",
@@ -1205,7 +2268,12 @@ fn validate_primitive_numeric_map_member_key_domains() {
   }
   for (key_type, key) in accepted {
     let schema = format!("m = {{ ? {} => uint }}", key_type);
-    let result = validate_cbor_from_slice(&schema, &encode_one_pair(key), None);
+    let result = validate_cbor_from_slice(
+      &schema,
+      &encode_one_pair(key),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(
       result.is_ok(),
       "single {} member rejected a key in its domain: {:?}",
@@ -1223,7 +2291,12 @@ fn validate_primitive_numeric_map_member_key_domains() {
     ("number", Value::Float(1.5)),
   ] {
     let schema = format!("m = {{ + {} => uint }}", key_type);
-    let result = validate_cbor_from_slice(&schema, &encode_one_pair(key), None);
+    let result = validate_cbor_from_slice(
+      &schema,
+      &encode_one_pair(key),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(
       result.is_ok(),
       "repeating {} member rejected a key in its domain: {:?}",
@@ -1237,7 +2310,13 @@ fn validate_primitive_numeric_map_member_key_domains() {
   ] {
     let schema = format!("m = {{ + {} => uint }}", key_type);
     assert!(
-      validate_cbor_from_slice(&schema, &encode_one_pair(key), None).is_err(),
+      validate_cbor_from_slice(
+        &schema,
+        &encode_one_pair(key),
+        #[cfg(feature = "additional-controls")]
+        None
+      )
+      .is_err(),
       "repeating {} member accepted a key outside its domain",
       key_type
     );
@@ -1249,19 +2328,33 @@ fn validate_primitive_numeric_map_member_key_domains() {
   validate_cbor_from_slice(
     r#"m = { ? uint => any, nint => uint }"#,
     &negative_key,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
   validate_cbor_from_slice(
     r#"m = { * uint => any, nint => uint }"#,
     &negative_key,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
 
   let zero_key = encode_one_pair(Value::Integer(0.into()));
-  validate_cbor_from_slice(r#"m = { ? nint => any, uint => uint }"#, &zero_key, None).unwrap();
-  validate_cbor_from_slice(r#"m = { * nint => any, uint => uint }"#, &zero_key, None).unwrap();
+  validate_cbor_from_slice(
+    r#"m = { ? nint => any, uint => uint }"#,
+    &zero_key,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    r#"m = { * nint => any, uint => uint }"#,
+    &zero_key,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 }
 
 #[test]
@@ -1275,12 +2368,14 @@ fn validate_repeating_map_member_candidates_are_entry_local_across_group_choices
   validate_cbor_from_slice(
     r#"m = { (+ tstr => uint // * tstr => tstr), ? int => [uint] }"#,
     text_value,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
   validate_cbor_from_slice(
     r#"m = { * tstr => tstr, (? int => [uint] // ? int => uint) }"#,
     text_value,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
@@ -1345,14 +2440,24 @@ fn validate_repeating_map_entry_counts_cover_primitive_key_paths() {
       "m = {{ ? {} => any, + {} => uint }}",
       consuming_key_type, repeating_key_type
     );
-    let result = validate_cbor_from_slice(&zero_or_more, &bytes, None);
+    let result = validate_cbor_from_slice(
+      &zero_or_more,
+      &bytes,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(
       result.is_ok(),
       "zero-or-more {} case failed: {:?}",
       case_name,
       result
     );
-    let result = validate_cbor_from_slice(&one_or_more, &bytes, None);
+    let result = validate_cbor_from_slice(
+      &one_or_more,
+      &bytes,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(
       result.is_err(),
       "one-or-more {} case unexpectedly matched",
@@ -1370,6 +2475,7 @@ fn validate_single_map_entry_claims_are_transactional_across_group_choices() {
   let error = validate_cbor_from_slice(
     r#"m = { tstr => uint // ? tstr => bytes }"#,
     one_text_value,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
@@ -1380,6 +2486,7 @@ fn validate_single_map_entry_claims_are_transactional_across_group_choices() {
   validate_cbor_from_slice(
     r#"m = { tstr => uint // tstr => tstr }"#,
     one_text_value,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
@@ -1421,13 +2528,30 @@ fn validate_optional_map_entries_are_greedy() {
     )
     .unwrap();
 
-    let result = validate_cbor_from_slice(schema, &bytes, None);
+    let result = validate_cbor_from_slice(
+      schema,
+      &bytes,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(result.is_err(), "schema {} unexpectedly matched", schema);
   }
 
   let text_pair = b"\xa1\x61a\x01"; // {"a": 1}
-  validate_cbor_from_slice(r#"m = { ? tstr => any, a: any }"#, text_pair, None).unwrap_err();
-  validate_cbor_from_slice(r#"m = { ? a: any, tstr => any }"#, text_pair, None).unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { ? tstr => any, a: any }"#,
+    text_pair,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { ? a: any, tstr => any }"#,
+    text_pair,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
@@ -1436,12 +2560,24 @@ fn validate_optional_arrow_value_failure_can_fall_through() {
 
   // RFC 8610 §3.5.4: without a cut, failure of the optional entry's value
   // type leaves the pair available to a later matching entry.
-  validate_cbor_from_slice(r#"m = { ? tstr => uint, tstr => tstr }"#, text_value, None).unwrap();
+  validate_cbor_from_slice(
+    r#"m = { ? tstr => uint, tstr => tstr }"#,
+    text_value,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // The colon shortcut includes a cut. Once `a` matches, the bad `uint`
   // value commits the failure and the later type-domain member cannot rescue
   // the pair.
-  validate_cbor_from_slice(r#"m = { ? a: uint, tstr => tstr }"#, text_value, None).unwrap_err();
+  validate_cbor_from_slice(
+    r#"m = { ? a: uint, tstr => tstr }"#,
+    text_value,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   // This is RFC 8610 §3.5.4's extensible-map example. The arrow form permits
   // the wildcard to cover a known key whose optional value type does not
@@ -1450,12 +2586,14 @@ fn validate_optional_arrow_value_failure_can_fall_through() {
   validate_cbor_from_slice(
     r#"m = { ? "optional-key" => int, * tstr => any }"#,
     extension_value,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
   validate_cbor_from_slice(
     r#"m = { ? "optional-key": int, * tstr => any }"#,
     extension_value,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap_err();
@@ -1471,8 +2609,20 @@ fn validate_optional_single_map_entry_assignment_considers_values() {
   let text_value_first = b"\xa2\x61a\x61x\x61b\x01";
   let integer_value_first = b"\xa2\x61a\x01\x61b\x61x";
 
-  validate_cbor_from_slice(schema, text_value_first, None).unwrap();
-  validate_cbor_from_slice(schema, integer_value_first, None).unwrap();
+  validate_cbor_from_slice(
+    schema,
+    text_value_first,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    schema,
+    integer_value_first,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Occurrence-less direct members use the same policy. The broad first
   // member can move to the integer-valued pair so the second member owns the
@@ -1480,6 +2630,7 @@ fn validate_optional_single_map_entry_assignment_considers_values() {
   validate_cbor_from_slice(
     r#"m = { tstr => any, tstr => tstr }"#,
     text_value_first,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
@@ -1489,15 +2640,33 @@ fn validate_optional_single_map_entry_assignment_considers_values() {
   // to pair 2. A pairwise-only repair cannot find this assignment.
   let three_way_schema = r#"m = { ? tstr => (int / bool), ? tstr => any, tstr => int }"#;
   let three_way_assignment = b"\xa3\x61a\x01\x61b\xf5\x61c\x41\x00";
-  validate_cbor_from_slice(three_way_schema, three_way_assignment, None).unwrap();
+  validate_cbor_from_slice(
+    three_way_schema,
+    three_way_assignment,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Generic group children allocate the same physical map. Their direct
   // claims must retain the member schema needed by the parent assignment.
   let generic_schema = "g<K, V> = (? K => V)\nm = { g<tstr, 1..2>, tstr => 1, * any => any }";
   let required_value_first = b"\xa2\x61a\x01\x61b\x02";
   let generic_value_first = b"\xa2\x61b\x02\x61a\x01";
-  validate_cbor_from_slice(generic_schema, required_value_first, None).unwrap();
-  validate_cbor_from_slice(generic_schema, generic_value_first, None).unwrap();
+  validate_cbor_from_slice(
+    generic_schema,
+    required_value_first,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    generic_schema,
+    generic_value_first,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Independent generic children initially select pair 0. The outward merge
   // must relocate the second child to a compatible free pair instead of
@@ -1506,7 +2675,13 @@ fn validate_optional_single_map_entry_assignment_considers_values() {
     h<K, V> = (? K => V)\n\
     m = { g<tstr, any>, h<tstr, any> }";
   let two_generic_pairs = b"\xa2\x61a\x01\x61b\x02";
-  validate_cbor_from_slice(two_generic_schema, two_generic_pairs, None).unwrap();
+  validate_cbor_from_slice(
+    two_generic_schema,
+    two_generic_pairs,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // The colliding child need not accept the placeholder itself. Matching can
   // move the earlier broad child to that pair and retain pair 0 for the
@@ -1515,23 +2690,47 @@ fn validate_optional_single_map_entry_assignment_considers_values() {
     h<K, V> = (? K => V)\n\
     m = { g<tstr, any>, h<tstr, int> }";
   let integer_then_bool = b"\xa2\x61a\x01\x61b\xf5";
-  validate_cbor_from_slice(two_generic_swap_schema, integer_then_bool, None).unwrap();
+  validate_cbor_from_slice(
+    two_generic_swap_schema,
+    integer_then_bool,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Two uses of the same generic rule have distinct instantiations. The
   // second claim must not replay with the first use's `any` argument.
   let repeated_generic_schema = "g<K, V> = (? K => V)\n\
     m = { g<tstr, any>, g<tstr, int> }";
   let two_bool_values = b"\xa2\x61a\xf5\x61b\xf4";
-  validate_cbor_from_slice(repeated_generic_schema, two_bool_values, None).unwrap_err();
+  validate_cbor_from_slice(
+    repeated_generic_schema,
+    two_bool_values,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   let repeated_identical_schema = "g<K, V> = (? K => V)\n\
     m = { g<tstr, any>, g<tstr, any> }";
-  validate_cbor_from_slice(repeated_identical_schema, two_bool_values, None).unwrap();
+  validate_cbor_from_slice(
+    repeated_identical_schema,
+    two_bool_values,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   let two_generic_cycle_schema = "g<K, V> = (? K => V)\n\
     h<K, V> = (? K => V)\n\
     m = { g<tstr, (int / bool)>, h<tstr, any>, tstr => int }";
-  validate_cbor_from_slice(two_generic_cycle_schema, three_way_assignment, None).unwrap();
+  validate_cbor_from_slice(
+    two_generic_cycle_schema,
+    three_way_assignment,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Parent and generic children share one physical ownership ledger. Either
   // text-key order must leave the byte-key pair for the later required member
@@ -1541,14 +2740,27 @@ fn validate_optional_single_map_entry_assignment_considers_values() {
     m = { g<tstr, int>, h<tstr, int>, bytes => any }";
   let text_byte_text = b"\xa3\x61a\x01\x41\x00\xf5\x61b\x02";
   let text_byte_text_reversed = b"\xa3\x61b\x02\x41\x00\xf5\x61a\x01";
-  validate_cbor_from_slice(generic_then_disjoint_schema, text_byte_text, None).unwrap();
-  validate_cbor_from_slice(generic_then_disjoint_schema, text_byte_text_reversed, None).unwrap();
+  validate_cbor_from_slice(
+    generic_then_disjoint_schema,
+    text_byte_text,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    generic_then_disjoint_schema,
+    text_byte_text_reversed,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // A failed assignment search is read-only. The next group alternative must
   // start from its checkpoint and can claim both pairs with a wildcard.
   validate_cbor_from_slice(
     r#"m = { (? tstr => tstr, tstr => bytes) // * any => any }"#,
     text_value_first,
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
@@ -1564,12 +2776,40 @@ fn validate_map_unexpected_entries_rejected() -> Result<(), Box<dyn Error>> {
   let k1_a2 = b"\xa2\x61\x6b\x01\x61\x61\x02"; // {"k": 1, "a": 2}
   let int_entry = b"\xa1\x01\x02"; // {1: 2}
 
-  validate_cbor_from_slice(r#"m = { ? k: uint }"#, empty_map, None)?;
-  validate_cbor_from_slice(r#"m = { ? k: uint }"#, k1, None)?;
-  assert!(validate_cbor_from_slice(r#"m = { ? k: uint }"#, a1, None).is_err());
-  assert!(validate_cbor_from_slice(r#"m = { ? k: uint }"#, k1_a2, None).is_err());
+  validate_cbor_from_slice(
+    r#"m = { ? k: uint }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
+  validate_cbor_from_slice(
+    r#"m = { ? k: uint }"#,
+    k1,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
+  assert!(validate_cbor_from_slice(
+    r#"m = { ? k: uint }"#,
+    a1,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
+  assert!(validate_cbor_from_slice(
+    r#"m = { ? k: uint }"#,
+    k1_a2,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
   // absent optional type-domain entry does not excuse a key of another domain
-  assert!(validate_cbor_from_slice(r#"m = { ? tstr => uint }"#, int_entry, None).is_err());
+  assert!(validate_cbor_from_slice(
+    r#"m = { ? tstr => uint }"#,
+    int_entry,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
 
   Ok(())
 }
@@ -1587,21 +2827,75 @@ fn validate_map_any_key_permits_extra_entries() -> Result<(), Box<dyn Error>> {
   // Put the specific member before the extension point. RFC 8610 Appendix A
   // makes the leading wildcard form greedy; Section 3.5.3 identifies that
   // general-before-specific overlap as pathological.
-  validate_cbor_from_slice(r#"m = { k: uint, * any => any }"#, k1, None)?;
-  validate_cbor_from_slice(r#"m = { k: uint, * any => any }"#, k1_z9, None)?;
-  assert!(validate_cbor_from_slice(r#"m = { * any => any, k: uint }"#, k1_z9, None).is_err());
+  validate_cbor_from_slice(
+    r#"m = { k: uint, * any => any }"#,
+    k1,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
+  validate_cbor_from_slice(
+    r#"m = { k: uint, * any => any }"#,
+    k1_z9,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
+  assert!(validate_cbor_from_slice(
+    r#"m = { * any => any, k: uint }"#,
+    k1_z9,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
   // colon shortcut form
-  validate_cbor_from_slice(r#"m = { k: uint, * any: any }"#, k1_z9, None)?;
-  validate_cbor_from_slice(r#"m = { * any => any }"#, empty_map, None)?;
+  validate_cbor_from_slice(
+    r#"m = { k: uint, * any: any }"#,
+    k1_z9,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
+  validate_cbor_from_slice(
+    r#"m = { * any => any }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
   // `any` keys are not limited to text keys
-  validate_cbor_from_slice(r#"m = { * any => any }"#, int_keyed, None)?;
+  validate_cbor_from_slice(
+    r#"m = { * any => any }"#,
+    int_keyed,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
   // `+` still requires at least one entry
-  assert!(validate_cbor_from_slice(r#"m = { + any => any }"#, empty_map, None).is_err());
-  validate_cbor_from_slice(r#"m = { + any => any }"#, k1, None)?;
+  assert!(validate_cbor_from_slice(
+    r#"m = { + any => any }"#,
+    empty_map,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
+  validate_cbor_from_slice(
+    r#"m = { + any => any }"#,
+    k1,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )?;
   // an `any` key does not excuse a value-type mismatch
-  assert!(validate_cbor_from_slice(r#"m = { k: uint, * any => uint }"#, k1_ztext, None).is_err());
+  assert!(validate_cbor_from_slice(
+    r#"m = { k: uint, * any => uint }"#,
+    k1_ztext,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
   // a map without the extension member stays closed
-  assert!(validate_cbor_from_slice(r#"m = { k: uint }"#, k1_z9, None).is_err());
+  assert!(validate_cbor_from_slice(
+    r#"m = { k: uint }"#,
+    k1_z9,
+    #[cfg(feature = "additional-controls")]
+    None
+  )
+  .is_err());
 
   Ok(())
 }
@@ -1617,9 +2911,14 @@ fn validate_map_any_key_does_not_rescue_cut_value_mismatch() {
     r#"m = { k: uint, * any => any }"#,
     r#"m = { k: uint, any => any }"#,
   ] {
-    let err = validate_cbor_from_slice(schema, k_wrong_z, None)
-      .unwrap_err()
-      .to_string();
+    let err = validate_cbor_from_slice(
+      schema,
+      k_wrong_z,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err()
+    .to_string();
     assert!(
       err.contains(r#"expected type uint, got Text("s")"#),
       "schema {}: expected a value-type error for k, got: {}",

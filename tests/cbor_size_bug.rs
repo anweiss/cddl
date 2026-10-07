@@ -24,7 +24,12 @@ fn test_type_check_with_size_constraint() -> Result<(), Box<dyn Error>> {
   // This should fail because we're providing bytes where text is expected
   let mut cbor_bytes_vec = Vec::new();
   ciborium::ser::into_writer(&cbor_bytes, &mut cbor_bytes_vec)?;
-  let result_without_size = validate_cbor_from_slice(cddl_without_size, &cbor_bytes_vec, None);
+  let result_without_size = validate_cbor_from_slice(
+    cddl_without_size,
+    &cbor_bytes_vec,
+    #[cfg(feature = "additional-controls")]
+    None,
+  );
   assert!(
     result_without_size.is_err(),
     "Validation should fail when bytes are provided instead of text"
@@ -48,7 +53,12 @@ fn test_type_check_with_size_constraint() -> Result<(), Box<dyn Error>> {
   // Same CBOR as before
   let mut cbor_bytes_vec = Vec::new();
   ciborium::ser::into_writer(&cbor_bytes, &mut cbor_bytes_vec)?;
-  let result_with_size = validate_cbor_from_slice(cddl_with_size, &cbor_bytes_vec, None);
+  let result_with_size = validate_cbor_from_slice(
+    cddl_with_size,
+    &cbor_bytes_vec,
+    #[cfg(feature = "additional-controls")]
+    None,
+  );
 
   // This currently passes but should fail
   assert!(

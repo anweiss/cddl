@@ -44,7 +44,12 @@ fn primitive_identifier_finders_only_run_for_member_keys() {
     // RFC 8610 Appendix C requires the data item itself to match the type.
     // A CBOR map (major type 5) is not a primitive value merely because one
     // of its keys belongs to the primitive's domain.
-    let result = validate_cbor_from_slice(&format!("m = {domain}"), &encode(map.clone()), None);
+    let result = validate_cbor_from_slice(
+      &format!("m = {domain}"),
+      &encode(map.clone()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(
       result.is_err(),
       "root {} value searched the enclosing map's keys",
@@ -52,8 +57,12 @@ fn primitive_identifier_finders_only_run_for_member_keys() {
     );
 
     let nested = one_pair(Value::Text("outer".into()), map);
-    let result =
-      validate_cbor_from_slice(&format!("m = {{ outer: {domain} }}"), &encode(nested), None);
+    let result = validate_cbor_from_slice(
+      &format!("m = {{ outer: {domain} }}"),
+      &encode(nested),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     assert!(
       result.is_err(),
       "nested {} value searched its own map's keys",
@@ -65,6 +74,7 @@ fn primitive_identifier_finders_only_run_for_member_keys() {
     let result = validate_cbor_from_slice(
       &schema,
       &encode(one_pair(key, Value::Integer(7.into()))),
+      #[cfg(feature = "additional-controls")]
       None,
     );
     assert!(
@@ -89,7 +99,13 @@ fn primitive_literal_finders_only_run_for_member_keys() {
   for (literal, key) in literals {
     let map = one_pair(key.clone(), Value::Integer(7.into()));
     assert!(
-      validate_cbor_from_slice(&format!("m = {literal}"), &encode(map.clone()), None).is_err(),
+      validate_cbor_from_slice(
+        &format!("m = {literal}"),
+        &encode(map.clone()),
+        #[cfg(feature = "additional-controls")]
+        None
+      )
+      .is_err(),
       "root literal {} searched the enclosing map's keys",
       literal
     );
@@ -99,6 +115,7 @@ fn primitive_literal_finders_only_run_for_member_keys() {
       validate_cbor_from_slice(
         &format!("m = {{ outer: {literal} }}"),
         &encode(nested),
+        #[cfg(feature = "additional-controls")]
         None,
       )
       .is_err(),
@@ -109,6 +126,7 @@ fn primitive_literal_finders_only_run_for_member_keys() {
     let result = validate_cbor_from_slice(
       &format!("m = {{ {literal} => uint }}"),
       &encode(one_pair(key, Value::Integer(7.into()))),
+      #[cfg(feature = "additional-controls")]
       None,
     );
     assert!(
@@ -127,6 +145,7 @@ fn repeating_primitive_members_preserve_value_and_key_contexts() {
     validate_cbor_from_slice(
       "m = [+ tstr]",
       &encode(Value::Array(vec![map.clone()])),
+      #[cfg(feature = "additional-controls")]
       None,
     )
     .is_err(),
@@ -139,6 +158,7 @@ fn repeating_primitive_members_preserve_value_and_key_contexts() {
         Value::Text("outer".into()),
         Value::Array(vec![map]),
       )),
+      #[cfg(feature = "additional-controls")]
       None,
     )
     .is_err(),
@@ -151,6 +171,7 @@ fn repeating_primitive_members_preserve_value_and_key_contexts() {
       Value::Text("key".into()),
       Value::Integer(7.into()),
     )),
+    #[cfg(feature = "additional-controls")]
     None,
   )
   .unwrap();
@@ -163,8 +184,20 @@ fn map_and_any_values_remain_valid_outside_member_key_context() {
     Value::Integer(7.into()),
   ));
 
-  validate_cbor_from_slice("m = any", &map, None).unwrap();
-  validate_cbor_from_slice("m = { * any => any }", &map, None).unwrap();
+  validate_cbor_from_slice(
+    "m = any",
+    &map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    "m = { * any => any }",
+    &map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 }
 
 #[test]
@@ -175,7 +208,13 @@ fn optional_composite_member_misses_skip_their_value_type() {
   // Once the first optional member owns the only pair, the second member is
   // absent. Its uint value type must not be evaluated against the enclosing
   // map as a surrogate way to discover that absence.
-  validate_cbor_from_slice("m = { ? [uint] => tstr, ? [uint] => uint }", &map, None).unwrap();
+  validate_cbor_from_slice(
+    "m = { ? [uint] => tstr, ? [uint] => uint }",
+    &map,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 }
 
 #[test]
@@ -184,7 +223,13 @@ fn primitive_member_value_errors_point_to_the_claimed_key() {
     Value::Text("key".into()),
     Value::Text("bad".into()),
   ));
-  let error = validate_cbor_from_slice("m = { tstr => uint }", &bad_member, None).unwrap_err();
+  let error = validate_cbor_from_slice(
+    "m = { tstr => uint }",
+    &bad_member,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
   let Error::Validation(errors) = error else {
     panic!("expected validation errors");
   };
