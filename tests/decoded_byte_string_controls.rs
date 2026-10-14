@@ -60,6 +60,7 @@ fn cat_uses_decoded_bytes_and_keeps_the_target_string_type() {
 
   for schema in byte_claims {
     assert_cbor_verdict(schema, &cbor_bytes(b"test3"), true);
+    assert_cbor_verdict(schema, &cbor_text("test3"), false);
     assert_cbor_verdict(schema, &cbor_bytes(b"test4"), false);
   }
 
