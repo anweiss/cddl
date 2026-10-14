@@ -3,7 +3,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::borrow::Cow;
-use std::fmt::Write;
 
 #[cfg(feature = "json")]
 use cddl::validator::validate_json_from_str;
@@ -28,13 +27,21 @@ fn decoded_byte_values_and_ast_nodes_render_as_cddl_literals() {
 }
 
 #[test]
-fn invalid_unqualified_byte_string_state_remains_fallible() {
+fn non_utf8_unqualified_byte_strings_render_as_base16() {
+  // Display must be infallible: unqualified byte-string state whose bytes
+  // are not valid UTF-8 falls back to h'…' notation, which denotes the same
+  // byte string and reparses.
   let value = ByteValue::UTF8(Cow::Borrowed(&[0xff]));
-  let mut rendered = String::new();
-  assert!(write!(&mut rendered, "{}", value).is_err());
+  assert_eq!(value.to_string(), "h'ff'");
+  assert_eq!(Type2::from(value).to_string(), "h'ff'");
 
-  rendered.clear();
-  assert!(write!(&mut rendered, "{}", Type2::from(value)).is_err());
+  let mixed = ByteValue::UTF8(Cow::Borrowed(&[0x74, 0x65, 0xff]));
+  assert_eq!(mixed.to_string(), "h'7465ff'");
+
+  // Valid UTF-8 keeps the unqualified notation.
+  let utf8 = ByteValue::UTF8(Cow::Borrowed(b"te"));
+  assert_eq!(utf8.to_string(), "'te'");
+  assert_eq!(Type2::from(utf8).to_string(), "'te'");
 }
 
 #[test]
