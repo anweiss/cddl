@@ -228,6 +228,7 @@ dependencies = [
  "data-encoding",
  "displaydoc",
  "fancy-regex",
+ "half",
  "hex",
  "hexf-parse",
  "indoc",
