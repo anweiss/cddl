@@ -1,7 +1,7 @@
 on:
   push:
-    tags-ignore:
-      - '*'
+    branches:
+      - '**'
     paths:
       - '.github/workflows/ci.yml'
       - '.github/workflows/anchore-analysis.yml'
