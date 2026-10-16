@@ -36,22 +36,70 @@ extended /= uint
 
 fn assert_json_three_arm_choice(schema: &str) {
   // Accept the base after two failed additions, and accept either addition.
-  validate_json_from_str(schema, "true", None).unwrap();
-  validate_json_from_str(schema, r#""x""#, None).unwrap();
-  validate_json_from_str(schema, "0", None).unwrap();
+  validate_json_from_str(
+    schema,
+    "true",
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_json_from_str(
+    schema,
+    r#""x""#,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_json_from_str(
+    schema,
+    "0",
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Reject a value outside every arm.
-  validate_json_from_str(schema, "null", None).unwrap_err();
+  validate_json_from_str(
+    schema,
+    "null",
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 fn assert_cbor_three_arm_choice(schema: &str) {
   // Accept the base after two failed additions, and accept either addition.
-  validate_cbor_from_slice(schema, &[0xf5], None).unwrap();
-  validate_cbor_from_slice(schema, &[0x61, b'x'], None).unwrap();
-  validate_cbor_from_slice(schema, &[0x00], None).unwrap();
+  validate_cbor_from_slice(
+    schema,
+    &[0xf5],
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    schema,
+    &[0x61, b'x'],
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    schema,
+    &[0x00],
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // Reject a value outside every arm.
-  validate_cbor_from_slice(schema, &[0xf6], None).unwrap_err();
+  validate_cbor_from_slice(
+    schema,
+    &[0xf6],
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
@@ -69,13 +117,49 @@ fn cbor_incremental_choice_is_root_independent_and_transactional() {
 #[test]
 fn alternate_only_choice_remains_valid_at_root_and_through_alias() {
   for schema in [ALTERNATE_ONLY_ROOT, ALTERNATE_ONLY_ALIAS] {
-    validate_json_from_str(schema, r#""x""#, None).unwrap();
-    validate_json_from_str(schema, "0", None).unwrap();
-    validate_json_from_str(schema, "true", None).unwrap_err();
+    validate_json_from_str(
+      schema,
+      r#""x""#,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap();
+    validate_json_from_str(
+      schema,
+      "0",
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap();
+    validate_json_from_str(
+      schema,
+      "true",
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
 
-    validate_cbor_from_slice(schema, &[0x61, b'x'], None).unwrap();
-    validate_cbor_from_slice(schema, &[0x00], None).unwrap();
-    validate_cbor_from_slice(schema, &[0xf5], None).unwrap_err();
+    validate_cbor_from_slice(
+      schema,
+      &[0x61, b'x'],
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap();
+    validate_cbor_from_slice(
+      schema,
+      &[0x00],
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap();
+    validate_cbor_from_slice(
+      schema,
+      &[0xf5],
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
   }
 }
 
@@ -96,17 +180,65 @@ fn generic_rule_extended_by_a_matching_arm_keeps_validating() {
   cddl_from_str(schema, false).unwrap();
 
   // Either arm matches, with `t` bound to `int` in both.
-  validate_json_from_str(schema, "[1]", None).unwrap();
-  validate_json_from_str(schema, r#"{"k":1}"#, None).unwrap();
-  validate_cbor_from_slice(schema, &[0x81, 0x01], None).unwrap();
-  validate_cbor_from_slice(schema, &[0xa1, 0x61, b'k', 0x01], None).unwrap();
+  validate_json_from_str(
+    schema,
+    "[1]",
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_json_from_str(
+    schema,
+    r#"{"k":1}"#,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    schema,
+    &[0x81, 0x01],
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    schema,
+    &[0xa1, 0x61, b'k', 0x01],
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
 
   // The binding is real, not vacuous: a `tstr` where the argument says
   // `int` fails in both arms and both encodings.
-  validate_json_from_str(schema, r#"["x"]"#, None).unwrap_err();
-  validate_json_from_str(schema, r#"{"k":"x"}"#, None).unwrap_err();
-  validate_cbor_from_slice(schema, &[0x81, 0x61, b'x'], None).unwrap_err();
-  validate_cbor_from_slice(schema, &[0xa1, 0x61, b'k', 0x61, b'x'], None).unwrap_err();
+  validate_json_from_str(
+    schema,
+    r#"["x"]"#,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_json_from_str(
+    schema,
+    r#"{"k":"x"}"#,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    schema,
+    &[0x81, 0x61, b'x'],
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
+  validate_cbor_from_slice(
+    schema,
+    &[0xa1, 0x61, b'k', 0x61, b'x'],
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
@@ -121,10 +253,21 @@ fn recursive_choice_arms_consume_nested_data() {
 
   for schema in [ROOT, ALIAS, ALTERNATE_ONLY] {
     for value in ["0", "[0]", "[[0]]", "[[[0]]]"] {
-      validate_json_from_str(schema, value, None)
-        .unwrap_or_else(|e| panic!("JSON {:?} rejected {}: {}", schema, value, e));
+      validate_json_from_str(
+        schema,
+        value,
+        #[cfg(feature = "additional-controls")]
+        None,
+      )
+      .unwrap_or_else(|e| panic!("JSON {:?} rejected {}: {}", schema, value, e));
     }
-    validate_json_from_str(schema, r#""x""#, None).unwrap_err();
+    validate_json_from_str(
+      schema,
+      r#""x""#,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
 
     for value in [
       &[0x00][..],
@@ -132,17 +275,40 @@ fn recursive_choice_arms_consume_nested_data() {
       &[0x81, 0x81, 0x00],
       &[0x81, 0x81, 0x81, 0x00],
     ] {
-      validate_cbor_from_slice(schema, value, None)
-        .unwrap_or_else(|e| panic!("CBOR {:?} rejected {:x?}: {}", schema, value, e));
+      validate_cbor_from_slice(
+        schema,
+        value,
+        #[cfg(feature = "additional-controls")]
+        None,
+      )
+      .unwrap_or_else(|e| panic!("CBOR {:?} rejected {:x?}: {}", schema, value, e));
     }
-    validate_cbor_from_slice(schema, &[0x61, b'x'], None).unwrap_err();
+    validate_cbor_from_slice(
+      schema,
+      &[0x61, b'x'],
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
   }
 
   // A value outside both arms must fail at every nesting depth instead of
   // being waved through by a coarse recursion guard once `t` repeats.
   for schema in [ROOT, ALIAS, ALTERNATE_ONLY] {
-    validate_json_from_str(schema, "[[true]]", None).unwrap_err();
-    validate_cbor_from_slice(schema, &[0x81, 0x81, 0xf5], None).unwrap_err();
+    validate_json_from_str(
+      schema,
+      "[[true]]",
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
+    validate_cbor_from_slice(
+      schema,
+      &[0x81, 0x81, 0xf5],
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
   }
 }
 
@@ -151,15 +317,51 @@ fn mutually_recursive_incremental_choice_consumes_nested_data() {
   // A realistic recursive shape: a list whose items are scalars or lists.
   let schema = "list = [* item]\nitem = int\nitem /= list\n";
 
-  validate_json_from_str(schema, "[[1], 2]", None).unwrap();
-  validate_json_from_str(schema, "[[[3]], 4]", None).unwrap();
-  validate_json_from_str(schema, r#"[["x"]]"#, None).unwrap_err();
+  validate_json_from_str(
+    schema,
+    "[[1], 2]",
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_json_from_str(
+    schema,
+    "[[[3]], 4]",
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_json_from_str(
+    schema,
+    r#"[["x"]]"#,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 
   // [[1], 2] and [[[3]], 4]
-  validate_cbor_from_slice(schema, &[0x82, 0x81, 0x01, 0x02], None).unwrap();
-  validate_cbor_from_slice(schema, &[0x82, 0x81, 0x81, 0x03, 0x04], None).unwrap();
+  validate_cbor_from_slice(
+    schema,
+    &[0x82, 0x81, 0x01, 0x02],
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
+  validate_cbor_from_slice(
+    schema,
+    &[0x82, 0x81, 0x81, 0x03, 0x04],
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap();
   // [["x"]]
-  validate_cbor_from_slice(schema, &[0x81, 0x81, 0x61, b'x'], None).unwrap_err();
+  validate_cbor_from_slice(
+    schema,
+    &[0x81, 0x81, 0x61, b'x'],
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_err();
 }
 
 #[test]
@@ -167,12 +369,23 @@ fn recursive_alternate_only_reference_completes_instead_of_crashing() {
   // Before the shared resolver, the JSON validator overflowed its stack and
   // aborted the process on this schema.
   for schema in ["a /= a\n", "root = a\na /= a\n"] {
-    validate_json_from_str(schema, "0", None).unwrap_err();
+    validate_json_from_str(
+      schema,
+      "0",
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
 
     // The CBOR recursion guard treats a revisited rule as satisfied, so the
     // verdict for this degenerate schema is a vacuous accept (`a = a`
     // behaves the same way); the regression pinned here is only that
     // validation completes.
-    let _ = validate_cbor_from_slice(schema, &[0x00], None);
+    let _ = validate_cbor_from_slice(
+      schema,
+      &[0x00],
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
   }
 }

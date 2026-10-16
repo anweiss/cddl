@@ -14,7 +14,13 @@ use cddl::validate_cbor_from_slice;
 
 fn validates(cddl: &str, hex: &str) -> bool {
   let cbor = hex::decode(hex).unwrap();
-  validate_cbor_from_slice(cddl, &cbor, None).is_ok()
+  validate_cbor_from_slice(
+    cddl,
+    &cbor,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .is_ok()
 }
 
 /// `{"a": 1, 2: 3}`

@@ -46,6 +46,7 @@ struct ParserError {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(feature = "json", feature = "cbor", test))]
 use crate::cddl_from_str;
 
 /// Validator trait. Implemented for JSON documents and CBOR binaries
@@ -272,6 +273,7 @@ impl<'a> ValidationState<'a> {
 
 #[cfg(all(test, feature = "json", not(target_arch = "wasm32")))]
 impl CDDL<'_> {
+  #[cfg(feature = "json")]
   /// Validate the given document against the CDDL definition
   fn validate_json(
     &self,
@@ -1432,6 +1434,7 @@ mod tests {
 
   use super::*;
 
+  #[cfg(feature = "json")]
   #[test]
   fn validate_json() {
     let cddl_schema = cddl_from_str(
@@ -1446,9 +1449,15 @@ mod tests {
 
     let documents = [r#"{ "bar": "foo" }"#, r#"{ "bar": "foo2" }"#];
 
-    documents
-      .iter()
-      .all(|doc| cddl_schema.validate_json(doc.as_bytes(), None).is_ok());
+    documents.iter().all(|doc| {
+      cddl_schema
+        .validate_json(
+          doc.as_bytes(),
+          #[cfg(feature = "additional-controls")]
+          None,
+        )
+        .is_ok()
+    });
   }
 
   #[test]
