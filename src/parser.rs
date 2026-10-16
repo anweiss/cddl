@@ -1,6 +1,6 @@
 use super::{ast::*, error::ErrorMsg, pest_bridge};
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "ast-span"))]
 use super::lexer::Position;
 
 use core::result;
@@ -164,6 +164,7 @@ impl CDDL<'_> {
 pub fn cddl_from_str(input: &str) -> result::Result<JsValue, JsValue> {
   #[derive(Serialize)]
   struct ParserError {
+    #[cfg(feature = "ast-span")]
     position: Position,
     msg: ErrorMsg,
   }
@@ -227,6 +228,7 @@ pub fn validate_cddl_from_str(input: &str, check_refs: bool) -> result::Result<J
 pub fn format_cddl_from_str(input: &str) -> result::Result<String, JsValue> {
   #[derive(Serialize)]
   struct ParserError {
+    #[cfg(feature = "ast-span")]
     position: Position,
     msg: ErrorMsg,
   }

@@ -180,14 +180,50 @@ fn incremental_group_chain_stays_valid_at_root_and_through_alias() {
   const REORDERED: &str = "g //= (k: int)\ng //= (j: int)\nr = {g}\n";
 
   for schema in [ALIAS, REORDERED] {
-    validate_json_from_str(schema, r#"{"k":1}"#, None).unwrap();
-    validate_json_from_str(schema, r#"{"j":1}"#, None).unwrap();
-    validate_json_from_str(schema, r#"{"x":1}"#, None).unwrap_err();
+    validate_json_from_str(
+      schema,
+      r#"{"k":1}"#,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap();
+    validate_json_from_str(
+      schema,
+      r#"{"j":1}"#,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap();
+    validate_json_from_str(
+      schema,
+      r#"{"x":1}"#,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
 
     // {"k":1} / {"j":1} / {"x":1}
-    validate_cbor_from_slice(schema, &[0xa1, 0x61, b'k', 0x01], None).unwrap();
-    validate_cbor_from_slice(schema, &[0xa1, 0x61, b'j', 0x01], None).unwrap();
-    validate_cbor_from_slice(schema, &[0xa1, 0x61, b'x', 0x01], None).unwrap_err();
+    validate_cbor_from_slice(
+      schema,
+      &[0xa1, 0x61, b'k', 0x01],
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap();
+    validate_cbor_from_slice(
+      schema,
+      &[0xa1, 0x61, b'j', 0x01],
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap();
+    validate_cbor_from_slice(
+      schema,
+      &[0xa1, 0x61, b'x', 0x01],
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
   }
 }
 
