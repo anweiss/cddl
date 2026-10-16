@@ -1,0 +1,91 @@
+name: Repository quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            www/package-lock.json
+            cddl-lsp/package-lock.json
+            cddl-lsp/client/package-lock.json
+            cddl-lsp/server/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install locked quality dependencies
+        run: |
+          npm ci
+          npm --prefix www ci
+          npm --prefix cddl-lsp ci
+          npm --prefix cddl-lsp/client ci
+          npm --prefix cddl-lsp/server ci
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -r requirements-dev.txt
+      - name: Fast static feedback
+        run: |
+          npm run lint
+          npm run format:check
+          npm run check:files
+          npm run check:docs
+          npm run check:versions
+          npm run check:complexity
+          npm run check:duplicates
+          cargo fmt --all -- --check
+      - name: Build real WASM packages and language server
+        run: |
+          cargo install wasm-pack --version 0.15.0 --locked
+          npm run build:wasm
+          npm run build:lsp
+          npm run typecheck
+          npm run check:dependencies
+      - name: Coverage and stability
+        run: |
+          npm run test:coverage
+          npm run test:stability
+      - name: Build, budget and profile
+        run: |
+          npm run build:playground
+          npm run check:bundle
+          npm run profile
+          cargo doc --all --no-deps
+      - name: Browser and dynamic security regressions
+        run: |
+          npm exec playwright install --with-deps chromium
+          npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quality-reports
+          path: |
+            reports/
+            playwright-report/
+            test-results/
+          retention-days: 14

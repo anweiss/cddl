@@ -1,28 +1,19 @@
 {
-	"compilerOptions": {
-		"target": "es2022",
-		"lib": [
-			"es2022"
-		],
-		"module": "node16",
-		"moduleResolution": "node16",
-		"sourceMap": true,
-		"strict": false,
-		"outDir": "out",
-		"rootDir": "src",
-		"skipLibCheck": true,
-		"esModuleInterop": true,
-		"allowSyntheticDefaultImports": true,
-		"ignoreDeprecations": "6.0",
-		"types": [
-			"node"
-		]
-	},
-	"include": [
-		"src"
-	],
-	"exclude": [
-		"node_modules",
-		".vscode-test"
-	]
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2022"],
+    "module": "node16",
+    "moduleResolution": "node16",
+    "sourceMap": true,
+    "strict": true,
+    "outDir": "out",
+    "rootDir": "src",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "ignoreDeprecations": "6.0",
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", ".vscode-test"]
 }

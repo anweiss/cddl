@@ -11,8 +11,12 @@
 
 import { parseRules } from './outline.js';
 
+/**
+ * @typedef {{label: string, insertText: string, detail: string, documentation: string,
+ * group: 'rule'|'prelude'|'control', sortText: string}} Suggestion
+ */
 /** RFC 8610 Appendix D — the standard prelude, in spec order. */
-export const PRELUDE_TYPES = [
+const PRELUDE_TYPES = [
   ['any', 'Any single data item'],
   ['uint', 'Unsigned integer (major type 0)'],
   ['nint', 'Negative integer (major type 1)'],
@@ -60,7 +64,7 @@ export const PRELUDE_TYPES = [
  * proposed `.pcre` extension, the `freezer` controls, and the RFC 9165/9741
  * additions (`additional-controls` is a default crate feature).
  */
-export const CONTROL_OPERATORS = [
+const CONTROL_OPERATORS = [
   ['.size', 'Constrain the size in bytes (or integer range)', 'tstr .size 12'],
   ['.bits', 'Constrain which bits may be set', 'uint .bits flags'],
   ['.regexp', 'Constrain a text string by XSD regular expression', 'tstr .regexp "[a-z]+"'],
@@ -87,7 +91,11 @@ export const CONTROL_OPERATORS = [
   ['.b64u', 'base64url (unpadded) encoding of the control type (RFC 9741)', 'tstr .b64u bstr'],
   ['.b64c', 'base64 classic (padded) encoding of the control type (RFC 9741)', 'tstr .b64c bstr'],
   ['.b64u-sloppy', 'base64url encoding, padding tolerated (RFC 9741)', 'tstr .b64u-sloppy bstr'],
-  ['.b64c-sloppy', 'base64 classic encoding, padding tolerated (RFC 9741)', 'tstr .b64c-sloppy bstr'],
+  [
+    '.b64c-sloppy',
+    'base64 classic encoding, padding tolerated (RFC 9741)',
+    'tstr .b64c-sloppy bstr',
+  ],
   ['.hex', 'base16 encoding in either case (RFC 9741)', 'tstr .hex bstr'],
   ['.hexlc', 'base16 encoding, lowercase (RFC 9741)', 'tstr .hexlc bstr'],
   ['.hexuc', 'base16 encoding, uppercase (RFC 9741)', 'tstr .hexuc bstr'],
@@ -95,7 +103,11 @@ export const CONTROL_OPERATORS = [
   ['.h32', 'base32hex encoding of the control type (RFC 9741)', 'tstr .h32 bstr'],
   ['.b45', 'base45 encoding of the control type (RFC 9741)', 'tstr .b45 bstr'],
   ['.base10', 'Decimal text representation of an integer (RFC 9741)', 'tstr .base10 int'],
-  ['.printf', 'Text formatted per a printf-style specification (RFC 9741)', 'tstr .printf ["%d", int]'],
+  [
+    '.printf',
+    'Text formatted per a printf-style specification (RFC 9741)',
+    'tstr .printf ["%d", int]',
+  ],
   ['.json', 'Text is the JSON encoding of the control type (RFC 9741)', 'tstr .json my-type'],
   ['.join', 'Text is the concatenation of an array of literals (RFC 9741)', 'tstr .join parts'],
 ];
@@ -109,7 +121,8 @@ const PRELUDE_NAMES = new Set(PRELUDE_TYPES.map(([name]) => name));
  * rule definition.
  * Returns `[{ name, generic, definition }]` in first-definition order.
  */
-export function extractRuleNames(text) {
+/** @type {(text: string) => {name: string, generic: string, definition: string}[]} */
+function extractRuleNames(text) {
   if (typeof text !== 'string' || text.length === 0) return [];
   const lines = text.split(/\r?\n/);
   const seen = new Map();
@@ -132,7 +145,8 @@ export function extractRuleNames(text) {
  * and `b64'…'` byte string prefixes), so a single left-to-right scan tracking
  * the active delimiter is enough.
  */
-export function inCommentOrString(linePrefix) {
+/** @type {(linePrefix: string) => boolean} */
+function inCommentOrString(linePrefix) {
   const prefix = typeof linePrefix === 'string' ? linePrefix : '';
   let quote = null;
   for (let i = 0; i < prefix.length; i++) {
@@ -158,6 +172,7 @@ export function inCommentOrString(linePrefix) {
  * Whitespace is what separates a control operator from a rule name containing a
  * dot: `foo .size` is an operator, `my.rule` is one identifier.
  */
+/** @type {(linePrefix: string) => 'none'|'control'|'type'} */
 export function completionContext(linePrefix) {
   const prefix = typeof linePrefix === 'string' ? linePrefix : '';
   if (inCommentOrString(prefix)) return 'none';
@@ -172,6 +187,7 @@ export function completionContext(linePrefix) {
  * @param {string} text        full buffer contents
  * @param {string} linePrefix  text on the current line before the cursor
  * @param {string} [selfRule]  rule currently being defined; excluded from output
+ * @returns {Suggestion[]}
  */
 export function buildSuggestions(text, linePrefix, selfRule) {
   const kind = completionContext(linePrefix);
@@ -189,6 +205,7 @@ export function buildSuggestions(text, linePrefix, selfRule) {
     }));
   }
 
+  /** @type {Suggestion[]} */
   const suggestions = [];
   for (const rule of extractRuleNames(text)) {
     if (rule.name === selfRule) continue;

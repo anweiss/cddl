@@ -5,21 +5,26 @@
 
 const IDENT_RE = /[A-Za-z0-9_.@$-]/;
 const IDENT_START_RE = /[A-Za-z_@$]/;
+/** @type {Record<string, string>} */
 const _escapeMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const _escapeRe = /[&<>"']/g;
 
+/** @type {(str: string) => string} */
 function escapeHtml(str) {
   return String(str).replace(_escapeRe, (ch) => _escapeMap[ch]);
 }
 
+/** @type {(ch: string) => boolean} */
 function isIdentChar(ch) {
   return IDENT_RE.test(ch);
 }
 
+/** @type {(ch: string) => boolean} */
 function isIdentStart(ch) {
   return IDENT_START_RE.test(ch);
 }
 
+/** @type {(source: string) => number[]} */
 function lineStarts(source) {
   const starts = [0];
   for (let i = 0; i < source.length; i++) {
@@ -28,6 +33,7 @@ function lineStarts(source) {
   return starts;
 }
 
+/** @type {(starts: number[], index: number) => {line: number, column: number}} */
 function positionFromIndex(starts, index) {
   let lo = 0;
   let hi = starts.length - 1;
@@ -39,6 +45,7 @@ function positionFromIndex(starts, index) {
   return { line: hi + 1, column: index - starts[hi] + 1 };
 }
 
+/** @type {(line: string) => string} */
 function stripLineComment(line) {
   let quote = null;
   let escaped = false;
@@ -57,10 +64,12 @@ function stripLineComment(line) {
   return line;
 }
 
+/** @type {(line: string) => boolean} */
 function isCommentOnly(line) {
   return line.trimStart().startsWith(';');
 }
 
+/** @type {(lines: string[], ruleLineIndex: number) => string | null} */
 function leadingComment(lines, ruleLineIndex) {
   const parts = [];
   for (let i = ruleLineIndex - 1; i >= 0; i--) {
@@ -71,6 +80,7 @@ function leadingComment(lines, ruleLineIndex) {
   return parts.length ? parts.join(' ') : null;
 }
 
+/** @type {(source: string, index: number) => number} */
 function skipSpacesAndComments(source, index) {
   let i = index;
   while (i < source.length) {
@@ -86,6 +96,7 @@ function skipSpacesAndComments(source, index) {
   return i;
 }
 
+/** @type {(source: string, index: number) => {generic: string | null, end: number}} */
 function readGeneric(source, index) {
   if (source[index] !== '<') return { generic: null, end: index };
   let i = index;
@@ -114,6 +125,7 @@ function readGeneric(source, index) {
   return { generic: null, end: index };
 }
 
+/** @type {(source: string, index: number) => {op: string, end: number} | null} */
 function readAssignment(source, index) {
   if (source.startsWith('//=', index)) return { op: '//=', end: index + 3 };
   if (source.startsWith('/=', index)) return { op: '/=', end: index + 2 };
@@ -129,6 +141,7 @@ function readAssignment(source, index) {
   return null;
 }
 
+/** @type {(source: string, index: number) => number} */
 function endOfRule(source, index) {
   let i = index;
   let depth = 0;
@@ -151,10 +164,10 @@ function endOfRule(source, index) {
       depth = Math.max(0, depth - 1);
     } else if (ch === '\n' && depth === 0) {
       let j = i + 1;
-      while (j < source.length && (source[j] === ' ' || source[j] === '\t' || source[j] === '\r')) j++;
+      while (j < source.length && (source[j] === ' ' || source[j] === '\t' || source[j] === '\r'))
+        j++;
       if (j >= source.length || source[j] === '\n' || source[j] === ';') return i;
       if (isIdentStart(source[j]) || source[j] === '$') {
-        const nameStart = j;
         while (j < source.length && isIdentChar(source[j])) j++;
         const generic = readGeneric(source, j);
         j = skipSpacesAndComments(source, generic.end);
@@ -166,6 +179,7 @@ function endOfRule(source, index) {
   return source.length;
 }
 
+/** @type {(source: string, start: number, end: number) => string} */
 function makePreview(source, start, end) {
   const text = source
     .slice(start, end)
@@ -177,16 +191,18 @@ function makePreview(source, start, end) {
   return text.length > 60 ? `${text.slice(0, 59)}…` : text;
 }
 
+/** @type {(source: string, index: number) => string} */
 function firstSignificant(source, index) {
   const i = skipSpacesAndComments(source, index);
   return source[i] || '';
 }
 
-/** Parse all top-level rule definitions from CDDL source. 1-based line/column. */
+/** @type {(source: string) => CddlRule[]} Top-level rules with 1-based positions. */
 export function parseRules(source) {
   const text = String(source || '');
   const starts = lineStarts(text);
   const lines = text.split(/\r?\n/);
+  /** @type {CddlRule[]} */
   const rules = [];
   let depth = 0;
   let quote = null;
@@ -268,8 +284,8 @@ export function parseRules(source) {
   return rules;
 }
 
-/** Find the rule defining `name`, or null. */
-export function findRule(source, name) {
+/** @type {(source: string, name: string) => CddlRule | null} */
+function findRule(source, name) {
   return parseRules(source).find((rule) => rule.name === name) || null;
 }
 
@@ -294,10 +310,12 @@ export function renderOutline(listEl, rules, opts = {}) {
     return;
   }
 
+  /** @type {HTMLDivElement[]} */
   const items = [];
   const activeIndex = visible.findIndex((rule) => rule.name === opts.activeName);
   const tabbableIndex = activeIndex >= 0 ? activeIndex : 0;
 
+  /** @param {number} index */
   const focusItem = (index) => {
     const next = items[index];
     if (!next) return;
@@ -358,6 +376,7 @@ export function renderOutline(listEl, rules, opts = {}) {
   listEl.appendChild(frag);
 }
 
+/** @type {(model: import('monaco-editor').editor.ITextModel, position: import('monaco-editor').Position) => import('monaco-editor').editor.IWordAtPosition | null} */
 function cddlWordAt(model, position) {
   const line = model.getLineContent(position.lineNumber);
   let start = position.column - 1;
@@ -365,16 +384,19 @@ function cddlWordAt(model, position) {
   while (start > 0 && isIdentChar(line[start - 1])) start--;
   while (end < line.length && isIdentChar(line[end])) end++;
   const word = line.slice(start, end);
-  return word ? { word, startColumn: start + 1, endColumn: end + 1 } : model.getWordAtPosition(position);
+  return word
+    ? { word, startColumn: start + 1, endColumn: end + 1 }
+    : model.getWordAtPosition(position);
 }
 
+/** @type {(source: string, rule: CddlRule) => string} */
 function definitionLine(source, rule) {
   return (source.split(/\r?\n/)[rule.line - 1] || '').trimEnd();
 }
 
 /**
  * Register go-to-definition + hover providers for the 'cddl' language.
- * @param {object} monaco the monaco namespace
+ * @param {typeof import('monaco-editor')} monaco the monaco namespace
  * @param {() => string} getSource
  * @returns {() => void} disposer that disposes both providers
  */

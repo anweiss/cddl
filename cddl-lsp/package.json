@@ -26,7 +26,7 @@
     "cbor"
   ],
   "engines": {
-    "vscode": "^1.43.0"
+    "vscode": "^1.91.0"
   },
   "activationEvents": [
     "onLanguage:cddl"
@@ -112,29 +112,23 @@
     "vscode:prepublish": "npm run webpack",
     "webpack": "npm run clean && webpack --mode production --config ./client/webpack.config.js && webpack --mode production --config ./server/webpack.config.js",
     "webpack-dev": "npm run clean && webpack --mode none --config ./client/webpack.config.js && webpack --mode none --config ./server/webpack.config.js",
-    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/pkg --release --target nodejs -- --features lsp,ast-comments",
+    "wasm": "cd .. && wasm-pack build --out-dir cddl-lsp/server/pkg --release --target nodejs -- --locked --features lsp,ast-comments",
     "compile": "npm run wasm && tsc -b",
     "compile:client": "tsc -b ./client/tsconfig.json",
     "compile:server": "npm run wasm && tsc -b ./server/tsconfig.json",
     "watch": "tsc -b -w",
-    "postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
     "clean": "rimraf client/out && rimraf server/out",
     "test": "npm run compile && sh ./scripts/e2e.sh",
     "patch": "npm version patch && cd server && npm version patch && cd ../client && npm version patch",
     "deploy": "vsce publish"
   },
   "devDependencies": {
-    "@types/mocha": "^10.0.10",
-    "@types/node": "^26",
-    "@typescript-eslint/eslint-plugin": "^8.71.1",
-    "@typescript-eslint/parser": "^8.71.1",
+    "@types/node": "^26.6.5",
     "@vscode/vsce": "^4.0.0",
     "esbuild-loader": "^4.5.0",
-    "eslint": "^10.12.0",
     "merge-options": "^3.0.4",
-    "mocha": "^12.0.3",
     "rimraf": "^6.1.3",
-    "typescript": "^7.0.2",
+    "typescript": "^6.0.3",
     "webpack": "^5.111.1",
     "webpack-cli": "^7.2.3"
   },

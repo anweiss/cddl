@@ -251,18 +251,15 @@ flexible-uint = unsigned
   { label: "bigfloat", detail: "bitfloat data type" },
   {
     label: "eb64url",
-    detail:
-      "expected conversion of byte string to base64url-encoded text string data type",
+    detail: "expected conversion of byte string to base64url-encoded text string data type",
   },
   {
     label: "eb64legacy",
-    detail:
-      "expected conversion of byte string to base64-encoded text string data type",
+    detail: "expected conversion of byte string to base64-encoded text string data type",
   },
   {
     label: "eb16",
-    detail:
-      "expected conversion of byte string to base16-encoded text string data type",
+    detail: "expected conversion of byte string to base16-encoded text string data type",
   },
   { label: "encoded-cbor", detail: "embedded CBOR data item" },
   {
@@ -470,8 +467,7 @@ tstr .size (1..100)   ; text string between 1 and 100 bytes
   },
   {
     label: ".bits",
-    detail:
-      "only the bits specified by the control type are allowed to be set in the target",
+    detail: "only the bits specified by the control type are allowed to be set in the target",
     documentation: {
       kind: "markdown",
       value: `**Bits Control Operator**
@@ -507,8 +503,7 @@ uuid = tstr .regexp "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
   },
   {
     label: ".pcre",
-    detail:
-      "target text string must match PCRE regex value in the control type",
+    detail: "target text string must match PCRE regex value in the control type",
     documentation: {
       kind: "markdown",
       value: `**Regular Expression Control Operator (PCRE)**
@@ -526,8 +521,7 @@ ip-address = tstr .pcre "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$"
   },
   {
     label: ".cbor",
-    detail:
-      "target byte string carries a CBOR-encoded data item as indicated by the control type",
+    detail: "target byte string carries a CBOR-encoded data item as indicated by the control type",
     documentation: {
       kind: "markdown",
       value: `**CBOR Encoding Control Operator**
@@ -564,8 +558,7 @@ event = { timestamp: uint, type: tstr, data: any }
   },
   {
     label: ".within",
-    detail:
-      "left-hand-side target type is a subset of the right-hand-side control type",
+    detail: "left-hand-side target type is a subset of the right-hand-side control type",
     documentation: {
       kind: "markdown",
       value: `**Within Control Operator**
@@ -602,8 +595,7 @@ validated-email = tstr .and .regexp "[^@]+@[^@]+"
   },
   {
     label: ".lt",
-    detail:
-      "left-hand-side target type is less than the right-hand-side control value",
+    detail: "left-hand-side target type is less than the right-hand-side control value",
     documentation: {
       kind: "markdown",
       value: `**Less Than Control Operator**
@@ -622,8 +614,7 @@ past-time = time .lt 1609459200  ; before 2021-01-01
   },
   {
     label: ".le",
-    detail:
-      "left-hand-side target type is less than or equal to the right-hand-side control value",
+    detail: "left-hand-side target type is less than or equal to the right-hand-side control value",
     documentation: {
       kind: "markdown",
       value: `**Less Than or Equal Control Operator**
@@ -642,8 +633,7 @@ max-time = time .le 1609459200   ; up to 2021-01-01
   },
   {
     label: ".gt",
-    detail:
-      "left-hand-side target type is greater than the right-hand-side control value",
+    detail: "left-hand-side target type is greater than the right-hand-side control value",
     documentation: {
       kind: "markdown",
       value: `**Greater Than Control Operator**
@@ -682,8 +672,7 @@ current-time = time .ge 1609459200 ; from 2021-01-01 onwards
   },
   {
     label: ".ne",
-    detail:
-      "left-hand-side target type not equal to the right-hand-side control value",
+    detail: "left-hand-side target type not equal to the right-hand-side control value",
     documentation: {
       kind: "markdown",
       value: `**Not Equal Control Operator**
@@ -706,8 +695,7 @@ different-value = any .ne null
   },
   {
     label: ".eq",
-    detail:
-      "left-hand-side target type is equal to the right-hand-side control value",
+    detail: "left-hand-side target type is equal to the right-hand-side control value",
     documentation: {
       kind: "markdown",
       value: `**Equal Control Operator**

@@ -58,10 +58,10 @@ auth-response = {
 
 ## Tildes work too
 
-~~~cddl
+```cddl
 ; Using tildes instead of backticks
 data = {
-  values: [* number], 
+  values: [* number],
   ? metadata: { * tstr => any }
 }
-~~~
+```

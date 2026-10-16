@@ -1,0 +1,13 @@
+{
+  "singleQuote": true,
+  "trailingComma": "all",
+  "printWidth": 100,
+  "overrides": [
+    {
+      "files": "cddl-lsp/**/*.ts",
+      "options": {
+        "singleQuote": false
+      }
+    }
+  ]
+}

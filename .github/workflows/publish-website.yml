@@ -12,7 +12,7 @@ jobs:
     if: contains(github.ref, 'vscode-extension') != true
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           persist-credentials: false
 
@@ -28,7 +28,7 @@ jobs:
       - name: Install node
         uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a
         with:
-          node-version: "24"
+          node-version: '24'
 
       - name: Build wasm
         run: |
@@ -37,7 +37,7 @@ jobs:
       - name: Build web
         run: |
           cd www
-          npm install
+          npm ci
           npm run build
 
       - name: Deploy web

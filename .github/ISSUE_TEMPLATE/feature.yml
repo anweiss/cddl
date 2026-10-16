@@ -1,0 +1,17 @@
+name: Feature or quality improvement
+description: Describe a use case or a measurable quality improvement.
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Problem and use case
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable behavior or checks that establish completion.
+    validations:
+      required: true

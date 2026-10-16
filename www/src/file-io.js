@@ -1,10 +1,11 @@
 /**
  * @typedef {{ name: string, text: string|null, bytes: Uint8Array|null, kind: 'cddl'|'json'|'cbor'|'unknown' }} LoadedFile
  */
+import { logFailure } from './logger.js';
 
 // ─── Classification ──────────────────────────────────────────────────────────
 
-/** Classify a filename into a kind. */
+/** @type {(name: string) => LoadedFile['kind']} Classify a filename. */
 export function classifyFile(name) {
   const lowerName = String(name || '').toLowerCase();
 
@@ -21,13 +22,14 @@ export function classifyFile(name) {
   return 'unknown';
 }
 
-/** Convert bytes to a lowercase hex string (used to show a dropped .cbor file in the editor). */
+/** @type {(bytes: Uint8Array) => string} Lowercase hex for the CBOR editor. */
 export function bytesToHex(bytes) {
   return Array.from(bytes || [], (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 // ─── Reading ─────────────────────────────────────────────────────────────────
 
+/** @type {(file: File, binary?: boolean) => boolean} */
 function shouldReadBinary(file, binary) {
   if (typeof binary === 'boolean') {
     return binary;
@@ -40,7 +42,7 @@ function shouldReadBinary(file, binary) {
  * Read a File into the LoadedFile shape. FileReader errors resolve to null
  * instead of rejecting so callers can show one consistent user-facing message.
  * @param {File} file
- * @param {boolean|undefined} binary
+ * @param {boolean} [binary]
  * @returns {Promise<LoadedFile|null>}
  */
 function readLoadedFile(file, binary) {
@@ -54,7 +56,9 @@ function readLoadedFile(file, binary) {
     reader.onabort = () => resolve(null);
     reader.onload = () => {
       if (readBinary) {
-        const bytes = new Uint8Array(reader.result || new ArrayBuffer(0));
+        const bytes = new Uint8Array(
+          reader.result instanceof ArrayBuffer ? reader.result : new ArrayBuffer(0),
+        );
         resolve({
           name: file.name,
           text: bytesToHex(bytes),
@@ -79,7 +83,7 @@ function readLoadedFile(file, binary) {
         reader.readAsText(file);
       }
     } catch (err) {
-      console.error('Failed to read file:', err);
+      logFailure('file.read_failed', err);
       resolve(null);
     }
   });
@@ -115,6 +119,7 @@ export function pickFile(opts = {}) {
       input.remove();
     };
 
+    /** @param {LoadedFile | null} value */
     const settle = (value) => {
       if (settled) {
         return;
@@ -125,6 +130,7 @@ export function pickFile(opts = {}) {
       resolve(value);
     };
 
+    /** @param {File} file */
     const readAndSettle = async (file) => {
       settle(await readLoadedFile(file, opts.binary));
     };
@@ -158,7 +164,7 @@ export function pickFile(opts = {}) {
     try {
       input.click();
     } catch (err) {
-      console.error('Failed to open file picker:', err);
+      logFailure('file.picker_failed', err);
       settle(null);
     }
   });
@@ -166,11 +172,19 @@ export function pickFile(opts = {}) {
 
 // ─── Downloads ───────────────────────────────────────────────────────────────
 
+/** @type {(filename: string) => string} */
 function sanitizeFilename(filename) {
-  const safeName = String(filename || 'download').replace(/[\\/\x00-\x1f\x7f]/g, '').trim();
+  const safeName = Array.from(String(filename || 'download'))
+    .filter(
+      (char) =>
+        char !== '/' && char !== '\\' && char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127,
+    )
+    .join('')
+    .trim();
   return safeName || 'download';
 }
 
+/** @type {(filename: string, blob: Blob) => void} */
 function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -182,29 +196,27 @@ function downloadBlob(filename, blob) {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-/** Trigger a download of text content. */
+/** @type {(filename: string, text: string, mimeType?: string) => void} Download text. */
 export function downloadText(filename, text, mimeType = 'text/plain;charset=utf-8') {
   downloadBlob(filename, new Blob([String(text ?? '')], { type: mimeType }));
 }
 
-/** Trigger a download of binary content. */
-export function downloadBytes(filename, bytes, mimeType = 'application/octet-stream') {
-  downloadBlob(filename, new Blob([bytes || new Uint8Array(0)], { type: mimeType }));
-}
-
 // ─── Drag And Drop ───────────────────────────────────────────────────────────
 
+/** @type {(event: DragEvent) => boolean} */
 function dragHasFiles(event) {
   const types = event.dataTransfer && event.dataTransfer.types;
   return !!types && Array.from(types).includes('Files');
 }
 
+/** @type {(overlayEl: HTMLElement | null) => void} */
 function showOverlay(overlayEl) {
   if (overlayEl) {
     overlayEl.classList.add('visible');
   }
 }
 
+/** @type {(overlayEl: HTMLElement | null) => void} */
 function hideOverlay(overlayEl) {
   if (overlayEl) {
     overlayEl.classList.remove('visible');
@@ -226,6 +238,7 @@ export function attachDropZone(target, overlayEl, onFile) {
     hideOverlay(overlayEl);
   };
 
+  /** @param {DragEvent} event */
   const onDragEnter = (event) => {
     if (!dragHasFiles(event)) {
       return;
@@ -236,6 +249,7 @@ export function attachDropZone(target, overlayEl, onFile) {
     showOverlay(overlayEl);
   };
 
+  /** @param {DragEvent} event */
   const onDragOver = (event) => {
     if (!dragHasFiles(event)) {
       return;
@@ -247,6 +261,7 @@ export function attachDropZone(target, overlayEl, onFile) {
     }
   };
 
+  /** @param {DragEvent} event */
   const onDragLeave = (event) => {
     if (!dragHasFiles(event)) {
       return;
@@ -259,6 +274,7 @@ export function attachDropZone(target, overlayEl, onFile) {
     }
   };
 
+  /** @param {DragEvent} event */
   const onDrop = (event) => {
     if (!dragHasFiles(event)) {
       return;

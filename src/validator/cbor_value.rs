@@ -214,7 +214,11 @@ impl From<ciborium_ll::Error<std::io::Error>> for DecodeError {
 pub fn decode_cbor(input: &[u8]) -> Result<Value, DecodeError> {
   let cursor = std::io::Cursor::new(input);
   let mut decoder = Decoder::from(cursor);
-  decode_value(&mut decoder)
+  let value = decode_value(&mut decoder)?;
+  if decoder.offset() != input.len() {
+    return Err(DecodeError::Syntax(decoder.offset()));
+  }
+  Ok(value)
 }
 
 fn decode_value<R: ciborium_io::Read>(decoder: &mut Decoder<R>) -> Result<Value, DecodeError>
@@ -410,6 +414,13 @@ where
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn rejects_trailing_cbor_data() {
+    assert!(super::decode_cbor(&[0x01, 0x02]).is_err());
+    assert!(super::decode_cbor(&[0x01, 0xff]).is_err());
+    assert!(super::decode_cbor(&[0x01]).is_ok());
+  }
+
   use super::*;
 
   #[test]

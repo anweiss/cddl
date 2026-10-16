@@ -7,12 +7,12 @@ on:
     branches:
       - main
     paths:
-      - ".github/workflows/release-vscode-extension.yml"
-      - "cddl-lsp/**"
+      - '.github/workflows/release-vscode-extension.yml'
+      - 'cddl-lsp/**'
   workflow_dispatch:
     inputs:
       version_override:
-        description: "Override version (leave empty to use package.json version)"
+        description: 'Override version (leave empty to use package.json version)'
         required: false
         type: string
 
@@ -26,20 +26,22 @@ jobs:
 
       - name: Get VSCode Extension Version
         id: get_version
+        env:
+          VERSION_OVERRIDE: ${{ github.event.inputs.version_override }}
         run: |
-          if [ -n "${{ github.event.inputs.version_override }}" ]; then
-            VERSION="${{ github.event.inputs.version_override }}"
+          if [ -n "$VERSION_OVERRIDE" ]; then
+            VERSION="$VERSION_OVERRIDE"
             echo "Using manually provided version: $VERSION"
           else
             VERSION=$(jq -r '.version' cddl-lsp/package.json)
             echo "Using version from package.json: $VERSION"
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "VSCode Extension version: $VERSION"
 
       - name: Draft Release
         id: draft_release
-        uses: release-drafter/release-drafter@v5
+        uses: release-drafter/release-drafter@v6
         with:
           config-name: vscode-extension-release-drafter.yml
           version: ${{ steps.get_version.outputs.version }}

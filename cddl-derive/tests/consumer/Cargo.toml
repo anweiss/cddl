@@ -5,6 +5,12 @@ edition = "2021"
 rust-version = "1.88"
 publish = false
 
+[package.metadata.cargo-machete]
+# cddl_typegen! and build.rs-generated code emit ::serde and ::serde_with paths.
+# Machete cannot see macro expansion; the standalone consumer test proves these
+# must be supplied by this downstream crate, not the derive crate.
+ignored = ["serde", "serde_with"]
+
 [workspace]
 resolver = "3"
 
@@ -13,7 +19,7 @@ cddl-codegen-rust = { path = "../../../cddl-codegen-rust" }
 
 [dependencies]
 cddl-derive = { path = "../.." }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
 serde_with = { version = "3", features = ["macros"] }
-ciborium = "0.2"
-serde_json = "1"
+ciborium = "0.2.0"
+serde_json = "1.0.150"

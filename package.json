@@ -1,0 +1,51 @@
+{
+  "name": "cddl-development",
+  "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "lint": "eslint . --max-warnings 0 && .venv/bin/ruff check scripts",
+    "format": "prettier --write . && .venv/bin/ruff format scripts",
+    "format:check": "prettier --check . && .venv/bin/ruff format --check scripts",
+    "typecheck": "tsc --noEmit -p cddl-lsp/client && tsc --noEmit -p cddl-lsp/server && tsc -p cddl-lsp/server/tsconfig.tests.json && tsc -p www/tsconfig.json && tsc -p tsconfig.tools.json",
+    "check:files": "node scripts/check-files.mjs",
+    "check:docs": "node scripts/check-docs.mjs",
+    "check:dependencies": "knip",
+    "check:duplicates": "jscpd --silent",
+    "check:versions": "python3 scripts/check_versions.py",
+    "check:complexity": ".venv/bin/python scripts/check_complexity.py",
+    "check:bundle": "node scripts/check-bundle.mjs",
+    "check:security": "node scripts/check-security.mjs",
+    "quality": "npm run lint && npm run typecheck && npm run format:check && npm run check:files && npm run check:docs && npm run check:dependencies && npm run check:versions && npm run check:complexity && npm run check:duplicates",
+    "build:wasm": "wasm-pack build --target web --out-dir pkg -- --locked && npm --prefix cddl-lsp run wasm",
+    "build:lsp": "npm --prefix cddl-lsp run compile",
+    "build:playground": "node scripts/build-playground.mjs",
+    "profile": "node --cpu-prof --cpu-prof-dir=reports scripts/profile.mjs",
+    "test": "vitest run",
+    "test:list": "vitest list",
+    "test:coverage": "vitest run --coverage",
+    "test:stability": "node scripts/test-stability.mjs",
+    "test:e2e": "playwright test",
+    "test:dast": "playwright test --grep @security",
+    "setup": "node scripts/setup.mjs",
+    "dev": "npm --prefix www start",
+    "hooks:install": "node scripts/install-hooks.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.1",
+    "@types/node": "26.6.5",
+    "@typescript-eslint/eslint-plugin": "8.71.2",
+    "@typescript-eslint/parser": "8.71.2",
+    "@vitest/coverage-v8": "5.0.5",
+    "eslint": "10.12.0",
+    "globals": "17.13.0",
+    "jscpd": "5.4.1",
+    "jsdom": "30.1.3",
+    "knip": "6.41.0",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}

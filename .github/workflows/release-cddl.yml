@@ -7,10 +7,10 @@ on:
     branches:
       - main
     paths-ignore:
-      - ".github/workflows/release-vscode-extension.yml"
-      - ".github/workflows/publish-vscode-extension.yml"
-      - ".github/vscode-extension-release-drafter.yml"
-      - "cddl-lsp/**"
+      - '.github/workflows/release-vscode-extension.yml'
+      - '.github/workflows/publish-vscode-extension.yml'
+      - '.github/vscode-extension-release-drafter.yml'
+      - 'cddl-lsp/**'
 
 jobs:
   compilation-check:
@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install Rust
         run: |
@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install Rust
         run: |
@@ -46,7 +46,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a
         with:
-          node-version: "24"
+          node-version: '24'
 
       - name: Install wasmpack
         run: |
@@ -73,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           persist-credentials: false
 
@@ -89,7 +89,7 @@ jobs:
       - name: Install node
         uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a
         with:
-          node-version: "24"
+          node-version: '24'
 
       - name: Build wasm
         run: |
@@ -98,18 +98,12 @@ jobs:
       - name: Build web
         run: |
           cd www
-          npm install
+          npm ci
           npm run build
 
   draft-release:
     name: Draft Release
-    needs:
-      [
-        compilation-check,
-        cargo-publish-dry-run,
-        wasm-compilation-check,
-        website-build-check,
-      ]
+    needs: [compilation-check, cargo-publish-dry-run, wasm-compilation-check, website-build-check]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
@@ -117,7 +111,7 @@ jobs:
 
       - name: Draft Release
         id: draft_release
-        uses: release-drafter/release-drafter@v5
+        uses: release-drafter/release-drafter@v6
         with:
           config-name: cddl-release-drafter.yml
           publish: ${{ startsWith(github.ref, 'refs/tags') }}

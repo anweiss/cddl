@@ -27,7 +27,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: '24'
 
       - name: Build WASM for LSP
         run: |
@@ -36,7 +36,9 @@ jobs:
       - name: Install dependencies and build extension
         working-directory: ./cddl-lsp
         run: |
-          npm install
+          npm ci
+          npm --prefix client ci
+          npm --prefix server ci
           npm run webpack
 
       - name: Run tests
@@ -55,12 +57,11 @@ jobs:
           echo "Extension version: $EXTENSION_VERSION"
 
           # Check if this version is already published
-          npm install -g @vscode/vsce
-          if vsce show anweiss.cddl-languageserver --json | jq -e --arg VERSION "$EXTENSION_VERSION" '.versions[] | select(.version == $VERSION)' >/dev/null 2>&1; then
+          if npx --no-install vsce show anweiss.cddl-languageserver --json | jq -e --arg VERSION "$EXTENSION_VERSION" '.versions[] | select(.version == $VERSION)' >/dev/null 2>&1; then
             echo "Version $EXTENSION_VERSION already exists on the marketplace, skipping publish"
             exit 0
           fi
 
           # Publish the extension
-          vsce publish -p $VSCODE_MARKETPLACE_TOKEN
+          npx --no-install vsce publish -p "$VSCODE_MARKETPLACE_TOKEN"
           echo "Successfully published VSCode extension version $EXTENSION_VERSION"

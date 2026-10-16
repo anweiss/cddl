@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated output and installed dependencies; source remains scanned"
+paths = [
+  '''(^|/)(node_modules|target|pkg|out|dist|\.venv|reports|playwright-report|test-results|\.git)(/|$)''',
+  '''(^|/)\.vscode-test(/|$)''',
+]

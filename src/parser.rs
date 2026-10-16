@@ -5,7 +5,7 @@ use super::lexer::Position;
 
 use core::result;
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 use codespan_reporting::{
   diagnostic::{Diagnostic, Label},
   files::SimpleFiles,
@@ -87,7 +87,7 @@ pub fn cddl_from_str(input: &str, _print_stderr: bool) -> core::result::Result<C
 }
 
 /// Print a pest parser error to stderr with codespan diagnostics
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 fn report_pest_error(error: &Error, input: &str) {
   if let Error::PARSER {
     #[cfg(feature = "ast-span")]

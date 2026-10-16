@@ -3,7 +3,7 @@ const ALLOWED_GROUPS = ['Editor', 'Playground', 'Panels'];
 /** @typedef {{ keys: string[], desc: string, group: string }} Shortcut */
 
 /** The canonical shortcut list, grouped. */
-export const SHORTCUTS = Object.freeze([
+const SHORTCUTS = Object.freeze([
   { keys: ['Mod', 'S'], desc: 'Format document (when Format on save is enabled)', group: 'Editor' },
   { keys: ['Mod', 'F'], desc: 'Find', group: 'Editor' },
   { keys: ['Mod', 'H'], desc: 'Replace', group: 'Editor' },
@@ -23,23 +23,26 @@ export const SHORTCUTS = Object.freeze([
 let warnedMissingElements = false;
 
 /** True on macOS — used to render ⌘ vs Ctrl. */
-export function isMac() {
+function isMac() {
   if (typeof navigator === 'undefined') return false;
-  const platform = navigator.userAgentData?.platform || navigator.platform || '';
+  const platform = navigator.platform || navigator.userAgent || '';
   return /mac/i.test(platform);
 }
 
+/** @type {(key: string) => string} */
 function keyLabel(key) {
   if (key === 'Mod') return isMac() ? '⌘' : 'Ctrl';
   return key;
 }
 
+/** @type {(el: HTMLElement | null) => Document | null} */
 function getDocument(el) {
   if (el && el.ownerDocument) return el.ownerDocument;
   if (typeof document !== 'undefined') return document;
   return null;
 }
 
+/** @type {(el: HTMLElement) => void} */
 function clearElement(el) {
   if ('textContent' in el) {
     el.textContent = '';
@@ -49,6 +52,7 @@ function clearElement(el) {
   }
 }
 
+/** @type {(doc: Document, parent: HTMLElement | DocumentFragment, shortcut: Shortcut) => void} */
 function appendShortcutRow(doc, parent, shortcut) {
   const rowEl = doc.createElement('div');
   rowEl.className = 'shortcut-row';
@@ -71,8 +75,8 @@ function appendShortcutRow(doc, parent, shortcut) {
   parent.appendChild(rowEl);
 }
 
-/** Render the shortcut list into the modal body. */
-export function renderShortcuts(bodyEl) {
+/** @type {(bodyEl: HTMLElement | null) => void} Render the shortcut list. */
+function renderShortcuts(bodyEl) {
   if (!bodyEl) return;
   const doc = getDocument(bodyEl);
   if (!doc) return;
@@ -114,8 +118,9 @@ function noopController() {
   };
 }
 
+/** @type {(target: Element | null) => boolean} */
 function isTypingTarget(target) {
-  if (!target) return false;
+  if (!(target instanceof HTMLElement)) return false;
   const tagName = target.tagName ? target.tagName.toLowerCase() : '';
   if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') return true;
   if (target.isContentEditable) return true;
@@ -125,24 +130,21 @@ function isTypingTarget(target) {
   return false;
 }
 
+/** @type {(modal: HTMLElement) => HTMLElement[]} */
 function focusableElements(modal) {
   if (typeof modal.querySelectorAll !== 'function') return [];
-  return Array.from(modal.querySelectorAll([
-    'a[href]',
-    'button:not([disabled])',
-    'input:not([disabled])',
-    'select:not([disabled])',
-    'textarea:not([disabled])',
-    '[tabindex]:not([tabindex="-1"])',
-  ].join(','))).filter((el) => (
-    !el.hasAttribute ||
-    (!el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true')
-  ));
+  return Array.from(
+    modal.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  )
+    .filter((el) => el instanceof HTMLElement)
+    .filter((el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true');
 }
 
 /**
  * Wire the shortcuts modal open/close behavior.
- * @param {{ btn: HTMLElement, modal: HTMLElement, closeBtn: HTMLElement, bodyEl: HTMLElement }} els
+ * @param {{ btn: HTMLElement | null, modal: HTMLElement | null, closeBtn: HTMLElement | null, bodyEl: HTMLElement | null }} els
  * @returns {{ open: () => void, close: () => void, toggle: () => void, dispose: () => void }}
  */
 export function initShortcutsModal(els) {
@@ -159,6 +161,7 @@ export function initShortcutsModal(els) {
   }
 
   let open = false;
+  /** @type {Element | null} */
   let previousFocus = null;
 
   const controller = {
@@ -176,7 +179,7 @@ export function initShortcutsModal(els) {
       modal.classList.remove('visible');
       modal.setAttribute('aria-hidden', 'true');
       open = false;
-      if (previousFocus && typeof previousFocus.focus === 'function') {
+      if (previousFocus instanceof HTMLElement) {
         previousFocus.focus();
       }
       previousFocus = null;
@@ -198,9 +201,11 @@ export function initShortcutsModal(els) {
 
   const onButtonClick = () => controller.open();
   const onCloseClick = () => controller.close();
+  /** @param {MouseEvent} e */
   const onBackdropClick = (e) => {
     if (e.target === modal) controller.close();
   };
+  /** @param {KeyboardEvent} e */
   const onKeyDown = (e) => {
     if (e.key === '?' && !open && !isTypingTarget(doc.activeElement)) {
       e.preventDefault();

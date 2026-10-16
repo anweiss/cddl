@@ -10,7 +10,7 @@
     "url": "https://github.com/anweiss/cddl"
   },
   "engines": {
-    "vscode": "^1.43.0"
+    "vscode": "^1.91.0"
   },
   "dependencies": {
     "vscode-languageclient": "^10.1.2"

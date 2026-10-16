@@ -1,49 +1,33 @@
-const CopyWebpackPlugin = require('copy-webpack-plugin');
-const HtmlWebpackPlugin = require('html-webpack-plugin');
-const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin');
-const path = require('path');
+const base = require('./webpack.config');
 
 module.exports = {
-  entry: './bootstrap.js',
+  ...base,
+  mode: 'production',
+  devtool: false,
+  stats: {
+    all: false,
+    assets: true,
+    modules: true,
+    nestedModules: false,
+    reasons: false,
+    source: false,
+    timings: true,
+    errors: true,
+    errorDetails: true,
+    warnings: true,
+  },
   output: {
-    path: path.resolve(__dirname, 'dist'),
+    ...base.output,
     filename: '[name].[contenthash:8].js',
     chunkFilename: '[name].[contenthash:8].js',
     clean: true,
   },
-  mode: 'production',
-  resolve: {
-    fallback: {
-      "util": require.resolve("util/"),
-      "path": require.resolve("path-browserify"),
-      "fs": false
-    }
-  },
-  plugins: [
-    new HtmlWebpackPlugin({
-      template: 'index.html',
-      inject: 'body',
-      scriptLoading: 'module',
-    }),
-    new CopyWebpackPlugin({ 
-      patterns: [
-        {
-          from: '../pkg/cddl_bg.wasm',
-          to: 'cddl_bg.wasm'
-        }
-      ] 
-    }),
-    new MonacoWebpackPlugin(),
-  ],
-  module: {
-    rules: [
-      {
-        test: /\.css$/,
-        use: ['style-loader', 'css-loader'],
-      },
-    ],
-  },
-  experiments: {
-    asyncWebAssembly: true,
+  // Monaco and the Rust validator are intentionally larger than webpack's
+  // generic 244 KiB recommendation. The measured gzip budgets are enforced
+  // by scripts/check-bundle.mjs instead.
+  performance: {
+    hints: 'error',
+    maxAssetSize: 5 * 1024 * 1024,
+    maxEntrypointSize: 5 * 1024 * 1024,
   },
 };

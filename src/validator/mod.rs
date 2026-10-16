@@ -270,17 +270,13 @@ impl<'a> ValidationState<'a> {
   }
 }
 
+#[cfg(all(test, feature = "json", not(target_arch = "wasm32")))]
 impl CDDL<'_> {
   /// Validate the given document against the CDDL definition
   fn validate_json(
     &self,
     document: &[u8],
-    #[cfg(feature = "additional-controls")]
-    #[cfg(not(target_arch = "wasm32"))]
-    enabled_features: Option<&[&str]>,
-    #[cfg(feature = "additional-controls")]
-    #[cfg(target_arch = "wasm32")]
-    enabled_features: Option<Box<[JsValue]>>,
+    #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
   ) -> Result<(), Box<dyn Error>> {
     let json =
       serde_json::from_slice::<serde_json::Value>(document).map_err(json::Error::JSONParsing)?;
@@ -288,25 +284,9 @@ impl CDDL<'_> {
     #[cfg(feature = "additional-controls")]
     let mut jv = JSONValidator::new(self, json, enabled_features);
     #[cfg(not(feature = "additional-controls"))]
-    let mut jv = JSONValidator::new(&cddl, json);
+    let mut jv = JSONValidator::new(self, json);
 
     jv.validate().map_err(|e| e.into())
-  }
-
-  fn validate_cbor(
-    &self,
-    document: &[u8],
-    #[cfg(feature = "additional-controls")]
-    #[cfg(not(target_arch = "wasm32"))]
-    enabled_features: Option<&[&str]>,
-    #[cfg(feature = "additional-controls")]
-    #[cfg(target_arch = "wasm32")]
-    enabled_features: Option<Box<[JsValue]>>,
-  ) -> Result<(), Box<dyn Error>> {
-    let cbor = decode_cbor(document).map_err(|e| e.to_string())?;
-
-    let mut cv = CBORValidator::new(self, cbor, enabled_features);
-    cv.validate().map_err(|e| e.into())
   }
 }
 

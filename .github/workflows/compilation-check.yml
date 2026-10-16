@@ -26,21 +26,21 @@ jobs:
           RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         run: |
           rustup update
-          rustup install $RUST_TOOLCHAIN
+          rustup install "$RUST_TOOLCHAIN"
 
       - name: Check compilation with default features
         env:
           RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         run: |
-          cargo +$RUST_TOOLCHAIN check --all --bins --examples --tests
+          cargo "+$RUST_TOOLCHAIN" check --all --bins --examples --tests
 
       - name: Install thumbv7em-none-eabihf target
         env:
           RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
-        run: rustup target add thumbv7em-none-eabihf --toolchain $RUST_TOOLCHAIN
+        run: rustup target add thumbv7em-none-eabihf --toolchain "$RUST_TOOLCHAIN"
 
       - name: Check compilation with no features
         env:
           RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         run: |
-          cargo +$RUST_TOOLCHAIN check -p cddl --lib --no-default-features --features _build-parser --target thumbv7em-none-eabihf
+          cargo "+$RUST_TOOLCHAIN" check -p cddl --lib --no-default-features --features _build-parser --target thumbv7em-none-eabihf

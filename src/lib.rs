@@ -519,7 +519,6 @@
 //! - [https://github.com/p2panda/p2panda](https://github.com/p2panda/p2panda)
 //!
 
-#![allow(dead_code)]
 #![warn(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
 

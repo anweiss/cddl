@@ -1,17 +1,20 @@
 /**
  * @typedef {{ cddl: string, instance?: string, kind?: 'json'|'cbor' }} PlaygroundState
+ * @typedef {{ c: string, i?: string, k?: 'json'|'cbor' }} CompactState
  */
 
-export const MAX_SHARE_BYTES = 32000;
+const MAX_SHARE_BYTES = 32000;
 
 const SHARE_PREFIX = 's1=';
 
+/** @type {(text: string | undefined) => number} */
 function byteLength(text) {
   return typeof text === 'string' ? new TextEncoder().encode(text).length : 0;
 }
 
 // ─── UTF-8 Base64url ─────────────────────────────────────────────────────────
 
+/** @type {(bytes: Uint8Array) => string} */
 function bytesToBase64(bytes) {
   let binary = '';
   for (let i = 0; i < bytes.length; i += 1) {
@@ -20,6 +23,7 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+/** @type {(base64: string) => Uint8Array} */
 function base64ToBytes(base64) {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -29,14 +33,13 @@ function base64ToBytes(base64) {
   return bytes;
 }
 
+/** @type {(text: string) => string} */
 function toBase64Url(text) {
   const bytes = new TextEncoder().encode(text);
-  return bytesToBase64(bytes)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
+  return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
+/** @type {(payload: string) => string | null} */
 function fromBase64Url(payload) {
   if (!/^[A-Za-z0-9_-]+$/.test(payload)) {
     return null;
@@ -48,7 +51,9 @@ function fromBase64Url(payload) {
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
 
+/** @type {(state: PlaygroundState) => CompactState} */
 function compactState(state) {
+  /** @type {CompactState} */
   const compact = {
     c: typeof state?.cddl === 'string' ? state.cddl : '',
   };
@@ -64,22 +69,24 @@ function compactState(state) {
   return compact;
 }
 
+/** @type {(compact: unknown) => PlaygroundState | null} */
 function expandState(compact) {
   if (!compact || typeof compact !== 'object' || Array.isArray(compact)) {
     return null;
   }
 
-  if (typeof compact.c !== 'string') {
+  if (!('c' in compact) || typeof compact.c !== 'string') {
     return null;
   }
 
+  /** @type {PlaygroundState} */
   const state = { cddl: compact.c };
 
-  if (typeof compact.i === 'string' && compact.i.length > 0) {
+  if ('i' in compact && typeof compact.i === 'string' && compact.i.length > 0) {
     state.instance = compact.i;
   }
 
-  if (compact.k === 'json' || compact.k === 'cbor') {
+  if ('k' in compact && (compact.k === 'json' || compact.k === 'cbor')) {
     state.kind = compact.k;
   }
 
@@ -88,13 +95,13 @@ function expandState(compact) {
 
 // ─── Share State ─────────────────────────────────────────────────────────────
 
-/** Encode state into a URL-hash-safe string (no leading '#'). */
-export function encodeState(state) {
+/** @type {(state: PlaygroundState) => string} Encode as a URL fragment. */
+function encodeState(state) {
   return `${SHARE_PREFIX}${toBase64Url(JSON.stringify(compactState(state)))}`;
 }
 
-/** Decode a hash string (with or without leading '#'); returns null if absent/invalid. */
-export function decodeState(hash) {
+/** @type {(hash: unknown) => PlaygroundState | null} Decode and validate an untrusted fragment. */
+function decodeState(hash) {
   try {
     const fragment = typeof hash === 'string' && hash.startsWith('#') ? hash.slice(1) : hash;
     if (typeof fragment !== 'string' || !fragment.startsWith(SHARE_PREFIX)) {
@@ -127,7 +134,7 @@ export function decodeState(hash) {
   }
 }
 
-/** Build a full absolute shareable URL for the given state. */
+/** @type {(state: PlaygroundState, baseUrl?: string) => string} Build an absolute share URL. */
 export function buildShareUrl(state, baseUrl) {
   let url = baseUrl;
   try {
@@ -142,6 +149,7 @@ export function buildShareUrl(state, baseUrl) {
   return `${url}#${encodeState(state)}`;
 }
 
+/** @type {(state: PlaygroundState) => boolean} */
 export function isTooLargeToShare(state) {
   return encodeState(state).length > MAX_SHARE_BYTES;
 }
@@ -170,7 +178,7 @@ export function clearLocationState() {
   }
 }
 
-/** Copy text to clipboard with a execCommand fallback. @returns {Promise<boolean>} success */
+/** @type {(text: string) => Promise<boolean>} Copy with an execCommand fallback. */
 export async function copyToClipboard(text) {
   try {
     if (globalThis.navigator?.clipboard?.writeText) {

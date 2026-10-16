@@ -18,6 +18,10 @@ use std::{
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
 
+fn is_json_unsigned(cddl: &CDDL, ident: &Identifier) -> bool {
+  is_ident_uint_data_type(cddl, ident) || matches!(lookup_ident(ident.ident), Token::UNSIGNED)
+}
+
 #[cfg(feature = "additional-controls")]
 use control::{abnf_from_complex_controller, cat_operation, plus_operation, validate_abnf};
 
@@ -134,20 +138,6 @@ impl fmt::Display for ValidationError {
 impl std::error::Error for ValidationError {
   fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
     None
-  }
-}
-
-impl ValidationError {
-  fn from_validator(jv: &JSONValidator, reason: String) -> Self {
-    ValidationError {
-      cddl_location: jv.state.cddl_location.clone(),
-      json_location: jv.state.data_location.clone(),
-      reason,
-      is_multi_type_choice: jv.state.is_multi_type_choice,
-      is_group_to_choice_enum: jv.state.is_group_to_choice_enum,
-      type_group_name_entry: jv.state.type_group_name_entry.map(|e| e.to_string()),
-      is_multi_group_choice: jv.state.is_multi_group_choice,
-    }
   }
 }
 
@@ -2768,8 +2758,10 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         Ok(())
       }
       Value::Number(n) => {
-        if is_ident_uint_data_type(self.state.cddl, ident) && n.is_u64() {
-          return Ok(());
+        if is_json_unsigned(self.state.cddl, ident) {
+          if n.is_u64() {
+            return Ok(());
+          }
         } else if is_ident_nint_data_type(self.state.cddl, ident) {
           if let Some(n) = n.as_i64() {
             if n.is_negative() {

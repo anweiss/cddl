@@ -4938,11 +4938,8 @@ fn extract_bitfield_widths(controller: &Type2) -> Option<u128> {
         match ge {
           GroupEntry::ValueMemberKey { ge: vmke, .. } => {
             // Extract the uint value from the entry type
-            if let Some(width) = extract_uint_from_type(&vmke.entry_type) {
-              total_bits = total_bits.checked_add(width as u128)?;
-            } else {
-              return None;
-            }
+            let width = extract_uint_from_type(&vmke.entry_type)?;
+            total_bits = total_bits.checked_add(width as u128)?;
           }
           GroupEntry::TypeGroupname { ge: tge, .. } => {
             // Type group name entry — try to extract from its name
