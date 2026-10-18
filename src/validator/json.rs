@@ -300,9 +300,6 @@ impl<'a> JSONValidator<'a> {
     Ok(())
   }
 
-  /// Validate every definition contributing to a named type choice from one
-  /// error checkpoint. Failed arms are tentative; their errors are retained
-  /// only when every arm fails.
   fn match_map_key_type(&mut self, key_type: &Type1<'a>) -> visitor::Result<Error> {
     let Value::Object(entries) = &self.json else {
       return Ok(());
@@ -354,6 +351,9 @@ impl<'a> JSONValidator<'a> {
     Ok(())
   }
 
+  /// Validate every definition contributing to a named type choice from one
+  /// error checkpoint. Failed arms are tentative; their errors are retained
+  /// only when every arm fails.
   fn visit_named_type_choice(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error> {
     let choices = type_choice_types_from_ident(self.state.cddl, ident);
 
