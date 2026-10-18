@@ -157,9 +157,14 @@ pub struct ValidationState<'a> {
 
 impl<'a> ValidationState<'a> {
   /// Create a new `ValidationState` with default values.
-  #[cfg(not(target_arch = "wasm32"))]
-  #[cfg(feature = "additional-controls")]
-  pub fn new(cddl: &'a CDDL<'a>, enabled_features: Option<&'a [&'a str]>) -> Self {
+  pub fn new(
+    cddl: &'a CDDL<'a>,
+    #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+    enabled_features: Option<&'a [&'a str]>,
+    #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))] enabled_features: Option<
+      Box<[JsValue]>,
+    >,
+  ) -> Self {
     ValidationState {
       cddl,
       cddl_location: String::new(),
@@ -180,93 +185,12 @@ impl<'a> ValidationState<'a> {
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
       visited_rules: HashSet::new(),
+      #[cfg(feature = "additional-controls")]
       enabled_features,
+      #[cfg(feature = "additional-controls")]
       has_feature_errors: false,
+      #[cfg(feature = "additional-controls")]
       disabled_features: None,
-    }
-  }
-
-  /// Create a new `ValidationState` with default values.
-  #[cfg(not(target_arch = "wasm32"))]
-  #[cfg(not(feature = "additional-controls"))]
-  pub fn new(cddl: &'a CDDL<'a>) -> Self {
-    ValidationState {
-      cddl,
-      cddl_location: String::new(),
-      data_location: String::new(),
-      occurrence: None,
-      is_member_key: false,
-      is_cut_present: false,
-      eval_generic_rule: None,
-      generic_rules: Vec::new(),
-      ctrl: None,
-      is_group_to_choice_enum: false,
-      is_multi_type_choice: false,
-      is_multi_group_choice: false,
-      type_group_name_entry: None,
-      advance_to_next_entry: false,
-      is_ctrl_map_equality: false,
-      is_colon_shortcut_present: false,
-      is_root: false,
-      is_multi_type_choice_type_rule_validating_array: false,
-      visited_rules: HashSet::new(),
-    }
-  }
-
-  /// Create a new `ValidationState` with default values.
-  #[cfg(target_arch = "wasm32")]
-  #[cfg(feature = "additional-controls")]
-  pub fn new(cddl: &'a CDDL<'a>, enabled_features: Option<Box<[JsValue]>>) -> Self {
-    ValidationState {
-      cddl,
-      cddl_location: String::new(),
-      data_location: String::new(),
-      occurrence: None,
-      is_member_key: false,
-      is_cut_present: false,
-      eval_generic_rule: None,
-      generic_rules: Vec::new(),
-      ctrl: None,
-      is_group_to_choice_enum: false,
-      is_multi_type_choice: false,
-      is_multi_group_choice: false,
-      type_group_name_entry: None,
-      advance_to_next_entry: false,
-      is_ctrl_map_equality: false,
-      is_colon_shortcut_present: false,
-      is_root: false,
-      is_multi_type_choice_type_rule_validating_array: false,
-      visited_rules: HashSet::new(),
-      enabled_features,
-      has_feature_errors: false,
-      disabled_features: None,
-    }
-  }
-
-  /// Create a new `ValidationState` with default values.
-  #[cfg(target_arch = "wasm32")]
-  #[cfg(not(feature = "additional-controls"))]
-  pub fn new(cddl: &'a CDDL<'a>) -> Self {
-    ValidationState {
-      cddl,
-      cddl_location: String::new(),
-      data_location: String::new(),
-      occurrence: None,
-      is_member_key: false,
-      is_cut_present: false,
-      eval_generic_rule: None,
-      generic_rules: Vec::new(),
-      ctrl: None,
-      is_group_to_choice_enum: false,
-      is_multi_type_choice: false,
-      is_multi_group_choice: false,
-      type_group_name_entry: None,
-      advance_to_next_entry: false,
-      is_ctrl_map_equality: false,
-      is_colon_shortcut_present: false,
-      is_root: false,
-      is_multi_type_choice_type_rule_validating_array: false,
-      visited_rules: HashSet::new(),
     }
   }
 }
