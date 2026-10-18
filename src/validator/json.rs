@@ -303,6 +303,57 @@ impl<'a> JSONValidator<'a> {
   /// Validate every definition contributing to a named type choice from one
   /// error checkpoint. Failed arms are tentative; their errors are retained
   /// only when every arm fails.
+  fn match_map_key_type(&mut self, key_type: &Type1<'a>) -> visitor::Result<Error> {
+    let Value::Object(entries) = &self.json else {
+      return Ok(());
+    };
+    let optional = matches!(self.state.occurrence, Some(Occur::Optional { .. }));
+    let repeating = self.state.occurrence.is_some() && !optional;
+    let mut matches = Vec::new();
+    let mut single_entry = None;
+
+    // Probe the entire key type per pair so different keys can match different
+    // alternatives without losing claims in the type-choice validator.
+    for (key, value) in entries {
+      if self
+        .validated_keys
+        .as_ref()
+        .is_some_and(|keys| keys.contains(key))
+      {
+        continue;
+      }
+      let mut validator = self.new_with_recursion_state(Value::String(key.clone()));
+      let _ = write!(
+        validator.state.data_location,
+        "{}/@key/{}",
+        self.state.data_location, key
+      );
+      validator.visit_type1(key_type)?;
+      if validator.errors.is_empty() {
+        if repeating {
+          matches.push((key.clone(), value.clone()));
+        } else {
+          single_entry = Some((key.clone(), value.clone()));
+          break;
+        }
+      }
+    }
+
+    if repeating {
+      self.map_entry_candidates = Some(matches);
+    } else if let Some((key, value)) = single_entry {
+      let _ = write!(self.state.data_location, "/{}", key);
+      self.validated_keys.get_or_insert_with(Vec::new).push(key);
+      self.object_value = Some(value);
+    } else if optional {
+      self.state.occurrence = None;
+      self.state.advance_to_next_entry = true;
+    } else {
+      self.add_error(format!("object requires entry key of type {}", key_type));
+    }
+    Ok(())
+  }
+
   fn visit_named_type_choice(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error> {
     let choices = type_choice_types_from_ident(self.state.cddl, ident);
 
@@ -3152,6 +3203,13 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
   fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<Error> {
     match mk {
+      MemberKey::Type1 { t1, .. }
+        if self.state.is_member_key
+          && matches!(self.json, Value::Object(_))
+          && key_type_has_choice(&self.state, t1) =>
+      {
+        self.match_map_key_type(t1)?;
+      }
       MemberKey::Type1 { is_cut, .. } => {
         self.state.is_cut_present = *is_cut;
         walk_memberkey(self, mk)?;
