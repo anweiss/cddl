@@ -699,6 +699,48 @@ pub fn type_choice_types_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> V
     .collect::<Vec<_>>()
 }
 
+// Keep non-choice keys on their existing paths, following aliases and generic
+// arguments without looping on recursive type definitions.
+fn key_type_has_choice(state: &ValidationState, key_type: &Type1) -> bool {
+  let mut pending = vec![key_type];
+  let mut visited = HashSet::new();
+  while let Some(key_type) = pending.pop() {
+    let types = match &key_type.type2 {
+      Type2::ParenthesizedType { pt, .. } => vec![pt],
+      Type2::Typename {
+        ident,
+        generic_args,
+        ..
+      } => {
+        if let Some(args) = generic_args {
+          pending.extend(args.args.iter().map(|arg| arg.arg.as_ref()));
+        }
+        if !visited.insert(ident.ident) {
+          continue;
+        }
+        if let Some(rule) = state
+          .generic_rules
+          .iter()
+          .find(|rule| Some(rule.name) == state.eval_generic_rule)
+        {
+          if let Some(index) = rule.params.iter().position(|param| *param == ident.ident) {
+            pending.extend(rule.args.get(index));
+          }
+        }
+        type_choice_types_from_ident(state.cddl, ident)
+      }
+      _ => continue,
+    };
+    if types.len() > 1 || types.iter().any(|t| t.type_choices.len() > 1) {
+      return true;
+    }
+    for t in types {
+      pending.extend(t.type_choices.iter().map(|choice| &choice.type1));
+    }
+  }
+  false
+}
+
 /// Find all group choice alternate rules from a given identifier
 pub fn group_choice_alternates_from_ident<'a>(
   cddl: &'a CDDL,

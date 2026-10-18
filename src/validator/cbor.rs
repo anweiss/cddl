@@ -543,6 +543,53 @@ impl<'a> CBORValidator<'a> {
       .collect()
   }
 
+  fn match_map_key_type<T: std::fmt::Debug + 'static>(
+    &mut self,
+    key_type: &Type1<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let Value::Map(entries) = &self.cbor else {
+      return Ok(());
+    };
+    let optional = matches!(self.state.occurrence, Some(Occur::Optional { .. }));
+    let repeating = self.state.occurrence.is_some() && !optional;
+    let mut matches = Vec::new();
+    let mut single_entry = None;
+
+    // Probe the entire key type per pair, not each alternative against the
+    // enclosing map. Occurrence bounds apply to the union of complete pairs.
+    for (index, (key, value)) in entries.iter().enumerate() {
+      if !Self::is_unconsumed_map_entry(index, &self.claimed_map_entries) {
+        continue;
+      }
+      let mut validator = self.new_with_recursion_state(key.clone());
+      let _ = write!(
+        validator.state.data_location,
+        "{}/@key/{}",
+        self.state.data_location, index
+      );
+      validator.validating_value = true;
+      validator.visit_type1(key_type)?;
+      if validator.errors.is_empty() {
+        if repeating {
+          matches.push(index);
+        } else {
+          single_entry = Some((index, key.clone(), value.clone()));
+          break;
+        }
+      }
+    }
+
+    if repeating {
+      self.map_entry_candidates = Some(matches);
+    } else if !self.claim_single_map_entry(single_entry, optional) && !optional {
+      self.add_error(format!("map requires entry key of type {}", key_type));
+    }
+    Ok(())
+  }
+
   fn repeating_member_upper_bound(entry: &ValueMemberKeyEntry<'a>) -> Option<usize> {
     entry.occur.as_ref().and_then(|occurrence| {
       if let Occur::Exact { upper, .. } = occurrence.occur {
@@ -4369,6 +4416,13 @@ where
 
   fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<Error<T>> {
     match mk {
+      MemberKey::Type1 { t1, .. }
+        if self.state.is_member_key
+          && matches!(self.cbor, Value::Map(_))
+          && key_type_has_choice(&self.state, t1) =>
+      {
+        self.match_map_key_type(t1)?;
+      }
       MemberKey::Type1 { is_cut, .. } => {
         self.state.is_cut_present = *is_cut;
         walk_memberkey(self, mk)?;
