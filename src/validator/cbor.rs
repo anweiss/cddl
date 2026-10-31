@@ -4273,6 +4273,29 @@ where
     &mut self,
     entry: &TypeGroupnameEntry<'a>,
   ) -> visitor::Result<Error<T>> {
+    let group_choice_alternates = group_choice_alternates_from_ident(self.state.cddl, &entry.name);
+    if entry.name.socket == Some(SocketPlug::GROUP)
+      && group_choice_alternates.is_empty()
+      && rule_from_ident(self.state.cddl, &entry.name).is_none()
+    {
+      // An unplugged socket has no matching alternatives (RFC 8610 §3.9).
+      // Only an occurrence allowing zero matches can skip it.
+      if !matches!(
+        entry.occur.as_ref().map(|o| o.occur),
+        Some(
+          Occur::ZeroOrMore { .. }
+            | Occur::Optional { .. }
+            | Occur::Exact {
+              lower: None | Some(0),
+              ..
+            }
+        )
+      ) {
+        self.add_error("undefined group socket requires zero occurrences".into());
+      }
+      return Ok(());
+    }
+
     self.state.type_group_name_entry = Some(entry.name.ident);
 
     if let Some(ga) = &entry.generic_args {
@@ -4344,7 +4367,6 @@ where
     }
 
     let error_count = self.errors.len();
-    let group_choice_alternates = group_choice_alternates_from_ident(self.state.cddl, &entry.name);
     if !group_choice_alternates.is_empty() {
       self.state.is_multi_group_choice = true;
     }
