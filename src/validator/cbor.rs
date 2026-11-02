@@ -186,6 +186,21 @@ pub struct CBORValidator<'a> {
 }
 
 impl<'a> CBORValidator<'a> {
+  fn validate_base64_url_tag(&mut self) {
+    if let Value::Tag(33, value) = &self.cbor {
+      if let Value::Text(text) = value.as_ref() {
+        if let Err(error) = base64_url::decode(text) {
+          self.add_error(format!(
+            "expected base64 URL data type, decoding error: {}",
+            error
+          ));
+        }
+        return;
+      }
+    }
+    self.add_error("expected b64url tag 33 with a text payload".into());
+  }
+
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   /// New cborValidation from CDDL AST and cbor value
@@ -269,6 +284,46 @@ impl<'a> CBORValidator<'a> {
   /// Extract the underlying CBOR Value.
   pub fn extract_cbor(self) -> Value {
     self.cbor
+  }
+
+  fn validate_equality_control<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    match target {
+      Type2::Typename { ident, .. } => {
+        if is_ident_string_data_type(self.state.cddl, ident)
+          || is_ident_numeric_data_type(self.state.cddl, ident)
+        {
+          return self.visit_type2(controller);
+        }
+      }
+      Type2::Array { .. } => {
+        if let Value::Array(_) = &self.cbor {
+          self.visit_type2(controller)?;
+          return Ok(());
+        }
+      }
+      Type2::Map { .. } => {
+        if let Value::Map(_) = &self.cbor {
+          self.state.ctrl = Some(ControlOperator::EQ);
+          self.state.is_ctrl_map_equality = true;
+          self.visit_type2(controller)?;
+          self.state.ctrl = None;
+          self.state.is_ctrl_map_equality = false;
+          return Ok(());
+        }
+      }
+      _ => self.add_error(format!(
+        "target for .eq operator must be a string, numerical, array or map data type, got {}",
+        target
+      )),
+    }
+    Ok(())
   }
 
   /// Claim one map entry for a member-key type that has no repeating
@@ -551,6 +606,62 @@ impl<'a> CBORValidator<'a> {
         None
       }
     })
+  }
+
+  fn validate_repeating_member_values<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entry: &ValueMemberKeyEntry<'a>,
+    candidates: Vec<usize>,
+    current_location: String,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let max_matches = Self::repeating_member_upper_bound(entry).unwrap_or(usize::MAX);
+    let mut match_count = 0;
+
+    for entry_index in candidates {
+      if match_count == max_matches {
+        break;
+      }
+
+      // Look the pair up lazily so candidate collection does not clone the
+      // key and value of every matching entry.
+      let candidate = match &self.cbor {
+        Value::Map(entries) => entries.get(entry_index).map(|(key, value)| {
+          let mut data_location = self.state.data_location.clone();
+          // The child inherits the recursion guard, so advance to this
+          // pair's value before resolving recursive table types (as JSON
+          // does).
+          let _ = write!(data_location, "/{:?}", key);
+          (data_location, value.clone())
+        }),
+        _ => None,
+      };
+
+      let Some((data_location, value)) = candidate else {
+        continue;
+      };
+
+      let mut cv = self.new_with_recursion_state(value);
+      cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+      cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+      cv.state.data_location = data_location;
+      cv.state.type_group_name_entry = self.state.type_group_name_entry;
+      cv.validating_value = true;
+      cv.visit_type(&entry.entry_type)?;
+
+      self.state.data_location = current_location.clone();
+
+      if cv.errors.is_empty() {
+        self.claimed_map_entries.push(entry_index);
+        match_count += 1;
+      }
+    }
+
+    self.validate_repeating_member_count(entry, match_count);
+    self.state.occurrence = None;
+    Ok(())
   }
 
   fn validate_repeating_member_count(&mut self, entry: &ValueMemberKeyEntry<'a>, count: usize) {
@@ -1760,38 +1871,7 @@ where
     }
 
     match ctrl {
-      ControlOperator::EQ => {
-        match target {
-          Type2::Typename { ident, .. } => {
-            if is_ident_string_data_type(self.state.cddl, ident)
-              || is_ident_numeric_data_type(self.state.cddl, ident)
-            {
-              return self.visit_type2(controller);
-            }
-          }
-          Type2::Array { .. } => {
-            if let Value::Array(_) = &self.cbor {
-              self.visit_type2(controller)?;
-              return Ok(());
-            }
-          }
-          Type2::Map { .. } => {
-            if let Value::Map(_) = &self.cbor {
-              self.state.ctrl = Some(ctrl);
-              self.state.is_ctrl_map_equality = true;
-              self.visit_type2(controller)?;
-              self.state.ctrl = None;
-              self.state.is_ctrl_map_equality = false;
-              return Ok(());
-            }
-          }
-          _ => self.add_error(format!(
-            "target for .eq operator must be a string, numerical, array or map data type, got {}",
-            target
-          )),
-        }
-        Ok(())
-      }
+      ControlOperator::EQ => self.validate_equality_control::<T>(target, controller),
       ControlOperator::NE => {
         match target {
           Type2::Typename { ident, .. } => {
@@ -3872,12 +3952,7 @@ where
             self.add_error(format!("expected URI data type, decoding error: {}", e));
           }
         } else if is_ident_b64url_data_type(self.state.cddl, ident) {
-          if let Err(e) = base64_url::decode(s) {
-            self.add_error(format!(
-              "expected base64 URL data type, decoding error: {}",
-              e
-            ));
-          }
+          self.add_error("expected b64url tag 33 with a text payload".into());
         } else if is_ident_tdate_data_type(self.state.cddl, ident) {
           if let Err(e) = chrono::DateTime::parse_from_rfc3339(s) {
             self.add_error(format!("expected tdate data type, decoding error: {}", e));
@@ -3891,6 +3966,10 @@ where
         Ok(())
       }
       Value::Tag(tag, value) => {
+        if is_ident_b64url_data_type(self.state.cddl, ident) {
+          self.validate_base64_url_tag();
+          return Ok(());
+        }
         if is_ident_bignum_data_type(self.state.cddl, ident) {
           if !(ident_accepts_bignum_tag(self.state.cddl, ident, *tag)
             && matches!(value.as_ref(), Value::Bytes(_)))
@@ -4153,51 +4232,7 @@ where
 
     if let Some(candidates) = map_entry_candidates {
       debug_assert!(object_value.is_none());
-      let max_matches = Self::repeating_member_upper_bound(entry).unwrap_or(usize::MAX);
-      let mut match_count = 0;
-
-      for entry_index in candidates {
-        if match_count == max_matches {
-          break;
-        }
-
-        // Look the pair up lazily so candidate collection does not clone the
-        // key and value of every matching entry.
-        let candidate = match &self.cbor {
-          Value::Map(entries) => entries.get(entry_index).map(|(key, value)| {
-            let mut data_location = self.state.data_location.clone();
-            // The child inherits the recursion guard, so advance to this
-            // pair's value before resolving recursive table types (as JSON
-            // does).
-            let _ = write!(data_location, "/{:?}", key);
-            (data_location, value.clone())
-          }),
-          _ => None,
-        };
-
-        let Some((data_location, value)) = candidate else {
-          continue;
-        };
-
-        let mut cv = self.new_with_recursion_state(value);
-        cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-        cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
-        cv.state.data_location = data_location;
-        cv.state.type_group_name_entry = self.state.type_group_name_entry;
-        cv.validating_value = true;
-        cv.visit_type(&entry.entry_type)?;
-
-        self.state.data_location = current_location.clone();
-
-        if cv.errors.is_empty() {
-          self.claimed_map_entries.push(entry_index);
-          match_count += 1;
-        }
-      }
-
-      self.validate_repeating_member_count(entry, match_count);
-      self.state.occurrence = None;
-      return Ok(());
+      return self.validate_repeating_member_values::<T>(entry, candidates, current_location);
     }
 
     if let Some(v) = object_value {

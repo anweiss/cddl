@@ -15,14 +15,15 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: chainguard-dev/actions/setup-gitsign@main
       - name: Install cargo-release
         uses: taiki-e/install-action@v1
         with:
           tool: cargo-release
 
-      - uses: cargo-bins/release-pr@v1
+      - uses: cargo-bins/release-pr@v2
         with:
+          crate-name: cddl
           github-token: ${{ secrets.GITHUB_TOKEN }}
           version: ${{ inputs.version }}
