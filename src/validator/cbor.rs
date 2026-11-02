@@ -714,7 +714,7 @@ impl<'a> CBORValidator<'a> {
     cbor::Error<T>: From<cbor::Error<std::io::Error>>,
   {
     for alternative in alternatives {
-      if !prelude_key_domain_admits(self.state.cddl, alternative, key) {
+      if !key_domain_admits(&self.state, alternative, key) {
         continue;
       }
       let mut probe = self.new_with_recursion_state(key.clone());
@@ -4567,6 +4567,18 @@ where
         return self.visit_choice_key_entry::<T>(ge, key_type, &alternatives, is_cut);
       }
     }
+    if let GroupEntry::TypeGroupname { ge, .. } = entry {
+      // A group reference's occurrence applies to the referenced group
+      // alone: once the group has matched, restore the prior indicator so
+      // `? g` cannot relax later required members, mirroring inline groups.
+      let prior_occurrence = self.state.occurrence;
+      let error_count = self.errors.len();
+      walk_group_entry(self, entry)?;
+      if ge.occur.is_some() && self.errors.len() == error_count {
+        self.state.occurrence = prior_occurrence;
+      }
+      return Ok(());
+    }
     walk_group_entry(self, entry)
   }
 
@@ -5137,67 +5149,156 @@ fn numeric_ident_matches_cbor_value(cddl: &CDDL, ident: &Identifier, v: &Value) 
 
 /// Scalar validation is lenient for some prelude types outside a map key's
 /// domain: it accepts positive integers for `nint` and ignores unrelated
-/// tags. Check a prelude key alternative's own domain before probing it.
-fn prelude_key_domain_admits(cddl: &CDDL, alternative: &Type1, key: &Value) -> bool {
-  let Type2::Typename {
-    ident,
-    generic_args: None,
-    ..
-  } = &alternative.type2
-  else {
-    return true;
-  };
-
-  // Follow single-definition aliases so a constrained alternative such as
-  // `negative .ne 0` inherits the domain of its underlying prelude type. The
-  // control operator itself is still enforced by the probe.
-  let mut current = ident;
-  let mut visited = HashSet::new();
-  let domain_ident = loop {
-    if lookup_ident(current.ident).in_standard_prelude().is_some()
-      && rule_from_ident(cddl, current).is_none()
-    {
-      break current;
-    }
-    if !visited.insert(current.ident) {
-      return true;
-    }
-    let types = type_choice_types_from_ident(cddl, current);
-    let [only] = types.as_slice() else {
-      return true;
-    };
-    let [choice] = only.type_choices.as_slice() else {
-      return true;
-    };
-    match &choice.type1.type2 {
-      Type2::Typename {
-        ident: next,
-        generic_args: None,
-        ..
-      } => current = next,
-      _ => return true,
-    }
-  };
-
-  if ident_numeric_kind(cddl, domain_ident).is_some() {
-    return numeric_ident_matches_cbor_value(cddl, domain_ident, key)
-      || is_bignum_value(cddl, domain_ident, key);
-  }
-  // `time` and `tdate` admit only their own tags (1 and 0 respectively).
-  if is_ident_time_data_type(cddl, domain_ident) {
-    return !matches!(key, Value::Tag(tag, _) if *tag != 1);
-  }
-  if is_ident_tdate_data_type(cddl, domain_ident) {
-    return !matches!(key, Value::Tag(tag, _) if *tag != 0);
-  }
-  !matches!(key, Value::Tag(..))
-    || !(is_ident_string_data_type(cddl, domain_ident)
-      || is_ident_byte_string_data_type(cddl, domain_ident)
-      || is_ident_bool_data_type(cddl, domain_ident)
-      || matches!(lookup_ident(domain_ident.ident), Token::TRUE | Token::FALSE)
-      || is_ident_null_data_type(cddl, domain_ident))
+/// tags. Check an alternative's own domain before probing it, following
+/// aliases — including generic instantiations and active generic bindings —
+/// to the underlying prelude types, literals and tagged types. Control
+/// operators are ignored here because the probe still enforces them.
+fn key_domain_admits(state: &ValidationState, alternative: &Type1, key: &Value) -> bool {
+  type1_key_domain_admits(
+    state,
+    alternative,
+    key,
+    &mut HashSet::new(),
+    &HashMap::new(),
+  )
 }
 
+/// Domain check for one type: a control operator constrains the complete
+/// type, so only its target determines the key domain.
+fn type1_key_domain_admits<'a>(
+  state: &ValidationState<'a>,
+  alternative: &Type1<'a>,
+  key: &Value,
+  visited: &mut HashSet<&'a str>,
+  bindings: &HashMap<&'a str, Type1<'a>>,
+) -> bool {
+  type2_key_domain_admits(state, &alternative.type2, key, visited, bindings)
+}
+
+/// Domain check for a type2 node: choices admit a key when any arm does.
+fn type2_key_domain_admits<'a>(
+  state: &ValidationState<'a>,
+  type2: &Type2<'a>,
+  key: &Value,
+  visited: &mut HashSet<&'a str>,
+  bindings: &HashMap<&'a str, Type1<'a>>,
+) -> bool {
+  match type2 {
+    Type2::ParenthesizedType { pt, .. } => pt.type_choices.iter().any(|choice| {
+      type1_key_domain_admits(state, &choice.type1, key, &mut visited.clone(), bindings)
+    }),
+    Type2::Typename {
+      ident,
+      generic_args,
+      ..
+    } => typename_key_domain_admits(state, ident, generic_args.as_ref(), key, visited, bindings),
+    Type2::IntValue { value, .. } => {
+      matches!(key, Value::Integer(i) if i128::from(*i) == *value as i128)
+    }
+    Type2::UintValue { value, .. } => {
+      matches!(key, Value::Integer(i) if i128::from(*i) == *value as i128)
+    }
+    Type2::FloatValue { value, .. } => matches!(key, Value::Float(f) if f == value),
+    Type2::TextValue { value, .. } => matches!(key, Value::Text(t) if t == value.as_ref()),
+    Type2::UTF8ByteString { value, .. }
+    | Type2::B16ByteString { value, .. }
+    | Type2::B64ByteString { value, .. } => {
+      matches!(key, Value::Bytes(b) if b == value.as_ref())
+    }
+    _ => true,
+  }
+}
+
+/// Domain check for a name: bound generic parameters, generic alias
+/// instantiations, prelude leaves and ordinary aliases.
+fn typename_key_domain_admits<'a>(
+  state: &ValidationState<'a>,
+  ident: &Identifier<'a>,
+  generic_args: Option<&GenericArgs<'a>>,
+  key: &Value,
+  visited: &mut HashSet<&'a str>,
+  bindings: &HashMap<&'a str, Type1<'a>>,
+) -> bool {
+  if let Some(bound) = bindings.get(ident.ident) {
+    return type1_key_domain_admits(state, bound, key, visited, bindings);
+  }
+  if generic_args.is_none() {
+    if let Some(arg) = generic_argument_for_param(state, ident.ident) {
+      return type1_key_domain_admits(state, &arg, key, visited, bindings);
+    }
+  }
+  if let Some(args) = generic_args {
+    let Some(rule) = rule_from_ident(state.cddl, ident) else {
+      return true;
+    };
+    let (Some(params), Rule::Type { rule, .. }) = (generic_params_from_rule(rule), rule) else {
+      return true;
+    };
+    let mut bound = bindings.clone();
+    for (param, arg) in params.iter().zip(args.args.iter()) {
+      bound.insert(param, (*arg.arg).clone());
+    }
+    return rule.value.type_choices.iter().any(|choice| {
+      type1_key_domain_admits(state, &choice.type1, key, &mut visited.clone(), &bound)
+    });
+  }
+  if lookup_ident(ident.ident).in_standard_prelude().is_some()
+    && rule_from_ident(state.cddl, ident).is_none()
+  {
+    return prelude_key_domain_admits(state, ident, key, visited, bindings);
+  }
+  if !visited.insert(ident.ident) {
+    return true;
+  }
+  let types = type_choice_types_from_ident(state.cddl, ident);
+  if types.is_empty() {
+    return true;
+  }
+  types.iter().any(|t| {
+    t.type_choices.iter().any(|choice| {
+      type1_key_domain_admits(state, &choice.type1, key, &mut visited.clone(), bindings)
+    })
+  })
+}
+
+/// Domain of a prelude leaf: numeric ranges, the declared tag and payload
+/// of tagged types such as `time` or `uri`, and no tags at all for plain
+/// scalars.
+fn prelude_key_domain_admits<'a>(
+  state: &ValidationState<'a>,
+  ident: &Identifier,
+  key: &Value,
+  visited: &mut HashSet<&'a str>,
+  bindings: &HashMap<&'a str, Type1<'a>>,
+) -> bool {
+  let cddl = state.cddl;
+  if ident_numeric_kind(cddl, ident).is_some() {
+    return numeric_ident_matches_cbor_value(cddl, ident, key) || is_bignum_value(cddl, ident, key);
+  }
+  if let Some(Type2::TaggedData {
+    tag: Some(TagConstraint::Literal(expected)),
+    t,
+    ..
+  }) = tag_from_token(&lookup_ident(ident.ident))
+  {
+    return match key {
+      Value::Tag(tag, inner) => {
+        *tag == expected
+          && t.type_choices.iter().any(|choice| {
+            type1_key_domain_admits(state, &choice.type1, inner, &mut visited.clone(), bindings)
+          })
+      }
+      // Untagged keys stay lenient here; the probe decides.
+      _ => true,
+    };
+  }
+  !matches!(key, Value::Tag(..))
+    || !(is_ident_string_data_type(cddl, ident)
+      || is_ident_byte_string_data_type(cddl, ident)
+      || is_ident_bool_data_type(cddl, ident)
+      || matches!(lookup_ident(ident.ident), Token::TRUE | Token::FALSE)
+      || is_ident_null_data_type(cddl, ident))
+}
 /// Is `v` a tagged byte string accepted by the bignum type `ident`?
 fn is_bignum_value(cddl: &CDDL, ident: &Identifier, v: &Value) -> bool {
   matches!(v, Value::Tag(tag, inner)

@@ -382,3 +382,104 @@ fn json_type_choice_keys_reassign_through_chains() {
     );
   }
 }
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_resolve_generic_alias_domains() {
+  // A generic alias instantiation inherits the domain of its argument.
+  let schema = "m = { * (key<nint> / tstr) => any }\nkey<T> = T";
+  check_cbor(schema, "a10301", false);
+  check_cbor(schema, "a12001", true);
+  check_cbor(schema, "a1617801", true);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_check_multi_alternative_alias_domains() {
+  // Every underlying alternative constrains the domain, including literals;
+  // the control operator itself is still enforced by the probe.
+  let schema = "m = { * (nonpositive .ne 0 / tstr) => any }\nnonpositive = nint / 0";
+  check_cbor(schema, "a10301", false);
+  check_cbor(schema, "a12001", true);
+  check_cbor(schema, "a10001", false);
+  check_cbor(schema, "a1617801", true);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_restrict_tagged_prelude_domains() {
+  // Tagged prelude types admit only their declared tag with a payload in the
+  // declared payload domain.
+  check_cbor("m = { * (uri / tstr) => any }", "a1c2410101", false);
+  check_cbor("m = { * (uri / tstr) => any }", "a1d8206361626301", true);
+  check_cbor("m = { * (b64url / tstr) => any }", "a1d5616b01", false);
+  check_cbor("m = { * (b64url / tstr) => any }", "a1d8216361626301", true);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_expand_shared_aliases_once() {
+  // 24 acyclic aliases, each doubling its predecessor, would produce 2^24
+  // alternatives without memoized, deduplicated expansion and could exhaust
+  // memory. With caching this validates instantly.
+  let mut schema = String::from("m = { * k24 => any }\nk0 = int / tstr\n");
+  for n in 1..=24 {
+    schema.push_str(&format!("k{n} = k{} / k{}\n", n - 1, n - 1));
+  }
+  check_cbor(&schema, "a0", true);
+  check_cbor(&schema, "a10301", true);
+  check_cbor(&schema, "a1617801", true);
+  check_cbor(&schema, "a1f501", false);
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_type_choice_keys_reassign_plain_member_claims() {
+  // The pair claimed by a plain `tstr => any` member may move to satisfy a
+  // later choice-key member.
+  for (json, expected) in [
+    (r#"{"a":1,"b":"x"}"#, true),
+    (r#"{"a":1}"#, false),
+    (r#"{"a":"x","b":2}"#, true),
+  ] {
+    let result = cddl::validator::validate_json_from_str(
+      "m = { tstr => any, (int / tstr) => uint }",
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
+  }
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_type_choice_keys_reassign_generic_group_claims() {
+  // Claims made inside a generic group stay movable at the parent level
+  // under their captured bindings.
+  let schema = "m = { g<(int / tstr)>, (\"a\" / \"z\") => uint }\ng<K> = (K => any)";
+  for (json, expected) in [(r#"{"a":1,"b":"x"}"#, true), (r#"{"a":1}"#, false)] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
+  }
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_reassign_generic_group_claims() {
+  let schema = "m = { g<(int / tstr)>, (\"a\" / \"z\") => uint }\ng<K> = (K => any)";
+  check_cbor(schema, "a261610161626178", true);
+  check_cbor(schema, "a1616101", false);
+}

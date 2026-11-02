@@ -20,8 +20,9 @@ use crate::{
   visitor::Visitor,
 };
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::rc::Rc;
 
 #[cfg(feature = "cbor")]
 use cbor::CBORValidator;
@@ -727,55 +728,98 @@ pub(crate) fn choice_member_key<'e, 'a>(
 /// The alternatives one map key may match for a member key type, following
 /// parentheses, aliases, `/=` extensions and generic parameters. A type with
 /// a control operator or generic arguments stays whole because it constrains
-/// the complete type rather than one alternative. Visited names are tracked
-/// per expansion path: sibling aliases expand fully, recursive paths stop.
+/// the complete type rather than one alternative. Expansion tracks the active
+/// name chain so recursive paths stop, and caches acyclic expansions by name:
+/// an alias subgraph shared by many paths is expanded once, so DAG-shaped
+/// alias hierarchies stay linear instead of exponential.
 pub(crate) fn member_key_type_alternatives<'a>(
   state: &ValidationState<'a>,
   key_type: &Type1<'a>,
 ) -> Vec<Type1<'a>> {
-  let mut alternatives = Vec::new();
-  let mut pending = vec![(key_type.clone(), HashSet::new())];
-  while let Some((candidate, mut visited)) = pending.pop() {
-    let expansion = match &candidate.type2 {
-      _ if candidate.operator.is_some() => Vec::new(),
-      Type2::ParenthesizedType { pt, .. } => pt
-        .type_choices
-        .iter()
-        .map(|choice| choice.type1.clone())
-        .collect(),
-      Type2::Typename {
-        ident,
-        generic_args: None,
-        ..
-      } => {
-        // Visited names are tracked per expansion path, so sibling aliases
-        // of the same name still expand fully while recursive paths stop.
-        if !visited.insert(ident.ident) {
-          alternatives.push(candidate);
-          continue;
-        }
-        match generic_argument_for_param(state, ident.ident) {
-          Some(arg) => vec![arg],
-          None => type_choice_types_from_ident(state.cddl, ident)
-            .into_iter()
-            .flat_map(|t| t.type_choices.iter().map(|choice| choice.type1.clone()))
-            .collect(),
-        }
+  let mut memo = HashMap::new();
+  expand_key_type_alternatives(state, key_type, &mut Vec::new(), &mut memo).0
+}
+
+/// Expand one candidate type into leaf alternatives. The returned flag is
+/// false when a recursive path was cut underneath, making the result specific
+/// to the active chain and unfit for caching by name.
+fn expand_key_type_alternatives<'a>(
+  state: &ValidationState<'a>,
+  candidate: &Type1<'a>,
+  active: &mut Vec<&'a str>,
+  memo: &mut HashMap<&'a str, Rc<Vec<Type1<'a>>>>,
+) -> (Vec<Type1<'a>>, bool) {
+  match &candidate.type2 {
+    _ if candidate.operator.is_some() => (vec![candidate.clone()], true),
+    Type2::ParenthesizedType { pt, .. } => {
+      let mut alternatives = Vec::new();
+      let mut acyclic = true;
+      for choice in &pt.type_choices {
+        let (mut nested, nested_acyclic) =
+          expand_key_type_alternatives(state, &choice.type1, active, memo);
+        alternatives.append(&mut nested);
+        acyclic &= nested_acyclic;
       }
-      _ => Vec::new(),
-    };
-    if expansion.is_empty() {
-      alternatives.push(candidate);
-    } else {
-      pending.extend(
-        expansion
-          .into_iter()
-          .rev()
-          .map(|child| (child, visited.clone())),
-      );
+      (alternatives, acyclic)
+    }
+    Type2::Typename {
+      ident,
+      generic_args: None,
+      ..
+    } => expand_key_ident_alternatives(state, candidate, ident, active, memo),
+    _ => (vec![candidate.clone()], true),
+  }
+}
+
+/// Expand one alias occurrence. Results are cached by name only when no
+/// recursive path was cut underneath them; a cut makes the result depend on
+/// the active chain.
+fn expand_key_ident_alternatives<'a>(
+  state: &ValidationState<'a>,
+  candidate: &Type1<'a>,
+  ident: &Identifier<'a>,
+  active: &mut Vec<&'a str>,
+  memo: &mut HashMap<&'a str, Rc<Vec<Type1<'a>>>>,
+) -> (Vec<Type1<'a>>, bool) {
+  if let Some(arg) = generic_argument_for_param(state, ident.ident) {
+    return expand_key_type_alternatives(state, &arg, active, memo);
+  }
+  if let Some(cached) = memo.get(ident.ident) {
+    return ((**cached).clone(), true);
+  }
+  if active.contains(&ident.ident) {
+    // Recursive path: keep the name as an opaque leaf.
+    return (vec![candidate.clone()], false);
+  }
+  let types = type_choice_types_from_ident(state.cddl, ident);
+  if types.is_empty() {
+    return (vec![candidate.clone()], true);
+  }
+  active.push(ident.ident);
+  let mut alternatives = Vec::new();
+  let mut acyclic = true;
+  for rule_type in types {
+    for choice in &rule_type.type_choices {
+      let (mut nested, nested_acyclic) =
+        expand_key_type_alternatives(state, &choice.type1, active, memo);
+      alternatives.append(&mut nested);
+      acyclic &= nested_acyclic;
     }
   }
-  alternatives
+  active.pop();
+  if acyclic {
+    // Cache a deduplicated copy so alias subgraphs shared by many paths are
+    // expanded once and stay small; the returned list keeps duplicates so a
+    // syntactic choice still reads as a choice to its caller.
+    let mut deduplicated: Vec<Type1<'a>> = Vec::new();
+    for alternative in &alternatives {
+      if !deduplicated.contains(alternative) {
+        deduplicated.push(alternative.clone());
+      }
+    }
+    memo.insert(ident.ident, Rc::new(deduplicated));
+  }
+  (alternatives, acyclic)
 }
 
 /// The argument bound to `param` in the generic rule currently being

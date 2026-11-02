@@ -267,3 +267,66 @@ fn json_successful_optional_group_consumes_its_occurrence() {
     assert_eq!(result.is_ok(), valid, "{schema}: {result:?}");
   }
 }
+
+#[cfg(feature = "cbor")]
+#[test]
+fn cbor_named_group_occurrence_stays_with_the_group() {
+  // A matched `? g` must not relax the members that follow it, whether the
+  // group matched zero-width through a socket or through real entries.
+  for (schema, bytes, valid) in [
+    ("m = { ? g, k: int }\ng = (* $$s)", vec![0xa0], false),
+    (
+      "m = { ? g, k: int }\ng = (* $$s)",
+      vec![0xa1, 0x61, 0x6b, 0x01],
+      true,
+    ),
+    ("m = { ? g, k: int }\ng = (a: int)", vec![0xa0], false),
+    (
+      "m = { ? g, k: int }\ng = (a: int)",
+      vec![0xa1, 0x61, 0x61, 0x01],
+      false,
+    ),
+    (
+      "m = { ? g, k: int }\ng = (a: int)",
+      vec![0xa2, 0x61, 0x61, 0x01, 0x61, 0x6b, 0x01],
+      true,
+    ),
+    (
+      "m = { ? g, k: int }\ng = (a: int)",
+      vec![0xa1, 0x61, 0x6b, 0x01],
+      true,
+    ),
+  ] {
+    let result = cddl::validate_cbor_from_slice(
+      schema,
+      &bytes,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), valid, "{schema}: {result:?}");
+  }
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn json_named_group_occurrence_stays_with_the_group() {
+  for (schema, json, valid) in [
+    ("m = { ? g, k: int }\ng = (* $$s)", "{}", false),
+    ("m = { ? g, k: int }\ng = (* $$s)", r#"{"k":1}"#, true),
+    ("m = { ? g, k: int }\ng = (a: int)", r#"{"a":1}"#, false),
+    (
+      "m = { ? g, k: int }\ng = (a: int)",
+      r#"{"a":1,"k":1}"#,
+      true,
+    ),
+    ("m = { ? g, k: int }\ng = (a: int)", r#"{"k":1}"#, true),
+  ] {
+    let result = cddl::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), valid, "{schema}: {result:?}");
+  }
+}
