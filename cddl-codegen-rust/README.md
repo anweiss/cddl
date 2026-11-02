@@ -118,7 +118,8 @@ fields; typed keys become flattened `entries` maps. Such structs decode through
 a generated map visitor that reads each value in place, so tagged values are
 kept and entries are routed to the first named field or key type that matches.
 JSON object keys are strings, so integer-keyed wildcard entries round-trip
-through CBOR only. Rule and variant names
+through CBOR only. An optional wildcard group (`? (* tstr => int)`) decodes to
+`None` when no entry matched and `Some(map)` otherwise. Rule and variant names
 normalize embedded acronyms, for example `hashedURI-map` becomes `HashedUriMap`.
 
 Explicit literal CBOR tags, such as `#6.37(bstr)`, are preserved on struct fields,

@@ -18,6 +18,8 @@ choice-shadow = "created" / choice
 uri-entries = { name: tstr, * tstr => uri }
 uuid-entries = { * tstr => buuid }
 typed-entries = { * tstr => int, * int => tstr }
+optional-entries = { name: tstr, ? (* tstr => int) }
+byte-table = { * bstr => uint }
 status = "assertion.hashedURI.mismatch" / "assertion.collectionHash.invalidURI"
 
 buuid = #6.37(bstr)

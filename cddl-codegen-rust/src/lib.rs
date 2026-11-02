@@ -2329,7 +2329,17 @@ fn render_flatten_deserialize(
   for (i, (field, spec)) in fields.iter().zip(specs).enumerate() {
     render_flatten_value_wrapper(output, i, field, spec.clone(), tag_mod)?;
   }
-  render_flatten_keys(output, fields)?;
+  let keys: Vec<Option<(String, Option<String>)>> = fields
+    .iter()
+    .zip(specs)
+    .map(|(field, spec)| flatten_key(field, spec.as_ref()))
+    .collect();
+  for (i, key) in keys.iter().enumerate() {
+    if let Some((key_type, Some(key_spec))) = key {
+      render_flatten_key_wrapper(output, i, key_type, key_spec)?;
+    }
+  }
+  render_flatten_keys(output, fields, &keys)?;
   writeln!(output, "        struct __CddlVisitor;")?;
   writeln!(
     output,
@@ -2338,7 +2348,7 @@ fn render_flatten_deserialize(
   writeln!(output, "            type Value = {};", name)?;
   writeln!(output, "            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {{ f.write_str(\"a map\") }}")?;
   writeln!(output, "            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {{")?;
-  render_flatten_visit_body(output, name, fields)?;
+  render_flatten_visit_body(output, name, fields, &keys)?;
   writeln!(output, "            }}\n        }}")?;
   writeln!(
     output,
@@ -2353,6 +2363,41 @@ fn generic_args(ty: &str) -> Vec<String> {
     Some(open) => split_generic_args(&ty[open + 1..ty.len() - 1]),
     None => Vec::new(),
   }
+}
+
+/// The key type of a flattened entries field, plus the serde adapter its keys
+/// need while decoding (for example `serde_with::Bytes` for `bstr` keys).
+fn flatten_key(field: &RustField, spec: Option<&String>) -> Option<(String, Option<String>)> {
+  if !field.flatten {
+    return None;
+  }
+  let key_type = generic_args(&field.rust_type)
+    .into_iter()
+    .next()
+    .unwrap_or_else(|| "String".into());
+  let key_spec = spec
+    .and_then(|spec| generic_args(spec).into_iter().next())
+    .filter(|spec| spec != "_");
+  Some((key_type, key_spec))
+}
+
+/// A transparent newtype that applies a flattened field's key encoding while
+/// decoding one map key.
+fn render_flatten_key_wrapper(
+  output: &mut String,
+  index: usize,
+  key_type: &str,
+  key_spec: &str,
+) -> Result<(), CodegenError> {
+  writeln!(output, "        #[serde_with::serde_as]")?;
+  writeln!(
+    output,
+    "        #[derive(serde::Deserialize)]\n        #[serde(transparent)]"
+  )?;
+  writeln!(output, "        struct __CddlKeyEntry{}(", index)?;
+  writeln!(output, "            #[serde_as(as = \"{}\")]", key_spec)?;
+  writeln!(output, "            {},\n        );", key_type)?;
+  Ok(())
 }
 
 /// A transparent newtype carrying a field's codec attributes, used to read one
@@ -2405,7 +2450,11 @@ fn render_flatten_value_wrapper(
 }
 
 /// Map keys are tried as named fields first, then as each typed key in order.
-fn render_flatten_keys(output: &mut String, fields: &[RustField]) -> Result<(), CodegenError> {
+fn render_flatten_keys(
+  output: &mut String,
+  fields: &[RustField],
+  keys: &[Option<(String, Option<String>)>],
+) -> Result<(), CodegenError> {
   let named = fields.iter().any(|f| !f.flatten);
   if named {
     writeln!(
@@ -2428,12 +2477,15 @@ fn render_flatten_keys(output: &mut String, fields: &[RustField]) -> Result<(), 
   if named {
     writeln!(output, "            Field(__CddlField),")?;
   }
-  for (i, field) in fields.iter().enumerate().filter(|(_, f)| f.flatten) {
-    let key = generic_args(&field.rust_type)
-      .first()
-      .cloned()
-      .unwrap_or_else(|| "String".into());
-    writeln!(output, "            Entries{}({}),", i, key)?;
+  for (i, key) in keys.iter().enumerate() {
+    let Some((key_type, key_spec)) = key else {
+      continue;
+    };
+    if key_spec.is_some() {
+      writeln!(output, "            Entries{}(__CddlKeyEntry{}),", i, i)?;
+    } else {
+      writeln!(output, "            Entries{}({}),", i, key_type)?;
+    }
   }
   writeln!(output, "        }}")?;
   Ok(())
@@ -2443,52 +2495,93 @@ fn render_flatten_visit_body(
   output: &mut String,
   name: &str,
   fields: &[RustField],
+  keys: &[Option<(String, Option<String>)>],
 ) -> Result<(), CodegenError> {
-  for (i, field) in fields.iter().enumerate() {
-    if field.flatten {
-      writeln!(
-        output,
-        "                let mut __f{} = std::collections::HashMap::new();",
-        i
-      )?;
-    } else {
-      writeln!(output, "                let mut __f{} = None;", i)?;
-    }
-  }
+  render_flatten_accumulators(output, fields)?;
   writeln!(
     output,
     "                while let Some(key) = map.next_key::<__CddlKey>()? {{\n                    match key {{"
   )?;
   for (i, field) in fields.iter().enumerate() {
-    if field.flatten {
-      writeln!(output, "                        __CddlKey::Entries{i}(k) => {{ __f{i}.insert(k, map.next_value::<__CddlValue{i}>()?.0); }}")?;
-    } else {
-      writeln!(output, "                        __CddlKey::Field(__CddlField::F{i}) => {{\n                            if __f{i}.is_some() {{ return Err(serde::de::Error::duplicate_field({:?})); }}\n                            __f{i} = Some(map.next_value::<__CddlValue{i}>()?.0);\n                        }}", field.original_name)?;
-    }
+    render_flatten_match_arm(output, i, field, keys.get(i).and_then(|k| k.as_ref()))?;
   }
   writeln!(output, "                    }}\n                }}")?;
   writeln!(output, "                Ok({} {{", name)?;
   for (i, field) in fields.iter().enumerate() {
-    if field.flatten {
-      writeln!(output, "                    {}: __f{},", field.name, i)?;
-    } else if field.is_optional {
-      writeln!(
-        output,
-        "                    {}: __f{}.flatten(),",
-        field.name, i
-      )?;
-    } else {
-      writeln!(
-        output,
-        "                    {}: __f{}.ok_or_else(|| serde::de::Error::missing_field({:?}))?,",
-        field.name, i, field.original_name
-      )?;
-    }
+    render_flatten_field_init(output, i, field)?;
   }
   writeln!(output, "                }})")?;
   Ok(())
 }
 
+fn render_flatten_accumulators(
+  output: &mut String,
+  fields: &[RustField],
+) -> Result<(), CodegenError> {
+  for (i, field) in fields.iter().enumerate() {
+    if field.flatten {
+      // The accumulator uses the (possibly substituted) field type, so custom
+      // map types such as BTreeMap keep working.
+      writeln!(
+        output,
+        "                let mut __f{} = <{} as Default>::default();",
+        i, field.rust_type
+      )?;
+    } else {
+      writeln!(output, "                let mut __f{} = None;", i)?;
+    }
+  }
+  Ok(())
+}
+
+fn render_flatten_match_arm(
+  output: &mut String,
+  i: usize,
+  field: &RustField,
+  key: Option<&(String, Option<String>)>,
+) -> Result<(), CodegenError> {
+  if field.flatten {
+    let key_expr = if key.is_some_and(|(_, spec)| spec.is_some()) {
+      "k.0"
+    } else {
+      "k"
+    };
+    writeln!(output, "                        __CddlKey::Entries{i}(k) => {{ __f{i}.insert({key_expr}, map.next_value::<__CddlValue{i}>()?.0); }}")?;
+  } else {
+    writeln!(output, "                        __CddlKey::Field(__CddlField::F{i}) => {{\n                            if __f{i}.is_some() {{ return Err(serde::de::Error::duplicate_field({:?})); }}\n                            __f{i} = Some(map.next_value::<__CddlValue{i}>()?.0);\n                        }}", field.original_name)?;
+  }
+  Ok(())
+}
+
+fn render_flatten_field_init(
+  output: &mut String,
+  i: usize,
+  field: &RustField,
+) -> Result<(), CodegenError> {
+  match (field.flatten, field.is_optional) {
+    (true, true) => {
+      // A wildcard matches any number of entries, including none, so an
+      // optional wildcard group is absent exactly when nothing matched.
+      writeln!(
+        output,
+        "                    {}: (!__f{}.is_empty()).then_some(__f{}),",
+        field.name, i, i
+      )?;
+    }
+    (true, false) => writeln!(output, "                    {}: __f{},", field.name, i)?,
+    (false, true) => writeln!(
+      output,
+      "                    {}: __f{}.flatten(),",
+      field.name, i
+    )?,
+    (false, false) => writeln!(
+      output,
+      "                    {}: __f{}.ok_or_else(|| serde::de::Error::missing_field({:?}))?,",
+      field.name, i, field.original_name
+    )?,
+  }
+  Ok(())
+}
 fn wrap_field_type(field: &RustField, ty: String) -> String {
   let ty = if field.is_boxed {
     format!("Box<{}>", ty)

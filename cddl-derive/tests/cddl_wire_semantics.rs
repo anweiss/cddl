@@ -276,6 +276,56 @@ fn flattened_structs_report_missing_and_duplicate_fields() {
   let duplicate = serde_json::from_str::<OpenRecord>(r#"{"name":"a","name":"b"}"#).unwrap_err();
   assert!(duplicate.to_string().contains("duplicate field `name`"));
 }
+#[test]
+fn optional_wildcard_groups_distinguish_absent_from_present() {
+  let empty: OptionalEntries = serde_json::from_value(json!({"name": "n"})).unwrap();
+  assert_eq!(empty.entries, None);
+  let full: OptionalEntries = serde_json::from_value(json!({"name": "n", "a": 1})).unwrap();
+  assert_eq!(full.entries, Some(HashMap::from([("a".to_string(), 1)])));
+  assert_eq!(
+    serde_json::to_value(&full).unwrap(),
+    json!({"name": "n", "a": 1})
+  );
+  let bytes = cbor(&full);
+  let decoded: OptionalEntries = ciborium::from_reader(bytes.as_slice()).unwrap();
+  assert_eq!(decoded.entries, full.entries);
+  let decoded: OptionalEntries = ciborium::from_reader(cbor(&empty).as_slice()).unwrap();
+  assert_eq!(decoded.entries, None);
+}
+
+#[test]
+fn byte_string_keys_round_trip_through_cbor() {
+  let table = ByteTable {
+    entries: HashMap::from([(vec![1, 2], 3u64)]),
+  };
+  let bytes = cbor(&table);
+  let value: ciborium::Value = ciborium::from_reader(bytes.as_slice()).unwrap();
+  assert_eq!(
+    value.as_map().unwrap()[0].0,
+    ciborium::Value::Bytes(vec![1, 2])
+  );
+  let decoded: ByteTable = ciborium::from_reader(bytes.as_slice()).unwrap();
+  assert_eq!(decoded.entries, table.entries);
+}
+
+mod substituted {
+  use super::*;
+  cddl_typegen!(
+    "tests/fixtures/wire_semantics.cddl",
+    substitute("table.entries" = "std::collections::BTreeMap<String, i64>")
+  );
+
+  #[test]
+  fn substituted_entry_maps_round_trip() {
+    let table: Table = serde_json::from_value(json!({"b": 2, "a": 1})).unwrap();
+    let ordered: Vec<_> = table.entries.keys().cloned().collect();
+    assert_eq!(ordered, vec!["a".to_string(), "b".to_string()]);
+    assert_eq!(
+      serde_json::to_value(&table).unwrap(),
+      json!({"a": 1, "b": 2})
+    );
+  }
+}
 mod configured {
   use super::*;
   cddl_typegen!(
