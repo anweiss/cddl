@@ -24,5 +24,6 @@ jobs:
 
       - uses: cargo-bins/release-pr@v2
         with:
+          crate-name: cddl
           github-token: ${{ secrets.GITHUB_TOKEN }}
           version: ${{ inputs.version }}
