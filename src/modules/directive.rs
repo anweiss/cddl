@@ -1,5 +1,5 @@
 //! Parsing of `;#` module directives per Appendix A of
-//! draft-ietf-cbor-cddl-modules-06.
+//! draft-ietf-cbor-cddl-modules-07.
 //!
 //! ```abnf
 //! directive = ";#" RS (%s"import" / %s"include") RS [from-clause]
@@ -23,7 +23,7 @@ use alloc::{
   vec::Vec,
 };
 
-use super::ModuleError;
+use super::{scan::directive_ranges, ModuleError};
 
 /// Which of the two directive groups a directive belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,21 +63,22 @@ pub struct Directive {
 
 /// Extract and parse every `;#` directive in `input`, in source order.
 ///
-/// A line whose first two characters are `;#` is a directive; if it does not
+/// A comment at column zero beginning with `;#` is a directive; if it does not
 /// match the grammar above, a [`ModuleError::Directive`] is returned rather
 /// than the line being silently treated as an ordinary comment.
 pub fn parse_directives(input: &str) -> Result<Vec<Directive>, ModuleError> {
   let mut directives = Vec::new();
 
-  for (index, raw) in input.lines().enumerate() {
-    let line = index + 1;
-    let text = raw.trim_end_matches('\r');
-
-    if !text.starts_with(";#") {
-      continue;
-    }
-
+  let mut line = 1;
+  let mut cursor = 0;
+  for range in directive_ranges(input) {
+    line += input[cursor..range.start]
+      .bytes()
+      .filter(|b| *b == b'\n')
+      .count();
+    let text = input[range.clone()].trim_end_matches(['\r', '\n']);
     directives.push(parse_line(&text[2..], line)?);
+    cursor = range.start;
   }
 
   Ok(directives)

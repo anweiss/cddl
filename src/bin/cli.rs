@@ -9,7 +9,7 @@ extern crate log;
 
 use cddl::cddl_from_str;
 #[cfg(all(feature = "modules", not(target_arch = "wasm32")))]
-use cddl::modules::{resolve_modules, FsModuleSource, ResolveOptions};
+use cddl::modules::{resolve_modules, FsModuleSource, ModuleError, ResolveOptions};
 #[cfg(not(target_arch = "wasm32"))]
 use cddl::{
   parser::root_type_name_from_cddl_str, validate_cbor_from_slice, validate_csv_from_str,
@@ -147,6 +147,18 @@ macro_rules! error {
         return Err(format!($($args)+).into());
       }
     };
+}
+
+#[cfg(all(feature = "modules", not(target_arch = "wasm32")))]
+fn module_error_message(error: ModuleError) -> &'static str {
+  match error {
+    ModuleError::Directive { .. } => "not a valid start rule or module directive",
+    ModuleError::ModuleNotFound { .. } => "module not found in the configured sources",
+    ModuleError::ModuleUnreadable { .. } => "module source could not be read",
+    ModuleError::ModuleParse { .. } => "module source is not valid CDDL",
+    ModuleError::RuleNotFound { .. } => "selected rule not found in the module",
+    ModuleError::CircularReference { .. } => "circular module reference",
+  }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -388,18 +400,12 @@ fn main() -> Result<(), Box<dyn Error>> {
       let input = match file.as_deref() {
         None | Some("-") => {
           let mut buffer = String::new();
-          io::stdin().read_to_string(&mut buffer)?;
+          io::stdin()
+            .read_to_string(&mut buffer)
+            .map_err(|_| "module input could not be read")?;
           buffer
         }
-        Some(path) => {
-          let p = Path::new(path);
-          if !p.exists() {
-            error!(cli.ci, "CDDL document {:?} does not exist", p);
-            return Ok(());
-          }
-
-          fs::read_to_string(path)?
-        }
+        Some(path) => fs::read_to_string(path).map_err(|_| "module input could not be read")?,
       };
 
       let mut command_line_imports = Vec::new();
@@ -409,11 +415,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             command_line_imports.push((namespace.to_string(), module.to_string()))
           }
           _ => {
-            error!(
-              cli.ci,
-              "invalid --import {:?}; expected <namespace>=<module>", spec
-            );
-            return Ok(());
+            return Err("invalid --import; expected <namespace>=<module>".into());
           }
         }
       }
@@ -430,7 +432,8 @@ fn main() -> Result<(), Box<dyn Error>> {
           start_rule: start.clone(),
           command_line_imports,
         },
-      )?;
+      )
+      .map_err(module_error_message)?;
 
       print!("{}", resolved);
     }

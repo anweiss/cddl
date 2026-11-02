@@ -1,7 +1,7 @@
 #![cfg(all(feature = "modules", feature = "std", not(target_arch = "wasm32")))]
 
 //! Conformance tests for the CDDL module structure, drawn from the examples in
-//! draft-ietf-cbor-cddl-modules-06.
+//! draft-ietf-cbor-cddl-modules-07.
 
 use cddl::modules::{resolve_modules, MemoryModuleSource, ModuleError, ResolveOptions};
 
@@ -460,6 +460,33 @@ fn filesystem_imports_validate_names_and_respect_empty_environment() {
     .output()
     .unwrap();
   assert!(!unsafe_name.status.success(), "{:?}", unsafe_name);
+  for args in [
+    vec!["resolve-modules", "-i", "private-invalid-spec"],
+    vec!["resolve-modules", "--cddl", "private-missing-file"],
+  ] {
+    let invalid = Command::new(env!("CARGO_BIN_EXE_cddl"))
+      .current_dir(&directory)
+      .args(args)
+      .output()
+      .unwrap();
+    assert!(!invalid.status.success());
+    assert!(invalid.stdout.is_empty());
+    assert!(!String::from_utf8_lossy(&invalid.stderr).contains("private-"));
+  }
+  fs::write(
+    directory.join("broken.cddl"),
+    "private_rule = { private_content",
+  )
+  .unwrap();
+  let broken = Command::new(env!("CARGO_BIN_EXE_cddl"))
+    .current_dir(&directory)
+    .args(["resolve-modules", "-ins=broken", "-sns.private_rule"])
+    .env(INCLUDE_PATH_VAR, ".")
+    .output()
+    .unwrap();
+  assert!(!broken.status.success());
+  assert!(!String::from_utf8_lossy(&broken.stderr).contains("private_"));
+  assert!(!String::from_utf8_lossy(&broken.stderr).contains("broken"));
   for start in ["", "ns.root other", "ns.root\ninjected = int"] {
     let invalid_start = Command::new(env!("CARGO_BIN_EXE_cddl"))
       .current_dir(&directory)
@@ -514,6 +541,7 @@ fn command_line_import_and_start_rule() {
     defined_order(&output),
     ["$.start.$", "cose.COSE_Key", "cose.label", "cose.values"]
   );
+  assert_parses(&output);
 }
 
 #[test]
@@ -644,6 +672,52 @@ fn ordinary_comments_survive_resolution() {
   let output = resolve("; a plain comment\na = int\n");
 
   assert!(output.contains("; a plain comment"));
+}
+
+#[test]
+fn directive_text_inside_literals_is_preserved() {
+  for literal in [
+    "'before\n;# import missing\nafter'",
+    "'before\n;# not a directive\nafter'",
+    "\"before\n;# import missing\nafter\"",
+    "h\"before\n;# import missing\nafter\"",
+    "\"escaped \\\" quote\n;# import missing\nafter\"",
+    "'before\r\n;# import missing\r\nafter'",
+  ] {
+    let input = format!("value = {}\n;# include label from rfc9052\n", literal);
+    let output = resolve(&input);
+    assert!(output.contains(&format!("value = {}\n", literal)));
+    assert!(output.contains("label = int / tstr"));
+    assert!(cddl::parser::cddl_from_str(&output, false).is_ok());
+
+    let mut source = cose();
+    source.insert("literal", &input);
+    let output = resolve_modules(
+      "root = ns.value\n;# import literal as ns\n",
+      &source,
+      &ResolveOptions::default(),
+    )
+    .unwrap();
+    assert!(output.contains(&format!("ns.value = {}\n", literal)));
+    assert!(cddl::parser::cddl_from_str(&output, false).is_ok());
+  }
+}
+
+#[test]
+fn directive_lines_keep_their_source_line_after_multiline_literals() {
+  let error = resolve_modules(
+    "value = 'before\n;# import ignored\nafter'\n;# import missing\n",
+    &cose(),
+    &ResolveOptions::default(),
+  )
+  .unwrap_err();
+  assert_eq!(
+    error,
+    ModuleError::ModuleNotFound {
+      name: "missing".to_string(),
+      line: 4,
+    }
+  );
 }
 
 #[test]

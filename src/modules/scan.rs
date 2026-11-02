@@ -8,10 +8,9 @@
 //! couple resolution to the AST's lifetimes. This scanner works directly on the
 //! text instead.
 //!
-//! It is deliberately conservative: string literals, comments and control
-//! operator names are recognized only well enough to keep them from being
-//! mistaken for rule references. A false positive is harmless — an identifier
-//! that names no rule in the module is simply ignored during selection.
+//! String literals, comments and non-reference identifier roles must be kept
+//! distinct: a false reference can pull in an unrelated rule or alter literal
+//! data during namespace rewriting.
 
 #[cfg(not(feature = "std"))]
 use alloc::{
@@ -73,6 +72,51 @@ fn is_ident_start(b: u8) -> bool {
 
 fn is_ident_continue(b: u8) -> bool {
   is_ident_start(b) || b.is_ascii_digit()
+}
+
+/// Skip a literal, respecting escapes only in text strings.
+fn literal_end(bytes: &[u8], start: usize) -> Option<usize> {
+  let (mut i, quote, escaped) = match bytes[start] {
+    b'h' if matches!(bytes.get(start + 1), Some(b'\'' | b'"')) => {
+      (start + 2, bytes[start + 1], false)
+    }
+    b'"' => (start + 1, b'"', true),
+    b'\'' => (start + 1, b'\'', false),
+    _ => return None,
+  };
+  while i < bytes.len() {
+    if bytes[i] == quote {
+      return Some(i + 1);
+    }
+    if escaped && bytes[i] == b'\\' {
+      i += 1;
+    }
+    i += 1;
+  }
+  Some(bytes.len())
+}
+
+/// Actual directive comments at column zero, excluding literal contents.
+pub(super) fn directive_ranges(src: &str) -> Vec<core::ops::Range<usize>> {
+  let bytes = src.as_bytes();
+  let mut ranges = Vec::new();
+  let mut i = 0;
+  while i < bytes.len() {
+    if let Some(end) = literal_end(bytes, i) {
+      i = end;
+    } else if bytes[i] == b';' {
+      let start = i;
+      while i < bytes.len() && bytes[i] != b'\n' {
+        i += 1;
+      }
+      if (start == 0 || bytes[start - 1] == b'\n') && bytes.get(start + 1) == Some(&b'#') {
+        ranges.push(start..i + usize::from(i < bytes.len()));
+      }
+    } else {
+      i += 1;
+    }
+  }
+  ranges
 }
 
 fn skip_spacing(bytes: &[u8], mut i: usize) -> usize {
@@ -216,6 +260,12 @@ pub(crate) fn scan(src: &str) -> Scan {
   while i < bytes.len() {
     let b = bytes[i];
 
+    if let Some(end) = literal_end(bytes, i) {
+      prev_was_ident_end = false;
+      i = end;
+      continue;
+    }
+
     match b {
       b' ' | b'\t' | b'\r' | b'\n' => {
         prev_was_ident_end = false;
@@ -230,50 +280,9 @@ pub(crate) fn scan(src: &str) -> Scan {
         }
       }
 
-      // Byte strings have raw content, with no backslash escapes.
-      b'h' if matches!(bytes.get(i + 1), Some(b'\'' | b'"')) => {
-        prev_was_ident_end = false;
-        let quote = bytes[i + 1];
-        i += 2;
-        while i < bytes.len() && bytes[i] != quote {
-          i += 1;
-        }
-        i += usize::from(i < bytes.len());
-      }
       b'b' if bytes[i..].starts_with(b"b64'") => {
         prev_was_ident_end = false;
         i += 3;
-      }
-
-      // Text string.
-      b'"' => {
-        prev_was_ident_end = false;
-        i += 1;
-        while i < bytes.len() {
-          match bytes[i] {
-            b'\\' => i += 2,
-            b'"' => {
-              i += 1;
-              break;
-            }
-            _ => i += 1,
-          }
-        }
-      }
-
-      // Byte string.
-      b'\'' => {
-        prev_was_ident_end = false;
-        i += 1;
-        while i < bytes.len() {
-          match bytes[i] {
-            b'\'' => {
-              i += 1;
-              break;
-            }
-            _ => i += 1,
-          }
-        }
       }
 
       b'(' | b'[' | b'{' => {

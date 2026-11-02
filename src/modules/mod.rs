@@ -1,5 +1,5 @@
 //! CDDL module structure as specified in
-//! [draft-ietf-cbor-cddl-modules-06](https://datatracker.ietf.org/doc/draft-ietf-cbor-cddl-modules/06/).
+//! [draft-ietf-cbor-cddl-modules-07](https://datatracker.ietf.org/doc/draft-ietf-cbor-cddl-modules/07/).
 //!
 //! The module structure is a *super-syntax* carried in comments: lines that
 //! begin with `;#` are parsed as directives by a module-aware processor while

@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
   directive::{is_filename, is_id, parse_directives, Directive, DirectiveKind, NameSelector},
-  scan::{scan, IdentRole},
+  scan::{directive_ranges, scan, IdentRole},
   ModuleError, ModuleSource,
 };
 
@@ -338,22 +338,13 @@ fn load_module(
 /// Check that a resolved module is basic CDDL, so that a malformed module is
 /// reported against the module that contains it rather than surfacing later as
 /// a parse failure of the resolved document.
-#[cfg(not(target_arch = "wasm32"))]
 fn validate_module(name: &str, resolved: &str) -> Result<(), ModuleError> {
-  crate::parser::cddl_from_str(resolved, false)
+  crate::pest_bridge::cddl_from_pest_str(resolved)
     .map(|_| ())
     .map_err(|message| ModuleError::ModuleParse {
       name: name.to_string(),
-      message,
+      message: message.to_string(),
     })
-}
-
-/// On `wasm32`, [`crate::parser::cddl_from_str`] is the `wasm_bindgen` export
-/// rather than the native parser entry point, so a loaded module is taken as
-/// given.
-#[cfg(target_arch = "wasm32")]
-fn validate_module(_name: &str, _resolved: &str) -> Result<(), ModuleError> {
-  Ok(())
 }
 
 /// Resolve a name written in a directive against the directive's namespace.
@@ -402,15 +393,12 @@ fn closure(seeds: &[String], index: &BTreeMap<&str, &ModuleRule>) -> Vec<String>
 fn strip_directives(input: &str) -> String {
   let mut output = String::with_capacity(input.len());
 
-  for line in input.lines() {
-    if line.trim_end_matches('\r').starts_with(";#") {
-      continue;
-    }
-
-    output.push_str(line);
-    output.push('\n');
+  let mut cursor = 0;
+  for range in directive_ranges(input) {
+    output.push_str(&input[cursor..range.start]);
+    cursor = range.end;
   }
-
+  output.push_str(&input[cursor..]);
   output
 }
 

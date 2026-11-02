@@ -14,7 +14,7 @@ This crate supports the following CDDL-related RFCs:
 | [RFC 9741](https://datatracker.ietf.org/doc/html/rfc9741) | Additional Control Operators for Text in CDDL | ✔️ `.b64u` , `.b64c` , `.hex` , `.hexlc` , `.hexuc` , `.b32` , `.h32` , `.b45` , `.base10` , `.printf` , `.json` , `.join` and sloppy variants |
 | [draft-bormann-cbor-cddl-csv-08](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/08/) | Using CDDL for CSV | ✔️ CSV validation via generic data model mapping |
 | [draft-bormann-cbor-cddl-freezer-17](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-17) | CDDL Feature Freezer | ✔️ `.pcre` (PCRE2), `.iregexp` (RFC 9485), `.bitfield` |
-| [draft-ietf-cbor-cddl-modules-06](https://datatracker.ietf.org/doc/draft-ietf-cbor-cddl-modules/06/) | CDDL Module Structure | ✔️ `;#` directives, `import` / `include`, `from` selection and `as` namespacing — behind the default-off `modules` feature |
+| [draft-ietf-cbor-cddl-modules-07](https://datatracker.ietf.org/doc/draft-ietf-cbor-cddl-modules/07/) | CDDL Module Structure | ✔️ `;#` directives, `import` / `include`, `from` selection and `as` namespacing — behind the default-off `modules` feature |
 
 This crate uses [Pest](https://pest.rs/) (a PEG parser generator for Rust) to parse CDDL. The grammar is defined in [ `cddl.pest` ](cddl.pest) and closely follows the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
 
@@ -167,7 +167,9 @@ An extension for editing CDDL documents with Visual Studio Code has been publish
 
 Behind the default-off `modules` feature, this crate implements the CDDL module
 structure of
-[draft-ietf-cbor-cddl-modules-06](https://datatracker.ietf.org/doc/draft-ietf-cbor-cddl-modules/06/).
+[draft-ietf-cbor-cddl-modules-07](https://datatracker.ietf.org/doc/draft-ietf-cbor-cddl-modules/07/).
+Revision 07 (2 September 2026, expires 6 March 2027) retains the directive
+grammar and resolution semantics of revision 06.
 Directives are carried in comments beginning with `;#`, so a module-structured
 document remains valid basic CDDL for tools that do not understand them.
 
@@ -246,8 +248,12 @@ paths. It defaults to `.:` (`.;` on Windows). Targets without a filesystem (such
 
 Each loaded module is parsed after resolution, so a module that is not valid
 CDDL is reported as an error rather than silently producing a broken document.
-This check is skipped on `wasm32`, where the crate's parser entry point is the
-`wasm_bindgen` export.
+The same check applies on native and WASM targets.
+
+No RFC module collection is bundled; empty search-path elements are skipped.
+The playground and language server do not expose module resolution. Callers
+resolve then parse in two steps, and resolution removes directives rather than
+preserving them in the AST. Directive-like text inside literals is preserved.
 
 ### CLI
 

@@ -193,7 +193,7 @@
 //!
 //! Behind the default-off `modules` feature, this crate implements the CDDL
 //! module structure of
-//! [draft-ietf-cbor-cddl-modules-06](https://datatracker.ietf.org/doc/draft-ietf-cbor-cddl-modules/06/).
+//! [draft-ietf-cbor-cddl-modules-07](https://datatracker.ietf.org/doc/draft-ietf-cbor-cddl-modules/07/).
 //! Directives are carried in comments beginning with `;#`, so a
 //! module-structured document remains valid basic CDDL for tools that do not
 //! understand them.
@@ -274,8 +274,13 @@
 //!
 //! Each loaded module is parsed after resolution, so a module that is not
 //! valid CDDL is reported as an error rather than silently producing a
-//! broken document. This check is skipped on `wasm32`, where the crate's
-//! parser entry point is the `wasm_bindgen` export.
+//! broken document. The same check applies on native and WASM targets.
+//!
+//! No RFC module collection is bundled; empty search-path elements are skipped.
+//! The playground and language server do not expose module resolution. Callers
+//! resolve then parse in two steps, and resolution removes directives rather
+//! than preserving them in the AST. Directive-like text inside literals is
+//! preserved.
 //!
 //! ### CLI
 //!
