@@ -1,0 +1,35 @@
+action = "created" / "edited" / tstr
+reverse-action = tstr / "created"
+mixed = "created" / int / bool
+escaped = "say \"hi\"" / tstr
+
+record = {
+  "name" => tstr,
+  ? "display-name" => tstr,
+  ? "quoted\"key" => tstr,
+  "count" => uint,
+}
+open-record = { name: tstr, * tstr => any }
+table = { * tstr => int }
+hashedURI-map = { url: tstr }
+x509Certificate = { serial: uint }
+choice = uint
+choice-shadow = "created" / choice
+uri-entries = { name: tstr, * tstr => uri }
+uuid-entries = { * tstr => buuid }
+typed-entries = { * tstr => int, * int => tstr }
+optional-entries = { name: tstr, ? (* tstr => int) }
+byte-table = { * bstr => uint }
+detail = { created: null }
+shadowed = "created" / detail
+status = "assertion.hashedURI.mismatch" / "assertion.collectionHash.invalidURI"
+
+buuid = #6.37(bstr)
+uuid-alias = buuid
+tagged-record = {
+  id: uuid-alias,
+  when: #6.0(tstr),
+  ? optional-id: buuid,
+  ids: [* buuid],
+  nested: #6.100(#6.37(bstr)),
+}
