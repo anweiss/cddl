@@ -733,6 +733,7 @@ pub(crate) fn key_probe_location(map_location: &str, key: &impl std::fmt::Debug)
 
 /// The key type, its alternatives and the cut flag of a member whose key
 /// type is a choice; `None` keeps every other member on its existing path.
+#[cfg(feature = "json")]
 pub(crate) fn choice_member_key<'e, 'a>(
   state: &ValidationState<'a>,
   entry: &'e ValueMemberKeyEntry<'a>,
@@ -932,8 +933,7 @@ fn expand_controlled_key_alternatives<'a>(
   };
   if !matches!(
     &operator.operator,
-    RangeCtlOp::CtlOp { ctrl, .. }
-      if !matches!(ctrl, ControlOperator::PLUS | ControlOperator::CAT | ControlOperator::DET)
+    RangeCtlOp::CtlOp { ctrl, .. } if !is_computed_control(ctrl)
   ) {
     return (vec![candidate.clone()], true);
   }
@@ -950,6 +950,23 @@ fn expand_controlled_key_alternatives<'a>(
     })
     .collect();
   (alternatives, acyclic)
+}
+
+/// Whether a control computes a new value from its target (`.plus`, `.cat`,
+/// `.det`) rather than constraining the target's values.
+pub(crate) fn is_computed_control(ctrl: &ControlOperator) -> bool {
+  #[cfg(feature = "additional-controls")]
+  {
+    matches!(
+      ctrl,
+      ControlOperator::PLUS | ControlOperator::CAT | ControlOperator::DET
+    )
+  }
+  #[cfg(not(feature = "additional-controls"))]
+  {
+    let _ = ctrl;
+    false
+  }
 }
 
 /// Expand a generic instantiation by substituting its arguments, resolved in
@@ -1306,7 +1323,7 @@ fn generic_argument_for_param<'a>(state: &ValidationState<'a>, param: &str) -> O
         ident,
         generic_args: None,
         ..
-      } if ident.ident == param
+      } if ident.ident == param && ident.socket.is_none()
     )
   {
     return None;

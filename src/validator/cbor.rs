@@ -5369,13 +5369,13 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
         .operator
         .as_ref()
         .map(|operator| &operator.operator),
-      Some(
-        RangeCtlOp::RangeOp { .. }
-          | RangeCtlOp::CtlOp {
-            ctrl: ControlOperator::PLUS | ControlOperator::CAT | ControlOperator::DET,
-            ..
-          }
-      ),
+      Some(RangeCtlOp::RangeOp { .. })
+    ) || matches!(
+      alternative
+        .operator
+        .as_ref()
+        .map(|operator| &operator.operator),
+      Some(RangeCtlOp::CtlOp { ctrl, .. }) if is_computed_control(ctrl)
     ) {
       // The probe's range validation enforces the interval, but only for
       // keys of the endpoint's kind: a numeric range would otherwise admit
@@ -5484,7 +5484,7 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
         matches!(key, Value::Bytes(b) if b == value.as_ref())
       }
       Type2::Array { group, .. } => self.array_admits(group, key, bindings),
-      Type2::Map { .. } => matches!(key, Value::Map(_)),
+      Type2::Map { group, .. } => self.map_admits(group, key, bindings),
       _ => true,
     }
   }
@@ -5535,32 +5535,85 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     }
   }
 
-  /// Domain check for one array item. The item is a different value from
-  /// the enclosing key, so names memoized or visited while checking the key
-  /// say nothing about it: each item starts a fresh walk, keeping only the
-  /// generic bindings in scope.
+  /// Domain check for one array item.
   fn array_entry_admits(
     &self,
     entry: &GroupEntry<'a>,
     item: &Value,
     bindings: &HashMap<&'a str, Type1<'a>>,
   ) -> bool {
-    let mut walk = KeyDomainWalk {
-      state: self.state,
-      memo: HashMap::new(),
-      cut: false,
-    };
     match entry {
-      GroupEntry::ValueMemberKey { ge, .. } => ge
-        .entry_type
-        .type_choices
-        .iter()
-        .any(|choice| walk.type1_admits(&choice.type1, item, &mut HashSet::new(), bindings)),
+      GroupEntry::ValueMemberKey { ge, .. } => {
+        self.nested_type_admits(&ge.entry_type, item, bindings)
+      }
       GroupEntry::TypeGroupname { ge, .. } => {
-        walk.typename_admits(&ge.name, None, item, &mut HashSet::new(), bindings)
+        self
+          .fresh_walk()
+          .typename_admits(&ge.name, None, item, &mut HashSet::new(), bindings)
       }
       GroupEntry::InlineGroup { .. } => true,
     }
+  }
+
+  /// A walk for a value nested in the key. The nested value differs from
+  /// the enclosing key, so names memoized or visited while checking the key
+  /// say nothing about it: it starts afresh, keeping only the generic
+  /// bindings in scope.
+  fn fresh_walk(&self) -> KeyDomainWalk<'s, 'a> {
+    KeyDomainWalk {
+      state: self.state,
+      memo: HashMap::new(),
+      cut: false,
+    }
+  }
+
+  fn nested_type_admits(
+    &self,
+    t: &Type<'a>,
+    value: &Value,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    let mut walk = self.fresh_walk();
+    t.type_choices
+      .iter()
+      .any(|choice| walk.type1_admits(&choice.type1, value, &mut HashSet::new(), bindings))
+  }
+
+  /// Domain check for a map type: only map keys qualify. A map whose members
+  /// all have a literal key and occur once also needs a key with exactly
+  /// those keys, each value in its member's domain. Other maps are left to
+  /// the probe.
+  fn map_admits(
+    &self,
+    group: &Group<'a>,
+    key: &Value,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    let Value::Map(pairs) = key else {
+      return false;
+    };
+    let [choice] = group.group_choices.as_slice() else {
+      return true;
+    };
+    let mut members = Vec::new();
+    for (entry, _) in &choice.group_entries {
+      let GroupEntry::ValueMemberKey { ge, .. } = entry else {
+        return true;
+      };
+      let literal = match &ge.member_key {
+        _ if ge.occur.is_some() => return true,
+        Some(MemberKey::Bareword { ident, .. }) => Value::Text(ident.ident.to_string()),
+        Some(MemberKey::Value { value, .. }) => token_value_into_cbor_value(value.clone()),
+        _ => return true,
+      };
+      members.push((literal, &ge.entry_type));
+    }
+    members.len() == pairs.len()
+      && members.iter().all(|(literal, entry_type)| {
+        pairs
+          .iter()
+          .any(|(k, v)| k == literal && self.nested_type_admits(entry_type, v, bindings))
+      })
   }
 
   /// Whether a bare entry name refers to a group, whose entries spread into

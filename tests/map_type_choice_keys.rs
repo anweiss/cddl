@@ -1362,3 +1362,37 @@ fn fixed_keys_take_pairs_from_movable_claims() {
     let _ = (json, hex);
   }
 }
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_map_choice_keys_check_member_domains() {
+  let schema = "m = { * ({ a: nint } / tstr) => any }";
+  check_cbor(schema, "a1a161612000", true);
+  check_cbor(schema, "a1a161610100", false);
+  check_cbor(schema, "a1a1616120616200", false);
+  check_cbor(schema, "a1617800", true);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn generic_choice_keys_expand_socket_arguments() {
+  let schema = "m = { g<$K> }\ng<K> = ((K / int) => any)\n$K /= tstr";
+  #[cfg(feature = "json")]
+  {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      r#"{"x":1}"#,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert!(result.is_ok(), "{:?}", result);
+  }
+  #[cfg(feature = "cbor")]
+  {
+    check_cbor(schema, "a1617801", true);
+    check_cbor(schema, "a10301", true);
+    check_cbor(schema, "a1f501", false);
+  }
+  let _ = schema;
+}
