@@ -118,3 +118,55 @@ fn public_options_preserve_substitutions_and_aliases() {
   assert!(output.contains("pub type Uint = u64;"));
   assert!(output.contains("Other(String),"));
 }
+
+#[test]
+fn mixed_literals_have_string_serialization() {
+  let output = generate_rust_code(r#"action = "created" / tstr"#).unwrap();
+  assert!(output.contains(r#"Self::Created => s.serialize_str("created")"#));
+}
+
+#[test]
+fn quoted_arrow_keys_are_fields_in_both_parser_apis() {
+  let source = r#"record = { "name" => tstr, ? "count" => uint }"#;
+  let output = generate_rust_code(source).unwrap();
+  assert!(output.contains("pub name: String,"));
+  assert!(output.contains("pub count: Option<u64>,"));
+  let ast = cddl_from_str(source, false).unwrap();
+  assert_eq!(
+    generate_rust_code_from_ast(&ast, source, &CodegenOptions::default()).unwrap(),
+    output
+  );
+}
+
+#[test]
+fn wildcard_entries_are_flattened() {
+  let output = generate_rust_code("record = { name: tstr, * tstr => any }").unwrap();
+  assert!(output.contains("#[serde(flatten)]"));
+}
+
+#[test]
+fn embedded_acronyms_are_normalized() {
+  let output = generate_rust_code(
+    r#"hashedURI-map = { url: tstr }
+status = "assertion.collectionHash.invalidURI" / "ok""#,
+  )
+  .unwrap();
+  assert!(output.contains("pub struct HashedUriMap"));
+  assert!(output.contains("AssertionCollectionHashInvalidUri"));
+}
+
+#[test]
+fn explicit_cbor_tags_have_encoding_adapters() {
+  let output = generate_rust_code("buuid = #6.37(bstr)\nrecord = { id: buuid }").unwrap();
+  assert!(output.contains("Tagged<37, serde_with::Bytes>"));
+  assert!(output.contains("pub type Buuid = Vec<u8>;"));
+  assert!(!output.contains("__CddlExplicitTag"));
+  let mut options = CodegenOptions::default();
+  options
+    .substitutions
+    .insert("buuid".into(), "String".into());
+  let output =
+    generate_rust_code_with_options("buuid = #6.37(bstr)\nrecord = { id: buuid }", &options)
+      .unwrap();
+  assert!(!output.contains("Tagged<37"));
+}
