@@ -819,6 +819,49 @@ fn a_rule_carries_its_noncontiguous_extensions() {
 }
 
 #[test]
+fn an_imported_group_alias_stays_a_group() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("m", "options = (one: 1, two: 2)\n");
+
+  let output = resolve_modules(
+    "root = &options\n;# import options from m as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+
+  assert!(output.contains("options = (ns.options,)"), "{}", output);
+  assert_parses(&output);
+  cddl::validate_json_from_str(&output, "1", None).unwrap();
+}
+
+#[test]
+fn tag_heads_and_occurrence_bounds_keep_namespaced_references() {
+  let mut source = MemoryModuleSource::new();
+  source.insert(
+    "m",
+    "eq = int\ne3 = int\ne5 = int\nvalue = [#7.eq 32, 1*3e3, #7.32e5]\n",
+  );
+
+  let output = resolve_modules(
+    "start = ns.value\n;# import m as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+
+  assert!(
+    output.contains("ns.value = [#7.eq 32, 1*3ns.e3, #7.32ns.e5]"),
+    "{}",
+    output
+  );
+  assert!(output.contains("ns.e3 = int"), "{}", output);
+  assert!(output.contains("ns.e5 = int"), "{}", output);
+  assert!(!output.contains("ns.eq"), "{}", output);
+  assert_parses(&output);
+}
+
+#[test]
 fn spaced_control_operators_keep_their_names_under_a_namespace() {
   let mut source = MemoryModuleSource::new();
   source.insert(

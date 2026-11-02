@@ -96,6 +96,9 @@ struct ModuleRule {
   params: Vec<String>,
   /// Every occurrence, in source order.
   parts: Vec<RulePart>,
+  /// Whether the parser classifies the rule as a group rule. Only computed
+  /// where an alias is generated, since it needs a full parse.
+  group: bool,
 }
 
 /// One occurrence of a rule: its base definition or one extension.
@@ -185,7 +188,7 @@ fn resolve(
       None => text,
     };
 
-    let rules = rules_of(&text);
+    let rules = module_rules(&text, directive);
     let index: BTreeMap<&str, &ModuleRule> = rules
       .iter()
       .map(|rule| (rule.name.as_str(), rule))
@@ -397,13 +400,24 @@ fn select_named(
 
     if let Some((emitted, aliases)) = alias_sink.as_mut() {
       if resolved != *written && emitted.insert(written.clone()) {
-        // A generic rule needs a generic alias that forwards its parameters.
-        let params = &index[resolved.as_str()].params;
-        aliases.push(if params.is_empty() {
-          format!("{} = {}", written, resolved)
+        // A generic rule needs a generic alias that forwards its parameters,
+        // and a group rule needs an alias the parser also reads as a group:
+        // `options = ns.options` and `options = (ns.options)` are both type
+        // rules, while `options = (ns.options,)` is a group rule.
+        let target = &index[resolved.as_str()];
+        let (head, reference) = if target.params.is_empty() {
+          (written.clone(), resolved.clone())
         } else {
-          let params = params.join(", ");
-          format!("{0}<{1}> = {2}<{1}>", written, params, resolved)
+          let params = target.params.join(", ");
+          (
+            format!("{}<{}>", written, params),
+            format!("{}<{}>", resolved, params),
+          )
+        };
+        aliases.push(if target.group {
+          format!("{} = ({},)", head, reference)
+        } else {
+          format!("{} = {}", head, reference)
         });
       }
     }
@@ -580,6 +594,7 @@ fn rules_of(src: &str) -> Vec<ModuleRule> {
         name: rule.name.clone(),
         params: rule.params.clone(),
         parts: vec![part],
+        group: false,
       }),
     }
   }
@@ -660,4 +675,26 @@ fn rename_capturing_params(
   }
 
   renamed
+}
+
+/// The rules of a (namespaced) module. For `import <names> from`, which emits
+/// alias rules, group rules are also identified so their aliases stay groups.
+fn module_rules(text: &str, directive: &Directive) -> Vec<ModuleRule> {
+  let mut rules = rules_of(text);
+  if directive.kind != DirectiveKind::Import || directive.names.is_none() {
+    return rules;
+  }
+  // The module was validated when it was loaded, and namespacing only renames
+  // identifiers, so this parse is expected to succeed.
+  if let Ok(cddl) = crate::pest_bridge::cddl_from_pest_str(text) {
+    for parsed in &cddl.rules {
+      if let crate::ast::Rule::Group { rule, .. } = parsed {
+        let name = rule.name.ident;
+        if let Some(found) = rules.iter_mut().find(|candidate| candidate.name == name) {
+          found.group = true;
+        }
+      }
+    }
+  }
+  rules
 }

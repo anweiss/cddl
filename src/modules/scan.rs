@@ -101,6 +101,32 @@ fn literal_end(bytes: &[u8], start: usize) -> Option<usize> {
   Some(bytes.len())
 }
 
+/// End of a tag or major-type head: `#`, `#7`, `#6.32`. The dot is consumed
+/// only when a tag value follows; in `#7.eq 32` it introduces a control
+/// operator instead. Tag values are unsigned integers, so `#7.32e5` ends
+/// after `32`.
+fn tag_end(bytes: &[u8], start: usize) -> usize {
+  let mut i = start + 1;
+  if bytes.get(i).is_some_and(u8::is_ascii_digit) {
+    i += 1;
+    if bytes.get(i) == Some(&b'.') && bytes.get(i + 1).is_some_and(u8::is_ascii_digit) {
+      i = uint_end(bytes, i + 1).0;
+    }
+  }
+  i
+}
+
+/// End of an occurrence indicator's upper bound, for the `*` at `star`. The
+/// bound is an unsigned integer, so in `1*3e3` it ends after `3` and `e3` is
+/// a reference.
+fn occurrence_end(bytes: &[u8], star: usize) -> usize {
+  if bytes.get(star + 1).is_some_and(u8::is_ascii_digit) {
+    uint_end(bytes, star + 1).0
+  } else {
+    star + 1
+  }
+}
+
 /// Actual directive comments at column zero, excluding literal contents.
 pub(super) fn directive_ranges(src: &str) -> Vec<core::ops::Range<usize>> {
   let bytes = src.as_bytes();
@@ -114,6 +140,10 @@ pub(super) fn directive_ranges(src: &str) -> Vec<core::ops::Range<usize>> {
       i = end;
     } else if is_ident_start(bytes[i]) {
       i = ident_end(bytes, i);
+    } else if bytes[i] == b'#' {
+      i = tag_end(bytes, i);
+    } else if bytes[i] == b'*' {
+      i = occurrence_end(bytes, i);
     } else if bytes[i].is_ascii_digit() {
       i = number_end(bytes, i);
     } else if bytes[i] == b';' {
@@ -365,16 +395,11 @@ pub(crate) fn scan(src: &str) -> Scan {
 
       // Keep a tag's separator out of decimal-fraction scanning.
       b'#' => {
-        i += 1;
-        if bytes.get(i).is_some_and(u8::is_ascii_digit) {
-          i += 1;
-          if bytes.get(i) == Some(&b'.') {
-            i += 1;
-            if bytes.get(i).is_some_and(u8::is_ascii_digit) {
-              i = uint_end(bytes, i).0;
-            }
-          }
-        }
+        i = tag_end(bytes, i);
+      }
+
+      b'*' => {
+        i = occurrence_end(bytes, i);
       }
 
       b'0'..=b'9' => {
@@ -672,6 +697,40 @@ mod tests {
       .idents
       .iter()
       .any(|ident| ident.text == "e" && ident.role == IdentRole::Reference));
+  }
+
+  #[test]
+  fn tag_heads_and_occurrence_bounds_scan_as_unsigned_integers() {
+    let scan = scan("value = [#7.32e5, #7.eq 32, 1*3e3]\n");
+    let roles: Vec<_> = scan
+      .idents
+      .iter()
+      .map(|ident| (ident.text.as_str(), ident.role))
+      .collect();
+    assert_eq!(
+      roles,
+      [
+        ("value", IdentRole::RuleHead),
+        ("e5", IdentRole::Reference),
+        ("eq", IdentRole::ControlName),
+        ("e3", IdentRole::Reference),
+      ]
+    );
+  }
+
+  #[test]
+  fn tag_heads_and_occurrence_bounds_respect_literal_boundaries() {
+    // A real text string after a tag value or occurrence bound must not be
+    // mistaken for an `h"..."` byte string ending at its escaped quote.
+    for head in ["#7.32e5h", "1*3e3h"] {
+      let src = format!(
+        "a = [{}\"x\\\"\n;# import missing\n\"]\n;# import real\n",
+        head
+      );
+      let ranges = directive_ranges(&src);
+      assert_eq!(ranges.len(), 1, "{}", src);
+      assert_eq!(&src[ranges[0].clone()], ";# import real\n", "{}", src);
+    }
   }
 
   #[test]
