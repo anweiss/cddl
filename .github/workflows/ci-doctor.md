@@ -2,7 +2,7 @@
 description: Investigates failed CI workflows to identify root causes and patterns, creating issues with diagnostic information
 on:
   workflow_run:
-    workflows: ['CI'] # Monitor the CI workflow specifically
+    workflows: ['Build and Test'] # Match the main CI workflow's name
     types:
       - completed
     branches:
@@ -35,6 +35,8 @@ safe-outputs:
   add-comment:
   update-issue:
   noop:
+    max: 1
+  report-incomplete: false
   messages:
     footer: '> 🩺 *Diagnosis provided by [{workflow_name}]({run_url})*'
     run-started: '🏥 CI Doctor reporting for duty! [{workflow_name}]({run_url}) is examining the patient on this {event_type}...'
@@ -43,8 +45,6 @@ safe-outputs:
 
 tools:
   cache-memory: true
-  web-fetch:
-  web-search:
   github:
     toolsets: [default, actions] # default: context, repos, issues, pull_requests; actions: workflow logs and artifacts
 
