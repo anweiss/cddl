@@ -292,7 +292,15 @@ fn emit_rule(
   references: &mut BTreeSet<String>,
   pulled: &mut Vec<String>,
 ) {
-  for part in &rule.parts {
+  // Base definitions go first: emitting an extension marks the name as
+  // defined (see emit_part), and a module that carries both must not lose
+  // its own base to that marker.
+  for part in rule
+    .parts
+    .iter()
+    .filter(|part| !part.extension)
+    .chain(rule.parts.iter().filter(|part| part.extension))
+  {
     if part.extension || !emitted.contains(&rule.name) {
       emit_part(&rule.name, part, emitted, emitted_parts, references, pulled);
     }
@@ -311,9 +319,10 @@ fn emit_part(
     return;
   }
 
-  if !part.extension {
-    emitted.insert(name.to_string());
-  }
+  // A bare extension introduces the name as surely as a base definition
+  // does, so a later module's base definition for the same name must be
+  // suppressed rather than emitted as a duplicate.
+  emitted.insert(name.to_string());
 
   // A rule pulled in here may reference names that a later directive is
   // responsible for supplying, so the reference set has to grow as rules

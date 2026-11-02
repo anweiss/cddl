@@ -819,6 +819,34 @@ fn a_rule_carries_its_noncontiguous_extensions() {
 }
 
 #[test]
+fn an_extension_only_include_suppresses_a_later_base_definition() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("one", "item /= 1\n");
+  source.insert("two", "item = uint\n");
+
+  // The extension-only include defines `item`, so the second module's base
+  // definition must be suppressed; emitting both would be a duplicate the
+  // parser rejects.
+  let output = resolve_modules(
+    ";# include one\n;# include two\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+
+  assert!(output.contains("item /= 1"), "{}", output);
+  assert!(!output.contains("item = uint"), "{}", output);
+  assert_parses(&output);
+
+  // A module carrying both parts still keeps its own base definition.
+  let mut source = MemoryModuleSource::new();
+  source.insert("ext", "item = uint\nitem /= 1\n");
+  let output = resolve_modules(";# include ext\n", &source, &ResolveOptions::default()).unwrap();
+  assert!(output.contains("item = uint"), "{}", output);
+  assert!(output.contains("item /= 1"), "{}", output);
+  assert_parses(&output);
+}
+#[test]
 fn a_later_import_sees_references_introduced_by_an_earlier_include() {
   let mut source = MemoryModuleSource::new();
   source.insert("module-a", "wrapper = [* external]\n");
