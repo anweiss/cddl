@@ -143,7 +143,7 @@ jobs:
           wasm-pack test --node -- --test wasm
 
       - name: Test wasm module resolution
-        run: wasm-pack test --node --features modules -- --test wasm
+        run: wasm-pack test --node -- --features modules --test wasm
 
   style-linting:
     strategy:
