@@ -1136,3 +1136,140 @@ fn cbor_optional_choice_member_may_win_a_held_pair() {
   // {"a": "x", "b": "x"}
   check_cbor(schema, "a26161617861626178", false);
 }
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_controlled_choice_keys_check_each_alternative_whole() {
+  let schema = "m = { * key => any }\nkey = (nint / tstr) .and any";
+  // {3: 1}: neither alternative admits 3.
+  check_cbor(schema, "a10301", false);
+  // {-1: 1} and {"x": 1}
+  check_cbor(schema, "a12001", true);
+  check_cbor(schema, "a1617801", true);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_wrapping_generic_choice_keys_follow_key_depth() {
+  let schema = "m = { * key<nint> => any }\nkey<T> = T / key<[T]>";
+  // A key of eight nested arrays around -1.
+  check_cbor(schema, "a181818181818181812001", true);
+  // Twenty nested arrays around -1.
+  check_cbor(schema, &format!("a1{}2001", "81".repeat(20)), true);
+  // Eight nested arrays around 1, which is not nint.
+  check_cbor(schema, "a181818181818181810100", false);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_branching_generic_choice_keys_stay_bounded_for_deep_keys() {
+  let schema = "m = { * key<nint> => any }\nkey<T> = T / key<[T]> / key<[T, T]>";
+  check_cbor(schema, "a1812001", true);
+  // Thirty nested arrays around a text string: no alternative matches, and
+  // the expansion budget keeps the rejection fast.
+  check_cbor(schema, &format!("a1{}617800", "81".repeat(30)), false);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_reassigned_pairs_validate_nested_values() {
+  let schema = "root = node\nnode = { (int / tstr) => any, (\"a\" / \"z\") => node } / null";
+  // {"a": {"a": false, "b": "x"}, "b": "x"}: false is not a node.
+  check_cbor(schema, "a26161a26161f46162617861626178", false);
+  // {"a": {"a": null, "b": "x"}, "b": "x"}
+  check_cbor(schema, "a26161a26161f66162617861626178", true);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_recursive_choice_keys_probe_at_their_own_location() {
+  let schema = "root = node\nnode = { * (node .and any / int) => uint } / tstr";
+  check_cbor(schema, "a1f501", false);
+  check_cbor(schema, "a1617801", true);
+  check_cbor(schema, "a10101", true);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_controlled_recursive_generic_choice_keys_terminate() {
+  let schema = "m = { * (key<nint> .and any / tstr) => any }\nkey<T> = T / key<[T]>";
+  check_cbor(schema, "a1617801", true);
+  check_cbor(schema, "a1812001", true);
+  check_cbor(schema, "a1810101", false);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_generic_choice_keys_substitute_group_choice_arguments() {
+  let schema = "m = { * key<1> => any }\nkey<K> = &choices<K> / tstr\nchoices<T> = (kind: T)";
+  check_cbor(schema, "a10100", true);
+  check_cbor(schema, "a1617800", true);
+  check_cbor(schema, "a10200", false);
+}
+
+#[cfg(all(feature = "cbor", feature = "additional-controls"))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_computed_control_choice_keys_check_the_result() {
+  let schema = "m = { * (1 .plus 2 / tstr) => any }";
+  check_cbor(schema, "a10300", true);
+  check_cbor(schema, "a10400", false);
+  check_cbor(schema, "a1617800", true);
+  for schema in [
+    "m = { * (\"a\" .cat \"b\" / int) => any }",
+    "m = { * (\"a\" .det \"b\" / int) => any }",
+  ] {
+    check_cbor(schema, "a162616200", true);
+    check_cbor(schema, "a162616300", false);
+    check_cbor(schema, "a10100", true);
+  }
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_choice_key_round_ten_cases() {
+  for (schema, json, expected) in [
+    // A key probe validates at its own location, not the object's.
+    (
+      "root = node\nnode = { * (node .and any / int) => uint } / tstr",
+      r#"{"x":1}"#,
+      true,
+    ),
+    (
+      "root = node\nnode = { * (node .and any / int) => uint } / tstr",
+      r#"{"x":"y"}"#,
+      false,
+    ),
+    // A controlled recursive generic stays under the expansion guards.
+    (
+      "m = { * (key<nint> .and any / tstr) => any }\nkey<T> = T / key<[T]>",
+      r#"{"x":1}"#,
+      true,
+    ),
+    (
+      "m = { * key => any }\nkey = (nint / tstr) .and any",
+      r#"{"x":1}"#,
+      true,
+    ),
+  ] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(
+      result.is_ok(),
+      expected,
+      "{schema} JSON: {json}, result: {result:?}"
+    );
+  }
+}

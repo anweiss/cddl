@@ -519,6 +519,14 @@ impl<'a> JSONValidator<'a> {
     probe
   }
 
+  /// A probe for one object key, at a location of its own: the recursion
+  /// guard would otherwise mistake the key for the object it belongs to.
+  fn key_probe(&self, key: &str, context: Option<&ClaimEvalContext<'a>>) -> JSONValidator<'a> {
+    let mut probe = self.probe_with_context(Value::String(key.to_string()), context);
+    probe.state.data_location = key_probe_location(&self.state.data_location, &key);
+    probe
+  }
+
   /// Whether a pair key satisfies a claimed member that has no choice key:
   /// its key type, bareword or literal.
   fn member_key_accepts(
@@ -528,8 +536,7 @@ impl<'a> JSONValidator<'a> {
   ) -> std::result::Result<bool, Error> {
     match &claim.entry.member_key {
       Some(MemberKey::Type1 { t1, .. }) => {
-        let mut probe =
-          self.probe_with_context(Value::String(key.to_string()), claim.context.as_ref());
+        let mut probe = self.key_probe(key, claim.context.as_ref());
         probe.visit_type1(t1)?;
         Ok(probe.errors.is_empty())
       }
@@ -566,8 +573,7 @@ impl<'a> JSONValidator<'a> {
       Some((_, alternatives, _)) => {
         let mut matched = false;
         for alternative in &alternatives {
-          let mut probe =
-            self.probe_with_context(Value::String(key.to_string()), claim.context.as_ref());
+          let mut probe = self.key_probe(key, claim.context.as_ref());
           probe.visit_type1(alternative)?;
           if probe.errors.is_empty() {
             matched = true;
@@ -803,6 +809,7 @@ impl<'a> JSONValidator<'a> {
   ) -> std::result::Result<bool, Error> {
     for alternative in alternatives {
       let mut probe = self.new_with_recursion_state(Value::String(key.to_string()));
+      probe.state.data_location = key_probe_location(&self.state.data_location, &key);
       probe.visit_type1(alternative)?;
       if probe.errors.is_empty() {
         return Ok(true);

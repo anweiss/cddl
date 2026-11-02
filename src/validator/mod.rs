@@ -714,8 +714,6 @@ pub(crate) fn occurrence_bounds(occur: Option<Occur>) -> (usize, Option<usize>) 
   }
 }
 
-/// The key type, its alternatives and the cut flag of a member whose key
-/// type is a choice; `None` keeps every other member on its existing path.
 /// A cache/recursion key for an identifier that keeps socket-prefixed names
 /// (`$s`, `$$s`) distinct from the plain name.
 pub(crate) fn qualified_ident_key(ident: &Identifier) -> String {
@@ -726,14 +724,32 @@ pub(crate) fn qualified_ident_key(ident: &Identifier) -> String {
   }
 }
 
+/// The data location of a probe that matches a map key. It differs from the
+/// map's own location and from every value location, so the recursion guard
+/// never mistakes a key for the map or one of its values.
+pub(crate) fn key_probe_location(map_location: &str, key: &impl std::fmt::Debug) -> String {
+  format!("{map_location}#key({key:?})")
+}
+
+/// The key type, its alternatives and the cut flag of a member whose key
+/// type is a choice; `None` keeps every other member on its existing path.
 pub(crate) fn choice_member_key<'e, 'a>(
   state: &ValidationState<'a>,
   entry: &'e ValueMemberKeyEntry<'a>,
 ) -> Option<(&'e Type1<'a>, Vec<Type1<'a>>, bool)> {
+  choice_member_key_for_depth(state, entry, 0)
+}
+
+/// `choice_member_key` for keys nested up to `key_depth` levels deep.
+pub(crate) fn choice_member_key_for_depth<'e, 'a>(
+  state: &ValidationState<'a>,
+  entry: &'e ValueMemberKeyEntry<'a>,
+  key_depth: usize,
+) -> Option<(&'e Type1<'a>, Vec<Type1<'a>>, bool)> {
   let Some(MemberKey::Type1 { t1, is_cut, .. }) = &entry.member_key else {
     return None;
   };
-  let (alternatives, acyclic) = member_key_type_alternatives(state, t1);
+  let (alternatives, acyclic) = member_key_type_alternatives_for_depth(state, t1, key_depth);
   // A cut recursive reference must not reach the scalar path, which follows
   // it without end, even when a single alternative remains. A control over a
   // choice (`(int / tstr) .and any`) also matches each key on its own, by
@@ -780,8 +796,26 @@ fn control_targets_choice(state: &ValidationState, t1: &Type1) -> bool {
 }
 
 /// How often a generic alias that recurses with changing arguments
-/// (`k<T> = T / k<[T]>`) is unrolled when expanding member-key alternatives.
-const MAX_GENERIC_KEY_UNROLL: usize = 8;
+/// (`k<T> = T / k<[T]>`) is unrolled at least when expanding member-key
+/// alternatives. Deeper keys raise the limit to their own nesting depth, up
+/// to a fixed bound that keeps expansion finite for any input.
+const MIN_GENERIC_KEY_UNROLL: usize = 8;
+const MAX_GENERIC_KEY_UNROLL_DEPTH: usize = 64;
+
+/// The total size, in bytes of instantiation keys, that one member-key
+/// expansion may expand. It bounds recursion that branches
+/// (`k<T> = T / k<[T]> / k<[T, T]>`) or doubles its argument however deep
+/// the keys are.
+const MAX_GENERIC_KEY_EXPANSION_SIZE: usize = 1 << 20;
+
+/// State shared by one member-key expansion: the per-name cache, the unroll
+/// limit for recursion with changing arguments and the remaining size budget
+/// of generic instantiations.
+struct KeyExpansion<'a> {
+  memo: HashMap<String, Rc<Vec<Type1<'a>>>>,
+  unroll_limit: usize,
+  budget: usize,
+}
 
 /// A recursion and cache key for one generic instantiation. Arguments are
 /// keyed by their structure rather than their display form, which prints
@@ -821,8 +855,26 @@ pub(crate) fn member_key_type_alternatives<'a>(
   state: &ValidationState<'a>,
   key_type: &Type1<'a>,
 ) -> (Vec<Type1<'a>>, bool) {
-  let mut memo = HashMap::new();
-  expand_key_type_alternatives(state, key_type, &mut Vec::new(), &mut memo)
+  member_key_type_alternatives_for_depth(state, key_type, 0)
+}
+
+/// Member-key alternatives for keys nested up to `key_depth` levels deep.
+/// Recursion that wraps its argument (`k<T> = T / k<[T]>`) adds a level per
+/// unrolling, so unrolling past the deepest key keeps keys up to the depth
+/// limit reachable without unbounded expansion.
+pub(crate) fn member_key_type_alternatives_for_depth<'a>(
+  state: &ValidationState<'a>,
+  key_type: &Type1<'a>,
+  key_depth: usize,
+) -> (Vec<Type1<'a>>, bool) {
+  let mut expansion = KeyExpansion {
+    memo: HashMap::new(),
+    unroll_limit: key_depth
+      .saturating_add(2)
+      .clamp(MIN_GENERIC_KEY_UNROLL, MAX_GENERIC_KEY_UNROLL_DEPTH),
+    budget: MAX_GENERIC_KEY_EXPANSION_SIZE,
+  };
+  expand_key_type_alternatives(state, key_type, &mut Vec::new(), &mut expansion)
 }
 
 /// Expand one candidate type into leaf alternatives. The returned flag is
@@ -832,16 +884,18 @@ fn expand_key_type_alternatives<'a>(
   state: &ValidationState<'a>,
   candidate: &Type1<'a>,
   active: &mut Vec<String>,
-  memo: &mut HashMap<String, Rc<Vec<Type1<'a>>>>,
+  expansion: &mut KeyExpansion<'a>,
 ) -> (Vec<Type1<'a>>, bool) {
   match &candidate.type2 {
-    _ if candidate.operator.is_some() => (vec![candidate.clone()], true),
+    _ if candidate.operator.is_some() => {
+      expand_controlled_key_alternatives(state, candidate, active, expansion)
+    }
     Type2::ParenthesizedType { pt, .. } => {
       let mut alternatives = Vec::new();
       let mut acyclic = true;
       for choice in &pt.type_choices {
         let (mut nested, nested_acyclic) =
-          expand_key_type_alternatives(state, &choice.type1, active, memo);
+          expand_key_type_alternatives(state, &choice.type1, active, expansion);
         alternatives.append(&mut nested);
         acyclic &= nested_acyclic;
       }
@@ -851,14 +905,51 @@ fn expand_key_type_alternatives<'a>(
       ident,
       generic_args: None,
       ..
-    } => expand_key_ident_alternatives(state, candidate, ident, active, memo),
+    } => expand_key_ident_alternatives(state, candidate, ident, active, expansion),
     Type2::Typename {
       ident,
       generic_args: Some(args),
       ..
-    } => expand_key_generic_alternatives(state, candidate, ident, args, active, memo),
+    } => expand_key_generic_alternatives(state, candidate, ident, args, active, expansion),
     _ => (vec![candidate.clone()], true),
   }
+}
+
+/// A predicate control constrains each value its target admits, so
+/// `(A / B) .ctl C` matches what `A .ctl C / B .ctl C` matches. Distributing
+/// it over the target's alternatives lets a key's domain check and probe
+/// agree on one alternative, and keeps a recursive target under the
+/// expansion guards. Ranges and controls that compute a value from their
+/// target (`.plus`, `.cat`, `.det`) stay whole.
+fn expand_controlled_key_alternatives<'a>(
+  state: &ValidationState<'a>,
+  candidate: &Type1<'a>,
+  active: &mut Vec<String>,
+  expansion: &mut KeyExpansion<'a>,
+) -> (Vec<Type1<'a>>, bool) {
+  let Some(operator) = &candidate.operator else {
+    return (vec![candidate.clone()], true);
+  };
+  if !matches!(
+    &operator.operator,
+    RangeCtlOp::CtlOp { ctrl, .. }
+      if !matches!(ctrl, ControlOperator::PLUS | ControlOperator::CAT | ControlOperator::DET)
+  ) {
+    return (vec![candidate.clone()], true);
+  }
+  let mut target = candidate.clone();
+  target.operator = None;
+  let (targets, acyclic) = expand_key_type_alternatives(state, &target, active, expansion);
+  let alternatives = targets
+    .iter()
+    .map(|target| {
+      let mut constrained = target.clone();
+      constrained.type2 = bound_type2(target);
+      constrained.operator = Some(operator.clone());
+      constrained
+    })
+    .collect();
+  (alternatives, acyclic)
 }
 
 /// Expand a generic instantiation by substituting its arguments, resolved in
@@ -870,7 +961,7 @@ fn expand_key_generic_alternatives<'a>(
   ident: &Identifier<'a>,
   args: &GenericArgs<'a>,
   active: &mut Vec<String>,
-  memo: &mut HashMap<String, Rc<Vec<Type1<'a>>>>,
+  expansion: &mut KeyExpansion<'a>,
 ) -> (Vec<Type1<'a>>, bool) {
   let Some(rule) = rule_from_ident(state.cddl, ident) else {
     return (vec![candidate.clone()], true);
@@ -891,14 +982,17 @@ fn expand_key_generic_alternatives<'a>(
     // own, and probing it would recurse without end.
     return (Vec::new(), false);
   }
-  if active.iter().filter(|name| **name == key).count() >= MAX_GENERIC_KEY_UNROLL {
-    // Recursion with changing arguments is unrolled to a fixed depth and
+  if active.iter().filter(|name| **name == key).count() >= expansion.unroll_limit
+    || memo_key.len() > expansion.budget
+  {
+    // Recursion with changing arguments is unrolled to a bounded depth and
     // deeper levels are dropped: probing them would never consume input.
     return (Vec::new(), false);
   }
-  if let Some(cached) = memo.get(&memo_key) {
+  if let Some(cached) = expansion.memo.get(&memo_key) {
     return ((**cached).clone(), true);
   }
+  expansion.budget -= memo_key.len();
   let bindings: HashMap<&'a str, Type1<'a>> = params.iter().copied().zip(resolved).collect();
   // Every definition contributes, including `/=` extensions.
   let types = type_choice_types_from_ident(state.cddl, ident);
@@ -910,14 +1004,16 @@ fn expand_key_generic_alternatives<'a>(
     for choice in &rule_type.type_choices {
       let substituted = substitute_generic_params(&choice.type1, &bindings);
       let (mut nested, nested_acyclic) =
-        expand_key_type_alternatives(state, &substituted, active, memo);
+        expand_key_type_alternatives(state, &substituted, active, expansion);
       alternatives.append(&mut nested);
       acyclic &= nested_acyclic;
     }
   }
   active.truncate(active.len() - 2);
   if acyclic {
-    memo.insert(memo_key, Rc::new(deduplicate_alternatives(&alternatives)));
+    expansion
+      .memo
+      .insert(memo_key, Rc::new(deduplicate_alternatives(&alternatives)));
   }
   (alternatives, acyclic)
 }
@@ -979,6 +1075,14 @@ fn substitute_type2_params<'a>(
   let mut substituted = t2.clone();
   match &mut substituted {
     Type2::Typename {
+      generic_args: Some(args),
+      ..
+    }
+    | Type2::ChoiceFromGroup {
+      generic_args: Some(args),
+      ..
+    }
+    | Type2::Unwrap {
       generic_args: Some(args),
       ..
     } => {
@@ -1136,7 +1240,7 @@ fn expand_key_ident_alternatives<'a>(
   candidate: &Type1<'a>,
   ident: &Identifier<'a>,
   active: &mut Vec<String>,
-  memo: &mut HashMap<String, Rc<Vec<Type1<'a>>>>,
+  expansion: &mut KeyExpansion<'a>,
 ) -> (Vec<Type1<'a>>, bool) {
   if let Some(arg) = ident
     .socket
@@ -1144,10 +1248,10 @@ fn expand_key_ident_alternatives<'a>(
     .then(|| generic_argument_for_param(state, ident.ident))
     .flatten()
   {
-    return expand_key_type_alternatives(state, &arg, active, memo);
+    return expand_key_type_alternatives(state, &arg, active, expansion);
   }
   let key = qualified_ident_key(ident);
-  if let Some(cached) = memo.get(&key) {
+  if let Some(cached) = expansion.memo.get(&key) {
     return ((**cached).clone(), true);
   }
   if active.contains(&key) {
@@ -1165,7 +1269,7 @@ fn expand_key_ident_alternatives<'a>(
   for rule_type in types {
     for choice in &rule_type.type_choices {
       let (mut nested, nested_acyclic) =
-        expand_key_type_alternatives(state, &choice.type1, active, memo);
+        expand_key_type_alternatives(state, &choice.type1, active, expansion);
       alternatives.append(&mut nested);
       acyclic &= nested_acyclic;
     }
@@ -1175,7 +1279,9 @@ fn expand_key_ident_alternatives<'a>(
     // Cache a deduplicated copy so alias subgraphs shared by many paths are
     // expanded once and stay small; the returned list keeps duplicates so a
     // syntactic choice still reads as a choice to its caller.
-    memo.insert(key, Rc::new(deduplicate_alternatives(&alternatives)));
+    expansion
+      .memo
+      .insert(key, Rc::new(deduplicate_alternatives(&alternatives)));
   }
   (alternatives, acyclic)
 }

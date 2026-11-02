@@ -418,13 +418,21 @@ impl<'a> CBORValidator<'a> {
     candidate.state.is_multi_type_choice = self.state.is_multi_type_choice;
     candidate.state.is_multi_group_choice = self.state.is_multi_group_choice;
     candidate.state.type_group_name_entry = self.state.type_group_name_entry;
+    // The candidate inherits the recursion guard, so it validates at the
+    // map's own location; at the root location an ancestor's guard would
+    // accept nested values without validating them.
+    candidate.state.data_location = self.state.data_location.clone();
     candidate.probing_single_entry_assignment = true;
 
     // A pair assigned to this member must satisfy it. Do not let an optional
     // occurrence turn a failed key match into a successful absence.
     let mut required_entry = entry.clone();
     required_entry.occur = None;
-    match choice_member_key(&candidate.state, &required_entry) {
+    match choice_member_key_for_depth(
+      &candidate.state,
+      &required_entry,
+      map_key_depth(&candidate.cbor),
+    ) {
       Some((key_type, alternatives, is_cut)) => {
         candidate.visit_choice_key_entry::<T>(&required_entry, key_type, &alternatives, is_cut)?
       }
@@ -797,6 +805,7 @@ impl<'a> CBORValidator<'a> {
         continue;
       }
       let mut probe = self.new_with_recursion_state(key.clone());
+      probe.state.data_location = key_probe_location(&self.state.data_location, key);
       probe.visit_type1(alternative)?;
       if probe.errors.is_empty() {
         return Ok(true);
@@ -4634,7 +4643,9 @@ where
 
   fn visit_group_entry(&mut self, entry: &GroupEntry<'a>) -> visitor::Result<Error<T>> {
     if let (GroupEntry::ValueMemberKey { ge, .. }, Value::Map(_)) = (entry, &self.cbor) {
-      if let Some((key_type, alternatives, is_cut)) = choice_member_key(&self.state, ge) {
+      if let Some((key_type, alternatives, is_cut)) =
+        choice_member_key_for_depth(&self.state, ge, map_key_depth(&self.cbor))
+      {
         return self.visit_choice_key_entry::<T>(ge, key_type, &alternatives, is_cut);
       }
     }
@@ -5282,13 +5293,21 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
         .operator
         .as_ref()
         .map(|operator| &operator.operator),
-      Some(RangeCtlOp::RangeOp { .. }),
+      Some(
+        RangeCtlOp::RangeOp { .. }
+          | RangeCtlOp::CtlOp {
+            ctrl: ControlOperator::PLUS | ControlOperator::CAT | ControlOperator::DET,
+            ..
+          }
+      ),
     ) {
       // The probe's range validation enforces the interval, but only for
       // keys of the endpoint's kind: a numeric range would otherwise admit
       // byte-string keys, whose lengths compare as numbers. Named endpoints
       // resolve to their literal kind, so a `lo..hi` alias range admits the
-      // whole numeric domain instead of the bound's literal value.
+      // whole numeric domain instead of the bound's literal value. Computed
+      // controls (`.plus`, `.cat`, `.det`) produce a value of their target's
+      // kind rather than the target itself, so they get the same check.
       return match self.range_endpoint_kind(&alternative.type2) {
         Some(EndpointKind::Numeric) => matches!(key, Value::Integer(_) | Value::Float(_)),
         Some(EndpointKind::Text) => matches!(key, Value::Text(_)),
@@ -5388,8 +5407,85 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
       | Type2::B64ByteString { value, .. } => {
         matches!(key, Value::Bytes(b) if b == value.as_ref())
       }
+      Type2::Array { group, .. } => self.array_admits(group, key, visited, bindings),
+      Type2::Map { .. } => matches!(key, Value::Map(_)),
       _ => true,
     }
+  }
+
+  /// Domain check for an array type: only array keys qualify. An array of
+  /// fixed entries, each occurring once without a member key, also needs a
+  /// key of the same length whose items each fall in their entry's domain.
+  /// Validating a nested array against a mismatched one costs time
+  /// exponential in its depth, so recursive generic alternatives such as
+  /// `k<T> = T / k<[T]>` are rejected here without being probed.
+  fn array_admits(
+    &mut self,
+    group: &Group<'a>,
+    key: &Value,
+    visited: &mut HashSet<String>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    let Value::Array(items) = key else {
+      return false;
+    };
+    let [choice] = group.group_choices.as_slice() else {
+      return true;
+    };
+    if choice.group_entries.len() != items.len() {
+      return !choice
+        .group_entries
+        .iter()
+        .all(|(entry, _)| self.fixed_array_entry(entry));
+    }
+    choice
+      .group_entries
+      .iter()
+      .zip(items)
+      .all(|((entry, _), item)| self.array_entry_admits(entry, item, visited, bindings))
+  }
+
+  /// Whether an array entry stands for exactly one item of a known type.
+  fn fixed_array_entry(&self, entry: &GroupEntry<'a>) -> bool {
+    match entry {
+      GroupEntry::ValueMemberKey { ge, .. } => ge.occur.is_none() && ge.member_key.is_none(),
+      GroupEntry::TypeGroupname { ge, .. } => {
+        ge.occur.is_none() && ge.generic_args.is_none() && !self.names_group(&ge.name)
+      }
+      GroupEntry::InlineGroup { .. } => false,
+    }
+  }
+
+  fn array_entry_admits(
+    &mut self,
+    entry: &GroupEntry<'a>,
+    item: &Value,
+    visited: &mut HashSet<String>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    if !self.fixed_array_entry(entry) {
+      return true;
+    }
+    match entry {
+      GroupEntry::ValueMemberKey { ge, .. } => ge
+        .entry_type
+        .type_choices
+        .iter()
+        .any(|choice| self.type1_admits(&choice.type1, item, &mut visited.clone(), bindings)),
+      GroupEntry::TypeGroupname { ge, .. } => {
+        self.typename_admits(&ge.name, None, item, &mut visited.clone(), bindings)
+      }
+      GroupEntry::InlineGroup { .. } => true,
+    }
+  }
+
+  /// Whether a bare entry name refers to a group, whose entries spread into
+  /// the array, rather than a type.
+  fn names_group(&self, name: &Identifier<'a>) -> bool {
+    self.state.cddl.rules.iter().any(|rule| {
+      matches!(rule, Rule::Group { rule, .. } if rule.name.ident == name.ident
+        && rule.name.socket == name.socket)
+    })
   }
 
   /// Domain check for a name: bound generic parameters, generic alias
@@ -5581,6 +5677,33 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
         || is_ident_null_data_type(cddl, ident))
   }
 }
+/// The deepest nesting of arrays, maps and tags among a map's keys.
+fn map_key_depth(map: &Value) -> usize {
+  match map {
+    Value::Map(entries) => entries
+      .iter()
+      .map(|(key, _)| value_nesting_depth(key))
+      .max()
+      .unwrap_or(0),
+    _ => 0,
+  }
+}
+
+fn value_nesting_depth(value: &Value) -> usize {
+  match value {
+    Value::Array(items) => 1 + items.iter().map(value_nesting_depth).max().unwrap_or(0),
+    Value::Map(entries) => {
+      1 + entries
+        .iter()
+        .map(|(key, value)| value_nesting_depth(key).max(value_nesting_depth(value)))
+        .max()
+        .unwrap_or(0)
+    }
+    Value::Tag(_, inner) => 1 + value_nesting_depth(inner),
+    _ => 0,
+  }
+}
+
 /// Is `v` a tagged byte string accepted by the bignum type `ident`?
 fn is_bignum_value(cddl: &CDDL, ident: &Identifier, v: &Value) -> bool {
   matches!(v, Value::Tag(tag, inner)
