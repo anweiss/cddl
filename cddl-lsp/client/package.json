@@ -12,6 +12,9 @@
   "engines": {
     "vscode": "^1.91.0"
   },
+  "scripts": {
+    "postinstall": "node scripts/patch-languageclient.cjs"
+  },
   "dependencies": {
     "vscode-languageclient": "^10.1.2"
   },
@@ -25,9 +28,7 @@
   },
   "overrides": {
     "glob": "$glob",
-    "mocha": {
-      "minimatch": "11.0.3"
-    },
+    "minimatch": "11.0.3",
     "serialize-javascript": "^7.1.4",
     "diff": "^9.0.0"
   }
