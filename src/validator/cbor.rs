@@ -614,6 +614,7 @@ impl<'a> CBORValidator<'a> {
     let (min, max) = occurrence_bounds(occurrence);
     let single = max == Some(1);
     let mut count = 0;
+    let mut cut_committed = false;
     let mut value_errors = Vec::new();
     let mut fallback = None;
     for (index, (key, value)) in entries.iter().enumerate() {
@@ -630,7 +631,8 @@ impl<'a> CBORValidator<'a> {
         // A cut commits a matching key to this member, so its failing value
         // rejects the map rather than falling through (RFC 8610 §3.5.4).
         count += usize::from(errors.is_empty());
-        self.claim_choice_key_pair(index, entry, single);
+        cut_committed |= is_cut;
+        self.claim_choice_key_pair(index, entry, single, is_cut);
         self.errors.extend(errors);
       } else {
         fallback.get_or_insert(index);
@@ -638,7 +640,7 @@ impl<'a> CBORValidator<'a> {
       }
     }
 
-    if count < min && single {
+    if count < min && single && !cut_committed {
       // Prefer the key-matching pair whose value failed; otherwise seed the
       // reassignment with any unclaimed pair, so the one-to-one allocator can
       // hand an earlier member a replacement.
@@ -669,13 +671,24 @@ impl<'a> CBORValidator<'a> {
 
   /// Single-occurrence claims join the one-to-one pair assignment so an
   /// earlier member can give up a pair that a later member needs.
-  fn claim_choice_key_pair(&mut self, index: usize, entry: &ValueMemberKeyEntry<'a>, single: bool) {
+  fn claim_choice_key_pair(
+    &mut self,
+    index: usize,
+    entry: &ValueMemberKeyEntry<'a>,
+    single: bool,
+    is_cut: bool,
+  ) {
     if !single {
       self.claimed_map_entries.push(index);
       return;
     }
     self.claim_single_map_key(index);
     self.active_single_entry_claim = None;
+    // A cut commits the pair to this member; a claim without an entry stays
+    // out of the one-to-one reassignment pool.
+    if is_cut {
+      return;
+    }
     if let Some(claim) = self.single_entry_claims.last_mut() {
       claim.entry = Some(entry.clone());
     }
@@ -4561,6 +4574,21 @@ where
       }
     }
     if let GroupEntry::TypeGroupname { ge, .. } = entry {
+      if ge.occur.is_some()
+        && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 == 0
+        && matches!(self.cbor, Value::Map(_))
+      {
+        // A failed reference that may occur zero times takes its zero-width
+        // path, exactly like an optional inline group.
+        let checkpoint = self.clone();
+        walk_group_entry(self, entry)?;
+        if self.errors.len() > checkpoint.errors.len() {
+          *self = checkpoint;
+        } else {
+          self.state.occurrence = checkpoint.state.occurrence;
+        }
+        return Ok(());
+      }
       // A group reference's occurrence applies to the referenced group
       // alone: once the group has matched, restore the prior indicator so
       // `? g` cannot relax later required members, mirroring inline groups.
@@ -5156,8 +5184,8 @@ fn key_domain_admits(state: &ValidationState, alternative: &Type1, key: &Value) 
 }
 
 /// Recursive key-domain check with per-name memoization. Alias results are
-/// cached only while no recursive path has been cut anywhere: a cut keeps
-/// the name as a lenient leaf, making every enclosing result specific to the
+/// cached only while no recursive path has been cut anywhere: a cut treats
+/// the name as an empty leaf, making every enclosing result specific to the
 /// active chain.
 struct KeyDomainWalk<'s, 'a> {
   state: &'s ValidationState<'a>,
@@ -5383,6 +5411,30 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
       }
       bound.insert(param, resolved);
     }
+    // A generic alias met again on this path is cut. The same instantiation
+    // (`k<T> = T / k<T>`) adds no keys of its own; one with other arguments
+    // (`k<T> = T / k<[T]>`) stays lenient and the probe decides.
+    let name = qualified_ident_key(ident);
+    let instantiation = format!(
+      "{}<{}>",
+      name,
+      params
+        .iter()
+        .map(|param| bound
+          .get(param)
+          .map(|arg| arg.to_string())
+          .unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join(", ")
+    );
+    if !visited.insert(instantiation) {
+      self.cut = true;
+      return false;
+    }
+    if !visited.insert(name) {
+      self.cut = true;
+      return true;
+    }
     types.iter().any(|t| {
       t.type_choices
         .iter()
@@ -5406,9 +5458,13 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
         return *cached;
       }
     }
+    // The walk follows only choices, aliases and parameters, so a name met
+    // again on the same path is a union back-reference that adds no keys of
+    // its own (the least fixed point). Admitting it would instead hand the
+    // recursive alias to a probe that may never terminate.
     if !visited.insert(cache_key.clone()) {
       self.cut = true;
-      return true;
+      return false;
     }
     let types = type_choice_types_from_ident(self.state.cddl, ident);
     if types.is_empty() {

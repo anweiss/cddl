@@ -330,3 +330,41 @@ fn json_named_group_occurrence_stays_with_the_group() {
     assert_eq!(result.is_ok(), valid, "{schema}: {result:?}");
   }
 }
+
+#[cfg(feature = "cbor")]
+#[test]
+fn cbor_zero_allowed_named_group_rolls_back_failures() {
+  for (schema, bytes, valid) in [
+    ("m = { ? g }\ng = ($$s)", vec![0xa0], true),
+    ("m = { * g }\ng = ($$s)", vec![0xa0], true),
+    ("m = { ? g }\ng = (a: int)", vec![0xa0], true),
+    ("m = { ? g }\ng = ($$s)", vec![0xa1, 0x09, 0x01], false),
+  ] {
+    let result = cddl::validate_cbor_from_slice(
+      schema,
+      &bytes,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), valid, "{schema}: {result:?}");
+  }
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn json_zero_allowed_named_group_rolls_back_failures() {
+  for (schema, json, valid) in [
+    ("m = { ? g }\ng = ($$s)", "{}", true),
+    ("m = { * g }\ng = ($$s)", "{}", true),
+    ("m = { ? g }\ng = (a: int)", "{}", true),
+    ("m = { ? g }\ng = ($$s)", r#"{"k":1}"#, false),
+  ] {
+    let result = cddl::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), valid, "{schema}: {result:?}");
+  }
+}

@@ -799,3 +799,93 @@ fn json_type_choice_keys_substitute_structured_generic_alternatives() {
     assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
   }
 }
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_cut_choice_key_claims_stay_committed() {
+  // A cut member owns its matching pair; reassignment cannot move it to
+  // another key to free the pair for a later member.
+  let schema = "m = { (int / tstr) ^ => any, (\"x\" / \"y\") => uint }";
+  check_cbor(schema, "a26178010302", false);
+  check_cbor(schema, "a20301617802", true);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_recursive_generic_choice_keys_terminate() {
+  let schema = "m = { * (key<nint> / tstr) => any }\nkey<T> = T / key<T>";
+  check_cbor(schema, "a1617801", true);
+  check_cbor(schema, "a12001", true);
+  check_cbor(schema, "a10301", false);
+  let schema = "m = { * key<nint> => any }\nkey<T> = T / key<T>";
+  check_cbor(schema, "a12001", true);
+  check_cbor(schema, "a1617801", false);
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_recursive_generic_choice_keys_terminate() {
+  let schema = "m = { * (key<nint> / tstr) => any }\nkey<T> = T / key<T>";
+  for json in [r#"{"x":1}"#, "{}"] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert!(result.is_ok(), "JSON: {json}, result: {result:?}");
+  }
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_generic_choice_key_dag_expands_each_instantiation_once() {
+  let mut schema = String::from("m = { * k24<uint> => any }\nk0<T> = T / tstr\n");
+  for n in 1..=24 {
+    schema.push_str(&format!("k{n}<T> = k{}<T> / k{}<T>\n", n - 1, n - 1));
+  }
+  check_cbor(&schema, "a0", true);
+  check_cbor(&schema, "a10301", true);
+  check_cbor(&schema, "a1617801", true);
+  check_cbor(&schema, "a1f501", false);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_generic_choice_keys_substitute_control_operands() {
+  let schema = "m = { * key<1> => any }\nkey<N> = tstr .size N / int";
+  check_cbor(schema, "a1617800", true);
+  check_cbor(schema, "a162787900", false);
+  check_cbor(schema, "a10300", true);
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_generic_choice_keys_substitute_control_operands() {
+  let schema = "m = { * key<1> => any }\nkey<N> = tstr .size N / int";
+  for (json, expected) in [(r#"{"x":0}"#, true), (r#"{"xy":0}"#, false)] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
+  }
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_generic_choice_keys_substitute_constrained_arguments() {
+  let schema = "m = { * key<uint .gt 0> => any }\nkey<K> = [K] / tstr";
+  check_cbor(schema, "a1810100", true);
+  check_cbor(schema, "a1810000", false);
+  check_cbor(schema, "a1617800", true);
+}

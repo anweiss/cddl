@@ -3615,6 +3615,21 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       }
     }
     if let GroupEntry::TypeGroupname { ge, .. } = entry {
+      if ge.occur.is_some()
+        && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 == 0
+        && matches!(self.json, Value::Object(_))
+      {
+        // A failed reference that may occur zero times takes its zero-width
+        // path, exactly like an optional inline group.
+        let checkpoint = self.clone();
+        walk_group_entry(self, entry)?;
+        if self.errors.len() > checkpoint.errors.len() {
+          *self = checkpoint;
+        } else {
+          self.state.occurrence = checkpoint.state.occurrence;
+        }
+        return Ok(());
+      }
       // A group reference's occurrence applies to the referenced group
       // alone: once the group has matched, restore the prior indicator so
       // `? g` cannot relax later required members, mirroring inline groups.
