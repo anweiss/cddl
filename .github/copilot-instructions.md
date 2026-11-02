@@ -2,9 +2,11 @@
 
 ## Build and Test Verification
 
-Before completing any task that modifies code, you MUST verify that all CI checks pass:
+Before completing code changes, run the local checks below and the shared
+quality matrix in `AGENTS.md`. When the user has authorized pushing changes,
+also verify hosted CI:
 
-1. **Push your changes** to the branch
+1. **Push your changes** to the branch only with the user's authorization
 2. **Wait for the GitHub Actions workflow** "Build and Test" (`.github/workflows/ci.yml`) to complete
 3. **Verify ALL jobs pass** - the workflow includes:
    - `minimum-version-check` (msrv check on ubuntu, macOS, windows)
@@ -16,7 +18,7 @@ Before completing any task that modifies code, you MUST verify that all CI check
    - `wasm-style-linting`
 
 4. **If any job fails**, investigate the failure, fix the issue, and re-run the workflow
-5. **Do NOT consider a task complete** until all CI jobs have passed successfully
+5. **Report checks that could not run**. Never claim hosted CI passed without a real run.
 
 ## Local Verification
 

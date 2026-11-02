@@ -12,12 +12,24 @@
 use cddl::{validate_cbor_from_slice, validate_json_from_str};
 
 fn json_validates(schema: &str, instance: &str) -> bool {
-  validate_json_from_str(schema, instance, None).is_ok()
+  validate_json_from_str(
+    schema,
+    instance,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .is_ok()
 }
 
 fn cbor_validates(schema: &str, hex: &str) -> bool {
   let bytes = hex::decode(hex).unwrap();
-  validate_cbor_from_slice(schema, &bytes, None).is_ok()
+  validate_cbor_from_slice(
+    schema,
+    &bytes,
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .is_ok()
 }
 
 fn both_accept(schema: &str, json: &str, cbor_hex: &str) {

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreBinaries": ["wasm-pack"],
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.mjs", "e2e/**/*.ts"],
+      "project": ["scripts/**/*.mjs", "*.config.{mjs,mts}", "e2e/**/*.ts"]
+    },
+    "cddl-lsp": {
+      "entry": ["test-first-rule.js", "shared.webpack.config.js"],
+      "project": ["*.js"],
+      "webpack": ["client/webpack.config.js", "server/webpack.config.js"]
+    },
+    "cddl-lsp/client": {
+      "entry": [
+        "src/extension.ts",
+        "src/test/{index,runTest}.ts",
+        "src/test/**/*.test.ts",
+        "webpack.config.js"
+      ],
+      "project": ["src/**/*.ts"]
+    },
+    "cddl-lsp/server": {
+      "entry": ["src/server.ts", "tests/**/*.test.ts", "webpack.config.js"],
+      "project": ["src/**/*.ts", "tests/**/*.ts"]
+    },
+    "www": {
+      "entry": ["webpack.config{,.prod}.js", "tests/**/*.test.js"],
+      "project": ["*.js", "src/**/*.{js,ts}", "tests/**/*.js"]
+    }
+  }
+}

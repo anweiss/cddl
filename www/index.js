@@ -1,13 +1,25 @@
 import * as monaco from 'monaco-editor';
-import { validateInstance, parseCborInput, isCborSupported } from './src/instance-validation.js';
-import { buildShareUrl, readStateFromLocation, clearLocationState, copyToClipboard, isTooLargeToShare } from './src/share.js';
+import { validateInstance, isCborSupported } from './src/instance-validation.js';
+import {
+  buildShareUrl,
+  readStateFromLocation,
+  clearLocationState,
+  copyToClipboard,
+  isTooLargeToShare,
+} from './src/share.js';
 import { pickFile, downloadText, attachDropZone, classifyFile, bytesToHex } from './src/file-io.js';
 import { parseRules, renderOutline, registerNavigation } from './src/outline.js';
 import { generateSample, listRootCandidates } from './src/sample-gen.js';
 import { initToasts, toast } from './src/toast.js';
 import { initShortcutsModal } from './src/shortcuts.js';
 import { buildSuggestions, completionContext } from './src/cddl-completion.js';
+import { logFailure, logStorageUnavailable } from './src/logger.js';
 
+/**
+ * @typedef {import('./src/types.js').Diagnostic} Diagnostic
+ * @typedef {import('./src/share.js').PlaygroundState} PlaygroundState
+ * @typedef {import('monaco-editor').editor.IStandaloneCodeEditor} Editor
+ */
 // ─── CDDL Language Registration ───────────────────────────────────────────────
 
 monaco.languages.register({
@@ -42,7 +54,7 @@ monaco.languages.setMonarchTokensProvider('cddl', {
       [/\$\$/, 'keyword.operator'],
       [/\$/, 'keyword.operator'],
       [/[a-zA-Z_][\w-]*/, 'identifier'],
-      [/[\[\]]/, 'bracket.square'],
+      [/[[\]]/, 'bracket.square'],
       [/[{}]/, 'bracket.curly'],
       [/[()]/, 'bracket.parenthesis'],
       [/[<>]/, 'bracket.angle'],
@@ -180,6 +192,7 @@ monaco.languages.registerCompletionItemProvider('cddl', {
 
 // ─── WASM Module ──────────────────────────────────────────────────────────────
 
+/** @type {typeof import('../pkg/cddl.js') | undefined} */
 let wasmModule;
 
 async function initWasm() {
@@ -189,7 +202,7 @@ async function initWasm() {
     wasmModule = wasmImport;
     return typeof wasmModule.validate_cddl_from_str === 'function';
   } catch (err) {
-    console.error('Failed to load WASM:', err);
+    logFailure('wasm.load_failed', err);
     return false;
   }
 }
@@ -698,8 +711,10 @@ label = int / text
  * Scan the source text up to a byte offset and find the deepest unmatched
  * opening delimiter.  Returns { char, line, column } or null.
  */
+/** @type {(source: string, upTo?: number) => {char: string, closer: string, line: number, column: number} | null} */
 function findUnmatchedOpener(source, upTo) {
   const stack = []; // { char, pos, line, column }
+  /** @type {Record<string, string>} */
   const match = { '{': '}', '[': ']', '(': ')' };
   const close = new Set(['}', ']', ')']);
   let line = 1;
@@ -720,17 +735,33 @@ function findUnmatchedOpener(source, upTo) {
       continue;
     }
 
-    if (inComment) { col++; continue; }
+    if (inComment) {
+      col++;
+      continue;
+    }
 
     if (inString) {
-      if (ch === '\\') { i++; col += 2; continue; }
+      if (ch === '\\') {
+        i++;
+        col += 2;
+        continue;
+      }
       if (ch === strChar) inString = false;
       col++;
       continue;
     }
 
-    if (ch === ';') { inComment = true; col++; continue; }
-    if (ch === '"' || ch === "'") { inString = true; strChar = ch; col++; continue; }
+    if (ch === ';') {
+      inComment = true;
+      col++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      strChar = ch;
+      col++;
+      continue;
+    }
 
     if (match[ch]) {
       stack.push({ char: ch, closer: match[ch], line, column: col });
@@ -749,6 +780,7 @@ function findUnmatchedOpener(source, upTo) {
 /**
  * Normalise a WASM error object into the shape the UI expects.
  */
+/** @type {(err: import('./src/types.js').WasmDiagnostic) => Diagnostic} */
 function normaliseError(err) {
   const line = err.position?.line ?? 1;
   const column = err.position?.column ?? 1;
@@ -775,14 +807,15 @@ function normaliseError(err) {
   // Categorise
   const lc = message.toLowerCase();
   let category = 'Syntax';
-  if (/\btoken\b|character|symbol|escape|unterminated|byte string|text string|hexfloat|exponent/.test(lc))
+  if (
+    /\btoken\b|character|symbol|escape|unterminated|byte string|text string|hexfloat|exponent/.test(
+      lc,
+    )
+  )
     category = 'Lexer';
-  else if (/expected|unexpected|missing|invalid.*syntax|must be/.test(lc))
-    category = 'Parser';
-  else if (/not defined|undefined|unknown/.test(lc))
-    category = 'Reference';
-  else if (/duplicate|already defined/.test(lc))
-    category = 'Duplicate';
+  else if (/expected|unexpected|missing|invalid.*syntax|must be/.test(lc)) category = 'Parser';
+  else if (/not defined|undefined|unknown/.test(lc)) category = 'Reference';
+  else if (/duplicate|already defined/.test(lc)) category = 'Duplicate';
 
   return { line, column, range, message, category, severity: err.severity || 'error', _raw: err };
 }
@@ -791,6 +824,7 @@ function normaliseError(err) {
  * Detect if an error is really about a missing closing delimiter, and if so,
  * rewrite the message and redirect the marker to the unmatched opener.
  */
+/** @type {(errors: Diagnostic[], source: string) => Diagnostic[]} */
 function enrichWithDelimiterCheck(errors, source) {
   return errors.map((err) => {
     const lc = err.message.toLowerCase();
@@ -798,7 +832,7 @@ function enrichWithDelimiterCheck(errors, source) {
     const isMissingClose =
       /expected.*\b(group_choice_op|group\s*entry|grpchoice|grpent|type_choice_op)\b/i.test(lc) ||
       /expected.*\b(eoi|rule)\b/i.test(lc) ||
-      /expected.*\btype\b/i.test(lc) && !/type\s+assignment/i.test(lc);
+      (/expected.*\btype\b/i.test(lc) && !/type\s+assignment/i.test(lc));
 
     if (!isMissingClose) return err;
 
@@ -813,7 +847,12 @@ function enrichWithDelimiterCheck(errors, source) {
     const opener = findUnmatchedOpener(source, byteOffset + 50);
     if (!opener) return err;
 
-    const closerName = opener.closer === '}' ? 'brace \'}\'' : opener.closer === ']' ? 'bracket \']\'' : 'parenthesis \')\'';
+    const closerName =
+      opener.closer === '}'
+        ? "brace '}'"
+        : opener.closer === ']'
+          ? "bracket ']'"
+          : "parenthesis ')'";
     return {
       ...err,
       message: `Missing closing ${closerName} — opened on Ln ${opener.line}, Col ${opener.column}.`,
@@ -829,9 +868,21 @@ function enrichWithDelimiterCheck(errors, source) {
  * Validate CDDL text using the WASM library.
  * Returns { isValid, errors }.
  */
+/** @type {(cddlText: string) => {isValid: boolean, errors: Diagnostic[]}} */
 function validateCDDLText(cddlText) {
   if (!wasmModule?.validate_cddl_from_str) {
-    return { isValid: false, errors: [{ line: 1, column: 1, range: null, message: 'WASM module not ready.', category: 'Internal' }] };
+    return {
+      isValid: false,
+      errors: [
+        {
+          line: 1,
+          column: 1,
+          range: null,
+          message: 'WASM module not ready.',
+          category: 'Internal',
+        },
+      ],
+    };
   }
 
   try {
@@ -879,23 +930,39 @@ function loadContent() {
   try {
     const c = localStorage.getItem(CACHE_KEY);
     if (c) return c;
-  } catch (_) {}
+  } catch (_) {
+    // Storage may be disabled; keep the editor usable without persistence.
+  }
   return DEFAULT_EXAMPLE;
 }
 
+/** @type {(content: string) => void} */
 function saveContent(content) {
   try {
     localStorage.setItem(CACHE_KEY, content);
-  } catch (_) {}
+  } catch (_) {
+    // Storage may be disabled; keep the current in-memory document.
+  }
 }
 
 // ─── DOM References ────────────────────────────────────────────────────────────
 
+/** @type {Editor | undefined} */
 let editor;
+/** @type {Editor | undefined} */
 let instanceEditor;
-let statusPill, statusText;
-let problemsPanel, problemsBadge, problemsBody, problemsEmpty;
-let cursorPosition;
+/** @type {HTMLElement | null} */
+let statusPill = null;
+/** @type {HTMLElement | null} */
+let statusText = null;
+/** @type {HTMLElement | null} */
+let problemsPanel = null;
+/** @type {HTMLElement | null} */
+let problemsBadge = null;
+/** @type {HTMLElement | null} */
+let problemsBody = null;
+/** @type {HTMLElement | null} */
+let cursorPosition = null;
 
 const INSTANCE_TEXT_CACHE_KEY = 'cddl-playground-instance-text';
 const INSTANCE_TEXT_CBOR_CACHE_KEY = 'cddl-playground-instance-text-cbor';
@@ -903,19 +970,44 @@ const INSTANCE_KIND_CACHE_KEY = 'cddl-playground-instance-kind';
 const INSTANCE_PANE_CACHE_KEY = 'cddl-playground-instance-open';
 const OUTLINE_PANE_CACHE_KEY = 'cddl-playground-outline-open';
 
+/** @type {'json'|'cbor'} */
 let instanceKind = 'json';
 // One buffer per instance kind — switching tabs must not carry text over.
 let instanceTexts = { json: '', cbor: '' };
-let instancePane, instanceToggleBtn, instanceResult, instanceRootRule;
-let instanceTabJson, instanceTabCbor, instanceCborHint;
-let outlinePane, outlineToggleBtn, outlineFilter, outlineList;
+/** @type {HTMLElement | null} */
+let instancePane = null;
+/** @type {HTMLElement | null} */
+let instanceToggleBtn = null;
+/** @type {HTMLElement | null} */
+let instanceResult = null;
+/** @type {HTMLSelectElement | null} */
+let instanceRootRule = null;
+/** @type {HTMLElement | null} */
+let instanceTabJson = null;
+/** @type {HTMLElement | null} */
+let instanceTabCbor = null;
+/** @type {HTMLElement | null} */
+let instanceCborHint = null;
+/** @type {HTMLElement | null} */
+let outlinePane = null;
+/** @type {HTMLElement | null} */
+let outlineToggleBtn = null;
+/** @type {HTMLInputElement | null} */
+let outlineFilter = null;
+/** @type {HTMLElement | null} */
+let outlineList = null;
+/** @type {import('./src/outline.js').CddlRule[]} */
 let outlineRules = [];
+/** @type {ReturnType<typeof setTimeout> | undefined} */
 let schemaFeatureTimer;
+/** @type {ReturnType<typeof initShortcutsModal> | undefined} */
 let shortcutsController;
+/** @type {(() => void) | undefined} */
 let navigationDisposer;
 
 // ─── Problems Panel ────────────────────────────────────────────────────────────
 
+/** @type {(errors: Diagnostic[]) => void} */
 function updateProblems(errors) {
   const count = errors.length;
   let errorCount = 0;
@@ -927,7 +1019,7 @@ function updateProblems(errors) {
 
   // Badge
   if (problemsBadge) {
-    problemsBadge.textContent = count;
+    problemsBadge.textContent = String(count);
     problemsBadge.classList.toggle('zero', count === 0);
   }
 
@@ -941,7 +1033,8 @@ function updateProblems(errors) {
     if (statusText) statusText.textContent = parts.join(', ');
   } else if (warningCount > 0) {
     if (statusPill) statusPill.classList.add('valid');
-    if (statusText) statusText.textContent = `Valid \u2022 ${warningCount} warning${warningCount > 1 ? 's' : ''}`;
+    if (statusText)
+      statusText.textContent = `Valid \u2022 ${warningCount} warning${warningCount > 1 ? 's' : ''}`;
   } else {
     if (statusPill) statusPill.classList.add('valid');
     if (statusText) statusText.textContent = 'Valid';
@@ -998,12 +1091,15 @@ function createEmptyState() {
   return el;
 }
 
+/** @type {Record<string, string>} */
 const _escapeMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const _escapeRe = /[&<>"']/g;
+/** @type {(str: string) => string} */
 function escapeHtml(str) {
   return str.replace(_escapeRe, (ch) => _escapeMap[ch]);
 }
 
+/** @type {(line: number, column: number) => void} */
 function jumpTo(line, column) {
   if (!editor) return;
   editor.setPosition({ lineNumber: line, column });
@@ -1020,6 +1116,7 @@ function jumpTo(line, column) {
  * - Trim trailing whitespace
  * - Ensure trailing newline
  */
+/** @type {(source: string) => string} */
 function formatCDDL(source) {
   const lines = source.split('\n');
   const out = [];
@@ -1067,24 +1164,30 @@ function formatCDDL(source) {
 function applyFormat() {
   if (!editor) return;
   const model = editor.getModel();
+  if (!model) return;
   const source = model.getValue();
   const formatted = formatCDDL(source);
   if (formatted !== source) {
     // Use pushEditOperations so it's undoable
     const fullRange = model.getFullModelRange();
-    editor.executeEdits('cddl-format', [{
-      range: fullRange,
-      text: formatted,
-    }]);
+    editor.executeEdits('cddl-format', [
+      {
+        range: fullRange,
+        text: formatted,
+      },
+    ]);
   }
 }
 
 // ─── Validation loop ───────────────────────────────────────────────────────────
 
+/** @type {ReturnType<typeof setTimeout> | undefined} */
 let validationTimer;
 
 let lastInput = '';
+/** @type {string | null} */
 let lastValidatedInput = null;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
 let saveTimer;
 
 function scheduleValidation() {
@@ -1099,6 +1202,9 @@ function scheduleSave() {
 }
 
 function runValidation() {
+  if (!editor) return;
+  const model = editor.getModel();
+  if (!model) return;
   const input = editor.getValue();
   // Skip only when the previous run produced a real result; a "not ready" stub
   // must not poison the cache, or it survives until the next keystroke.
@@ -1109,7 +1215,7 @@ function runValidation() {
   if (!input.trim()) {
     lastValidatedInput = input;
     updateProblems([]);
-    monaco.editor.setModelMarkers(editor.getModel(), 'cddl', []);
+    monaco.editor.setModelMarkers(model, 'cddl', []);
     if (statusPill) statusPill.className = 'status-pill';
     if (statusText) statusText.textContent = 'Ready';
     return;
@@ -1124,7 +1230,6 @@ function runValidation() {
   updateProblems(result.errors);
 
   // Update Monaco markers
-  const model = editor.getModel();
   const markers = result.errors.map((err) => toMarker(model, err));
   monaco.editor.setModelMarkers(model, 'cddl', markers);
 }
@@ -1138,16 +1243,16 @@ function runValidation() {
  *     position (scan forward to end of word / operator).
  *  3. Final fallback: highlight from column to end-of-line.
  */
+/** @type {(model: monaco.editor.ITextModel, err: Diagnostic) => monaco.editor.IMarkerData} */
 function toMarker(model, err) {
-  const severity = err.severity === 'warning'
-    ? monaco.MarkerSeverity.Warning
-    : monaco.MarkerSeverity.Error;
+  const severity =
+    err.severity === 'warning' ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Error;
 
   // ── Unmatched opener (missing closing delimiter) ──
   if (err._openerLine) {
     const oLine = Math.max(1, Math.min(err._openerLine, model.getLineCount()));
     const oContent = model.getLineContent(oLine);
-    const oCol = Math.max(1, Math.min(err._openerColumn, oContent.length + 1));
+    const oCol = Math.max(1, Math.min(err._openerColumn || 1, oContent.length + 1));
     return {
       startLineNumber: oLine,
       startColumn: oCol,
@@ -1185,7 +1290,9 @@ function toMarker(model, err) {
 
   if (rest.length > 0) {
     // Match identifier, number, string-quote, or operator cluster
-    const tokenMatch = rest.match(/^(?:[a-zA-Z_][\w\-]*|\d[\d.eE+\-]*|"[^"]*"?|'[^']*'?|[^\s,;{}()\[\]]+)/);
+    const tokenMatch = rest.match(
+      /^(?:[a-zA-Z_][\w-]*|\d[\d.eE+-]*|"[^"]*"?|'[^']*'?|[^\s,;{}()[\]]+)/,
+    );
     if (tokenMatch) {
       endCol = col + tokenMatch[0].length;
     } else {
@@ -1203,7 +1310,7 @@ function toMarker(model, err) {
   // or to a closing delimiter (the real problem is the token before it), walk
   // back to the previous meaningful token — possibly on an earlier line.
   const charAtCol = lineContent[col - 1] || '';
-  const isClosingDelim = /^[\]\)}]$/.test(charAtCol);
+  const isClosingDelim = /^[\])}]$/.test(charAtCol);
   if (isClosingDelim) {
     // The error is at a closing delimiter — highlight the gap just before it
     // where the missing token is expected (e.g. the space after `*` in `[* ]`).
@@ -1226,7 +1333,7 @@ function toMarker(model, err) {
     // First try: highlight the last token on the SAME line (if it has content).
     const trimmedCurrent = lineContent.trimEnd();
     if (trimmedCurrent.length > 0) {
-      const lastMatch = trimmedCurrent.match(/[a-zA-Z_][\w\-]*$|"[^"]*"$|'[^']*'$|\S+$/);
+      const lastMatch = trimmedCurrent.match(/[a-zA-Z_][\w-]*$|"[^"]*"$|'[^']*'$|\S+$/);
       if (lastMatch) {
         const start = trimmedCurrent.length - lastMatch[0].length + 1;
         return {
@@ -1249,7 +1356,7 @@ function toMarker(model, err) {
       if (targetContent.trim().length > 0) break;
     }
     const trimmed = targetContent.trimEnd();
-    const lastTokenMatch = trimmed.match(/[a-zA-Z_][\w\-]*$|"[^"]*"$|'[^']*'$|\S+$/);
+    const lastTokenMatch = trimmed.match(/[a-zA-Z_][\w-]*$|"[^"]*"$|'[^']*'$|\S+$/);
     if (lastTokenMatch) {
       const start = trimmed.length - lastTokenMatch[0].length + 1;
       return {
@@ -1284,9 +1391,9 @@ function toMarker(model, err) {
   };
 }
 
-
 // ─── Instance Validation ─────────────────────────────────────────────────────
 
+/** @type {(sharedState: PlaygroundState | null, kind: 'json'|'cbor') => {json: string, cbor: string}} */
 function loadInstanceTexts(sharedState, kind) {
   const texts = { json: '', cbor: '' };
   if (sharedState) {
@@ -1304,16 +1411,21 @@ function loadInstanceTexts(sharedState, kind) {
       texts.json = legacy;
       texts.cbor = cbor || '';
     }
-  } catch (_) {}
+  } catch (_) {
+    logStorageUnavailable('storage.instance_texts');
+  }
   return texts;
 }
 
+/** @type {(sharedState: PlaygroundState | null) => 'json'|'cbor'} */
 function loadInstanceKind(sharedState) {
   if (sharedState?.kind === 'json' || sharedState?.kind === 'cbor') return sharedState.kind;
   try {
     const saved = localStorage.getItem(INSTANCE_KIND_CACHE_KEY);
     if (saved === 'json' || saved === 'cbor') return saved;
-  } catch (_) {}
+  } catch (_) {
+    logStorageUnavailable('storage.instance_kind');
+  }
   return 'json';
 }
 
@@ -1325,20 +1437,28 @@ function saveInstanceState() {
       localStorage.setItem(INSTANCE_TEXT_CBOR_CACHE_KEY, instanceTexts.cbor);
     }
     localStorage.setItem(INSTANCE_KIND_CACHE_KEY, instanceKind);
-    if (instancePane) localStorage.setItem(INSTANCE_PANE_CACHE_KEY, String(!instancePane.classList.contains('collapsed')));
-  } catch (_) {}
+    if (instancePane)
+      localStorage.setItem(
+        INSTANCE_PANE_CACHE_KEY,
+        String(!instancePane.classList.contains('collapsed')),
+      );
+  } catch (_) {
+    logStorageUnavailable('storage.instance_state');
+  }
 }
 
 function layoutInstanceNextFrame() {
   if (!instanceEditor || (instancePane && instancePane.classList.contains('collapsed'))) return;
-  requestAnimationFrame(() => instanceEditor.layout());
+  requestAnimationFrame(() => instanceEditor?.layout());
 }
 
 function layoutPlaygroundEditors() {
   if (editor) editor.layout();
-  if (instanceEditor && (!instancePane || !instancePane.classList.contains('collapsed'))) instanceEditor.layout();
+  if (instanceEditor && (!instancePane || !instancePane.classList.contains('collapsed')))
+    instanceEditor.layout();
 }
 
+/** @type {(kind: 'json'|'cbor') => void} */
 function setInstanceKind(kind) {
   const next = kind === 'cbor' ? 'cbor' : 'json';
   const previous = instanceKind;
@@ -1364,8 +1484,9 @@ function setInstanceKind(kind) {
       instanceCborHint.textContent = 'CBOR validation is not available in this WASM build.';
     }
   }
-  if (instanceEditor?.getModel()) {
-    monaco.editor.setModelLanguage(instanceEditor.getModel(), instanceKind === 'json' ? 'json' : 'plaintext');
+  const model = instanceEditor?.getModel();
+  if (instanceEditor && model) {
+    monaco.editor.setModelLanguage(model, instanceKind === 'json' ? 'json' : 'plaintext');
     if (switching) {
       const restored = instanceTexts[instanceKind] || '';
       if (instanceEditor.getValue() !== restored) instanceEditor.setValue(restored);
@@ -1387,6 +1508,7 @@ function clearInstanceResult() {
   instanceResult.appendChild(empty);
 }
 
+/** @type {(result: import('./src/instance-validation.js').ValidationResult) => void} */
 function renderInstanceResult(result) {
   if (!instanceResult) return;
   instanceResult.textContent = '';
@@ -1395,7 +1517,8 @@ function renderInstanceResult(result) {
 
   const title = document.createElement('div');
   title.className = 'instance-result-title';
-  title.textContent = result.title || (result.ok ? 'Instance is valid' : 'Instance validation failed');
+  title.textContent =
+    result.title || (result.ok ? 'Instance is valid' : 'Instance validation failed');
   instanceResult.appendChild(title);
 
   const list = document.createElement('div');
@@ -1404,7 +1527,7 @@ function renderInstanceResult(result) {
   if (failures.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'instance-result-empty';
-    empty.textContent = result.ok ? 'No failures.' : (result.detail || 'Validation failed.');
+    empty.textContent = result.ok ? 'No failures.' : result.detail || 'Validation failed.';
     list.appendChild(empty);
   } else {
     for (const failure of failures) {
@@ -1430,9 +1553,11 @@ function validateCurrentInstance() {
   toast(result.title, result.ok ? 'success' : 'error');
 }
 
+/** @type {(forceOpen?: boolean) => void} */
 function toggleInstancePane(forceOpen) {
   if (!instancePane) return;
-  const open = typeof forceOpen === 'boolean' ? forceOpen : instancePane.classList.contains('collapsed');
+  const open =
+    typeof forceOpen === 'boolean' ? forceOpen : instancePane.classList.contains('collapsed');
   instancePane.classList.toggle('collapsed', !open);
   if (instanceToggleBtn) instanceToggleBtn.classList.toggle('active', open);
   saveInstanceState();
@@ -1464,13 +1589,18 @@ function generateCurrentSample() {
   const schema = editor.getValue();
 
   // Verify candidates against the real validator rather than trusting heuristics.
+  /** @type {((json: string) => string | null) | undefined} */
   const validate = wasmModule?.validate_json_from_str
     ? (json) => {
-      const check = validateInstance({
-        wasmModule, cddl: schema, kind: 'json', text: json, rootRule: selectedRoot,
-      });
-      return check.ok ? null : (check.failures[0] || check.title);
-    }
+        const check = validateInstance({
+          wasmModule,
+          cddl: schema,
+          kind: 'json',
+          text: json,
+          rootRule: selectedRoot,
+        });
+        return check.ok ? null : check.failures[0] || check.title;
+      }
     : undefined;
 
   const result = generateSample(schema, selectedRoot, { validate });
@@ -1506,7 +1636,11 @@ function generateCurrentSample() {
     } else if (result.verified) {
       toast('Generated sample instance', 'success');
     } else if (result.validationError) {
-      toast(`Generated a sample, but it does not validate: ${result.validationError}`, 'warning', 7000);
+      toast(
+        `Generated a sample, but it does not validate: ${result.validationError}`,
+        'warning',
+        7000,
+      );
       warnedAlready = true;
     } else if (result.constraintsSatisfied === false) {
       toast(
@@ -1516,7 +1650,11 @@ function generateCurrentSample() {
       );
       warnedAlready = true;
     } else {
-      toast('Generated a sample, but it could not be verified because the validator is not ready.', 'warning', 7000);
+      toast(
+        'Generated a sample, but it could not be verified because the validator is not ready.',
+        'warning',
+        7000,
+      );
       warnedAlready = true;
     }
   }
@@ -1525,13 +1663,15 @@ function generateCurrentSample() {
   }
 }
 
+/** @type {(sharedState: PlaygroundState | null) => void} */
 function initInstanceFeature(sharedState) {
   try {
     instancePane = document.getElementById('instancePane');
     instanceToggleBtn = document.getElementById('instanceToggleBtn');
     instanceTabJson = document.getElementById('instanceTabJson');
     instanceTabCbor = document.getElementById('instanceTabCbor');
-    instanceRootRule = document.getElementById('instanceRootRule');
+    const rootSelect = document.getElementById('instanceRootRule');
+    instanceRootRule = rootSelect instanceof HTMLSelectElement ? rootSelect : null;
     instanceResult = document.getElementById('instanceResult');
     instanceCborHint = document.getElementById('instanceCborHint');
     const container = document.getElementById('instanceEditor');
@@ -1560,12 +1700,16 @@ function initInstanceFeature(sharedState) {
       bracketPairColorization: { enabled: true },
       guides: { bracketPairs: 'active', indentation: true },
       padding: { top: 12, bottom: 12 },
-      hover: { enabled: true, delay: 300, sticky: true },
+      hover: { enabled: 'on', delay: 300, sticky: true },
     });
     instanceEditor.onDidChangeModelContent(saveInstanceState);
 
     let open = false;
-    try { open = localStorage.getItem(INSTANCE_PANE_CACHE_KEY) === 'true'; } catch (_) {}
+    try {
+      open = localStorage.getItem(INSTANCE_PANE_CACHE_KEY) === 'true';
+    } catch (_) {
+      logStorageUnavailable('storage.instance_pane');
+    }
     if (sharedState?.instance) open = true;
     toggleInstancePane(open);
     setInstanceKind(instanceKind);
@@ -1581,9 +1725,10 @@ function initInstanceFeature(sharedState) {
     if (genBtn) genBtn.addEventListener('click', generateCurrentSample);
 
     const splitHandle = document.getElementById('instanceSplitHandle');
-    if (splitHandle && instancePane) wireHorizontalResize(splitHandle, instancePane, 'ew-resize', 260, 720, -1);
+    if (splitHandle && instancePane)
+      wireHorizontalResize(splitHandle, instancePane, 'ew-resize', 260, 720, -1);
   } catch (err) {
-    console.error('Failed to initialize instance validation:', err);
+    logFailure('instance.initialization_failed', err);
   }
 }
 
@@ -1607,8 +1752,16 @@ function refreshOutline() {
 }
 
 function refreshSchemaFeatures() {
-  try { refreshOutline(); } catch (err) { console.error('Failed to refresh outline:', err); }
-  try { refreshRootCandidates(); } catch (err) { console.error('Failed to refresh root rules:', err); }
+  try {
+    refreshOutline();
+  } catch (err) {
+    logFailure('outline.refresh_failed', err);
+  }
+  try {
+    refreshRootCandidates();
+  } catch (err) {
+    logFailure('instance.roots_failed', err);
+  }
 }
 
 function scheduleSchemaFeatures() {
@@ -1616,15 +1769,22 @@ function scheduleSchemaFeatures() {
   schemaFeatureTimer = setTimeout(refreshSchemaFeatures, 400);
 }
 
+/** @type {(forceOpen?: boolean) => void} */
 function toggleOutlinePane(forceOpen) {
   if (!outlinePane) return;
-  const open = typeof forceOpen === 'boolean' ? forceOpen : outlinePane.classList.contains('collapsed');
+  const open =
+    typeof forceOpen === 'boolean' ? forceOpen : outlinePane.classList.contains('collapsed');
   outlinePane.classList.toggle('collapsed', !open);
   if (outlineToggleBtn) outlineToggleBtn.classList.toggle('active', open);
-  try { localStorage.setItem(OUTLINE_PANE_CACHE_KEY, String(open)); } catch (_) {}
+  try {
+    localStorage.setItem(OUTLINE_PANE_CACHE_KEY, String(open));
+  } catch (_) {
+    logStorageUnavailable('storage.outline_pane');
+  }
   if (editor) editor.layout();
 }
 
+/** @type {(handle: HTMLElement, pane: HTMLElement, cursor: string, minWidth: number, maxWidth: number, direction: number) => void} */
 function wireHorizontalResize(handle, pane, cursor, minWidth, maxWidth, direction) {
   handle.addEventListener('mousedown', (e) => {
     if (pane.classList.contains('collapsed')) return;
@@ -1635,8 +1795,9 @@ function wireHorizontalResize(handle, pane, cursor, minWidth, maxWidth, directio
 
     const startX = e.clientX;
     const startWidth = pane.offsetWidth;
-    let rafId;
+    let rafId = 0;
 
+    /** @param {MouseEvent} ev */
     function onMouseMove(ev) {
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
@@ -1664,28 +1825,33 @@ function initOutlineFeature() {
   try {
     outlinePane = document.getElementById('outlinePane');
     outlineToggleBtn = document.getElementById('outlineToggleBtn');
-    outlineFilter = document.getElementById('outlineFilter');
+    const filterInput = document.getElementById('outlineFilter');
+    outlineFilter = filterInput instanceof HTMLInputElement ? filterInput : null;
     outlineList = document.getElementById('outlineList');
 
     let open = true;
     try {
       const saved = localStorage.getItem(OUTLINE_PANE_CACHE_KEY);
       if (saved === 'false') open = false;
-    } catch (_) {}
+    } catch (_) {
+      logStorageUnavailable('storage.outline_preference');
+    }
     toggleOutlinePane(open);
 
     if (outlineToggleBtn) outlineToggleBtn.addEventListener('click', () => toggleOutlinePane());
     if (outlineFilter) outlineFilter.addEventListener('input', renderOutlineNow);
     const resizeHandle = document.getElementById('outlineResizeHandle');
-    if (resizeHandle && outlinePane) wireHorizontalResize(resizeHandle, outlinePane, 'ew-resize', 160, 420, 1);
+    if (resizeHandle && outlinePane)
+      wireHorizontalResize(resizeHandle, outlinePane, 'ew-resize', 160, 420, 1);
     navigationDisposer = registerNavigation(monaco, () => editor?.getValue() || '');
   } catch (err) {
-    console.error('Failed to initialize outline:', err);
+    logFailure('outline.initialization_failed', err);
   }
 }
 
 // ─── File I/O ────────────────────────────────────────────────────────────────
 
+/** @type {(source: string) => void} */
 function setMainEditorContent(source) {
   if (!editor) return;
   editor.setValue(source);
@@ -1694,6 +1860,7 @@ function setMainEditorContent(source) {
   refreshSchemaFeatures();
 }
 
+/** @type {(file: import('./src/file-io.js').LoadedFile) => void} */
 function routeLoadedFile(file) {
   if (!file) return;
   const kind = file.kind || classifyFile(file.name);
@@ -1706,7 +1873,7 @@ function routeLoadedFile(file) {
   } else if (kind === 'cbor') {
     if (!instanceEditor) return;
     setInstanceKind('cbor');
-    instanceEditor.setValue(file.text || bytesToHex(file.bytes));
+    instanceEditor.setValue(file.text || bytesToHex(file.bytes || new Uint8Array()));
     toggleInstancePane(true);
     toast(`Loaded ${file.name || 'CBOR file'} into instance editor`, 'success');
   } else {
@@ -1736,7 +1903,7 @@ function initFileIoFeature() {
     if (saveBtn) saveBtn.addEventListener('click', saveSchemaFile);
     if (document.body) attachDropZone(document.body, dropOverlay, routeLoadedFile);
   } catch (err) {
-    console.error('Failed to initialize file I/O:', err);
+    logFailure('file.initialization_failed', err);
   }
 }
 
@@ -1766,7 +1933,7 @@ function initShareFeature() {
     const shareBtn = document.getElementById('shareBtn');
     if (shareBtn) shareBtn.addEventListener('click', sharePlayground);
   } catch (err) {
-    console.error('Failed to initialize sharing:', err);
+    logFailure('share.initialization_failed', err);
   }
 }
 
@@ -1797,7 +1964,7 @@ function initShortcutFeature() {
       bodyEl: document.getElementById('shortcutsBody'),
     });
   } catch (err) {
-    console.error('Failed to initialize shortcuts:', err);
+    logFailure('shortcuts.initialization_failed', err);
   }
 }
 
@@ -1810,47 +1977,68 @@ function boot() {
   problemsPanel = document.getElementById('problemsPanel');
   problemsBadge = document.getElementById('problemsBadge');
   problemsBody = document.getElementById('problemsBody');
-  problemsEmpty = document.getElementById('problemsEmpty');
   cursorPosition = document.getElementById('cursorPosition');
 
-  try { initToasts(document.getElementById('toastContainer')); } catch (err) { console.error('Failed to initialize toasts:', err); }
+  try {
+    initToasts(document.getElementById('toastContainer'));
+  } catch (err) {
+    logFailure('toast.initialization_failed', err);
+  }
 
   let sharedState = null;
   try {
     sharedState = readStateFromLocation();
     if (sharedState) clearLocationState();
   } catch (err) {
-    console.error('Failed to read shared state:', err);
+    logFailure('share.read_failed', err);
   }
 
   // Ref-check toggle
   const refCheckTrack = document.getElementById('refCheckTrack');
   try {
     checkRefs = localStorage.getItem(REFS_CACHE_KEY) === 'true';
-  } catch (_) {}
+  } catch (_) {
+    logStorageUnavailable('storage.reference_check');
+  }
   if (checkRefs && refCheckTrack) refCheckTrack.classList.add('active');
 
   const refCheckToggle = document.getElementById('refCheckToggle');
-  if (refCheckToggle) refCheckToggle.addEventListener('click', () => {
-    checkRefs = !checkRefs;
-    if (refCheckTrack) refCheckTrack.classList.toggle('active', checkRefs);
-    try { localStorage.setItem(REFS_CACHE_KEY, checkRefs); } catch (_) {}
-    if (editor) { lastInput = ''; lastValidatedInput = null; runValidation(); }
-  });
+  if (refCheckToggle)
+    refCheckToggle.addEventListener('click', () => {
+      checkRefs = !checkRefs;
+      if (refCheckTrack) refCheckTrack.classList.toggle('active', checkRefs);
+      try {
+        localStorage.setItem(REFS_CACHE_KEY, String(checkRefs));
+      } catch (_) {
+        // Preferences are optional when browser storage is unavailable.
+      }
+      if (editor) {
+        lastInput = '';
+        lastValidatedInput = null;
+        runValidation();
+      }
+    });
 
   // Format-on-save toggle
   const formatTrack = document.getElementById('formatTrack');
   try {
     formatOnSave = localStorage.getItem(FORMAT_CACHE_KEY) === 'true';
-  } catch (_) {}
+  } catch (_) {
+    logStorageUnavailable('storage.format_preference');
+  }
   if (formatOnSave && formatTrack) formatTrack.classList.add('active');
 
   const formatToggle = document.getElementById('formatToggle');
-  if (formatToggle) formatToggle.addEventListener('click', () => {
-    formatOnSave = !formatOnSave;
-    if (formatTrack) formatTrack.classList.toggle('active', formatOnSave);
-    try { localStorage.setItem(FORMAT_CACHE_KEY, formatOnSave); } catch (_) {}
-  });
+  if (formatToggle)
+    formatToggle.addEventListener('click', () => {
+      formatOnSave = !formatOnSave;
+      if (formatTrack) formatTrack.classList.toggle('active', formatOnSave);
+      try {
+        localStorage.setItem(FORMAT_CACHE_KEY, String(formatOnSave));
+      } catch (_) {
+        // Preferences are optional when browser storage is unavailable.
+      }
+    });
 
   // Examples dropdown
   const examplesWrapper = document.getElementById('examplesWrapper');
@@ -1880,13 +2068,14 @@ function boot() {
   }
   if (examplesDropdown) examplesDropdown.appendChild(ddFrag);
 
-  if (examplesBtn && examplesWrapper) examplesBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    examplesWrapper.classList.toggle('open');
-  });
+  if (examplesBtn && examplesWrapper)
+    examplesBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      examplesWrapper.classList.toggle('open');
+    });
 
   document.addEventListener('click', (e) => {
-    if (examplesWrapper && !examplesWrapper.contains(e.target)) {
+    if (examplesWrapper && e.target instanceof Node && !examplesWrapper.contains(e.target)) {
       examplesWrapper.classList.remove('open');
     }
   });
@@ -1895,18 +2084,25 @@ function boot() {
   try {
     const saved = localStorage.getItem(THEME_CACHE_KEY);
     if (saved === 'light') isDark = false;
-  } catch (_) {}
+  } catch (_) {
+    logStorageUnavailable('storage.theme_preference');
+  }
   if (!isDark) document.body.classList.add('light');
 
   const themeToggle = document.getElementById('themeToggle');
-  if (themeToggle) themeToggle.addEventListener('click', () => {
-    isDark = !isDark;
-    document.body.classList.toggle('light', !isDark);
-    if (editor) {
-      monaco.editor.setTheme(isDark ? 'cddl-dark' : 'cddl-light');
-    }
-    try { localStorage.setItem(THEME_CACHE_KEY, isDark ? 'dark' : 'light'); } catch (_) {}
-  });
+  if (themeToggle)
+    themeToggle.addEventListener('click', () => {
+      isDark = !isDark;
+      document.body.classList.toggle('light', !isDark);
+      if (editor) {
+        monaco.editor.setTheme(isDark ? 'cddl-dark' : 'cddl-light');
+      }
+      try {
+        localStorage.setItem(THEME_CACHE_KEY, isDark ? 'dark' : 'light');
+      } catch (_) {
+        logStorageUnavailable('storage.theme_save');
+      }
+    });
 
   const container = document.getElementById('cddlEditor');
   if (!container) return;
@@ -1935,7 +2131,7 @@ function boot() {
     bracketPairColorization: { enabled: true },
     guides: { bracketPairs: 'active', indentation: true },
     padding: { top: 12, bottom: 12 },
-    hover: { enabled: true, delay: 300, sticky: true },
+    hover: { enabled: 'on', delay: 300, sticky: true },
   });
 
   // Expose globally for convenience
@@ -1951,7 +2147,8 @@ function boot() {
 
   // Cursor position in status bar
   editor.onDidChangeCursorPosition((e) => {
-    if (cursorPosition) cursorPosition.textContent = `Ln ${e.position.lineNumber}, Col ${e.position.column}`;
+    if (cursorPosition)
+      cursorPosition.textContent = `Ln ${e.position.lineNumber}, Col ${e.position.column}`;
   });
 
   // Intercept playground shortcuts globally. Keep Mod+S single-handled here.
@@ -2003,45 +2200,44 @@ function boot() {
 
   // Problems panel resize
   const resizeHandle = document.getElementById('resizeHandle');
-  let resizing = false;
 
-  if (resizeHandle) resizeHandle.addEventListener('mousedown', (e) => {
-    if (problemsPanel && problemsPanel.classList.contains('collapsed')) return;
-    e.preventDefault();
-    resizing = true;
-    resizeHandle.classList.add('active');
-    document.body.style.cursor = 'ns-resize';
-    document.body.style.userSelect = 'none';
+  if (resizeHandle)
+    resizeHandle.addEventListener('mousedown', (e) => {
+      if (problemsPanel && problemsPanel.classList.contains('collapsed')) return;
+      e.preventDefault();
+      resizeHandle.classList.add('active');
+      document.body.style.cursor = 'ns-resize';
+      document.body.style.userSelect = 'none';
 
-    const startY = e.clientY;
-    const startHeight = problemsPanel ? problemsPanel.offsetHeight : 0;
+      const startY = e.clientY;
+      const startHeight = problemsPanel ? problemsPanel.offsetHeight : 0;
 
-    let rafId;
-    function onMouseMove(ev) {
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        const delta = startY - ev.clientY;
-        const newHeight = Math.max(33, Math.min(startHeight + delta, window.innerHeight * 0.7));
-        if (problemsPanel) problemsPanel.style.height = newHeight + 'px';
-        layoutPlaygroundEditors();
-      });
-    }
+      let rafId = 0;
+      /** @param {MouseEvent} ev */
+      function onMouseMove(ev) {
+        cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(() => {
+          const delta = startY - ev.clientY;
+          const newHeight = Math.max(33, Math.min(startHeight + delta, window.innerHeight * 0.7));
+          if (problemsPanel) problemsPanel.style.height = newHeight + 'px';
+          layoutPlaygroundEditors();
+        });
+      }
 
-    function onMouseUp() {
-      resizing = false;
-      resizeHandle.classList.remove('active');
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    }
+      function onMouseUp() {
+        resizeHandle?.classList.remove('active');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      }
 
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  });
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
 
   // Window resize (throttled)
-  let resizeRaf;
+  let resizeRaf = 0;
   window.addEventListener('resize', () => {
     cancelAnimationFrame(resizeRaf);
     resizeRaf = requestAnimationFrame(layoutPlaygroundEditors);
@@ -2072,3 +2268,8 @@ if (document.readyState === 'loading') {
 // Expose jump helper globally (used by inline onclick)
 window.jumpToError = jumpTo;
 window.editor = editor;
+window.addEventListener('pagehide', (event) => {
+  if (event.persisted) return;
+  shortcutsController?.dispose();
+  navigationDisposer?.();
+});

@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+npm run check:files
+npm run lint
+npm run format:check
+npm run check:docs
+cargo fmt --all -- --check

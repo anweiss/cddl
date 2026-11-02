@@ -1,0 +1,24 @@
+name: Bug report
+description: Reproduce a parser, validator, CLI, extension or playground failure.
+labels: ['bug']
+body:
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include synthetic CDDL/input and exact commands. Remove private data and credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Version and environment
+      description: CDDL version, OS, browser or VS Code version, target and enabled Cargo features.
+    validations:
+      required: true

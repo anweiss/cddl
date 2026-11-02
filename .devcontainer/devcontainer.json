@@ -1,27 +1,28 @@
 {
-  "name": "Rust",
-  "dockerFile": "Dockerfile",
-  "runArgs": ["--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined"],
-  // Set *default* container specific settings.json values on container create.
-  "settings": {
-    "terminal.integrated.shell.linux": "/bin/bash",
-    "lldb.executable": "/usr/bin/lldb",
-    "rust-analyzer.updates.askBeforeDownload": false,
-    "files.watcherExclude": {
-			"**/target/**": true
-		}
+  "name": "CDDL",
+  "workspaceFolder": "/workspaces/cddl",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/cddl,type=bind,consistency=cached",
+  "build": { "dockerfile": "Dockerfile" },
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "24" },
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.12" }
   },
-  // Add the IDs of extensions you want installed when the container is created.
-  "extensions": [
-    "matklad.rust-analyzer",
-    "bungcip.better-toml",
-    "vadimcn.vscode-lldb",
-    "serayuzgur.crates"
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer", "tamasfe.even-better-toml"],
+      "settings": { "files.watcherExclude": { "**/target/**": true } }
+    }
+  },
+  "mounts": [
+    "source=cddl-${devcontainerId}-venv,target=/workspaces/cddl/.venv,type=volume",
+    "source=cddl-${devcontainerId}-node,target=/workspaces/cddl/node_modules,type=volume",
+    "source=cddl-${devcontainerId}-web-node,target=/workspaces/cddl/www/node_modules,type=volume",
+    "source=cddl-${devcontainerId}-lsp-node,target=/workspaces/cddl/cddl-lsp/node_modules,type=volume",
+    "source=cddl-${devcontainerId}-client-node,target=/workspaces/cddl/cddl-lsp/client/node_modules,type=volume",
+    "source=cddl-${devcontainerId}-server-node,target=/workspaces/cddl/cddl-lsp/server/node_modules,type=volume",
+    "source=cddl-${devcontainerId}-target,target=/workspaces/cddl/target,type=volume",
+    "source=cddl-${devcontainerId}-consumer-target,target=/workspaces/cddl/cddl-derive/tests/consumer/target,type=volume"
   ],
-  // Use 'forwardPorts' to make a list of ports inside the container available locally.
-  // "forwardPorts": [],
-  // Use 'postCreateCommand' to run commands after the container is created.
-  "postCreateCommand": "cargo build",
-  // Uncomment to connect as a non-root user. See https://aka.ms/vscode-remote/containers/non-root.
+  "postCreateCommand": "sudo chown -R vscode:vscode .venv node_modules www/node_modules cddl-lsp/node_modules cddl-lsp/client/node_modules cddl-lsp/server/node_modules target cddl-derive/tests/consumer/target && npm run setup",
   "remoteUser": "vscode"
 }

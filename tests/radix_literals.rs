@@ -17,8 +17,13 @@ fn assert_valid_claim(cddl_input: &str, cbor_hex: &str) {
     .unwrap_or_else(|e| panic!("unchecked parser rejected {:?}: {}", cddl_input, e));
   ast::CDDL::from_slice(cddl_input.as_bytes())
     .unwrap_or_else(|e| panic!("checked parser rejected {:?}: {}", cddl_input, e));
-  validate_cbor_from_slice(cddl_input, &cbor(cbor_hex), None)
-    .unwrap_or_else(|e| panic!("validator rejected {:?}: {}", cddl_input, e));
+  validate_cbor_from_slice(
+    cddl_input,
+    &cbor(cbor_hex),
+    #[cfg(feature = "additional-controls")]
+    None,
+  )
+  .unwrap_or_else(|e| panic!("validator rejected {:?}: {}", cddl_input, e));
 }
 
 fn assert_parse_error_claim(cddl_input: &str) {
@@ -265,7 +270,13 @@ fn decimal_leading_zero_regroups_in_arrays() {
   // RFC-derivable as the two entries `0 42`, so [042] accepts CBOR [0, 42] — and only that.
   assert_valid_claim("thing = [042]", "8200182a");
   assert!(
-    validate_cbor_from_slice("thing = [042]", &cbor("81182a"), None).is_err(),
+    validate_cbor_from_slice(
+      "thing = [042]",
+      &cbor("81182a"),
+      #[cfg(feature = "additional-controls")]
+      None
+    )
+    .is_err(),
     "[042] must not validate CBOR [42]"
   );
 }

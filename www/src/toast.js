@@ -2,8 +2,16 @@ const MAX_TOASTS = 4;
 const DEFAULT_DURATION_MS = 3200;
 const TRANSITION_FALLBACK_MS = 250;
 
+/**
+ * @typedef {'info'|'success'|'error'|'warning'} ToastType
+ * @typedef {{el: HTMLDivElement, message: string, type: ToastType,
+ * timerId: ReturnType<typeof setTimeout>|null, fallbackTimerId: ReturnType<typeof setTimeout>|null,
+ * removing: boolean, removed: boolean, dismiss: () => void}} ToastRecord
+ */
+/** @type {HTMLElement | null} */
 let containerEl = null;
 let warnedMissingContainer = false;
+/** @type {ToastRecord[]} */
 let toasts = [];
 
 const ICONS = {
@@ -21,14 +29,17 @@ function warnMissingContainer() {
   }
 }
 
+/** @type {(type: string) => ToastType} */
 function normalizeType(type) {
-  return Object.prototype.hasOwnProperty.call(ICONS, type) ? type : 'info';
+  return type === 'success' || type === 'error' || type === 'warning' ? type : 'info';
 }
 
+/** @type {(record: ToastRecord) => void} */
 function removeToastRecord(record) {
   toasts = toasts.filter((toastRecord) => toastRecord !== record);
 }
 
+/** @type {(record: ToastRecord, durationMs: number) => void} */
 function scheduleTimer(record, durationMs) {
   if (record.timerId) clearTimeout(record.timerId);
   record.timerId = null;
@@ -37,6 +48,7 @@ function scheduleTimer(record, durationMs) {
   }
 }
 
+/** @type {(record: ToastRecord) => void} */
 function removeToastNode(record) {
   if (record.removed) return;
   record.removed = true;
@@ -46,6 +58,7 @@ function removeToastNode(record) {
   }
 }
 
+/** @type {(doc: Document, message: string, type: ToastType) => {el: HTMLDivElement, closeBtn: HTMLButtonElement}} */
 function createToast(doc, message, type) {
   const el = doc.createElement('div');
   el.className = `toast toast-${type}`;
@@ -74,8 +87,9 @@ function createToast(doc, message, type) {
   return { el, closeBtn };
 }
 
-/** Set the container element the toasts render into. Must be called once at boot. */
+/** @type {(container: HTMLElement | null) => void} Set the toast container at boot. */
 export function initToasts(container) {
+  clearToasts();
   containerEl = container || null;
 }
 
@@ -94,11 +108,10 @@ export function toast(message, type = 'info', durationMs = DEFAULT_DURATION_MS) 
 
   const normalizedType = normalizeType(type);
   const normalizedMessage = String(message);
-  const existing = toasts.find((record) => (
-    !record.removing &&
-    record.message === normalizedMessage &&
-    record.type === normalizedType
-  ));
+  const existing = toasts.find(
+    (record) =>
+      !record.removing && record.message === normalizedMessage && record.type === normalizedType,
+  );
   if (existing) {
     scheduleTimer(existing, durationMs);
     return existing.dismiss;
@@ -111,6 +124,7 @@ export function toast(message, type = 'info', durationMs = DEFAULT_DURATION_MS) 
   }
 
   const { el, closeBtn } = createToast(doc, normalizedMessage, normalizedType);
+  /** @type {ToastRecord} */
   const record = {
     el,
     message: normalizedMessage,
@@ -119,7 +133,7 @@ export function toast(message, type = 'info', durationMs = DEFAULT_DURATION_MS) 
     fallbackTimerId: null,
     removing: false,
     removed: false,
-    dismiss: null,
+    dismiss: () => {},
   };
 
   record.dismiss = () => {
@@ -129,6 +143,7 @@ export function toast(message, type = 'info', durationMs = DEFAULT_DURATION_MS) 
     record.timerId = null;
     removeToastRecord(record);
 
+    /** @param {TransitionEvent} e */
     const onTransitionEnd = (e) => {
       if (e && e.target !== el) return;
       el.removeEventListener('transitionend', onTransitionEnd);
@@ -165,7 +180,7 @@ export function toast(message, type = 'info', durationMs = DEFAULT_DURATION_MS) 
 }
 
 /** Remove all visible toasts immediately. */
-export function clearToasts() {
+function clearToasts() {
   for (const record of [...toasts]) {
     if (record.timerId) clearTimeout(record.timerId);
     if (record.fallbackTimerId) clearTimeout(record.fallbackTimerId);

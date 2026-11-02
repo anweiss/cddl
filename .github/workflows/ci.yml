@@ -1,16 +1,17 @@
 on:
   push:
-    tags-ignore:
-      - "*"
+    branches:
+      - '**'
     paths:
-      - ".github/workflows/ci.yml"
-      - ".github/workflows/anchore-analysis.yml"
-      - "Dockerfile"
-      - ".dockerignore"
-      - "Cargo.toml"
-      - "src/**"
-      - "tests/**"
-      - "cddl-derive/**"
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/anchore-analysis.yml'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'Cargo.toml'
+      - 'src/**'
+      - 'tests/**'
+      - 'cddl-codegen-rust/**'
+      - 'cddl-derive/**'
   pull_request:
 
 name: Build and Test
@@ -74,7 +75,7 @@ jobs:
 
       - name: Check compilation for wasm target
         run: |
-          cargo +${{ matrix.rust_toolchain }} check -p cddl --lib --target wasm32-unknown-unknown
+          cargo +${{ matrix.rust_toolchain }} check -p cddl -p cddl-codegen-rust --lib --target wasm32-unknown-unknown
 
       - name: Check compilation for wasm target (modules)
         run: |
@@ -135,7 +136,7 @@ jobs:
       - name: Install node
         uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a
         with:
-          node-version: "24"
+          node-version: '24'
 
       - name: Build wasm
         run: |
@@ -190,4 +191,4 @@ jobs:
       - name: cargo +${{ matrix.rust_toolchain }} clippy
         if: ${{ always() }}
         run: |
-          cargo +${{ matrix.rust_toolchain }} clippy -p cddl --lib --target wasm32-unknown-unknown
+          cargo +${{ matrix.rust_toolchain }} clippy -p cddl -p cddl-codegen-rust --lib --target wasm32-unknown-unknown

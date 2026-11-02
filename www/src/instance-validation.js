@@ -1,12 +1,19 @@
 // ─── CBOR Input Parsing ──────────────────────────────────────────────────────
 
 /**
+ * @typedef {{position?: {line?: number, column?: number}, msg?: {short?: string, extended?: string}}} ParserError
+ * @typedef {{validate_json_from_str?: (cddl: string, text: string, features?: string[]) => void,
+ * validate_cbor_from_slice?: (cddl: string, bytes: Uint8Array, features?: string[]) => void}} WasmValidators
+ * @typedef {{ok: boolean, title: string, detail: string, failures: string[], kind: string}} ValidationResult
+ */
+/**
  * Parse a user-supplied CBOR string into bytes.
  * Accepts: hex (with or without 0x prefix, whitespace/newlines tolerated,
  * optional colon or space separators) OR base64. Auto-detects which.
+ * @param {string} text
  * @returns {{ bytes: Uint8Array|null, error: string|null, encoding: 'hex'|'base64'|null }}
  */
-export function parseCborInput(text) {
+function parseCborInput(text) {
   const input = String(text ?? '').trim();
   if (!input) {
     return { bytes: null, error: 'CBOR input is empty.', encoding: null };
@@ -16,7 +23,11 @@ export function parseCborInput(text) {
   const hexCandidate = withoutHexPrefixes.replace(/[\s:]/g, '');
   if (hexCandidate && /^[0-9a-fA-F]+$/.test(hexCandidate)) {
     if (hexCandidate.length % 2 !== 0) {
-      return { bytes: null, error: 'Hex CBOR input must contain an even number of digits.', encoding: 'hex' };
+      return {
+        bytes: null,
+        error: 'Hex CBOR input must contain an even number of digits.',
+        encoding: 'hex',
+      };
     }
 
     const bytes = new Uint8Array(hexCandidate.length / 2);
@@ -39,6 +50,7 @@ export function parseCborInput(text) {
   };
 }
 
+/** @type {(input: string) => Uint8Array | null} */
 function parseBase64(input) {
   if (!input || input.length % 4 === 1 || !/^[A-Za-z0-9+/]*={0,2}$/.test(input)) {
     return null;
@@ -49,11 +61,9 @@ function parseBase64(input) {
     return null;
   }
 
-  const padded = input.padEnd(input.length + (4 - input.length % 4) % 4, '=');
+  const padded = input.padEnd(input.length + ((4 - (input.length % 4)) % 4), '=');
   try {
-    const binary = typeof globalThis.atob === 'function'
-      ? globalThis.atob(padded)
-      : globalThis.Buffer.from(padded, 'base64').toString('binary');
+    const binary = globalThis.atob(padded);
     if (!binary) return null;
 
     const bytes = new Uint8Array(binary.length);
@@ -68,7 +78,7 @@ function parseBase64(input) {
 
 // ─── Instance Validation ─────────────────────────────────────────────────────
 
-/** @returns {boolean} whether CBOR validation is available in this build */
+/** @type {(wasmModule: WasmValidators | undefined) => boolean} Is CBOR validation available? */
 export function isCborSupported(wasmModule) {
   return typeof wasmModule?.validate_cbor_from_slice === 'function';
 }
@@ -81,9 +91,11 @@ const RULE_START = /^[ \t]*([A-Za-z@_$][\w@\-.$]*)[ \t]*(<[^>\n]*>)?[ \t]*(\/\/=
  * The WASM validators always validate against the first non-generic type rule,
  * so a synthetic alias to the selected rule is prepended when it is not already
  * the root.
+ * @param {string} cddl
+ * @param {string} [rootRule]
  * @returns {{ cddl: string, error: string|null }}
  */
-export function applyRootRule(cddl, rootRule) {
+function applyRootRule(cddl, rootRule) {
   const source = String(cddl ?? '');
   const name = String(rootRule ?? '').trim();
   if (!name) return { cddl: source, error: null };
@@ -105,6 +117,7 @@ export function applyRootRule(cddl, rootRule) {
   return { cddl: `${SYNTHETIC_ROOT_RULE} = ${name}\n\n${source}`, error: null };
 }
 
+/** @type {(source: string) => {name: string, isRootable: boolean}[]} */
 function scanRules(source) {
   const rules = [];
   for (const rawLine of source.split(/\r?\n/)) {
@@ -122,6 +135,7 @@ function scanRules(source) {
   return rules;
 }
 
+/** @type {(line: string) => string} */
 function stripComment(line) {
   let inString = false;
   for (let i = 0; i < line.length; i += 1) {
@@ -141,7 +155,7 @@ function stripComment(line) {
 /**
  * Validate an instance document against a CDDL schema.
  * @param {object} opts
- * @param {object} opts.wasmModule  the initialised wasm namespace object
+ * @param {WasmValidators | undefined} opts.wasmModule  the initialised wasm namespace object
  * @param {string} opts.cddl        the schema source
  * @param {'json'|'cbor'} opts.kind
  * @param {string} opts.text        JSON text, or hex/base64 CBOR
@@ -156,34 +170,24 @@ export function validateInstance(opts) {
     const text = String(opts?.text ?? '');
 
     if (!cddl.trim()) {
-      return failure('Schema is empty', 'Enter a CDDL schema before validating an instance.', [], kind);
+      return failure(
+        'Schema is empty',
+        'Enter a CDDL schema before validating an instance.',
+        [],
+        kind,
+      );
     }
 
     if (!text.trim()) {
       return failure('Nothing to validate', 'Enter a JSON or CBOR instance to validate.', [], kind);
     }
 
-    const fnName = kind === 'cbor' ? 'validate_cbor_from_slice' : 'validate_json_from_str';
-    const validate = wasmModule?.[fnName];
-    if (typeof validate !== 'function') {
-      const detail = kind === 'cbor'
-        ? 'CBOR validation is not available in this WASM build.'
-        : 'The WASM module is not loaded or does not expose JSON validation.';
+    if (kind === 'cbor' ? !isCborSupported(wasmModule) : !wasmModule?.validate_json_from_str) {
+      const detail =
+        kind === 'cbor'
+          ? 'CBOR validation is not available in this WASM build.'
+          : 'The WASM module is not loaded or does not expose JSON validation.';
       return failure('WASM module not ready', detail, [detail], kind);
-    }
-
-    let instance = text;
-    if (kind === 'json') {
-      const jsonError = validateJsonText(text);
-      if (jsonError) {
-        return failure(`Invalid JSON: ${jsonError}`, jsonError, [jsonError], kind);
-      }
-    } else {
-      const parsed = parseCborInput(text);
-      if (parsed.error) {
-        return failure('Invalid CBOR input', parsed.error, [parsed.error], kind);
-      }
-      instance = parsed.bytes;
     }
 
     const rooted = applyRootRule(cddl, opts?.rootRule);
@@ -191,33 +195,60 @@ export function validateInstance(opts) {
       return failure('Unsupported root rule', rooted.error, [rooted.error], kind);
     }
 
-    invokeValidator(validate, rooted.cddl, instance);
+    if (kind === 'json') {
+      const jsonError = validateJsonText(text);
+      if (jsonError) {
+        return failure(`Invalid JSON: ${jsonError}`, jsonError, [jsonError], kind);
+      }
+      const validate = wasmModule?.validate_json_from_str;
+      if (!validate) throw new Error('JSON validator is not available.');
+      invokeValidator(
+        () => validate(rooted.cddl, text, undefined),
+        () => validate(rooted.cddl, text),
+      );
+    } else {
+      const parsed = parseCborInput(text);
+      if (!parsed.bytes) {
+        const error = parsed.error || 'Unable to decode CBOR input.';
+        return failure('Invalid CBOR input', error, [error], kind);
+      }
+      const validate = wasmModule?.validate_cbor_from_slice;
+      if (!validate) throw new Error('CBOR validator is not available.');
+      const bytes = parsed.bytes;
+      invokeValidator(
+        () => validate(rooted.cddl, bytes, undefined),
+        () => validate(rooted.cddl, bytes),
+      );
+    }
     return { ok: true, title: 'Instance is valid', detail: '', failures: [], kind };
   } catch (err) {
     return normaliseValidationFailure(err, opts?.kind === 'cbor' ? 'cbor' : 'json');
   }
 }
 
-function invokeValidator(validate, cddl, instance) {
+/** @type {(withFeatures: () => void, withoutFeatures: () => void) => void} */
+function invokeValidator(withFeatures, withoutFeatures) {
   try {
-    return validate(cddl, instance, undefined);
+    return withFeatures();
   } catch (err) {
     if (err instanceof TypeError) {
-      return validate(cddl, instance);
+      return withoutFeatures();
     }
     throw err;
   }
 }
 
+/** @type {(text: string) => string | null} */
 function validateJsonText(text) {
   try {
     JSON.parse(text);
     return null;
   } catch (err) {
-    return err?.message || String(err);
+    return err instanceof Error ? err.message : String(err);
   }
 }
 
+/** @type {(err: unknown, kind: string) => ValidationResult} */
 function normaliseValidationFailure(err, kind) {
   if (Array.isArray(err) && err.length && err.every(isParserErrorLike)) {
     const failures = err.map(formatParserError);
@@ -237,18 +268,22 @@ function normaliseValidationFailure(err, kind) {
   return failure(`Instance does not conform (${count} error${plural})`, detail, failures, kind);
 }
 
+/** @type {(err: unknown) => err is ParserError} */
 function isParserErrorLike(err) {
-  return Boolean(err && typeof err === 'object' && err.position && err.msg);
+  return Boolean(err && typeof err === 'object' && 'position' in err && 'msg' in err);
 }
 
 // Decoding failures surfaced by the WASM CBOR decoder, which are reported
 // before any schema constraint is evaluated.
-const CBOR_DECODE_ERROR = /^(syntax error at offset\b|unexpected end of input\b|unexpected break\b|i\/o error:)/i;
+const CBOR_DECODE_ERROR =
+  /^(syntax error at offset\b|unexpected end of input\b|unexpected break\b|i\/o error:)/i;
 
+/** @type {(detail: string) => boolean} */
 function isCborDecodeError(detail) {
   return CBOR_DECODE_ERROR.test(String(detail ?? '').trim());
 }
 
+/** @type {(err: ParserError) => string} */
 function formatParserError(err) {
   const line = err.position?.line ?? 1;
   const column = err.position?.column ?? 1;
@@ -256,6 +291,7 @@ function formatParserError(err) {
   return `Ln ${line}, Col ${column}: ${message}`;
 }
 
+/** @type {(err: ParserError) => string} */
 function formatParserDetail(err) {
   const line = err.position?.line ?? 1;
   const column = err.position?.column ?? 1;
@@ -263,6 +299,7 @@ function formatParserDetail(err) {
   return `Ln ${line}, Col ${column}: ${message}`;
 }
 
+/** @type {(line: string) => string} */
 function formatConstraintFailure(line) {
   return line
     .replace(/^error validating at JSON location\s+/i, '')
@@ -270,6 +307,7 @@ function formatConstraintFailure(line) {
     .replace(/^error validating at\s+/i, '');
 }
 
+/** @type {(detail: string) => string[]} */
 function splitFailures(detail) {
   const failures = String(detail ?? '')
     .split(/\r?\n/)
@@ -279,6 +317,7 @@ function splitFailures(detail) {
   return failures.length ? failures : [fallback];
 }
 
+/** @type {(title: string, detail: string, failures: string[], kind: string) => ValidationResult} */
 function failure(title, detail, failures, kind) {
   return {
     ok: false,

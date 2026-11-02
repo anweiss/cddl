@@ -1,16 +1,14 @@
 {
   "folders": [
-	{
-		"path": "."
-	},
-	{
-		"path": "cddl-lsp"
-	}
-],
-	"settings": {
-		"rust-analyzer.cargo.allFeatures": false,
-		"rust-analyzer.cargo.features": [
-			"std"
-		]
-	}
+    {
+      "path": ".",
+    },
+    {
+      "path": "cddl-lsp",
+    },
+  ],
+  "settings": {
+    "rust-analyzer.cargo.allFeatures": false,
+    "rust-analyzer.cargo.features": ["std"],
+  },
 }

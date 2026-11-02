@@ -1,13 +1,9 @@
 #![cfg(feature = "std")]
+#![cfg(any(feature = "json", feature = "cbor"))]
+#![cfg(not(feature = "lsp"))]
 #![cfg(not(target_arch = "wasm32"))]
 
-use cddl::{validate_cbor_from_slice, validate_json_from_str};
-use std::{
-  error::Error,
-  ffi::OsStr,
-  fs::{self, File},
-  io::Read,
-};
+use std::{error::Error, ffi::OsStr, fs};
 
 /// Convention: fixture files whose name starts with "bad-" are expected to fail
 /// validation; all other fixture files are expected to pass.
@@ -30,8 +26,11 @@ fn read_cddl_schema(dir: &std::path::Path) -> Result<String, Box<dyn Error>> {
   Err(format!("missing cddl file at {:?}", dir).into())
 }
 
+#[cfg(feature = "json")]
 #[test]
 fn validate_did_json_examples() -> Result<(), Box<dyn Error>> {
+  use cddl::validate_json_from_str;
+
   for entry in fs::read_dir("tests/fixtures/did/")? {
     let entry = entry?;
     if !entry.file_type()?.is_dir() {
@@ -75,8 +74,13 @@ fn validate_did_json_examples() -> Result<(), Box<dyn Error>> {
   Ok(())
 }
 
+#[cfg(feature = "cbor")]
 #[test]
 fn validate_did_cbor_examples() -> Result<(), Box<dyn Error>> {
+  use std::{fs::File, io::Read as _};
+
+  use cddl::validate_cbor_from_slice;
+
   for entry in fs::read_dir("tests/fixtures/did/")? {
     let entry = entry?;
     if !entry.file_type()?.is_dir() {

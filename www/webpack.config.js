@@ -1,7 +1,5 @@
-const CopyWebpackPlugin = require('copy-webpack-plugin');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin');
-const webpack = require('webpack');
 const path = require('path');
 
 module.exports = {
@@ -11,31 +9,11 @@ module.exports = {
     filename: 'app.js',
   },
   mode: 'development',
+  devtool: 'source-map',
   resolve: {
-    fallback: {
-      "util": require.resolve("util/"),
-      "path": require.resolve("path-browserify"),
-      "fs": false,
-      "process": require.resolve("process/browser"),
-      "text-encoding": require.resolve("text-encoding")
-    },
     alias: {
-      'text-encoding': require.resolve('text-encoding')
-    }
-  },
-  devServer: {
-    static: [
-      {
-        directory: path.join(__dirname, 'dist'),
-        publicPath: '/',
-      }
-    ],
-    compress: true,
-    port: 8080,
-    open: true,
-    hot: true,
-    client: {
-      logging: 'info',
+      // Only ship the editor and JSON support, not every built-in language.
+      'monaco-editor$': require.resolve('monaco-editor/editor/editor.api.js'),
     },
   },
   plugins: [
@@ -44,19 +22,10 @@ module.exports = {
       inject: 'body',
       scriptLoading: 'module',
     }),
-    new CopyWebpackPlugin({ 
-      patterns: [
-        {
-          from: '../pkg/cddl_bg.wasm',
-          to: 'cddl_bg.wasm'
-        }
-      ] 
-    }),
-    new MonacoWebpackPlugin(),
-    new webpack.ProvidePlugin({
-      process: 'process/browser',
-      TextEncoder: ['text-encoding', 'TextEncoder'],
-      TextDecoder: ['text-encoding', 'TextDecoder'],
+    new MonacoWebpackPlugin({
+      // Monaco's package exports hide esm/metadata.js from package-name resolution.
+      monacoEditorPath: path.join(__dirname, 'node_modules/monaco-editor'),
+      languages: ['json'],
     }),
   ],
   module: {

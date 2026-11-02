@@ -1,9 +1,39 @@
-/target
+**/target/
 **/*.rs.bk
 .cargo/
 
+.DS_Store
 .DS_STORE
+Thumbs.db
 
 node_modules/
 
-/www/dist/
+**/dist/
+**/out/
+**/*.tsbuildinfo
+/pkg/
+/cddl-lsp/server/pkg/
+/cddl-languageserver/
+**/.vscode-test/
+**/coverage/
+/reports/
+/playwright-report/
+/test-results/
+/.venv/
+/.cache/
+
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+
+.idea/
+*.swp
+*.swo
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json

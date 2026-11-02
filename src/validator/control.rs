@@ -1,8 +1,10 @@
 #![cfg(any(feature = "json", feature = "cbor"))]
 #![cfg(not(feature = "lsp"))]
 
+use crate::ast::{Identifier, Rule, Type2, CDDL};
+#[cfg(feature = "additional-controls")]
 use crate::{
-  ast::{GroupEntry, Identifier, MemberKey, Operator, RangeCtlOp, Rule, Type2, CDDL},
+  ast::{GroupEntry, MemberKey, Operator, RangeCtlOp},
   token::ControlOperator,
 };
 
@@ -590,6 +592,7 @@ fn dedent_bytes(source: &[u8], is_utf8_byte_string: bool) -> Result<Vec<u8>, Str
 
 /// Numeric addition of target and controller. The Vec return type is to
 /// accommodate more than one type choice in the controller
+#[cfg(feature = "additional-controls")]
 pub fn plus_operation<'a>(
   cddl: &'a CDDL<'a>,
   target: &Type2,
@@ -1439,7 +1442,7 @@ pub fn validate_b32_text<'a>(
 }
 
 #[cfg(feature = "additional-controls")]
-/// Validate base45 encoded text string against byte string  
+/// Validate base45 encoded text string against byte string
 pub fn validate_b45_text<'a>(
   _target: &Type2<'a>,
   controller: &Type2<'a>,

@@ -1,0 +1,18 @@
+{
+  "path": [
+    "src",
+    "cddl-codegen-rust/src",
+    "cddl-derive/src",
+    "cddl-lsp/client/src",
+    "cddl-lsp/server/src",
+    "www/index.js",
+    "www/src"
+  ],
+  "format": ["rust", "javascript", "typescript"],
+  "ignore": ["**/*.test.*", "**/parser_tests.rs", "**/*.d.ts"],
+  "minLines": 10,
+  "minTokens": 100,
+  "threshold": 7.3,
+  "reporters": ["console", "json", "html"],
+  "output": "reports/duplication"
+}

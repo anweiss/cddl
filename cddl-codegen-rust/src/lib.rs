@@ -1,4 +1,16 @@
-//! Internal code generation logic for converting CDDL AST to Rust source code.
+//! Generate Rust source code from CDDL definitions.
+//!
+//! This crate contains the code-generation engine used by `cddl-derive`, but
+//! exposes it as a regular Rust library for build scripts, command-line tools,
+//! and applications that need to transform CDDL before generating code.
+//!
+//! Use [`generate_rust_code`] for the default configuration, or
+//! [`generate_rust_code_with_options`] to customize the generated output.
+//!
+#![doc = include_str!("../README.md")]
+
+/// The parser and AST version used by this code-generation engine.
+pub use cddl;
 
 use cddl::ast::{
   Group, GroupChoice, GroupEntry, MemberKey, Occur, Rule, Type, Type1, Type2, TypeChoice, TypeRule,
@@ -9,7 +21,7 @@ use std::fmt::Write;
 
 /// Errors that can occur during code generation.
 #[derive(Debug)]
-pub(crate) enum CodegenError {
+pub enum CodegenError {
   /// CDDL parsing failed.
   ParseError(String),
   /// A Rust type alias cycle cannot be emitted.
@@ -31,6 +43,15 @@ impl std::fmt::Display for CodegenError {
   }
 }
 
+impl std::error::Error for CodegenError {
+  fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+    match self {
+      CodegenError::FmtError(error) => Some(error),
+      _ => None,
+    }
+  }
+}
+
 impl From<std::fmt::Error> for CodegenError {
   fn from(e: std::fmt::Error) -> Self {
     CodegenError::FmtError(e)
@@ -43,7 +64,8 @@ impl From<std::fmt::Error> for CodegenError {
 /// these options were introduced. See
 /// <https://github.com/anweiss/cddl/issues/641>.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct CodegenOptions {
+#[non_exhaustive]
+pub struct CodegenOptions {
   /// Internal lowering mode: retain tag identity until encoding is inferred.
   preserve_tag_names: bool,
   /// Rust type to generate for CDDL `any`. Defaults to `serde_json::Value`.
@@ -608,8 +630,46 @@ fn to_cddl_lookup_name(rust_name: &str) -> String {
   pascal_to_cddl_name(rust_name)
 }
 
+/// Generate Rust source code for all rules in a CDDL document using default
+/// options.
+pub fn generate_rust_code(source: &str) -> Result<String, CodegenError> {
+  generate_rust_code_with_options(source, &CodegenOptions::default())
+}
+
+/// Generate Rust source code for all rules in a CDDL document.
+pub fn generate_rust_code_with_options(
+  source: &str,
+  opts: &CodegenOptions,
+) -> Result<String, CodegenError> {
+  let cddl = cddl::pest_bridge::cddl_from_pest_str(source)
+    .map_err(|error| CodegenError::ParseError(error.to_string()))?;
+  generate_rust_code_from_ast(&cddl, source, opts)
+}
+
+/// Generate Rust source code for one named rule in a CDDL document.
+///
+/// `rule_name` is the CDDL identifier. `output_name` can override the
+/// generated Rust type name. Lookup normalizes `rule_name` to its generated
+/// PascalCase name, as the attribute macro does.
+pub fn generate_rust_code_for_rule(
+  source: &str,
+  rule_name: &str,
+  output_name: Option<&str>,
+  opts: &CodegenOptions,
+) -> Result<String, CodegenError> {
+  let cddl = cddl::pest_bridge::cddl_from_pest_str(source)
+    .map_err(|error| CodegenError::ParseError(error.to_string()))?;
+  generate_rust_code_for_rule_from_ast(&cddl, source, rule_name, output_name, opts)
+}
+
 /// Generate Rust source code for all rules in a parsed CDDL AST.
-pub(crate) fn generate_all_types(
+///
+/// `source` supplies fallback documentation for nodes without AST comments;
+/// its line numbers must correspond to the AST spans. For an AST assembled
+/// from multiple documents, pass `""` to use only AST-attached comments and
+/// avoid associating nodes with unrelated source lines. The caller is
+/// responsible for resolving duplicate rules and conflicting fields.
+pub fn generate_rust_code_from_ast(
   cddl: &CDDL<'_>,
   source: &str,
   opts: &CodegenOptions,
@@ -624,27 +684,30 @@ pub(crate) fn generate_all_types(
 
 /// Generate Rust source code for a single named rule in a parsed CDDL AST.
 ///
-/// If `output_name` is provided, the generated type will use that name instead
-/// of the name derived from the CDDL rule. This allows the `#[cddl]` attribute
-/// macro to preserve the user's chosen struct name.
-pub(crate) fn generate_single_type(
+/// `rule_name` is the CDDL identifier. If `output_name` is provided, the
+/// generated type will use that name instead of the name derived from the CDDL
+/// rule. Lookup normalizes `rule_name` to its generated PascalCase name, as the
+/// attribute macro does. See [`generate_rust_code_from_ast`] for the `source`
+/// contract.
+pub fn generate_rust_code_for_rule_from_ast(
   cddl: &CDDL<'_>,
+  source: &str,
   rule_name: &str,
   output_name: Option<&str>,
-  source: &str,
   opts: &CodegenOptions,
 ) -> Result<String, CodegenError> {
   let comments = CommentMap::new(source);
   let mut type_defs = collect_type_defs(cddl, &comments, opts)?;
   apply_options(&mut type_defs, opts);
   let fundamental_aliases = append_fundamental_aliases(cddl, &mut type_defs, opts, false)?;
-  apply_alias_encodings(cddl, &mut type_defs, opts, Some(rule_name))?;
+  let rust_rule_name = to_pascal_case(rule_name);
+  apply_alias_encodings(cddl, &mut type_defs, opts, Some(&rust_rule_name))?;
   let mut matching = type_defs
     .into_iter()
     .find(|d| match d {
       RustTypeDef::Struct { name, .. }
       | RustTypeDef::TypeAlias { name, .. }
-      | RustTypeDef::Enum { name, .. } => name == rule_name,
+      | RustTypeDef::Enum { name, .. } => name == &rust_rule_name,
     })
     .ok_or_else(|| {
       CodegenError::ParseError(format!(
@@ -654,7 +717,7 @@ pub(crate) fn generate_single_type(
     })?;
 
   let mut output = String::new();
-  let emit_name = output_name.unwrap_or(rule_name);
+  let emit_name = output_name.unwrap_or(&rust_rule_name);
   let exact_name = emit_name.strip_prefix("r#").unwrap_or(emit_name);
   let alias_mod = format!("__cddl_prelude_{}", exact_name);
   let used = referenced_fundamental_aliases(std::slice::from_ref(&matching));
@@ -742,7 +805,7 @@ pub(crate) fn generate_single_type(
 }
 
 /// Convert a PascalCase struct name to a CDDL-style kebab-case identifier.
-pub(crate) fn pascal_to_cddl_name(pascal: &str) -> String {
+pub fn pascal_to_cddl_name(pascal: &str) -> String {
   let mut result = String::with_capacity(pascal.len() + 4);
   for (i, c) in pascal.chars().enumerate() {
     if c.is_uppercase() {
@@ -755,6 +818,26 @@ pub(crate) fn pascal_to_cddl_name(pascal: &str) -> String {
     }
   }
   result
+}
+
+#[cfg(test)]
+fn generate_all_types(
+  cddl: &CDDL<'_>,
+  source: &str,
+  opts: &CodegenOptions,
+) -> Result<String, CodegenError> {
+  generate_rust_code_from_ast(cddl, source, opts)
+}
+
+#[cfg(test)]
+fn generate_single_type(
+  cddl: &CDDL<'_>,
+  rule_name: &str,
+  output_name: Option<&str>,
+  source: &str,
+  opts: &CodegenOptions,
+) -> Result<String, CodegenError> {
+  generate_rust_code_for_rule_from_ast(cddl, source, rule_name, output_name, opts)
 }
 
 // --- Internal helpers (unchanged from original codegen) ---

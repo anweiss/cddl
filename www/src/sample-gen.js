@@ -1,5 +1,16 @@
 /**
  * @typedef {{ json: string|null, warnings: string[], error: string|null, jsonRepresentable: boolean, constraintsSatisfied: boolean, verified: boolean, validationError: string|null }} SampleResult
+ * @typedef {import('./sample-types.js').JsonValue} JsonValue
+ * @typedef {import('./sample-types.js').JsonObject} JsonObject
+ * @typedef {import('./sample-types.js').Token} Token
+ * @typedef {import('./sample-types.js').AstNode} AstNode
+ * @typedef {import('./sample-types.js').Key} Key
+ * @typedef {import('./sample-types.js').GroupEntry} GroupEntry
+ * @typedef {import('./sample-types.js').Occurrence} Occurrence
+ * @typedef {import('./sample-types.js').Model} Model
+ * @typedef {import('./sample-types.js').Context} Context
+ * @typedef {import('./sample-types.js').Environment} Environment
+ * @typedef {JsonValue | typeof UNSATISFIABLE} GeneratedValue
  */
 
 const MAX_DEPTH = 32;
@@ -13,7 +24,7 @@ const MAX_NODES = 5000;
  */
 const UNSATISFIABLE = Symbol('unsatisfiable');
 
-/** Collapse the sentinel to `null` for contexts that must yield a concrete value. */
+/** @type {(value: GeneratedValue) => JsonValue} Collapse the unsatisfiable sentinel. */
 function concrete(value) {
   return value === UNSATISFIABLE ? null : value;
 }
@@ -22,16 +33,69 @@ const MAX_REPEAT = 64;
 /** Structural limits that keep hostile shared links from freezing the tab. */
 const MAX_NESTING = 64;
 const MAX_TOKENS = 20000;
+const NUMERIC_SAMPLES = new Map([
+  ['uint', 1],
+  ['unsigned', 1],
+  ['biguint', 1],
+  ['nint', -1],
+  ['bignint', -1],
+  ['int', 0],
+  ['integer', 0],
+  ['bigint', 0],
+  ['number', 0],
+  ['float', 1.5],
+  ['float16', 1.5],
+  ['float32', 1.5],
+  ['float64', 1.5],
+  ['float16-32', 1.5],
+  ['float32-64', 1.5],
+  ['decfrac', 1.5],
+  ['bigfloat', 1.5],
+]);
 const BUILTINS = new Set([
-  'any', 'uint', 'nint', 'int', 'integer', 'unsigned', 'number', 'float', 'float16',
-  'float32', 'float64', 'float16-32', 'float32-64', 'bool', 'true', 'false', 'nil',
-  'null', 'tstr', 'text', 'uri', 'tdate', 'time', 'bstr', 'bytes', 'biguint',
-  'bignint', 'bigint', 'decfrac', 'bigfloat', 'eb64url', 'eb64legacy', 'eb16',
-  'encoded-cbor', 'b64url', 'b64legacy', 'regexp', 'mime-message', 'cbor-any',
+  'any',
+  'uint',
+  'nint',
+  'int',
+  'integer',
+  'unsigned',
+  'number',
+  'float',
+  'float16',
+  'float32',
+  'float64',
+  'float16-32',
+  'float32-64',
+  'bool',
+  'true',
+  'false',
+  'nil',
+  'null',
+  'tstr',
+  'text',
+  'uri',
+  'tdate',
+  'time',
+  'bstr',
+  'bytes',
+  'biguint',
+  'bignint',
+  'bigint',
+  'decfrac',
+  'bigfloat',
+  'eb64url',
+  'eb64legacy',
+  'eb16',
+  'encoded-cbor',
+  'b64url',
+  'b64legacy',
+  'regexp',
+  'mime-message',
+  'cbor-any',
   'undefined',
 ]);
 
-/** Rule names that are plausible entry points, best first. */
+/** @type {(source: string) => string[]} Plausible entry points, best first. */
 export function listRootCandidates(source) {
   try {
     const model = parseSource(source || '');
@@ -65,6 +129,8 @@ export function listRootCandidates(source) {
  * samples are run through it and the first conforming one wins. Without it the generator
  * can only report its own heuristics, which is why `verified` exists.
  *
+ * @param {string} source
+ * @param {string} [rootRuleName]
  * @param {{ validate?: (json: string) => string|null }} [options]
  *   `validate` returns null when the instance conforms, or the validator error otherwise.
  * @returns {SampleResult} json is pretty-printed with 2-space indent, or null on error.
@@ -77,7 +143,8 @@ export function generateSample(source, rootRuleName, options = {}) {
   // controls). Try with them, then without, and let the validator pick the winner.
   for (const includeOptional of [true, false]) {
     const attempt = generateOnce(source, rootRuleName, includeOptional);
-    if (attempt.error || !attempt.jsonRepresentable || !validate) return attempt;
+    if (attempt.error || attempt.json === null || !attempt.jsonRepresentable || !validate)
+      return attempt;
 
     const validationError = validate(attempt.json);
     if (!validationError) return { ...attempt, verified: true, validationError: null };
@@ -85,28 +152,51 @@ export function generateSample(source, rootRuleName, options = {}) {
   }
 
   if (last && last.validationError) {
-    last.warnings = [...last.warnings, 'Generated sample does not validate against this schema; it is a best-effort starting point.'];
+    last.warnings = [
+      ...last.warnings,
+      'Generated sample does not validate against this schema; it is a best-effort starting point.',
+    ];
     last.constraintsSatisfied = false;
   }
+  if (!last) throw new Error('Sample generation produced no attempts.');
   return last;
 }
 
+/** @type {(source: string, rootRuleName: string | undefined, includeOptional: boolean) => SampleResult} */
 function generateOnce(source, rootRuleName, includeOptional) {
+  /** @type {string[]} */
   const warnings = [];
 
   try {
     const model = parseSource(source || '');
     if (model.order.length === 0) {
-      return { json: null, warnings: [], error: 'No rules found in schema', jsonRepresentable: false, constraintsSatisfied: false, verified: false, validationError: null };
+      return {
+        json: null,
+        warnings: [],
+        error: 'No rules found in schema',
+        jsonRepresentable: false,
+        constraintsSatisfied: false,
+        verified: false,
+        validationError: null,
+      };
     }
 
     const roots = listRootCandidates(source);
     const root = rootRuleName || roots[0] || model.order[0];
     if (!root || !model.rules.has(root)) {
       warnings.push(`Unknown root rule "${root}"; emitted null.`);
-      return { json: JSON.stringify(null, null, 2), warnings, error: null, jsonRepresentable: true, constraintsSatisfied: true, verified: false, validationError: null };
+      return {
+        json: JSON.stringify(null, null, 2),
+        warnings,
+        error: null,
+        jsonRepresentable: true,
+        constraintsSatisfied: true,
+        verified: false,
+        validationError: null,
+      };
     }
 
+    /** @type {Context} */
     const ctx = {
       model,
       warnings,
@@ -120,7 +210,9 @@ function generateOnce(source, rootRuleName, includeOptional) {
     const generated = generateRef(root, [], null, ctx, 0, new Set(), new Map());
     if (generated === UNSATISFIABLE) {
       ctx.constraintsSatisfied = false;
-      warnings.push(`Root rule "${root}" cannot be generated (recursive, too deeply nested, or too large); emitted null, which will not validate.`);
+      warnings.push(
+        `Root rule "${root}" cannot be generated (recursive, too deeply nested, or too large); emitted null, which will not validate.`,
+      );
     }
     const value = concrete(generated);
     return {
@@ -136,7 +228,7 @@ function generateOnce(source, rootRuleName, includeOptional) {
     return {
       json: null,
       warnings,
-      error: err && err.message ? err.message : String(err),
+      error: err instanceof Error ? err.message : String(err),
       jsonRepresentable: false,
       constraintsSatisfied: false,
       verified: false,
@@ -150,6 +242,7 @@ function generateOnce(source, rootRuleName, includeOptional) {
  * A shared permalink is attacker-controlled, and parseExpression recurses per
  * nesting level, so deep nesting is a cheap way to freeze the tab.
  */
+/** @type {(tokens: Token[]) => void} */
 function assertParseable(tokens) {
   if (tokens.length > MAX_TOKENS) {
     throw new Error(`Schema is too large to analyze (${tokens.length} tokens).`);
@@ -168,9 +261,11 @@ function assertParseable(tokens) {
   }
 }
 
+/** @type {(source: string) => Model} */
 function parseSource(source) {
   const tokens = tokenize(source);
   assertParseable(tokens);
+  /** @type {Model['rules']} */
   const rules = new Map();
   const order = [];
   let pos = 0;
@@ -190,11 +285,13 @@ function parseSource(source) {
     const op = tokens[assign].value;
 
     if (!rules.has(name)) {
-      const initialNode = op === '//='
-        ? { kind: 'groupMerge', options: [node], label: name }
-        : op === '/='
-          ? { kind: 'choice', options: [node], label: name }
-          : node;
+      /** @type {AstNode} */
+      const initialNode =
+        op === '//='
+          ? { kind: 'groupMerge', options: [node], label: name }
+          : op === '/='
+            ? { kind: 'choice', options: [node], label: name }
+            : node;
       rules.set(name, { name, params, node: initialNode, choices: op === '=' ? [] : [node] });
       order.push(name);
       pos = next < 0 ? tokens.length : next;
@@ -202,20 +299,23 @@ function parseSource(source) {
     }
 
     const rule = rules.get(name);
+    if (!rule) throw new Error(`Missing rule "${name}".`);
     if (op === '=') {
       rule.params = params;
       rule.node = node;
       rule.choices = [];
     } else if (op === '//=') {
       rule.choices.push(node);
-      rule.node = rule.node.kind === 'groupMerge'
-        ? { ...rule.node, options: [...rule.node.options, node] }
-        : { kind: 'groupMerge', options: [rule.node, node], label: name };
+      rule.node =
+        rule.node.kind === 'groupMerge'
+          ? { ...rule.node, options: [...rule.node.options, node] }
+          : { kind: 'groupMerge', options: [rule.node, node], label: name };
     } else {
       rule.choices.push(node);
-      rule.node = rule.node.kind === 'choice'
-        ? { ...rule.node, options: [...rule.node.options, node] }
-        : { kind: 'choice', options: [rule.node, node], label: name };
+      rule.node =
+        rule.node.kind === 'choice'
+          ? { ...rule.node, options: [...rule.node.options, node] }
+          : { kind: 'choice', options: [rule.node, node], label: name };
     }
 
     pos = next < 0 ? tokens.length : next;
@@ -224,14 +324,19 @@ function parseSource(source) {
   return { rules, order };
 }
 
+/** @type {(source: string) => Token[]} */
 function tokenize(source) {
+  /** @type {Token[]} */
   const tokens = [];
   let i = 0;
 
   while (i < source.length) {
     const ch = source[i];
 
-    if (/\s/.test(ch)) { i++; continue; }
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
     if (ch === ';') {
       while (i < source.length && source[i] !== '\n') i++;
       continue;
@@ -247,7 +352,11 @@ function tokenize(source) {
     if ((source.startsWith("h'", i) || source.startsWith("b64'", i)) && /[hb]/.test(ch)) {
       const prefix = source.startsWith("b64'", i) ? 'b64' : 'h';
       const result = readQuoted(source, i + prefix.length, "'");
-      tokens.push({ type: 'bytes', value: source.slice(i, result.next), raw: source.slice(i, result.next) });
+      tokens.push({
+        type: 'bytes',
+        value: source.slice(i, result.next),
+        raw: source.slice(i, result.next),
+      });
       i = result.next;
       continue;
     }
@@ -274,7 +383,11 @@ function tokenize(source) {
     }
 
     if (isNumberStart(source, i)) {
-      const match = source.slice(i).match(/^-?(?:0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]+)?p[+-]?\d+|0x[0-9a-fA-F]+|0b[01]+|(?:[1-9]\d*|0)(?:\.\d+)?(?:[eE][+-]?\d+)?)/);
+      const match = source
+        .slice(i)
+        .match(
+          /^-?(?:0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]+)?p[+-]?\d+|0x[0-9a-fA-F]+|0b[01]+|(?:[1-9]\d*|0)(?:\.\d+)?(?:[eE][+-]?\d+)?)/,
+        );
       if (match) {
         tokens.push({ type: 'number', value: match[0], raw: match[0] });
         i += match[0].length;
@@ -286,7 +399,7 @@ function tokenize(source) {
       let j = i;
       if (source.startsWith('$$', i)) j += 2;
       else if (source[j] === '$') j++;
-      while (j < source.length && /[A-Za-z0-9_@$.\-]/.test(source[j])) j++;
+      while (j < source.length && /[A-Za-z0-9_@$.-]/.test(source[j])) j++;
       tokens.push({ type: 'id', value: source.slice(i, j), raw: source.slice(i, j) });
       i = j;
       continue;
@@ -304,25 +417,35 @@ function tokenize(source) {
   return tokens;
 }
 
+/** @type {(source: string, start: number, quote: string) => {token: Token, next: number}} */
 function readQuoted(source, start, quote) {
   let i = start + 1;
   while (i < source.length) {
-    if (source[i] === '\\') { i += 2; continue; }
-    if (source[i] === quote) { i++; break; }
+    if (source[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (source[i] === quote) {
+      i++;
+      break;
+    }
     i++;
   }
   const raw = source.slice(start, i);
   return { token: { type: quote === '"' ? 'string' : 'bytes', value: raw, raw }, next: i };
 }
 
+/** @type {(source: string, i: number) => boolean} */
 function isNumberStart(source, i) {
   return /\d/.test(source[i]) || (source[i] === '-' && /\d/.test(source[i + 1] || ''));
 }
 
+/** @type {(ch: string) => boolean} */
 function isIdentStart(ch) {
   return /[A-Za-z_@]/.test(ch);
 }
 
+/** @type {(tokens: Token[], from: number) => number} */
 function findNextRuleStart(tokens, from) {
   for (let i = from; i < tokens.length; i++) {
     if (tokens[i].type === 'id' && findRuleAssign(tokens, i) >= 0) return i;
@@ -330,6 +453,7 @@ function findNextRuleStart(tokens, from) {
   return -1;
 }
 
+/** @type {(tokens: Token[], start: number) => number} */
 function findRuleAssign(tokens, start) {
   if (!tokens[start] || tokens[start].type !== 'id') return -1;
   let i = start + 1;
@@ -337,6 +461,7 @@ function findRuleAssign(tokens, start) {
   return ['=', '/=', '//='].includes(tokens[i]?.value) ? i : -1;
 }
 
+/** @type {(tokens: Token[], start: number, open: string, close: string) => number} */
 function skipBalanced(tokens, start, open, close) {
   let depth = 0;
   for (let i = start; i < tokens.length; i++) {
@@ -346,7 +471,9 @@ function skipBalanced(tokens, start, open, close) {
   return start;
 }
 
+/** @type {(tokens: Token[]) => string[]} */
 function parseParams(tokens) {
+  /** @type {string[]} */
   const params = [];
   if (tokens[0]?.value !== '<') return params;
   for (const token of tokens) {
@@ -355,13 +482,18 @@ function parseParams(tokens) {
   return params;
 }
 
+/** @type {(tokens: Token[]) => AstNode} */
 function parseExpression(tokens) {
   const trimmed = trimTokens(tokens);
   if (trimmed.length === 0) return { kind: 'unknown', name: 'empty expression' };
 
   const choiceParts = splitTopLevel(trimmed, '/');
   if (choiceParts.length > 1) {
-    return { kind: 'choice', options: choiceParts.map(parseExpression), label: describeTokens(trimmed) };
+    return {
+      kind: 'choice',
+      options: choiceParts.map(parseExpression),
+      label: describeTokens(trimmed),
+    };
   }
 
   const rangeIndex = findTopLevelOp(trimmed, ['..', '...']);
@@ -391,8 +523,10 @@ function parseExpression(tokens) {
     if (splitTopLevel(inner, ',').length > 1) return { kind: 'group', entries: parseGroup(inner) };
     return parseExpression(inner);
   }
-  if (isWrapped(trimmed, '{', '}')) return { kind: 'map', entries: parseGroup(trimmed.slice(1, -1)) };
-  if (isWrapped(trimmed, '[', ']')) return { kind: 'array', entries: parseGroup(trimmed.slice(1, -1)) };
+  if (isWrapped(trimmed, '{', '}'))
+    return { kind: 'map', entries: parseGroup(trimmed.slice(1, -1)) };
+  if (isWrapped(trimmed, '[', ']'))
+    return { kind: 'array', entries: parseGroup(trimmed.slice(1, -1)) };
 
   if (trimmed[0]?.value === '~') {
     const ref = parseReference(trimmed.slice(1));
@@ -409,19 +543,29 @@ function parseExpression(tokens) {
   if (trimmed[0]?.value === '#') {
     const paren = trimmed.findIndex((token) => token.value === '(');
     if (paren >= 0 && trimmed[trimmed.length - 1]?.value === ')') {
-      return { kind: 'tag', inner: parseExpression(trimmed.slice(paren + 1, -1)), tag: describeTokens(trimmed.slice(0, paren)) };
+      return {
+        kind: 'tag',
+        inner: parseExpression(trimmed.slice(paren + 1, -1)),
+        tag: describeTokens(trimmed.slice(0, paren)),
+      };
     }
-    return { kind: 'tag', inner: { kind: 'ref', name: 'any', args: [] }, tag: describeTokens(trimmed) };
+    return {
+      kind: 'tag',
+      inner: { kind: 'ref', name: 'any', args: [] },
+      tag: describeTokens(trimmed),
+    };
   }
 
   if (trimmed.length === 1) return parseAtom(trimmed[0]);
   return parseReference(trimmed);
 }
 
+/** @type {(tokens: Token[]) => Token[]} */
 function trimTokens(tokens) {
   return tokens.filter(Boolean);
 }
 
+/** @type {(tokens: Token[], op: string) => Token[][]} */
 function splitTopLevel(tokens, op) {
   const parts = [];
   let start = 0;
@@ -439,6 +583,7 @@ function splitTopLevel(tokens, op) {
   return parts.length > 0 ? parts : [tokens];
 }
 
+/** @type {(tokens: Token[], ops: string[]) => number} */
 function findTopLevelOp(tokens, ops) {
   let depth = 0;
   for (let i = 0; i < tokens.length; i++) {
@@ -450,6 +595,7 @@ function findTopLevelOp(tokens, ops) {
   return -1;
 }
 
+/** @type {(tokens: Token[]) => number} */
 function findTopLevelControl(tokens) {
   let depth = 0;
   for (let i = 0; i < tokens.length; i++) {
@@ -461,11 +607,18 @@ function findTopLevelControl(tokens) {
   return -1;
 }
 
+/** @type {(tokens: Token[], open: string, close: string) => boolean} */
 function isWrapped(tokens, open, close) {
-  return tokens[0]?.value === open && matchingCloseIndex(tokens, 0) === tokens.length - 1 && tokens.at(-1)?.value === close;
+  return (
+    tokens[0]?.value === open &&
+    matchingCloseIndex(tokens, 0) === tokens.length - 1 &&
+    tokens.at(-1)?.value === close
+  );
 }
 
+/** @type {(tokens: Token[], start: number) => number} */
 function matchingCloseIndex(tokens, start) {
+  /** @type {Record<string, string>} */
   const pairs = { '{': '}', '[': ']', '(': ')', '<': '>' };
   const open = tokens[start]?.value;
   const close = pairs[open];
@@ -477,6 +630,7 @@ function matchingCloseIndex(tokens, start) {
   return -1;
 }
 
+/** @type {(tokens: Token[]) => GroupEntry[]} */
 function parseGroup(tokens) {
   const choices = splitTopLevel(tokens, '//');
   if (choices.length > 1) {
@@ -486,18 +640,25 @@ function parseGroup(tokens) {
   return splitTopLevel(tokens, ',')
     .flatMap(splitImplicitGroupEntries)
     .map((entry) => parseGroupEntry(entry))
-    .filter(Boolean);
+    .filter((entry) => entry !== null);
 }
 
+/** @type {(tokens: Token[]) => Token[][]} */
 function splitImplicitGroupEntries(tokens) {
   tokens = trimTokens(tokens);
   if (tokens.length < 2 || findTopLevelOp(tokens, [':', '=>']) >= 0) return [tokens];
-  if (tokens[0].type === 'number' && tokens[1]?.value !== '*' && tokens[1]?.value !== '..' && tokens[1]?.value !== '...') {
+  if (
+    tokens[0].type === 'number' &&
+    tokens[1]?.value !== '*' &&
+    tokens[1]?.value !== '..' &&
+    tokens[1]?.value !== '...'
+  ) {
     return [tokens.slice(0, 1), ...splitImplicitGroupEntries(tokens.slice(1))];
   }
   return [tokens];
 }
 
+/** @type {(tokens: Token[]) => GroupEntry | null} */
 function parseGroupEntry(tokens) {
   tokens = trimTokens(tokens);
   if (tokens.length === 0) return null;
@@ -527,17 +688,23 @@ function parseGroupEntry(tokens) {
   return { kind: 'element', occurrence, value: parseExpression(tokens) };
 }
 
+/** @type {(tokens: Token[]) => {consumed: number, occurrence: Occurrence} | null} */
 function readOccurrence(tokens) {
   const first = tokens[0];
   if (!first) return null;
   if (first.value === '?') return { consumed: 1, occurrence: makeOccurrence(0, 1, '?', true) };
-  if (first.value === '*' && tokens[1]?.type !== 'number') return { consumed: 1, occurrence: makeOccurrence(0, Infinity, '*') };
+  if (first.value === '*' && tokens[1]?.type !== 'number')
+    return { consumed: 1, occurrence: makeOccurrence(0, Infinity, '*') };
   if (first.value === '+') return { consumed: 1, occurrence: makeOccurrence(1, Infinity, '+') };
 
   if (first.type === 'number' && tokens[1]?.value === '*' && tokens[2]?.type === 'number') {
     return {
       consumed: 3,
-      occurrence: makeOccurrence(numberFromToken(first), numberFromToken(tokens[2]), `${first.raw}*${tokens[2].raw}`),
+      occurrence: makeOccurrence(
+        numberFromToken(first),
+        numberFromToken(tokens[2]),
+        `${first.raw}*${tokens[2].raw}`,
+      ),
     };
   }
 
@@ -558,7 +725,7 @@ function readOccurrence(tokens) {
   return null;
 }
 
-/** Occurrence with a concrete repeat count that always respects [min, max]. */
+/** @type {(min: number, max: number, raw: string, optional?: boolean) => Occurrence} */
 function makeOccurrence(min, max, raw, optional = false) {
   const lo = Number.isFinite(min) && min >= 0 ? min : 0;
   const hi = max === Infinity || (Number.isFinite(max) && max >= lo) ? max : lo;
@@ -566,56 +733,71 @@ function makeOccurrence(min, max, raw, optional = false) {
   return { min: lo, max: hi, count, optional, raw };
 }
 
-/** Repeat count clamped to MAX_REPEAT; exceeding the cap is reported, never silent. */
+/** @type {(occurrence: Occurrence, ctx: Context) => number} */
 function repeatCount(occurrence, ctx) {
   const wanted = occurrence?.count ?? 1;
   if (wanted <= MAX_REPEAT) return wanted;
   ctx.constraintsSatisfied = false;
-  ctx.warnings.push(`Occurrence "${occurrence.raw}" requires ${wanted} items; generated ${MAX_REPEAT} to keep the sample manageable.`);
+  ctx.warnings.push(
+    `Occurrence "${occurrence.raw}" requires ${wanted} items; generated ${MAX_REPEAT} to keep the sample manageable.`,
+  );
   return MAX_REPEAT;
 }
 
-/** True when an optional entry should be omitted for this attempt. */
+/** @type {(entry: GroupEntry, ctx: Context) => boolean} */
 function skipOptional(entry, ctx) {
-  return ctx.includeOptional === false && entry?.occurrence?.optional === true;
+  return ctx.includeOptional === false && 'occurrence' in entry && entry.occurrence.optional;
 }
 
-/** Assign without invoking inherited setters such as `__proto__`. */
+/** @type {(object: JsonObject, key: string, value: JsonValue) => void} Assign without inherited setters. */
 function setMember(object, key, value) {
-  Object.defineProperty(object, key, { value, enumerable: true, writable: true, configurable: true });
+  Object.defineProperty(object, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
 }
 
-/** Object.assign equivalent that is safe for `__proto__` keys. */
+/** @type {(target: JsonObject, source: JsonValue) => JsonObject} Prototype-safe object merge. */
 function mergeMembers(target, source) {
-  if (!source || typeof source !== 'object') return target;
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return target;
   for (const key of Object.keys(source)) setMember(target, key, source[key]);
   return target;
 }
 
+/** @type {(tokens: Token[]) => Key} */
 function parseKey(tokens) {
   tokens = trimTokens(tokens).filter((token) => token.value !== '^');
   if (tokens.length === 1) {
     const token = tokens[0];
-    if (token.type === 'string') return { kind: 'literal', value: parseStringToken(token), raw: token.raw };
-    if (token.type === 'number') return { kind: 'literal', value: numberFromToken(token), raw: token.raw };
+    if (token.type === 'string')
+      return { kind: 'literal', value: parseStringToken(token), raw: token.raw };
+    if (token.type === 'number')
+      return { kind: 'literal', value: numberFromToken(token), raw: token.raw };
     if (token.type === 'id') return { kind: 'name', name: token.value };
   }
   return { kind: 'computed', node: parseExpression(tokens), text: describeTokens(tokens) };
 }
 
+/** @type {(token: Token) => AstNode} */
 function parseAtom(token) {
-  if (token.type === 'string') return { kind: 'literal', value: parseStringToken(token), raw: token.raw };
+  if (token.type === 'string')
+    return { kind: 'literal', value: parseStringToken(token), raw: token.raw };
   if (token.type === 'bytes') return { kind: 'bytesLiteral', raw: token.raw };
-  if (token.type === 'number') return { kind: 'literal', value: numberFromToken(token), raw: token.raw };
+  if (token.type === 'number')
+    return { kind: 'literal', value: numberFromToken(token), raw: token.raw };
   if (token.type === 'id') {
     if (token.value === 'true') return { kind: 'literal', value: true, raw: 'true' };
     if (token.value === 'false') return { kind: 'literal', value: false, raw: 'false' };
-    if (token.value === 'null' || token.value === 'nil') return { kind: 'literal', value: null, raw: token.value };
+    if (token.value === 'null' || token.value === 'nil')
+      return { kind: 'literal', value: null, raw: token.value };
     return { kind: 'ref', name: token.value, args: [] };
   }
   return { kind: 'unknown', name: token.raw };
 }
 
+/** @type {(tokens: Token[]) => import('./sample-types.js').ReferenceNode} */
 function parseReference(tokens) {
   tokens = trimTokens(tokens);
   const name = tokens[0]?.type === 'id' ? tokens[0].value : describeTokens(tokens);
@@ -629,18 +811,26 @@ function parseReference(tokens) {
   return { kind: 'ref', name, args };
 }
 
+/** @type {(token: Token) => string} */
 function parseStringToken(token) {
-  try { return JSON.parse(token.raw); } catch { return token.raw.slice(1, -1); }
+  try {
+    return JSON.parse(token.raw);
+  } catch {
+    return token.raw.slice(1, -1);
+  }
 }
 
+/** @type {(token: Token) => number} */
 function numberFromToken(token) {
   const raw = token.raw || token.value;
   if (/^-?0x/i.test(raw)) return parseInt(raw, 16);
-  if (/^-?0b/i.test(raw)) return parseInt(raw.replace(/^-/i, '').slice(2), 2) * (raw.startsWith('-') ? -1 : 1);
+  if (/^-?0b/i.test(raw))
+    return parseInt(raw.replace(/^-/i, '').slice(2), 2) * (raw.startsWith('-') ? -1 : 1);
   const number = Number(raw);
   return Number.isFinite(number) ? number : 0;
 }
 
+/** @type {(name: string, args: AstNode[], key: string | null, ctx: Context, depth: number, visiting: Set<string>, env: Environment) => GeneratedValue} */
 function generateRef(name, args, key, ctx, depth, visiting, env) {
   if (env.has(name)) return generateNode(env.get(name), key, ctx, depth + 1, visiting, env, name);
   if (BUILTINS.has(name)) return generateBuiltin(name, key, ctx);
@@ -669,6 +859,7 @@ function generateRef(name, args, key, ctx, depth, visiting, env) {
   return generateNode(rule.node, key, ctx, depth + 1, nextVisiting, nextEnv, name);
 }
 
+/** @type {(node: AstNode | undefined, key: string | null, ctx: Context, depth: number, visiting: Set<string>, env: Environment, label: string | null) => GeneratedValue} */
 function generateNode(node, key, ctx, depth, visiting, env, label) {
   if (!node) return null;
   if (--ctx.budget < 0) {
@@ -681,36 +872,52 @@ function generateNode(node, key, ctx, depth, visiting, env, label) {
   }
 
   switch (node.kind) {
-    case 'literal': return node.value;
+    case 'literal':
+      return node.value;
     case 'bytesLiteral':
       markNotJsonRepresentable(ctx, 'byte strings');
       ctx.warnings.push(`Byte string literal ${node.raw} represented as a JSON string.`);
       return 'AQID';
-    case 'ref': return generateRef(node.name, node.args, key, ctx, depth, visiting, env);
-    case 'unwrap': return generateNode(node.ref, key, ctx, depth + 1, visiting, env, label);
-    case 'range': return generateNode(node.lower, key, ctx, depth + 1, visiting, env, label);
+    case 'ref':
+      return generateRef(node.name, node.args, key, ctx, depth, visiting, env);
+    case 'unwrap':
+      return generateNode(node.ref, key, ctx, depth + 1, visiting, env, label);
+    case 'range':
+      return generateNode(node.lower, key, ctx, depth + 1, visiting, env, label);
     case 'choice': {
       const option = chooseOption(node.options, ctx.model, env);
-      ctx.warnings.push(`Using ${option === node.options[0] ? 'first' : 'a later'} alternative of choice${node.label ? ` "${node.label}"` : ''}.`);
-      if (option !== node.options[0]) ctx.warnings.push('Skipped an earlier choice alternative with a prelude-name map key that does not validate as a JSON object key.');
+      ctx.warnings.push(
+        `Using ${option === node.options[0] ? 'first' : 'a later'} alternative of choice${node.label ? ` "${node.label}"` : ''}.`,
+      );
+      if (option !== node.options[0])
+        ctx.warnings.push(
+          'Skipped an earlier choice alternative with a prelude-name map key that does not validate as a JSON object key.',
+        );
       return generateNode(option, key, ctx, depth + 1, visiting, env, label);
     }
-    case 'control': return generateControl(node, key, ctx, depth, visiting, env, label);
+    case 'control':
+      return generateControl(node, key, ctx, depth, visiting, env, label);
     case 'tag':
       markNotJsonRepresentable(ctx, 'CBOR tags');
       ctx.warnings.push(`CBOR tag ${node.tag || ''} was dropped for JSON output.`.trim());
       return generateNode(node.inner, key, ctx, depth + 1, visiting, env, label);
-    case 'map': return generateMap(node.entries, ctx, depth + 1, visiting, env);
-    case 'array': return generateArray(node.entries, ctx, depth + 1, visiting, env);
+    case 'map':
+      return generateMap(node.entries, ctx, depth + 1, visiting, env);
+    case 'array':
+      return generateArray(node.entries, ctx, depth + 1, visiting, env);
     case 'group':
       return hasMemberEntries(node.entries)
         ? generateMap(node.entries, ctx, depth + 1, visiting, env)
         : generateArray(node.entries, ctx, depth + 1, visiting, env);
-    case 'enum': return generateEnum(node.entries, ctx, depth + 1, visiting, env);
-    case 'groupMerge': return generateGroupMerge(node.options, ctx, depth + 1, visiting, env);
+    case 'enum':
+      return generateEnum(node.entries, ctx, depth + 1, visiting, env);
+    case 'groupMerge':
+      return generateGroupMerge(node.options, ctx, depth + 1, visiting, env);
     case 'enumRef': {
       const value = generateNode(node.ref, key, ctx, depth + 1, visiting, env, label);
-      return value && typeof value === 'object' && !Array.isArray(value) ? Object.values(value)[0] ?? null : value;
+      return value && typeof value === 'object' && !Array.isArray(value)
+        ? (Object.values(value)[0] ?? null)
+        : value;
     }
     case 'unknown':
     default:
@@ -719,6 +926,7 @@ function generateNode(node, key, ctx, depth, visiting, env, label) {
   }
 }
 
+/** @type {(node: import('./sample-types.js').ControlNode, key: string | null, ctx: Context, depth: number, visiting: Set<string>, env: Environment, label: string | null) => GeneratedValue} */
 function generateControl(node, key, ctx, depth, visiting, env, label) {
   const base = () => generateNode(node.base, key, ctx, depth + 1, visiting, env, label);
   const controller = () => generateNode(node.controller, key, ctx, depth + 1, visiting, env, label);
@@ -729,15 +937,8 @@ function generateControl(node, key, ctx, depth, visiting, env, label) {
       return controller();
     case '.within':
       return base();
-    case '.size': {
-      const size = controlNumber(node.controller);
-      const value = base();
-      if (value === UNSATISFIABLE) return UNSATISFIABLE;
-      if (size == null || size < 0) return markControlUnapplied(ctx, node.op, value);
-      if (typeof value === 'string') return sizedString(value, size);
-      if (typeof value === 'number') return Number.isInteger(value) ? sizedInteger(value, size) : value;
-      return markControlUnapplied(ctx, node.op, value);
-    }
+    case '.size':
+      return applySize(base(), controlNumber(node.controller), ctx, node.op);
     case '.lt':
     case '.le':
     case '.gt':
@@ -745,7 +946,8 @@ function generateControl(node, key, ctx, depth, visiting, env, label) {
       const limit = controlNumber(node.controller);
       const value = base();
       if (value === UNSATISFIABLE) return UNSATISFIABLE;
-      if (limit == null || typeof value !== 'number') return markControlUnapplied(ctx, node.op, value);
+      if (limit == null || typeof value !== 'number')
+        return markControlUnapplied(ctx, node.op, value);
       return boundedNumber(value, limit, node.op);
     }
     case '.ne': {
@@ -765,16 +967,28 @@ function generateControl(node, key, ctx, depth, visiting, env, label) {
   }
 }
 
+/** @type {(value: GeneratedValue, size: number | null, ctx: Context, op: string) => GeneratedValue} */
+function applySize(value, size, ctx, op) {
+  if (value === UNSATISFIABLE) return UNSATISFIABLE;
+  if (size == null || size < 0) return markControlUnapplied(ctx, op, value);
+  if (typeof value === 'string') return sizedString(value, size);
+  if (typeof value === 'number') return Number.isInteger(value) ? sizedInteger(value, size) : value;
+  return markControlUnapplied(ctx, op, value);
+}
+
+/** @type {(ctx: Context, op: string, value: JsonValue) => JsonValue} */
 function markControlUnapplied(ctx, op, value) {
   ctx.constraintsSatisfied = false;
   if (!ctx.unappliedControls.has(op)) {
     ctx.unappliedControls.add(op);
-    ctx.warnings.push(`Control operator ${op} could not be applied; the generated value may not validate.`);
+    ctx.warnings.push(
+      `Control operator ${op} could not be applied; the generated value may not validate.`,
+    );
   }
   return value;
 }
 
-/** Numeric controller value, or null when it is not a plain number or numeric range. */
+/** @type {(node: AstNode) => number | null} Numeric controller value, if literal. */
 function controlNumber(node) {
   if (!node) return null;
   if (node.kind === 'literal' && typeof node.value === 'number') return node.value;
@@ -782,13 +996,14 @@ function controlNumber(node) {
   return null;
 }
 
+/** @type {(value: string, size: number) => string} */
 function sizedString(value, size) {
   if (value.length === size) return value;
   if (value.length > size) return value.slice(0, size);
   return value.padEnd(size, 'x');
 }
 
-/** Largest-fitting placeholder for `n .size b`, where b counts bytes of the encoded integer. */
+/** @type {(value: number, size: number) => number} Integer constrained to the encoded byte width. */
 function sizedInteger(value, size) {
   if (size === 0) return 0;
   const max = 2 ** (Math.min(size, 6) * 8) - 1;
@@ -796,28 +1011,49 @@ function sizedInteger(value, size) {
   return value >= -max - 1 ? value : -max - 1;
 }
 
+/** @type {(value: number, limit: number, op: string) => number} */
 function boundedNumber(value, limit, op) {
   switch (op) {
-    case '.lt': return value < limit ? value : limit - 1;
-    case '.le': return value <= limit ? value : limit;
-    case '.gt': return value > limit ? value : limit + 1;
-    default: return value >= limit ? value : limit;
+    case '.lt':
+      return value < limit ? value : limit - 1;
+    case '.le':
+      return value <= limit ? value : limit;
+    case '.gt':
+      return value > limit ? value : limit + 1;
+    default:
+      return value >= limit ? value : limit;
   }
 }
 
+/** @type {(name: string, key: string | null, ctx: Context) => JsonValue} */
 function generateBuiltin(name, key, ctx) {
   if (['text', 'tstr', 'uri', 'tdate', 'time', 'regexp', 'mime-message'].includes(name)) {
     return stringForKey(key || name);
   }
-  if (['uint', 'unsigned', 'biguint'].includes(name)) return 1;
-  if (['nint', 'bignint'].includes(name)) return -1;
-  if (['int', 'integer', 'bigint', 'number'].includes(name)) return 0;
-  if (['float', 'float16', 'float32', 'float64', 'float16-32', 'float32-64', 'decfrac', 'bigfloat'].includes(name)) return 1.5;
+  const numericSample = NUMERIC_SAMPLES.get(name);
+  if (numericSample !== undefined) return numericSample;
   if (['bool', 'true', 'false'].includes(name)) return true;
-  if (['null', 'nil', 'undefined'].includes(name)) return null;
-  if (['bytes', 'bstr', 'eb64url', 'eb64legacy', 'eb16', 'encoded-cbor', 'b64url', 'b64legacy'].includes(name)) {
+  if (['null', 'nil'].includes(name)) return null;
+  if (name === 'undefined') {
+    markNotJsonRepresentable(ctx, 'undefined values');
+    return null;
+  }
+  if (
+    [
+      'bytes',
+      'bstr',
+      'eb64url',
+      'eb64legacy',
+      'eb16',
+      'encoded-cbor',
+      'b64url',
+      'b64legacy',
+    ].includes(name)
+  ) {
     markNotJsonRepresentable(ctx, 'byte strings');
-    ctx.warnings.push(`JSON cannot represent CBOR byte strings natively; ${name} emitted as a base64-like string.`);
+    ctx.warnings.push(
+      `JSON cannot represent CBOR byte strings natively; ${name} emitted as a base64-like string.`,
+    );
     return 'AQID';
   }
   if (['any', 'cbor-any'].includes(name)) {
@@ -828,10 +1064,12 @@ function generateBuiltin(name, key, ctx) {
   return null;
 }
 
+/** @type {(options: AstNode[], model: Model, env: Environment) => AstNode | undefined} */
 function chooseOption(options, model, env) {
   return options.find((option) => !hasPreludeNameKey(option, model, env, new Set())) || options[0];
 }
 
+/** @type {(node: AstNode | undefined, model: Model, env: Environment, seen: Set<string>) => boolean} */
 function hasPreludeNameKey(node, model, env, seen) {
   if (!node) return false;
   if (node.kind === 'ref') {
@@ -842,32 +1080,61 @@ function hasPreludeNameKey(node, model, env, seen) {
     return rule ? hasPreludeNameKey(rule.node, model, env, seen) : false;
   }
   if (node.kind === 'map') return node.entries.some(hasPreludeEntryKey);
-  if (node.kind === 'choice' || node.kind === 'groupMerge') return node.options.some((option) => hasPreludeNameKey(option, model, env, seen));
+  if (node.kind === 'choice' || node.kind === 'groupMerge')
+    return node.options.some((option) => hasPreludeNameKey(option, model, env, seen));
   return false;
 }
 
+/** @type {(entry: GroupEntry) => boolean} */
 function hasPreludeEntryKey(entry) {
   if (!entry) return false;
   if (entry.kind === 'member') return entry.key.kind === 'name' && BUILTINS.has(entry.key.name);
   if (entry.kind === 'group') return entry.entries.some(hasPreludeEntryKey);
-  if (entry.kind === 'groupChoice') return entry.options.some((entries) => entries.some(hasPreludeEntryKey));
+  if (entry.kind === 'groupChoice')
+    return entry.options.some((entries) => entries.some(hasPreludeEntryKey));
   return false;
 }
 
+/** @type {(ctx: Context, reason: string) => void} */
 function markNotJsonRepresentable(ctx, reason) {
   if (!ctx || !ctx.nonRepReasons || ctx.nonRepReasons.has(reason)) return;
   ctx.nonRepReasons.add(reason);
   ctx.jsonRepresentable = false;
-  ctx.warnings.push(`This schema uses ${reason}, which JSON cannot represent — generate and validate this one as CBOR.`);
+  ctx.warnings.push(
+    `This schema uses ${reason}, which JSON cannot represent — generate and validate this one as CBOR.`,
+  );
 }
 
+/** @type {(key: string) => string} */
 function stringForKey(key) {
-  const normalized = String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normalized = String(key || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
   if (normalized.includes('email')) return 'user@example.com';
-  if (normalized.includes('url') || normalized.includes('uri') || normalized === 'href' || normalized.includes('regid')) return 'https://example.com';
+  if (
+    normalized.includes('url') ||
+    normalized.includes('uri') ||
+    normalized === 'href' ||
+    normalized.includes('regid')
+  )
+    return 'https://example.com';
   if (normalized.includes('uuid')) return '123e4567-e89b-12d3-a456-426614174000';
-  if (normalized === 'id' || normalized.endsWith('id') || normalized.includes('identifier') || normalized.includes('jti')) return '123e4567-e89b-12d3-a456-426614174000';
-  if (normalized.includes('date') || normalized.includes('time') || normalized === 'iat' || normalized === 'nbf' || normalized === 'exp' || normalized.includes('expire')) return '2026-08-17T16:56:23Z';
+  if (
+    normalized === 'id' ||
+    normalized.endsWith('id') ||
+    normalized.includes('identifier') ||
+    normalized.includes('jti')
+  )
+    return '123e4567-e89b-12d3-a456-426614174000';
+  if (
+    normalized.includes('date') ||
+    normalized.includes('time') ||
+    normalized === 'iat' ||
+    normalized === 'nbf' ||
+    normalized === 'exp' ||
+    normalized.includes('expire')
+  )
+    return '2026-08-17T16:56:23Z';
   if (normalized.includes('phone')) return '+1-555-0100';
   if (normalized.includes('name')) return 'example name';
   if (normalized.includes('address') || normalized.includes('street')) return '123 Example Street';
@@ -879,6 +1146,7 @@ function stringForKey(key) {
   return 'string';
 }
 
+/** @type {(entries: GroupEntry[], ctx: Context, depth: number, visiting: Set<string>, env: Environment, target?: JsonObject) => JsonObject} */
 function generateMap(entries, ctx, depth, visiting, env, target) {
   const object = target || {};
   for (const entry of entries) {
@@ -893,7 +1161,8 @@ function generateMap(entries, ctx, depth, visiting, env, target) {
       if (skipOptional(entry, ctx)) continue;
       const count = repeatCount(entry.occurrence, ctx);
       // Repeated groups generate into the same object so dynamic keys stay distinct.
-      for (let i = 0; i < count; i++) generateMap(entry.entries, ctx, depth + 1, visiting, env, object);
+      for (let i = 0; i < count; i++)
+        generateMap(entry.entries, ctx, depth + 1, visiting, env, object);
       continue;
     }
     if (entry.kind === 'member') {
@@ -907,7 +1176,9 @@ function generateMap(entries, ctx, depth, visiting, env, target) {
         const before = ctx.warnings.length;
         const placed = placeAtOccurrence(
           generateNode(entry.value, key, ctx, depth + 1, visiting, env, key),
-          entry.occurrence, ctx, `Member "${key}"`,
+          entry.occurrence,
+          ctx,
+          `Member "${key}"`,
         );
         if (placed.omit) continue;
         setMember(object, key, placed.value);
@@ -920,7 +1191,9 @@ function generateMap(entries, ctx, depth, visiting, env, target) {
     if (entry.kind === 'element') {
       const placed = placeAtOccurrence(
         generateNode(entry.value, null, ctx, depth + 1, visiting, env, null),
-        entry.occurrence, ctx, 'Group entry',
+        entry.occurrence,
+        ctx,
+        'Group entry',
       );
       if (placed.omit) continue;
       const value = placed.value;
@@ -934,12 +1207,16 @@ function generateMap(entries, ctx, depth, visiting, env, target) {
   return object;
 }
 
-/** A key not already present, for repeated map members. Literal keys cannot repeat. */
+/** @type {(object: JsonObject, baseKey: string, entry: Extract<GroupEntry, {kind: 'member'}>, ctx: Context, index: number) => string} */
 function distinctKey(object, baseKey, entry, ctx, index) {
   if (entry.key?.kind === 'literal') {
     ctx.constraintsSatisfied = false;
-    const repeats = entry.occurrence.raw ? `repeats ${entry.occurrence.raw} times` : 'occurs more than once';
-    ctx.warnings.push(`Member "${baseKey}" ${repeats} but has a literal key; a JSON object cannot hold duplicates.`);
+    const repeats = entry.occurrence.raw
+      ? `repeats ${entry.occurrence.raw} times`
+      : 'occurs more than once';
+    ctx.warnings.push(
+      `Member "${baseKey}" ${repeats} but has a literal key; a JSON object cannot hold duplicates.`,
+    );
     return baseKey;
   }
   let candidate = `${baseKey}${index + 1}`;
@@ -951,6 +1228,7 @@ function distinctKey(object, baseKey, entry, ctx, index) {
   return candidate;
 }
 
+/** @type {(options: AstNode[], ctx: Context, depth: number, visiting: Set<string>, env: Environment) => JsonObject} */
 function generateGroupMerge(options, ctx, depth, visiting, env) {
   if (options.length > 1) ctx.warnings.push('Using first alternative of group socket choices.');
   const value = generateNode(options[0], null, ctx, depth + 1, visiting, env, null);
@@ -962,6 +1240,7 @@ function generateGroupMerge(options, ctx, depth, visiting, env) {
  * Returns `{ omit: true }` when the value could not be generated and the
  * occurrence permits zero items, and otherwise a concrete value — falling back
  * to `null` with an explicit warning when the occurrence demands at least one.
+ * @type {(value: GeneratedValue, occurrence: Occurrence, ctx: Context, what: string) => {omit: true, value: undefined} | {omit: false, value: JsonValue}}
  */
 function placeAtOccurrence(value, occurrence, ctx, what) {
   if (value !== UNSATISFIABLE) return { omit: false, value };
@@ -973,6 +1252,7 @@ function placeAtOccurrence(value, occurrence, ctx, what) {
   return { omit: false, value: null };
 }
 
+/** @type {(entries: GroupEntry[], ctx: Context, depth: number, visiting: Set<string>, env: Environment) => JsonValue[]} */
 function generateArray(entries, ctx, depth, visiting, env) {
   const array = [];
   for (const entry of entries) {
@@ -989,19 +1269,33 @@ function generateArray(entries, ctx, depth, visiting, env) {
         const key = keyToString(entry.key, ctx, depth, visiting, env, entry.arrow);
         const placed = placeAtOccurrence(
           generateNode(entry.value, key, ctx, depth + 1, visiting, env, null),
-          entry.occurrence, ctx, `Array element "${key}"`,
+          entry.occurrence,
+          ctx,
+          `Array element "${key}"`,
         );
         if (!placed.omit) array.push(placed.value);
-      } else if (entry.kind === 'group') array.push(...generateArray(entry.entries, ctx, depth + 1, visiting, env));
+      } else if (entry.kind === 'group')
+        array.push(...generateArray(entry.entries, ctx, depth + 1, visiting, env));
       else {
         // A group reference contributes its entries to the array, not a nested array.
         const seen = new Set();
         const resolved = resolveGroupNode(entry.value, ctx, env, seen, visiting);
-        if (resolved) array.push(...generateArray(resolved.group.entries, ctx, depth + 1, new Set([...visiting, ...seen]), resolved.env));
+        if (resolved)
+          array.push(
+            ...generateArray(
+              resolved.group.entries,
+              ctx,
+              depth + 1,
+              new Set([...visiting, ...seen]),
+              resolved.env,
+            ),
+          );
         else {
           const placed = placeAtOccurrence(
             generateNode(entry.value, null, ctx, depth + 1, visiting, env, null),
-            entry.occurrence, ctx, 'Array element',
+            entry.occurrence,
+            ctx,
+            'Array element',
           );
           if (!placed.omit) array.push(placed.value);
         }
@@ -1011,7 +1305,7 @@ function generateArray(entries, ctx, depth, visiting, env) {
   return array;
 }
 
-/** True when entries describe map members rather than array elements. */
+/** @type {(entries: GroupEntry[]) => boolean} True for map member groups. */
 function hasMemberEntries(entries) {
   return (entries || []).some((entry) => {
     if (!entry) return false;
@@ -1022,7 +1316,7 @@ function hasMemberEntries(entries) {
   });
 }
 
-/** Follow references to an inline group definition with its environment, or null when it is not one. */
+/** @type {(node: AstNode | undefined, ctx: Context, env: Environment, seen: Set<string>, visiting: Set<string>) => {group: import('./sample-types.js').GroupNode, env: Environment} | null} */
 function resolveGroupNode(node, ctx, env, seen, visiting) {
   if (!node) return null;
   if (node.kind === 'group') return hasMemberEntries(node.entries) ? null : { group: node, env };
@@ -1040,6 +1334,7 @@ function resolveGroupNode(node, ctx, env, seen, visiting) {
   return resolveGroupNode(rule.node, ctx, nextEnv, seen, visiting);
 }
 
+/** @type {(entries: GroupEntry[], ctx: Context, depth: number, visiting: Set<string>, env: Environment) => GeneratedValue} */
 function generateEnum(entries, ctx, depth, visiting, env) {
   const first = entries.find(Boolean);
   if (!first) {
@@ -1050,14 +1345,26 @@ function generateEnum(entries, ctx, depth, visiting, env) {
     ctx.warnings.push('Using first alternative of group-to-choice enumeration.');
     return generateEnum(first.options[0], ctx, depth + 1, visiting, env);
   }
-  if (first.kind === 'member') return generateNode(first.value, keyToString(first.key, ctx, depth, visiting, env, first.arrow), ctx, depth + 1, visiting, env, null);
+  if (first.kind === 'member')
+    return generateNode(
+      first.value,
+      keyToString(first.key, ctx, depth, visiting, env, first.arrow),
+      ctx,
+      depth + 1,
+      visiting,
+      env,
+      null,
+    );
+  if (first.kind === 'group') return generateEnum(first.entries, ctx, depth + 1, visiting, env);
   return generateNode(first.value, null, ctx, depth + 1, visiting, env, null);
 }
 
+/** @type {(key: Key, ctx: Context, depth: number, visiting: Set<string>, env: Environment, arrow?: boolean) => string} */
 function keyToString(key, ctx, depth, visiting, env, arrow = false) {
   if (!key) return 'key';
   if (key.kind === 'literal') {
-    if (typeof key.value !== 'string') markNotJsonRepresentable(ctx, 'integer or non-text member keys');
+    if (typeof key.value !== 'string')
+      markNotJsonRepresentable(ctx, 'integer or non-text member keys');
     return String(key.value);
   }
   if (key.kind === 'name' && arrow && (ctx.model.rules.has(key.name) || BUILTINS.has(key.name))) {
@@ -1072,18 +1379,19 @@ function keyToString(key, ctx, depth, visiting, env, arrow = false) {
   return value == null ? 'key' : String(value);
 }
 
+/** @type {(model: Model) => Set<string>} */
 function collectReferences(model) {
+  /** @type {Set<string>} */
   const refs = new Set();
   for (const rule of model.rules.values()) collectNodeReferences(rule.node, refs);
   return refs;
 }
 
+/** @type {(node: unknown, refs: Set<string>) => void} */
 function collectNodeReferences(node, refs) {
-  if (!node) return;
-  if (node.kind === 'ref') {
+  if (!node || typeof node !== 'object') return;
+  if ('kind' in node && node.kind === 'ref' && 'name' in node && typeof node.name === 'string') {
     refs.add(node.name);
-    node.args.forEach((arg) => collectNodeReferences(arg, refs));
-    return;
   }
   for (const value of Object.values(node)) {
     if (Array.isArray(value)) value.forEach((item) => collectNodeReferences(item, refs));
@@ -1091,6 +1399,10 @@ function collectNodeReferences(node, refs) {
   }
 }
 
+/** @type {(tokens: Token[]) => string} */
 function describeTokens(tokens) {
-  return tokens.map((token) => token.raw || token.value).join(' ').trim();
+  return tokens
+    .map((token) => token.raw || token.value)
+    .join(' ')
+    .trim();
 }

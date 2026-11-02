@@ -22,6 +22,13 @@ This crate supports validation of CBOR, JSON, and CSV data structures. The minim
 
 Also bundled into this repository is a basic language server implementation and extension for Visual Studio Code for editing CDDL. The implementation is backed by the compiled WebAssembly target included in this crate.
 
+## Contributing and local development
+
+With Rust stable, Node 24 LTS and Python 3.11+ installed, run `npm run setup`.
+See [agent guidance](AGENTS.md), [development commands](docs/development.md),
+[architecture](docs/architecture.md), [interactive QA](docs/qa.md) and
+[security and privacy](SECURITY.md). No application credentials or services are required.
+
 ## Goals
 
 * [x] Parse CDDL documents into an AST
@@ -340,6 +347,30 @@ assert!(cddl_from_str(input, true).is_ok())
 ```
 
 ### Generating Rust types from CDDL
+
+The [`cddl-codegen-rust`](cddl-codegen-rust/) library generates Rust source at runtime or
+from build scripts:
+
+```toml
+[dependencies]
+cddl-codegen-rust = "0.1"
+```
+
+```rust
+use cddl_codegen_rust::{generate_rust_code, CodegenError};
+
+fn generate(schema: &str) -> Result<String, CodegenError> {
+  generate_rust_code(schema)
+}
+```
+
+For tools that combine or transform schemas, parse them with the re-exported
+`cddl_codegen_rust::cddl`, then pass the resulting AST to
+`generate_rust_code_from_ast`. Pass the original source
+for an unchanged AST, or `""` for ASTs combined from multiple documents (using
+AST-attached documentation only). The caller chooses conflict and merge
+policies; see the library's example. Generated code needs the same Serde
+dependencies as the macros described below.
 
 The companion crate [`cddl-derive`](cddl-derive/) provides proc macros for generating Rust types from CDDL definitions at compile time.
 

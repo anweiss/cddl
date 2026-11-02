@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install Rust
         run: |
@@ -41,7 +41,9 @@ jobs:
       - name: Install dependencies
         working-directory: ./cddl-lsp
         run: |
-          npm install
+          npm ci
+          npm --prefix client ci
+          npm --prefix server ci
           npm run webpack
 
       - name: Run unit tests and integration tests

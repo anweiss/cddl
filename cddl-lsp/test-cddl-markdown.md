@@ -29,7 +29,7 @@ The above should have CDDL syntax highlighting applied.
 ; JSON Web Token Claims Set
 jwt-claims = {
   ? iss: tstr,           ; issuer
-  ? sub: tstr,           ; subject  
+  ? sub: tstr,           ; subject
   ? aud: tstr / [* tstr], ; audience
   ? exp: uint,           ; expiration time
   ? nbf: uint,           ; not before
