@@ -48,9 +48,11 @@ isolated loopback static server and close it afterwards.
 ## Dependency and feature changes
 
 Commit npm and Cargo lockfiles. Use `npm run check:versions` when editing
-manifests. Pest packages are held together at 2.8.8 because Pest 2.9.3 pins
-a psm version that fails WASM linking. Upgrade the family only after both
-release WASM builds and tests pass. Do not use `npm audit fix --force`.
+manifests. Keep the Pest family pinned together at 2.9.4. The earlier 2.8.8
+pin avoided a psm WASM linking failure; 2.9.4 passes both release WASM
+package builds and the Node WASM tests with Rust stable 1.99.1. Validate
+both release WASM builds and tests before upgrading the family again.
+Do not use `npm audit fix --force`.
 Dependabot's seven-day cooldown applies to ordinary updates, not urgent
 security updates.
 
