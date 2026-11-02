@@ -210,3 +210,60 @@ fn json_skipped_optional_group_keeps_later_members_required() {
     }
   }
 }
+
+#[cfg(feature = "cbor")]
+#[test]
+fn cbor_successful_optional_group_consumes_its_occurrence() {
+  // A successful optional group must not leak its `?` into later members:
+  // `k: int` and `b: int` stay required.
+  for (schema, bytes, valid) in [
+    ("m = { ? (* $$s), k: int }", vec![0xa0], false),
+    (
+      "m = { ? (* $$s), k: int }",
+      vec![0xa1, 0x61, 0x6b, 0x01],
+      true,
+    ),
+    (
+      "m = { ? (a: int), b: int }",
+      vec![0xa1, 0x61, 0x61, 0x01],
+      false,
+    ),
+    (
+      "m = { ? (a: int), b: int }",
+      vec![0xa1, 0x61, 0x62, 0x01],
+      true,
+    ),
+    (
+      "m = { ? (a: int), b: int }",
+      vec![0xa2, 0x61, 0x61, 0x01, 0x61, 0x62, 0x01],
+      true,
+    ),
+  ] {
+    let result = cddl::validate_cbor_from_slice(
+      schema,
+      &bytes,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), valid, "{schema}: {result:?}");
+  }
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn json_successful_optional_group_consumes_its_occurrence() {
+  for (schema, json, valid) in [
+    ("m = { ? (* $$s), k: int }", "{}", false),
+    ("m = { ? (* $$s), k: int }", r#"{"k":1}"#, true),
+    ("m = { ? (a: int), b: int }", r#"{"a":1}"#, false),
+    ("m = { ? (a: int), b: int }", r#"{"b":1}"#, true),
+  ] {
+    let result = cddl::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), valid, "{schema}: {result:?}");
+  }
+}

@@ -330,3 +330,55 @@ fn json_type_choice_keys_reassign_claimed_pairs() {
     );
   }
 }
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_resolve_constrained_alias_domains() {
+  // A constrained alias inherits its underlying key domain, and the control
+  // operator is still enforced by the probe.
+  let negative = "m = { * (negative .ne 0 / tstr) => any }\nnegative = nint";
+  check_cbor(negative, "a10301", false);
+  check_cbor(negative, "a12001", true);
+  check_cbor(negative, "a1617801", true);
+  let nonzero = "m = { * (nonzero / tstr) => any }\nnonzero = uint .ne 0";
+  check_cbor(nonzero, "a10001", false);
+  check_cbor(nonzero, "a10301", true);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_restrict_time_and_tdate_tags() {
+  // `time` keys admit tag 1 only, `tdate` keys tag 0 only; other tags are
+  // not timestamps or dates.
+  check_cbor("m = { * (time / tstr) => any }", "a1c2410101", false);
+  check_cbor("m = { * (time / tstr) => any }", "a1c11a0000000101", true);
+  check_cbor("m = { * (tdate / tstr) => any }", "a1c2410101", false);
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_type_choice_keys_reassign_through_chains() {
+  // Four members, four pairs: only the assignment "c", "d", "b", "a" works,
+  // which requires moving a pair claimed by a member satisfied through an
+  // earlier reassignment.
+  let schema = "m = { (int / tstr) => uint, (\"b\" / \"d\") => uint, (\"a\" / \"b\") => uint, (\"a\" / \"z\") => uint }";
+  for (json, expected) in [
+    (r#"{"a":1,"b":1,"c":1,"d":1}"#, true),
+    (r#"{"a":1,"b":1,"c":1}"#, false),
+  ] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(
+      result.is_ok(),
+      expected,
+      "schema: {schema}, JSON: {json}, result: {result:?}"
+    );
+  }
+}

@@ -4581,11 +4581,15 @@ where
     }
     // A failed group that may occur zero times takes its zero-width path:
     // restore the complete pre-group state so its errors, claims and
-    // occurrence indicator do not leak into later members.
+    // occurrence indicator do not leak into later members. The group's own
+    // occurrence is consumed by the group, so restore the prior one after a
+    // success as well.
     let checkpoint = self.clone();
     walk_inline_group_entry(self, occur, g)?;
     if self.errors.len() > checkpoint.errors.len() {
       *self = checkpoint;
+    } else {
+      self.state.occurrence = checkpoint.state.occurrence;
     }
     Ok(())
   }
@@ -5143,20 +5147,55 @@ fn prelude_key_domain_admits(cddl: &CDDL, alternative: &Type1, key: &Value) -> b
   else {
     return true;
   };
-  if lookup_ident(ident.ident).in_standard_prelude().is_none()
-    || rule_from_ident(cddl, ident).is_some()
-  {
-    return true;
+
+  // Follow single-definition aliases so a constrained alternative such as
+  // `negative .ne 0` inherits the domain of its underlying prelude type. The
+  // control operator itself is still enforced by the probe.
+  let mut current = ident;
+  let mut visited = HashSet::new();
+  let domain_ident = loop {
+    if lookup_ident(current.ident).in_standard_prelude().is_some()
+      && rule_from_ident(cddl, current).is_none()
+    {
+      break current;
+    }
+    if !visited.insert(current.ident) {
+      return true;
+    }
+    let types = type_choice_types_from_ident(cddl, current);
+    let [only] = types.as_slice() else {
+      return true;
+    };
+    let [choice] = only.type_choices.as_slice() else {
+      return true;
+    };
+    match &choice.type1.type2 {
+      Type2::Typename {
+        ident: next,
+        generic_args: None,
+        ..
+      } => current = next,
+      _ => return true,
+    }
+  };
+
+  if ident_numeric_kind(cddl, domain_ident).is_some() {
+    return numeric_ident_matches_cbor_value(cddl, domain_ident, key)
+      || is_bignum_value(cddl, domain_ident, key);
   }
-  if ident_numeric_kind(cddl, ident).is_some() {
-    return numeric_ident_matches_cbor_value(cddl, ident, key) || is_bignum_value(cddl, ident, key);
+  // `time` and `tdate` admit only their own tags (1 and 0 respectively).
+  if is_ident_time_data_type(cddl, domain_ident) {
+    return !matches!(key, Value::Tag(tag, _) if *tag != 1);
+  }
+  if is_ident_tdate_data_type(cddl, domain_ident) {
+    return !matches!(key, Value::Tag(tag, _) if *tag != 0);
   }
   !matches!(key, Value::Tag(..))
-    || !(is_ident_string_data_type(cddl, ident)
-      || is_ident_byte_string_data_type(cddl, ident)
-      || is_ident_bool_data_type(cddl, ident)
-      || matches!(lookup_ident(ident.ident), Token::TRUE | Token::FALSE)
-      || is_ident_null_data_type(cddl, ident))
+    || !(is_ident_string_data_type(cddl, domain_ident)
+      || is_ident_byte_string_data_type(cddl, domain_ident)
+      || is_ident_bool_data_type(cddl, domain_ident)
+      || matches!(lookup_ident(domain_ident.ident), Token::TRUE | Token::FALSE)
+      || is_ident_null_data_type(cddl, domain_ident))
 }
 
 /// Is `v` a tagged byte string accepted by the bignum type `ident`?

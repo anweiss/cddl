@@ -502,12 +502,12 @@ impl<'a> JSONValidator<'a> {
         return Ok(false);
       };
       keys.push(candidates[pair_slot].0.clone());
-      if claim_slot < self.choice_claims.len() {
-        new_claims.push((
-          candidates[pair_slot].0.clone(),
-          claims[claim_slot].1.clone(),
-        ));
-      }
+      // Retain every assigned claim, including the member that just became
+      // satisfiable, so later reassignments can move its pair again.
+      new_claims.push((
+        candidates[pair_slot].0.clone(),
+        claims[claim_slot].1.clone(),
+      ));
     }
     self.choice_claims = new_claims;
     Ok(true)
@@ -3433,11 +3433,15 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     }
     // A failed group that may occur zero times takes its zero-width path:
     // restore the complete pre-group state so its errors, claimed members
-    // and occurrence indicator do not leak into later entries.
+    // and occurrence indicator do not leak into later entries. The group's
+    // own occurrence is consumed by the group, so restore the prior one
+    // after a success as well.
     let checkpoint = self.clone();
     walk_inline_group_entry(self, occur, g)?;
     if self.errors.len() > checkpoint.errors.len() {
       *self = checkpoint;
+    } else {
+      self.state.occurrence = checkpoint.state.occurrence;
     }
     Ok(())
   }
