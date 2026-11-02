@@ -12,6 +12,7 @@
     "check:files": "node scripts/check-files.mjs",
     "check:docs": "node scripts/check-docs.mjs",
     "check:dependencies": "knip",
+    "test:dependencies": "node --test scripts/dependency-compatibility.test.mjs",
     "check:duplicates": "jscpd --silent",
     "check:versions": "python3 scripts/check_versions.py",
     "check:complexity": ".venv/bin/python scripts/check_complexity.py",
@@ -47,5 +48,8 @@
     "prettier": "3.9.10",
     "typescript": "6.0.3",
     "vitest": "5.0.5"
+  },
+  "overrides": {
+    "minimatch": "11.0.3"
   }
 }
