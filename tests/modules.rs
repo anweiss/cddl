@@ -836,6 +836,96 @@ fn a_later_import_sees_references_introduced_by_an_earlier_include() {
 }
 
 #[test]
+fn local_definitions_keep_included_extensions() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("ext", "item = int\nitem /= tstr\n");
+
+  let output = resolve_modules(
+    "item = bool\n;# include item from ext\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+
+  // The base definition is already supplied locally, but the extension must
+  // still apply to it.
+  assert!(!output.contains("item = int\n"));
+  assert!(output.contains("item /= tstr"), "{}", output);
+  assert_parses(&output);
+
+  // Two modules extending one socket both contribute.
+  let mut source = MemoryModuleSource::new();
+  source.insert("one", "plug /= 1\n");
+  source.insert("two", "plug /= 2\n");
+  let output = resolve_modules(
+    "plug = uint\n;# include one\n;# include two\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(output.contains("plug /= 1"), "{}", output);
+  assert!(output.contains("plug /= 2"), "{}", output);
+  assert_parses(&output);
+}
+
+#[test]
+fn imports_retain_extensions_of_suppressed_bases_and_their_dependencies() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("ext", "item = int\nitem /= extra\nextra = tstr\n");
+
+  let output = resolve_modules(
+    "item = bool\nstart = item\n;# import item from ext\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+
+  assert!(!output.contains("item = int\n"));
+  assert!(output.contains("item /= extra"), "{}", output);
+  assert!(output.contains("extra = tstr"), "{}", output);
+  assert_parses(&output);
+}
+
+#[test]
+fn suppressed_rules_do_not_pull_their_module_dependencies() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("m", "foo = a\na = helper\nhelper = tstr\n");
+
+  // Local `a` satisfies the reference from `foo`, so the module's own `a` and
+  // its dependency `helper` must stay out of the output.
+  let output = resolve_modules(
+    "a = int\nstart = foo\n;# import foo from m\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+
+  assert_eq!(output, "a = int\nstart = foo\nfoo = a\n");
+  assert_parses(&output);
+}
+
+#[test]
+fn a_generic_import_alias_forwards_its_parameters() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("generic", "messages<a, b> = [a, b]\n");
+
+  let output = resolve_modules(
+    "start = ns.messages<int, bool>\n;# import messages from generic as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+
+  assert!(
+    output.contains("messages<a, b> = ns.messages<a, b>"),
+    "{}",
+    output
+  );
+  assert!(output.contains("ns.messages<a, b> = [a, b]"), "{}", output);
+  assert_parses(&output);
+}
+
+#[test]
 fn a_rule_already_defined_locally_is_not_pulled_in() {
   let output =
     resolve("label = tstr\nmydata = {* label => values}\n;# include label, values from rfc9052\n");

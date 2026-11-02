@@ -22,7 +22,7 @@ use std::{
   error::Error,
   fmt::Write,
   fs::{self, File},
-  io::{self, BufReader, Read},
+  io::{self, BufReader, IsTerminal, Read},
   path::Path,
 };
 
@@ -398,6 +398,9 @@ fn resolve_modules_command(
   include_path: Option<&str>,
 ) -> Result<(), Box<dyn Error>> {
   let input = match file {
+    // With neither a file nor piped input there is no document: the `-i`/`-s`
+    // shortcuts synthesize one (§2.7). Do not block reading a terminal.
+    None if io::stdin().is_terminal() => String::new(),
     None | Some("-") => {
       let mut buffer = String::new();
       io::stdin()

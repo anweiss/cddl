@@ -12,6 +12,7 @@ use alloc::{
   collections::{BTreeMap, BTreeSet},
   format,
   string::{String, ToString},
+  vec,
   vec::Vec,
 };
 
@@ -84,11 +85,26 @@ pub struct ResolveOptions {
 }
 
 /// A rule definition recovered from a module, with its original text intact.
+/// All occurrences of a name — RFC 8610 allows a rule to be extended with `/=`
+/// and `//=`, and those extensions need not be adjacent to the original
+/// definition — are collected into one entry so that selecting a rule always
+/// carries its extensions with it.
 #[derive(Debug, Clone)]
 struct ModuleRule {
   name: String,
+  /// The generic parameters declared by the base definition, if any.
+  params: Vec<String>,
+  /// Every occurrence, in source order.
+  parts: Vec<RulePart>,
+}
+
+/// One occurrence of a rule: its base definition or one extension.
+#[derive(Debug, Clone)]
+struct RulePart {
   text: String,
   deps: Vec<String>,
+  /// Whether this part extends an existing definition (`/=` or `//=`).
+  extension: bool,
 }
 
 /// Resolve the module directives in `input` against `source`, returning an
@@ -126,6 +142,11 @@ fn resolve(
   let local = rules_of(&body);
 
   let mut emitted: BTreeSet<String> = local.iter().map(|rule| rule.name.clone()).collect();
+  // Parts already emitted, so a rule selected by two directives is not
+  // duplicated. Extensions deduplicate separately from base definitions: a
+  // base suppressed by a local definition must not suppress `/=` or `//=`
+  // contributions.
+  let mut emitted_parts: BTreeSet<String> = BTreeSet::new();
   let mut references = referenced_names(&body);
 
   if let Some(start) = &options.start_rule {
@@ -162,13 +183,33 @@ fn resolve(
 
     let mut aliases: Vec<String> = Vec::new();
 
-    let selected = match (&directive.kind, &directive.names) {
+    match (&directive.kind, &directive.names) {
       // `include <module>`: every rule of the module, verbatim.
-      (DirectiveKind::Include, None) => rules.iter().map(|rule| rule.name.clone()).collect(),
+      (DirectiveKind::Include, None) => {
+        for rule in &rules {
+          emit_rule(
+            rule,
+            &mut emitted,
+            &mut emitted_parts,
+            &mut references,
+            &mut pulled,
+          );
+        }
+      }
 
       // `include <names> from <module>`: exactly the rules named.
       (DirectiveKind::Include, Some(selectors)) => {
-        select_named(directive, selectors, &rules, &index, None)?
+        for name in select_named(directive, selectors, &rules, &index, None)? {
+          if let Some(rule) = index.get(name.as_str()) {
+            emit_rule(
+              rule,
+              &mut emitted,
+              &mut emitted_parts,
+              &mut references,
+              &mut pulled,
+            );
+          }
+        }
       }
 
       // `import <module>`: the rules this module references, transitively.
@@ -179,7 +220,16 @@ fn resolve(
           .filter(|name| references.contains(name))
           .collect();
 
-        closure(&seeds, &index)
+        for (name, part) in closure(&seeds, &index, &emitted) {
+          emit_part(
+            name,
+            part,
+            &mut emitted,
+            &mut emitted_parts,
+            &mut references,
+            &mut pulled,
+          );
+        }
       }
 
       // `import <names> from <module>`: the rules named, transitively.
@@ -191,25 +241,19 @@ fn resolve(
           &index,
           Some((&mut emitted, &mut aliases)),
         )?;
-        closure(&seeds, &index)
-      }
-    };
-
-    for alias in aliases {
-      pulled.push(alias);
-    }
-
-    for name in selected {
-      if !emitted.insert(name.clone()) {
-        continue;
-      }
-
-      if let Some(rule) = index.get(name.as_str()) {
-        // A rule pulled in here may reference names that a later directive is
-        // responsible for supplying, so the reference set has to grow as rules
-        // are emitted rather than being fixed at the original body.
-        references.extend(referenced_names(&rule.text));
-        pulled.push(rule.text.clone());
+        for alias in aliases.drain(..) {
+          pulled.push(alias);
+        }
+        for (name, part) in closure(&seeds, &index, &emitted) {
+          emit_part(
+            name,
+            part,
+            &mut emitted,
+            &mut emitted_parts,
+            &mut references,
+            &mut pulled,
+          );
+        }
       }
     }
   }
@@ -236,6 +280,46 @@ fn render(start_rule: Option<&str>, body: &str, pulled: Vec<String>) -> String {
   }
 
   output
+}
+
+/// Emit every part of `rule` that is not already supplied: a base definition
+/// whose name is already present (locally or from an earlier directive) is
+/// skipped, but `/=` and `//=` extensions always travel with the selection.
+fn emit_rule(
+  rule: &ModuleRule,
+  emitted: &mut BTreeSet<String>,
+  emitted_parts: &mut BTreeSet<String>,
+  references: &mut BTreeSet<String>,
+  pulled: &mut Vec<String>,
+) {
+  for part in &rule.parts {
+    if part.extension || !emitted.contains(&rule.name) {
+      emit_part(&rule.name, part, emitted, emitted_parts, references, pulled);
+    }
+  }
+}
+
+fn emit_part(
+  name: &str,
+  part: &RulePart,
+  emitted: &mut BTreeSet<String>,
+  emitted_parts: &mut BTreeSet<String>,
+  references: &mut BTreeSet<String>,
+  pulled: &mut Vec<String>,
+) {
+  if !emitted_parts.insert(format!("{}\u{0}{}", name, part.text)) {
+    return;
+  }
+
+  if !part.extension {
+    emitted.insert(name.to_string());
+  }
+
+  // A rule pulled in here may reference names that a later directive is
+  // responsible for supplying, so the reference set has to grow as rules
+  // are emitted rather than being fixed at the original body.
+  references.extend(referenced_names(&part.text));
+  pulled.push(part.text.clone());
 }
 
 fn command_line_directive(namespace: &str, module: &str) -> Result<Directive, ModuleError> {
@@ -294,7 +378,14 @@ fn select_named(
 
     if let Some((emitted, aliases)) = alias_sink.as_mut() {
       if resolved != *written && emitted.insert(written.clone()) {
-        aliases.push(format!("{} = {}", written, resolved));
+        // A generic rule needs a generic alias that forwards its parameters.
+        let params = &index[resolved.as_str()].params;
+        aliases.push(if params.is_empty() {
+          format!("{} = {}", written, resolved)
+        } else {
+          let params = params.join(", ");
+          format!("{0}<{1}> = {2}<{1}>", written, params, resolved)
+        });
       }
     }
 
@@ -362,32 +453,47 @@ fn push_unique(names: &mut Vec<String>, name: String) {
   }
 }
 
-/// Breadth-first transitive closure over rule dependencies, in discovery order.
-fn closure(seeds: &[String], index: &BTreeMap<&str, &ModuleRule>) -> Vec<String> {
-  let mut ordered: Vec<String> = Vec::new();
+/// Breadth-first transitive closure over rule dependencies, in discovery
+/// order. Only parts that will actually be retained are returned, and only
+/// their dependencies are followed: a base definition suppressed by a local
+/// definition or an earlier directive is satisfied by that existing
+/// definition, so its module-side dependencies are not pulled in.
+fn closure<'a>(
+  seeds: &[String],
+  index: &BTreeMap<&str, &'a ModuleRule>,
+  emitted: &BTreeSet<String>,
+) -> Vec<(&'a str, &'a RulePart)> {
+  let mut retained: Vec<(&'a str, &'a RulePart)> = Vec::new();
   let mut queue: Vec<String> = seeds.to_vec();
+  let mut seen: BTreeSet<String> = BTreeSet::new();
   let mut head = 0usize;
 
   while head < queue.len() {
     let name = queue[head].clone();
     head += 1;
 
-    if ordered.contains(&name) {
+    if !seen.insert(name.clone()) {
       continue;
     }
 
-    ordered.push(name.clone());
-
     if let Some(rule) = index.get(name.as_str()) {
-      for dep in &rule.deps {
-        if !ordered.contains(dep) {
-          queue.push(dep.clone());
+      for part in &rule.parts {
+        if !part.extension && emitted.contains(&rule.name) {
+          continue;
+        }
+
+        retained.push((rule.name.as_str(), part));
+
+        for dep in &part.deps {
+          if !seen.contains(dep) {
+            queue.push(dep.clone());
+          }
         }
       }
     }
   }
 
-  ordered
+  retained
 }
 
 /// Remove directive lines, leaving the rest of the document otherwise intact.
@@ -403,13 +509,11 @@ fn strip_directives(input: &str) -> String {
   output
 }
 
-/// Split a document into its rules, recording each rule's dependencies on
-/// other rules of the same document.
-///
-/// A name may be defined more than once — RFC 8610 allows a rule to be extended
-/// with `/=` and `//=`, and those extensions need not be adjacent to the
-/// original definition. All occurrences of a name are merged into a single
-/// entry so that selecting a rule always carries its extensions with it.
+/// Split a document into its rules, recording each occurrence's dependencies
+/// on other rules of the same document. Occurrences of one name are grouped
+/// into a single [`ModuleRule`] but kept as separate parts, so that a base
+/// definition and its `/=` or `//=` extensions can be deduplicated
+/// independently during emission.
 fn rules_of(src: &str) -> Vec<ModuleRule> {
   let scanned = scan(src);
   let defined: BTreeSet<&str> = scanned
@@ -437,24 +541,21 @@ fn rules_of(src: &str) -> Vec<ModuleRule> {
       push_unique(&mut deps, ident.text.clone());
     }
 
-    let text = src[rule.start..rule.end].to_string();
+    let part = RulePart {
+      text: src[rule.start..rule.end].to_string(),
+      deps,
+      extension: rule.extension,
+    };
 
     match merged
       .iter_mut()
       .find(|existing| existing.name == rule.name)
     {
-      Some(existing) => {
-        existing.text.push('\n');
-        existing.text.push_str(&text);
-
-        for dep in deps {
-          push_unique(&mut existing.deps, dep);
-        }
-      }
+      Some(existing) => existing.parts.push(part),
       None => merged.push(ModuleRule {
         name: rule.name.clone(),
-        text,
-        deps,
+        params: rule.params.clone(),
+        parts: vec![part],
       }),
     }
   }

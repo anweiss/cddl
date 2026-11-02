@@ -55,6 +55,11 @@ pub(crate) struct RuleSpan {
   pub start: usize,
   /// Byte offset one past the end of the rule, trailing whitespace trimmed.
   pub end: usize,
+  /// Whether the rule extends an existing definition (`/=` or `//=`) rather
+  /// than defining the name.
+  pub extension: bool,
+  /// The generic parameters declared by this definition, if any.
+  pub params: Vec<String>,
 }
 
 /// The result of scanning a CDDL document.
@@ -408,7 +413,7 @@ pub(crate) fn scan(src: &str) -> Scan {
   // The head of a rule is the last plain reference occurring before its
   // assignment operator; generic parameters and control names are excluded by
   // construction.
-  let mut head_indices: Vec<usize> = Vec::new();
+  let mut heads: Vec<(usize, usize)> = Vec::new();
   for assign in &top_level_assigns {
     let head = idents
       .iter()
@@ -418,19 +423,22 @@ pub(crate) fn scan(src: &str) -> Scan {
       .map(|(idx, _)| idx);
 
     if let Some(idx) = head {
-      if !head_indices.contains(&idx) {
-        head_indices.push(idx);
+      if !heads.iter().any(|(existing, _)| *existing == idx) {
+        heads.push((idx, *assign));
       }
     }
   }
 
-  for idx in &head_indices {
+  for (idx, _) in &heads {
     idents[*idx].role = IdentRole::RuleHead;
   }
 
   let mut rules: Vec<RuleSpan> = Vec::new();
-  for (n, idx) in head_indices.iter().enumerate() {
-    let next = head_indices.get(n + 1).copied().unwrap_or(idents.len());
+  for (n, (idx, assign)) in heads.iter().enumerate() {
+    let next = heads
+      .get(n + 1)
+      .map(|(idx, _)| *idx)
+      .unwrap_or(idents.len());
     let params: Vec<String> = idents[*idx..next]
       .iter()
       .filter(|ident| ident.role == IdentRole::GenericParam)
@@ -443,16 +451,21 @@ pub(crate) fn scan(src: &str) -> Scan {
     }
 
     let start = idents[*idx].start;
-    let end = match head_indices.get(n + 1) {
-      Some(next) => idents[*next].start,
+    let end = match heads.get(n + 1) {
+      Some((next, _)) => idents[*next].start,
       None => src.len(),
     };
     let end = src[start..end].trim_end().len() + start;
+
+    // `/=` and `//=` extend an existing rule; the `/` directly precedes `=`.
+    let extension = assign > &0 && bytes[assign - 1] == b'/';
 
     rules.push(RuleSpan {
       name: idents[*idx].text.clone(),
       start,
       end,
+      extension,
+      params,
     });
   }
 
