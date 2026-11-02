@@ -20,6 +20,8 @@ uuid-entries = { * tstr => buuid }
 typed-entries = { * tstr => int, * int => tstr }
 optional-entries = { name: tstr, ? (* tstr => int) }
 byte-table = { * bstr => uint }
+detail = { created: null }
+shadowed = "created" / detail
 status = "assertion.hashedURI.mismatch" / "assertion.collectionHash.invalidURI"
 
 buuid = #6.37(bstr)

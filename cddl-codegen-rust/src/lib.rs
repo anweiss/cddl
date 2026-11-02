@@ -2773,6 +2773,53 @@ fn render_mixed_enum_serialize(
   Ok(())
 }
 
+/// The string-only literal proxy for a mixed choice. A derived enum would
+/// also accept Serde's externally tagged `{"literal": null}` form and capture
+/// maps that belong to a typed alternative.
+fn render_mixed_literal_helper(
+  output: &mut String,
+  variants: &[RustEnumVariant],
+) -> Result<(), CodegenError> {
+  writeln!(output, "        enum __CddlLiterals {{")?;
+  for variant in variants.iter().filter(|v| is_string_literal_variant(v)) {
+    writeln!(output, "            {},", variant.name)?;
+  }
+  writeln!(output, "        }}")?;
+  writeln!(
+    output,
+    "        impl<'de> serde::Deserialize<'de> for __CddlLiterals {{"
+  )?;
+  writeln!(
+    output,
+    "            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {{"
+  )?;
+  writeln!(
+    output,
+    "                Ok(match <String as serde::Deserialize>::deserialize(d)?.as_str() {{"
+  )?;
+  for variant in variants.iter().filter(|v| is_string_literal_variant(v)) {
+    writeln!(
+      output,
+      "                    {:?} => Self::{},",
+      variant.rename.as_deref().unwrap_or(&variant.name),
+      variant.name
+    )?;
+  }
+  let expected = variants
+    .iter()
+    .filter(|v| is_string_literal_variant(v))
+    .filter_map(|v| v.rename.as_ref().map(|r| format!("{:?}", r)))
+    .collect::<Vec<_>>()
+    .join(", ");
+  writeln!(
+    output,
+    "                    other => return Err(serde::de::Error::unknown_variant(other, &[{}])),",
+    expected
+  )?;
+  writeln!(output, "                }})")?;
+  writeln!(output, "            }}\n        }}")?;
+  Ok(())
+}
 fn render_mixed_enum_deserialize(
   output: &mut String,
   name: &str,
@@ -2783,19 +2830,7 @@ fn render_mixed_enum_deserialize(
     output,
     "    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {{"
   )?;
-  writeln!(
-    output,
-    "        #[derive(serde::Deserialize)]\n        enum __CddlLiterals {{"
-  )?;
-  for variant in variants.iter().filter(|v| is_string_literal_variant(v)) {
-    writeln!(
-      output,
-      "            #[serde(rename = {:?})] {},",
-      variant.rename.as_ref().unwrap(),
-      variant.name
-    )?;
-  }
-  writeln!(output, "        }}")?;
+  render_mixed_literal_helper(output, variants)?;
   writeln!(output, "        #[derive(serde::Deserialize)]\n        #[serde(untagged)]\n        enum __CddlChoice {{\n            Literals(__CddlLiterals),")?;
   for (i, variant) in variants
     .iter()
@@ -3424,13 +3459,15 @@ mod tests {
     assert!(result.contains("\"created\" => Self::Created,"));
   }
 
-  /// A choice that mixes string literals with other types still needs the
-  /// untagged representation.
+  /// A choice that mixes string literals with other types decodes the
+  /// literals from strings only, so a map like `{"created": null}` still
+  /// reaches a typed alternative instead of the literal variant.
   #[test]
-  fn test_mixed_choices_stay_untagged() {
+  fn test_mixed_choices_decode_literals_from_strings() {
     let result = gen(r#"action = "created" / int"#);
-    assert!(result.contains("#[serde(untagged)]"));
-    assert!(result.contains("#[serde(rename = \"created\")]"));
+    assert!(result.contains("\"created\" => Self::Created,"));
+    assert!(result.contains("Self::Created => s.serialize_str(\"created\"),"));
+    assert!(!result.contains("#[serde(rename = \"created\")]"));
   }
 
   #[test]

@@ -277,6 +277,20 @@ fn flattened_structs_report_missing_and_duplicate_fields() {
   assert!(duplicate.to_string().contains("duplicate field `name`"));
 }
 #[test]
+fn literal_proxies_do_not_capture_typed_maps() {
+  let value = json!({"created": null});
+  let decoded: Shadowed = serde_json::from_value(value.clone()).unwrap();
+  assert!(matches!(decoded, Shadowed::Detail(_)));
+  assert_eq!(serde_json::to_value(&decoded).unwrap(), value);
+  assert!(matches!(
+    serde_json::from_value::<Shadowed>(json!("created")).unwrap(),
+    Shadowed::Created
+  ));
+  // Unknown strings still fail rather than silently becoming a literal.
+  assert!(serde_json::from_value::<Shadowed>(json!("other")).is_err());
+}
+
+#[test]
 fn optional_wildcard_groups_distinguish_absent_from_present() {
   let empty: OptionalEntries = serde_json::from_value(json!({"name": "n"})).unwrap();
   assert_eq!(empty.entries, None);
