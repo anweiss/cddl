@@ -493,11 +493,32 @@ fn validate_module(name: &str, resolved: &str) -> Result<(), ModuleError> {
 /// Resolve a name written in a directive against the directive's namespace.
 fn qualify(written: &str, alias: Option<&str>) -> String {
   match alias {
-    Some(alias) if !PRELUDE.contains(&written) && !written.starts_with(&format!("{}.", alias)) => {
-      format!("{}.{}", alias, written)
+    Some(alias)
+      if !PRELUDE.contains(&written)
+        && !written[socket_sigils(written)..].starts_with(&format!("{}.", alias)) =>
+    {
+      namespaced(written, alias)
     }
     _ => written.to_string(),
   }
+}
+
+/// The number of leading `$` characters that make `name` a socket: one for a
+/// type socket, two for a group socket. `$.start.$` is a plain identifier.
+fn socket_sigils(name: &str) -> usize {
+  let sigils = name.bytes().take(2).take_while(|b| *b == b'$').count();
+  match name.as_bytes().get(sigils) {
+    Some(b'.') | None => 0,
+    Some(_) => sigils,
+  }
+}
+
+/// Prefix a name with a namespace after any socket sigils, so `$$options`
+/// becomes `$$ns.options` and stays a group socket rather than turning into
+/// the type name `ns.$$options`.
+fn namespaced(name: &str, namespace: &str) -> String {
+  let sigils = socket_sigils(name);
+  format!("{}{}.{}", &name[..sigils], namespace, &name[sigils..])
 }
 
 fn push_unique(names: &mut Vec<String>, name: String) {
@@ -581,11 +602,12 @@ fn rules_of(src: &str) -> Vec<ModuleRule> {
     let mut deps: Vec<String> = Vec::new();
 
     for ident in &scanned.idents {
+      // A prelude name is a dependency only when this document defines or
+      // extends it; otherwise `defined` excludes it as a built-in.
       if ident.role != IdentRole::Reference
         || ident.start < rule.start
         || ident.end > rule.end
         || ident.text == rule.name
-        || PRELUDE.contains(&ident.text.as_str())
         || !defined.contains(ident.text.as_str())
       {
         continue;
@@ -644,7 +666,7 @@ fn apply_namespace(src: &str, defined: &BTreeSet<String>, namespace: &str) -> St
       IdentRole::RuleHead | IdentRole::Reference
         if !PRELUDE.contains(&ident.text.as_str()) && defined.contains(&ident.text) =>
       {
-        format!("{}.{}", namespace, ident.text)
+        namespaced(&ident.text, namespace)
       }
       _ => continue,
     };
@@ -710,7 +732,7 @@ fn module_rules(text: &str, directive: &Directive) -> Vec<ModuleRule> {
   if let Ok(cddl) = crate::pest_bridge::cddl_from_pest_str(text) {
     for parsed in &cddl.rules {
       if let crate::ast::Rule::Group { rule, .. } = parsed {
-        let name = rule.name.ident;
+        let name = rule.name.to_string();
         if let Some(found) = rules.iter_mut().find(|candidate| candidate.name == name) {
           found.group = true;
         }

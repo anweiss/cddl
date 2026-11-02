@@ -101,19 +101,47 @@ fn literal_end(bytes: &[u8], start: usize) -> Option<usize> {
   Some(bytes.len())
 }
 
-/// End of a tag or major-type head: `#`, `#7`, `#6.32`. The dot is consumed
-/// only when a tag value follows; in `#7.eq 32` it introduces a control
-/// operator instead. Tag values are unsigned integers, so `#7.32e5` ends
+/// End of a tag or major-type head: `#`, `#7`, `#6.32`. The grammar allows
+/// spacing and comments between the components, as in `#7. 32`. The dot is
+/// consumed only when a tag value follows; in `#7.eq 32` it introduces a
+/// control operator instead. Tag values are unsigned integers, so `#7.32e5` ends
 /// after `32`.
 fn tag_end(bytes: &[u8], start: usize) -> usize {
   let mut i = start + 1;
-  if bytes.get(i).is_some_and(u8::is_ascii_digit) {
-    i += 1;
-    if bytes.get(i) == Some(&b'.') && bytes.get(i + 1).is_some_and(u8::is_ascii_digit) {
-      i = uint_end(bytes, i + 1).0;
+  let major = skip_spacing(bytes, i);
+  if bytes.get(major).is_some_and(u8::is_ascii_digit) {
+    i = major + 1;
+    let dot = skip_spacing(bytes, i);
+    let value = skip_spacing(bytes, dot + 1);
+    if bytes.get(dot) == Some(&b'.') && bytes.get(value).is_some_and(u8::is_ascii_digit) {
+      i = uint_end(bytes, value).0;
     }
   }
   i
+}
+
+/// Directive comments inside a tag head, which can contain only spacing,
+/// comments and numeric characters, so any `;` there starts a comment.
+fn tag_directives(
+  bytes: &[u8],
+  start: usize,
+  end: usize,
+  ranges: &mut Vec<core::ops::Range<usize>>,
+) {
+  let mut i = start;
+  while i < end {
+    if bytes[i] != b';' {
+      i += 1;
+      continue;
+    }
+    let comment = i;
+    while i < bytes.len() && bytes[i] != b'\n' {
+      i += 1;
+    }
+    if bytes[comment - 1] == b'\n' && bytes.get(comment + 1) == Some(&b'#') {
+      ranges.push(comment..i + usize::from(i < bytes.len()));
+    }
+  }
 }
 
 /// End of an occurrence indicator's upper bound, for the `*` at `star`. The
@@ -141,7 +169,9 @@ pub(super) fn directive_ranges(src: &str) -> Vec<core::ops::Range<usize>> {
     } else if is_ident_start(bytes[i]) {
       i = ident_end(bytes, i);
     } else if bytes[i] == b'#' {
-      i = tag_end(bytes, i);
+      let end = tag_end(bytes, i);
+      tag_directives(bytes, i + 1, end, &mut ranges);
+      i = end;
     } else if bytes[i] == b'*' {
       i = occurrence_end(bytes, i);
     } else if bytes[i].is_ascii_digit() {
@@ -763,6 +793,33 @@ mod tests {
       assert_eq!(ranges.len(), 1, "{}", src);
       assert_eq!(&src[ranges[0].clone()], ";# import real\n", "{}", src);
     }
+  }
+
+  #[test]
+  fn spaced_tag_heads_scan_as_unsigned_integers() {
+    let scan = scan("value = [#7. 32e5, # 6 ; note\n . 32e3, #7 .eq 32]\n");
+    let roles: Vec<_> = scan
+      .idents
+      .iter()
+      .map(|ident| (ident.text.as_str(), ident.role))
+      .collect();
+    assert_eq!(
+      roles,
+      [
+        ("value", IdentRole::RuleHead),
+        ("e5", IdentRole::Reference),
+        ("e3", IdentRole::Reference),
+        ("eq", IdentRole::ControlName),
+      ]
+    );
+  }
+
+  #[test]
+  fn directives_inside_spaced_tag_heads_are_found() {
+    let src = "a = [#7.\n;# import real\n32e5h\"x\\\"\n;# import missing\n\"]\n";
+    let ranges = directive_ranges(src);
+    assert_eq!(ranges.len(), 1, "{}", src);
+    assert_eq!(&src[ranges[0].clone()], ";# import real\n");
   }
 
   #[test]

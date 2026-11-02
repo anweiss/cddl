@@ -848,6 +848,75 @@ fn an_imported_group_alias_stays_a_group() {
 }
 
 #[test]
+fn explicitly_extended_prelude_rules_travel_with_their_dependents() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("m", "value = int\nint /= tstr\n");
+  for (input, head) in [
+    ("root = value\n;# import m\n", "value = int"),
+    ("root = ns.value\n;# import m as ns\n", "ns.value = int"),
+  ] {
+    let output = resolve_modules(input, &source, &ResolveOptions::default()).unwrap();
+    assert!(output.contains(head), "{}", output);
+    assert!(output.contains("int /= tstr"), "{}", output);
+    assert!(!output.contains("ns.int"), "{}", output);
+    assert_parses(&output);
+  }
+}
+
+#[test]
+fn namespaced_sockets_keep_their_socket_kind() {
+  let mut source = MemoryModuleSource::new();
+  source.insert(
+    "m",
+    "$$options = (one: 1)\n$kind = uint\nholder = [$$options, $kind]\n",
+  );
+  let output = resolve_modules(
+    "root = [&$$ns.options, ns.holder]\n;# import m as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(output.contains("$$ns.options = (one: 1)"), "{}", output);
+  assert!(output.contains("$ns.kind = uint"), "{}", output);
+  assert!(
+    output.contains("ns.holder = [$$ns.options, $ns.kind]"),
+    "{}",
+    output
+  );
+  assert_parses(&output);
+  let cddl = cddl::parser::cddl_from_str(&output, false).unwrap();
+  assert!(cddl.rules.iter().any(|rule| matches!(
+    rule,
+    cddl::ast::Rule::Group { rule, .. } if rule.name.to_string() == "$$ns.options"
+  )));
+
+  let output = resolve_modules(
+    "root = &$$options\n;# import $$options from m as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(output.contains("$$options = ($$ns.options,)"), "{}", output);
+  assert_parses(&output);
+}
+
+#[test]
+fn spaced_tag_heads_keep_namespaced_references() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("m", "e5 = int\nvalue = [#7. 32e5, # 6 . ; note\n 32e5]\n");
+  let output = resolve_modules(
+    "root = ns.value\n;# import m as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(output.contains("[#7. 32 ns.e5, # 6 . ; note"), "{}", output);
+  assert!(output.contains(" 32 ns.e5]"), "{}", output);
+  assert!(output.contains("ns.e5 = int"), "{}", output);
+  assert_parses(&output);
+}
+
+#[test]
 fn a_synthetic_start_rule_rejects_existing_definitions() {
   let mut source = MemoryModuleSource::new();
   source.insert("m", "$.start.$ = int\n");
