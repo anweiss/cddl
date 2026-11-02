@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -53,6 +53,7 @@ jobs:
       - name: Fast static feedback
         run: |
           npm run lint
+          npm run test:dependencies
           npm run format:check
           npm run check:files
           npm run check:docs

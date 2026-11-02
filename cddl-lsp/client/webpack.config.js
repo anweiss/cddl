@@ -4,6 +4,9 @@
 
 const withDefaults = require('../shared.webpack.config');
 const path = require('path');
+const { applyPatch } = require('./scripts/patch-languageclient.cjs');
+
+applyPatch({ check: true });
 
 module.exports = withDefaults({
   context: path.join(__dirname),
