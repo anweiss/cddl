@@ -8,6 +8,8 @@
 extern crate log;
 
 use cddl::cddl_from_str;
+#[cfg(all(feature = "modules", not(target_arch = "wasm32")))]
+use cddl::modules::{resolve_modules, FsModuleSource, ModuleError, ResolveOptions};
 #[cfg(not(target_arch = "wasm32"))]
 use cddl::{
   parser::root_type_name_from_cddl_str, validate_cbor_from_slice, validate_csv_from_str,
@@ -20,9 +22,21 @@ use std::{
   error::Error,
   fmt::Write,
   fs::{self, File},
-  io::{self, BufReader, Read},
+  io::{self, BufReader, IsTerminal, Read},
   path::Path,
 };
+
+/// Help text for `--include-path`, whose separator is platform-specific: `;` on
+/// Windows, where `:` occurs in drive-letter paths, and `:` elsewhere.
+#[cfg(all(feature = "modules", windows))]
+const INCLUDE_PATH_HELP: &str =
+  "Semicolon-separated module search path; defaults to CDDL_INCLUDE_PATH, then \".;\"";
+
+/// Help text for `--include-path`, whose separator is platform-specific: `;` on
+/// Windows, where `:` occurs in drive-letter paths, and `:` elsewhere.
+#[cfg(all(feature = "modules", not(windows)))]
+const INCLUDE_PATH_HELP: &str =
+  "Colon-separated module search path; defaults to CDDL_INCLUDE_PATH, then \".:\"";
 
 #[derive(Parser)]
 #[clap(author, version, about = "Tool for verifying conformance of CDDL definitions against RFC 8610 and for validating JSON documents and CBOR binary files", long_about = None)]
@@ -48,6 +62,37 @@ enum Commands {
     file: String,
   },
   Validate(Validate),
+  #[cfg(feature = "modules")]
+  #[clap(
+    name = "resolve-modules",
+    about = "Resolve CDDL module directives (draft-ietf-cbor-cddl-modules) into basic RFC 8610 CDDL"
+  )]
+  ResolveModules {
+    #[clap(
+      short = 'c',
+      long = "cddl",
+      help = "Path to a module-structured CDDL document; omit or pass \"-\" to read stdin"
+    )]
+    file: Option<String>,
+    #[clap(
+      short = 'i',
+      long = "import",
+      help = "Synthesize an import directive: -icose=rfc9052 is shorthand for \";# import rfc9052 as cose\"",
+      action = ArgAction::Append
+    )]
+    imports: Vec<String>,
+    #[clap(
+      short = 's',
+      long = "start",
+      help = "Emit a start (root) rule, as $.start.$ = <rule>"
+    )]
+    start: Option<String>,
+    #[clap(
+      long = "include-path",
+      help = INCLUDE_PATH_HELP
+    )]
+    include_path: Option<String>,
+  },
 }
 
 #[derive(Args)]
@@ -333,10 +378,78 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
       }
     }
+    #[cfg(feature = "modules")]
+    Commands::ResolveModules {
+      file,
+      imports,
+      start,
+      include_path,
+    } => resolve_modules_command(file.as_deref(), imports, start, include_path.as_deref())?,
   }
 
   Ok(())
 }
 
+#[cfg(all(feature = "modules", not(target_arch = "wasm32")))]
+fn resolve_modules_command(
+  file: Option<&str>,
+  imports: &[String],
+  start: &Option<String>,
+  include_path: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+  let input = match file {
+    // With neither a file nor piped input there is no document: the `-i`/`-s`
+    // shortcuts synthesize one (§2.7). Do not block reading a terminal.
+    None if io::stdin().is_terminal() => String::new(),
+    None | Some("-") => {
+      let mut buffer = String::new();
+      io::stdin()
+        .read_to_string(&mut buffer)
+        .map_err(|_| "module input could not be read")?;
+      buffer
+    }
+    Some(path) => fs::read_to_string(path).map_err(|_| "module input could not be read")?,
+  };
+
+  let command_line_imports = imports
+    .iter()
+    .map(|spec| match spec.split_once('=') {
+      Some((namespace, module)) if !namespace.is_empty() && !module.is_empty() => {
+        Ok((namespace.to_string(), module.to_string()))
+      }
+      _ => Err("invalid --import; expected <namespace>=<module>"),
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+
+  let source = match include_path {
+    Some(path) => FsModuleSource::from_include_path(path),
+    None => FsModuleSource::from_env(),
+  };
+
+  let resolved = resolve_modules(
+    &input,
+    &source,
+    &ResolveOptions {
+      start_rule: start.clone(),
+      command_line_imports,
+    },
+  )
+  .map_err(module_error_message)?;
+
+  print!("{}", resolved);
+  Ok(())
+}
+
+#[cfg(all(feature = "modules", not(target_arch = "wasm32")))]
+fn module_error_message(error: ModuleError) -> &'static str {
+  match error {
+    ModuleError::Directive { .. } => "not a valid start rule or module directive",
+    ModuleError::ModuleNotFound { .. } => "module not found in the configured sources",
+    ModuleError::ModuleUnreadable { .. } => "module source could not be read",
+    ModuleError::ModuleParse { .. } => "module source is not valid CDDL",
+    ModuleError::RuleNotFound { .. } => "selected rule not found in the module",
+    ModuleError::CircularReference { .. } => "circular module reference",
+  }
+}
 #[cfg(target_arch = "wasm32")]
 fn main() {}
