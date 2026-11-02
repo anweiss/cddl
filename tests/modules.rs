@@ -901,6 +901,48 @@ fn namespaced_sockets_keep_their_socket_kind() {
 }
 
 #[test]
+fn dollar_identifiers_that_are_not_sockets_take_a_plain_prefix() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("m", "$-value = int\n$1 = tstr\nholder = [$-value, $1]\n");
+  for kind in ["include", "import"] {
+    let input = format!("root = ns.holder\n;# {} m as ns\n", kind);
+    let output = resolve_modules(&input, &source, &ResolveOptions::default()).unwrap();
+    assert!(output.contains("ns.$-value = int"), "{}", output);
+    assert!(output.contains("ns.$1 = tstr"), "{}", output);
+    assert!(
+      output.contains("ns.holder = [ns.$-value, ns.$1]"),
+      "{}",
+      output
+    );
+    assert_parses(&output);
+  }
+}
+
+#[test]
+fn rules_with_noncontiguous_extensions_keep_their_own_dependencies() {
+  let mut module = String::new();
+  for n in 0..20 {
+    module.push_str(&format!(
+      "rule{n} = [int, next{n}]\nnext{n} = tstr\nrule{n} /= uint\n",
+      n = n
+    ));
+  }
+  let mut source = MemoryModuleSource::new();
+  source.insert("m", &module);
+  let output = resolve_modules(
+    "root = rule19\n;# import m\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(output.contains("rule19 = [int, next19]"), "{}", output);
+  assert!(output.contains("rule19 /= uint"), "{}", output);
+  assert!(output.contains("next19 = tstr"), "{}", output);
+  assert!(!output.contains("rule18"), "{}", output);
+  assert_parses(&output);
+}
+
+#[test]
 fn spaced_tag_heads_keep_namespaced_references() {
   let mut source = MemoryModuleSource::new();
   source.insert("m", "e5 = int\nvalue = [#7. 32e5, # 6 . ; note\n 32e5]\n");
@@ -955,7 +997,7 @@ fn explicit_prelude_selections_keep_their_unqualified_names() {
 fn namespace_prefixes_cannot_merge_with_adjacent_numbers() {
   let mut source = MemoryModuleSource::new();
   for (namespace, number) in [("e3", "1"), ("a", "0xff"), ("e3", "0b11")] {
-    source.insert("m", &format!("item = int\nvalue = [{}item]\n", number));
+    source.insert("m", format!("item = int\nvalue = [{}item]\n", number));
     for kind in ["include", "import"] {
       let input = format!(
         "root = {}.value\n;# {} m as {}\n",
@@ -1048,8 +1090,8 @@ fn shared_dependencies_are_loaded_once() {
   inner.insert("m0", "t0 = int\n");
   for k in 1..=12 {
     inner.insert(
-      &format!("m{}", k),
-      &format!(
+      format!("m{}", k),
+      format!(
         "t{k} = [t{p}]\n;# import m{p}\n;# import m{p}\n",
         k = k,
         p = k - 1

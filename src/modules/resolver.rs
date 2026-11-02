@@ -507,9 +507,11 @@ fn qualify(written: &str, alias: Option<&str>) -> String {
 /// type socket, two for a group socket. `$.start.$` is a plain identifier.
 fn socket_sigils(name: &str) -> usize {
   let sigils = name.bytes().take(2).take_while(|b| *b == b'$').count();
+  // Only a character that can start an identifier makes the `$` a sigil:
+  // `$-value`, `$1` and `$.start.$` are plain identifiers.
   match name.as_bytes().get(sigils) {
-    Some(b'.') | None => 0,
-    Some(_) => sigils,
+    Some(b) if b.is_ascii_alphabetic() || matches!(b, b'@' | b'_' | b'$') => sigils,
+    _ => 0,
   }
 }
 
@@ -597,23 +599,30 @@ fn rules_of(src: &str) -> Vec<ModuleRule> {
     .collect();
 
   let mut merged: Vec<ModuleRule> = Vec::new();
+  let mut slots: BTreeMap<&str, usize> = BTreeMap::new();
+  // Rules and identifiers are both in source order and rules do not overlap,
+  // so one cursor visits each identifier once.
+  let mut cursor = 0usize;
 
   for rule in &scanned.rules {
     let mut deps: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
 
-    for ident in &scanned.idents {
+    while cursor < scanned.idents.len() && scanned.idents[cursor].start < rule.start {
+      cursor += 1;
+    }
+    while cursor < scanned.idents.len() && scanned.idents[cursor].end <= rule.end {
+      let ident = &scanned.idents[cursor];
+      cursor += 1;
       // A prelude name is a dependency only when this document defines or
       // extends it; otherwise `defined` excludes it as a built-in.
-      if ident.role != IdentRole::Reference
-        || ident.start < rule.start
-        || ident.end > rule.end
-        || ident.text == rule.name
-        || !defined.contains(ident.text.as_str())
+      if ident.role == IdentRole::Reference
+        && ident.text != rule.name
+        && defined.contains(ident.text.as_str())
+        && seen.insert(ident.text.as_str())
       {
-        continue;
+        deps.push(ident.text.clone());
       }
-
-      push_unique(&mut deps, ident.text.clone());
     }
 
     let part = RulePart {
@@ -622,17 +631,17 @@ fn rules_of(src: &str) -> Vec<ModuleRule> {
       extension: rule.extension,
     };
 
-    match merged
-      .iter_mut()
-      .find(|existing| existing.name == rule.name)
-    {
-      Some(existing) => existing.parts.push(part),
-      None => merged.push(ModuleRule {
-        name: rule.name.clone(),
-        params: rule.params.clone(),
-        parts: vec![part],
-        group: false,
-      }),
+    match slots.get(rule.name.as_str()) {
+      Some(slot) => merged[*slot].parts.push(part),
+      None => {
+        slots.insert(rule.name.as_str(), merged.len());
+        merged.push(ModuleRule {
+          name: rule.name.clone(),
+          params: rule.params.clone(),
+          parts: vec![part],
+          group: false,
+        });
+      }
     }
   }
 
@@ -730,14 +739,53 @@ fn module_rules(text: &str, directive: &Directive) -> Vec<ModuleRule> {
   // The module was validated when it was loaded, and namespacing only renames
   // identifiers, so this parse is expected to succeed.
   if let Ok(cddl) = crate::pest_bridge::cddl_from_pest_str(text) {
-    for parsed in &cddl.rules {
-      if let crate::ast::Rule::Group { rule, .. } = parsed {
-        let name = rule.name.to_string();
-        if let Some(found) = rules.iter_mut().find(|candidate| candidate.name == name) {
-          found.group = true;
-        }
-      }
+    let groups: BTreeSet<String> = cddl
+      .rules
+      .iter()
+      .filter_map(|parsed| match parsed {
+        crate::ast::Rule::Group { rule, .. } => Some(rule.name.to_string()),
+        _ => None,
+      })
+      .collect();
+    for rule in &mut rules {
+      rule.group = groups.contains(&rule.name);
     }
   }
   rules
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn rules_of_handles_many_rules_and_extensions() {
+    let mut src = String::new();
+    for n in 0..10_000 {
+      src.push_str(&format!(
+        "rule{n} = [int, next{n}]\nnext{n} = tstr\n",
+        n = n
+      ));
+    }
+    for n in 0..10_000 {
+      src.push_str(&format!("rule{n} /= uint\n", n = n));
+    }
+    let rules = rules_of(&src);
+    assert_eq!(rules.len(), 20_000);
+    let rule = rules.iter().find(|rule| rule.name == "rule9999").unwrap();
+    assert_eq!(rule.parts.len(), 2);
+    assert_eq!(rule.parts[0].deps, ["next9999"]);
+    assert!(rule.parts[1].extension);
+    assert!(rule.parts[1].deps.is_empty());
+  }
+
+  #[test]
+  fn only_identifier_starts_make_dollar_signs_sockets() {
+    assert_eq!(namespaced("$$options", "ns"), "$$ns.options");
+    assert_eq!(namespaced("$kind", "ns"), "$ns.kind");
+    assert_eq!(namespaced("$$$x", "ns"), "$$ns.$x");
+    assert_eq!(namespaced("$-value", "ns"), "ns.$-value");
+    assert_eq!(namespaced("$1", "ns"), "ns.$1");
+    assert_eq!(namespaced("$.start.$", "ns"), "ns.$.start.$");
+  }
 }
