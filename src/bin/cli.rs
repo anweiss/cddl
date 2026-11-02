@@ -149,18 +149,6 @@ macro_rules! error {
     };
 }
 
-#[cfg(all(feature = "modules", not(target_arch = "wasm32")))]
-fn module_error_message(error: ModuleError) -> &'static str {
-  match error {
-    ModuleError::Directive { .. } => "not a valid start rule or module directive",
-    ModuleError::ModuleNotFound { .. } => "module not found in the configured sources",
-    ModuleError::ModuleUnreadable { .. } => "module source could not be read",
-    ModuleError::ModuleParse { .. } => "module source is not valid CDDL",
-    ModuleError::RuleNotFound { .. } => "selected rule not found in the module",
-    ModuleError::CircularReference { .. } => "circular module reference",
-  }
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), Box<dyn Error>> {
   TermLogger::init(
@@ -396,51 +384,69 @@ fn main() -> Result<(), Box<dyn Error>> {
       imports,
       start,
       include_path,
-    } => {
-      let input = match file.as_deref() {
-        None | Some("-") => {
-          let mut buffer = String::new();
-          io::stdin()
-            .read_to_string(&mut buffer)
-            .map_err(|_| "module input could not be read")?;
-          buffer
-        }
-        Some(path) => fs::read_to_string(path).map_err(|_| "module input could not be read")?,
-      };
-
-      let mut command_line_imports = Vec::new();
-      for spec in imports {
-        match spec.split_once('=') {
-          Some((namespace, module)) if !namespace.is_empty() && !module.is_empty() => {
-            command_line_imports.push((namespace.to_string(), module.to_string()))
-          }
-          _ => {
-            return Err("invalid --import; expected <namespace>=<module>".into());
-          }
-        }
-      }
-
-      let source = match include_path {
-        Some(path) => FsModuleSource::from_include_path(path),
-        None => FsModuleSource::from_env(),
-      };
-
-      let resolved = resolve_modules(
-        &input,
-        &source,
-        &ResolveOptions {
-          start_rule: start.clone(),
-          command_line_imports,
-        },
-      )
-      .map_err(module_error_message)?;
-
-      print!("{}", resolved);
-    }
+    } => resolve_modules_command(file.as_deref(), imports, start, include_path.as_deref())?,
   }
 
   Ok(())
 }
 
+#[cfg(all(feature = "modules", not(target_arch = "wasm32")))]
+fn resolve_modules_command(
+  file: Option<&str>,
+  imports: &[String],
+  start: &Option<String>,
+  include_path: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+  let input = match file {
+    None | Some("-") => {
+      let mut buffer = String::new();
+      io::stdin()
+        .read_to_string(&mut buffer)
+        .map_err(|_| "module input could not be read")?;
+      buffer
+    }
+    Some(path) => fs::read_to_string(path).map_err(|_| "module input could not be read")?,
+  };
+
+  let command_line_imports = imports
+    .iter()
+    .map(|spec| match spec.split_once('=') {
+      Some((namespace, module)) if !namespace.is_empty() && !module.is_empty() => {
+        Ok((namespace.to_string(), module.to_string()))
+      }
+      _ => Err("invalid --import; expected <namespace>=<module>"),
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+
+  let source = match include_path {
+    Some(path) => FsModuleSource::from_include_path(path),
+    None => FsModuleSource::from_env(),
+  };
+
+  let resolved = resolve_modules(
+    &input,
+    &source,
+    &ResolveOptions {
+      start_rule: start.clone(),
+      command_line_imports,
+    },
+  )
+  .map_err(module_error_message)?;
+
+  print!("{}", resolved);
+  Ok(())
+}
+
+#[cfg(all(feature = "modules", not(target_arch = "wasm32")))]
+fn module_error_message(error: ModuleError) -> &'static str {
+  match error {
+    ModuleError::Directive { .. } => "not a valid start rule or module directive",
+    ModuleError::ModuleNotFound { .. } => "module not found in the configured sources",
+    ModuleError::ModuleUnreadable { .. } => "module source could not be read",
+    ModuleError::ModuleParse { .. } => "module source is not valid CDDL",
+    ModuleError::RuleNotFound { .. } => "selected rule not found in the module",
+    ModuleError::CircularReference { .. } => "circular module reference",
+  }
+}
 #[cfg(target_arch = "wasm32")]
 fn main() {}

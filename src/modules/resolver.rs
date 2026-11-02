@@ -117,27 +117,7 @@ fn resolve(
   let mut directives: Vec<Directive> = options
     .command_line_imports
     .iter()
-    .map(|(namespace, module)| {
-      if !is_filename(module) {
-        return Err(ModuleError::Directive {
-          line: 0,
-          message: format!("\"{}\" is not a valid module name", module),
-        });
-      }
-      if !is_id(namespace) {
-        return Err(ModuleError::Directive {
-          line: 0,
-          message: format!("\"{}\" is not a valid namespace", namespace),
-        });
-      }
-      Ok(Directive {
-        kind: DirectiveKind::Import,
-        names: None,
-        filename: module.clone(),
-        alias: Some(namespace.clone()),
-        line: 0,
-      })
-    })
+    .map(|(namespace, module)| command_line_directive(namespace, module))
     .collect::<Result<_, _>>()?;
 
   directives.extend(parse_directives(input)?);
@@ -188,32 +168,7 @@ fn resolve(
 
       // `include <names> from <module>`: exactly the rules named.
       (DirectiveKind::Include, Some(selectors)) => {
-        let mut names = Vec::new();
-
-        for selector in selectors {
-          match selector {
-            NameSelector::All => {
-              for rule in &rules {
-                push_unique(&mut names, rule.name.clone());
-              }
-            }
-            NameSelector::Name(written) => {
-              let resolved = qualify(written, directive.alias.as_deref());
-
-              if !index.contains_key(resolved.as_str()) {
-                return Err(ModuleError::RuleNotFound {
-                  rule: written.clone(),
-                  module: directive.filename.clone(),
-                  line: directive.line,
-                });
-              }
-
-              push_unique(&mut names, resolved);
-            }
-          }
-        }
-
-        names
+        select_named(directive, selectors, &rules, &index, None)?
       }
 
       // `import <module>`: the rules this module references, transitively.
@@ -229,37 +184,13 @@ fn resolve(
 
       // `import <names> from <module>`: the rules named, transitively.
       (DirectiveKind::Import, Some(selectors)) => {
-        let mut seeds = Vec::new();
-
-        for selector in selectors {
-          match selector {
-            NameSelector::All => {
-              for rule in &rules {
-                push_unique(&mut seeds, rule.name.clone());
-              }
-            }
-            NameSelector::Name(written) => {
-              let resolved = qualify(written, directive.alias.as_deref());
-
-              if !index.contains_key(resolved.as_str()) {
-                return Err(ModuleError::RuleNotFound {
-                  rule: written.clone(),
-                  module: directive.filename.clone(),
-                  line: directive.line,
-                });
-              }
-
-              // §2.6: importing a name that was written without the namespace
-              // prefix also defines an unprefixed alias for it.
-              if resolved != *written && emitted.insert(written.clone()) {
-                aliases.push(format!("{} = {}", written, resolved));
-              }
-
-              push_unique(&mut seeds, resolved);
-            }
-          }
-        }
-
+        let seeds = select_named(
+          directive,
+          selectors,
+          &rules,
+          &index,
+          Some((&mut emitted, &mut aliases)),
+        )?;
         closure(&seeds, &index)
       }
     };
@@ -283,9 +214,13 @@ fn resolve(
     }
   }
 
+  Ok(render(options.start_rule.as_deref(), &body, pulled))
+}
+
+fn render(start_rule: Option<&str>, body: &str, pulled: Vec<String>) -> String {
   let mut output = String::new();
 
-  if let Some(start) = &options.start_rule {
+  if let Some(start) = start_rule {
     output.push_str(&format!("$.start.$ = {}\n", start));
   }
 
@@ -300,7 +235,73 @@ fn resolve(
     output.push('\n');
   }
 
-  Ok(output)
+  output
+}
+
+fn command_line_directive(namespace: &str, module: &str) -> Result<Directive, ModuleError> {
+  if !is_filename(module) {
+    return Err(ModuleError::Directive {
+      line: 0,
+      message: format!("\"{}\" is not a valid module name", module),
+    });
+  }
+  if !is_id(namespace) {
+    return Err(ModuleError::Directive {
+      line: 0,
+      message: format!("\"{}\" is not a valid namespace", namespace),
+    });
+  }
+  Ok(Directive {
+    kind: DirectiveKind::Import,
+    names: None,
+    filename: module.to_string(),
+    alias: Some(namespace.to_string()),
+    line: 0,
+  })
+}
+
+/// Resolve the names of a `from` clause against a module. When `alias_sink` is
+/// supplied (for `import`), names written without the namespace prefix also
+/// get an unprefixed alias rule, per §2.6.
+fn select_named(
+  directive: &Directive,
+  selectors: &[NameSelector],
+  rules: &[ModuleRule],
+  index: &BTreeMap<&str, &ModuleRule>,
+  mut alias_sink: Option<(&mut BTreeSet<String>, &mut Vec<String>)>,
+) -> Result<Vec<String>, ModuleError> {
+  let mut names = Vec::new();
+
+  for selector in selectors {
+    let written = match selector {
+      NameSelector::All => {
+        for rule in rules {
+          push_unique(&mut names, rule.name.clone());
+        }
+        continue;
+      }
+      NameSelector::Name(written) => written,
+    };
+
+    let resolved = qualify(written, directive.alias.as_deref());
+    if !index.contains_key(resolved.as_str()) {
+      return Err(ModuleError::RuleNotFound {
+        rule: written.clone(),
+        module: directive.filename.clone(),
+        line: directive.line,
+      });
+    }
+
+    if let Some((emitted, aliases)) = alias_sink.as_mut() {
+      if resolved != *written && emitted.insert(written.clone()) {
+        aliases.push(format!("{} = {}", written, resolved));
+      }
+    }
+
+    push_unique(&mut names, resolved);
+  }
+
+  Ok(names)
 }
 
 /// Load a module and resolve its own directives, so that what a caller sees is
