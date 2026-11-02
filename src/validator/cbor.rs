@@ -792,6 +792,127 @@ impl<'a> CBORValidator<'a> {
     Ok(false)
   }
 
+  /// Claim the pair whose key is the literal `value` and return a missing
+  /// key error unless the member is optional or under `.ne`/`.default`.
+  fn lookup_literal_map_key<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entries: &[(Value, Value)],
+    value: &token::Value<'a>,
+  ) -> std::result::Result<Option<String>, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let key = token_value_into_cbor_value(value.clone());
+    if let Some((entry_index, _, v)) = self.find_or_release_map_entry::<T>(entries, &key)? {
+      self.claim_single_map_key(entry_index);
+      self.object_value = Some(v);
+      self.state.data_location.push_str(&format!("/{}", value));
+      return Ok(None);
+    }
+    if let Some(Occur::Optional { .. } | Occur::ZeroOrMore { .. }) = self.state.occurrence.take() {
+      self.state.advance_to_next_entry = true;
+      return Ok(None);
+    }
+    if let Some(ControlOperator::NE | ControlOperator::DEFAULT) = &self.state.ctrl {
+      return Ok(None);
+    }
+    Ok(Some(format!("object missing key: {}", value)))
+  }
+
+  /// Find the unclaimed pair with a fixed key. When a movable claim holds
+  /// it, first try to move the movable claims onto other pairs.
+  fn find_or_release_map_entry<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entries: &[(Value, Value)],
+    key: &Value,
+  ) -> std::result::Result<Option<(usize, Value, Value)>, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let found = self.find_single_map_entry_matching(entries, |candidate| candidate == key);
+    if found.is_some() || !self.state.is_member_key || self.probing_single_entry_assignment {
+      return Ok(found);
+    }
+    let Some(index) = entries.iter().position(|(candidate, _)| candidate == key) else {
+      return Ok(None);
+    };
+    if !self.release_single_map_entry::<T>(entries, index)? {
+      return Ok(None);
+    }
+    Ok(self.find_single_map_entry_matching(entries, |candidate| candidate == key))
+  }
+
+  /// Move every movable single-entry claim one-to-one onto the pairs other
+  /// than `released`, so a fixed member can take it. Only claims recorded
+  /// with their member take part; committed claims keep their pairs.
+  fn release_single_map_entry<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entries: &[(Value, Value)],
+    released: usize,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let movable: Vec<usize> = (0..self.single_entry_claims.len())
+      .filter(|position| self.single_entry_claims[*position].entry.is_some())
+      .collect();
+    if !movable
+      .iter()
+      .any(|position| self.single_entry_claims[*position].entry_index == released)
+    {
+      return Ok(false);
+    }
+    let held: Vec<usize> = movable
+      .iter()
+      .map(|position| self.single_entry_claims[*position].entry_index)
+      .collect();
+    let candidates: Vec<usize> = (0..entries.len())
+      .filter(|index| {
+        *index != released
+          && (held.contains(index)
+            || Self::is_unconsumed_map_entry(*index, &self.claimed_map_entries))
+      })
+      .collect();
+    let mut compatibility = vec![vec![false; candidates.len()]; movable.len()];
+    for (claim_slot, position) in movable.iter().enumerate() {
+      let claim = &self.single_entry_claims[*position];
+      let Some(entry) = claim.entry.clone() else {
+        continue;
+      };
+      for (entry_slot, index) in candidates.iter().enumerate() {
+        let (key, value) = entries[*index].clone();
+        compatibility[claim_slot][entry_slot] = self.single_pair_validates_entry::<T>(
+          &entry,
+          claim.generic_context.as_ref(),
+          key,
+          value,
+        )?;
+      }
+    }
+    let mut entry_owners = vec![None; candidates.len()];
+    for claim_slot in 0..movable.len() {
+      let mut visited_entries = vec![false; candidates.len()];
+      if !Self::augment_single_entry_assignment(
+        claim_slot,
+        &compatibility,
+        &mut visited_entries,
+        &mut entry_owners,
+      ) {
+        return Ok(false);
+      }
+    }
+    self
+      .claimed_map_entries
+      .retain(|index| !held.contains(index));
+    for (entry_slot, owner) in entry_owners.into_iter().enumerate() {
+      if let Some(claim_slot) = owner {
+        self.single_entry_claims[movable[claim_slot]].entry_index = candidates[entry_slot];
+        self.claimed_map_entries.push(candidates[entry_slot]);
+      }
+    }
+    Ok(true)
+  }
+
   fn map_key_matches_alternatives<T: std::fmt::Debug + 'static>(
     &self,
     key: &Value,
@@ -5142,61 +5263,8 @@ where
           return Ok(());
         }
 
-        // Retrieve the value from key unless optional/zero or more, in which
-        // case advance to next group entry
-        let k = token_value_into_cbor_value(value.clone());
         let entries = o.clone();
-
-        #[cfg(feature = "ast-span")]
-        if let Some((entry_index, _, v)) =
-          self.find_single_map_entry_matching(&entries, |candidate| candidate == &k)
-        {
-          self.claim_single_map_key(entry_index);
-          self.object_value = Some(v);
-          let _ = write!(self.state.data_location, "/{}", value);
-
-          None
-        } else if let Some(Occur::Optional { .. }) | Some(Occur::ZeroOrMore { .. }) =
-          &self.state.occurrence.take()
-        {
-          self.state.advance_to_next_entry = true;
-          None
-        } else if let Some(Occur::Exact {
-          lower: None,
-          upper: None,
-          ..
-        }) = &self.state.occurrence.take()
-        {
-          // Handle Exact { lower: None, upper: None } as zero-or-more (for backward compatibility)
-          self.state.advance_to_next_entry = true;
-          None
-        } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.state.ctrl
-        {
-          None
-        } else {
-          Some(format!("object missing key: {}", value))
-        }
-
-        #[cfg(not(feature = "ast-span"))]
-        if let Some((entry_index, _, v)) =
-          self.find_single_map_entry_matching(&entries, |candidate| candidate == &k)
-        {
-          self.claim_single_map_key(entry_index);
-          self.object_value = Some(v);
-          self.state.data_location.push_str(&format!("/{}", value));
-
-          None
-        } else if let Some(Occur::Optional {}) | Some(Occur::ZeroOrMore {}) =
-          &self.state.occurrence.take()
-        {
-          self.state.advance_to_next_entry = true;
-          None
-        } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.state.ctrl
-        {
-          None
-        } else {
-          Some(format!("object missing key: {}", value))
-        }
+        self.lookup_literal_map_key::<T>(&entries, value)?
       }
       _ => Some(format!("expected {}, got {:?}", value, self.cbor)),
     };
@@ -5407,7 +5475,7 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
       | Type2::B64ByteString { value, .. } => {
         matches!(key, Value::Bytes(b) if b == value.as_ref())
       }
-      Type2::Array { group, .. } => self.array_admits(group, key, visited, bindings),
+      Type2::Array { group, .. } => self.array_admits(group, key, bindings),
       Type2::Map { .. } => matches!(key, Value::Map(_)),
       _ => true,
     }
@@ -5416,6 +5484,8 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
   /// Domain check for an array type: only array keys qualify. An array of
   /// fixed entries, each occurring once without a member key, also needs a
   /// key of the same length whose items each fall in their entry's domain.
+  /// Any variable-width entry shifts the positions of the items after it, so
+  /// such arrays are left to the probe's sequence matching.
   /// Validating a nested array against a mismatched one costs time
   /// exponential in its depth, so recursive generic alternatives such as
   /// `k<T> = T / k<[T]>` are rejected here without being probed.
@@ -5423,7 +5493,6 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     &mut self,
     group: &Group<'a>,
     key: &Value,
-    visited: &mut HashSet<String>,
     bindings: &HashMap<&'a str, Type1<'a>>,
   ) -> bool {
     let Value::Array(items) = key else {
@@ -5432,17 +5501,19 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     let [choice] = group.group_choices.as_slice() else {
       return true;
     };
-    if choice.group_entries.len() != items.len() {
-      return !choice
-        .group_entries
-        .iter()
-        .all(|(entry, _)| self.fixed_array_entry(entry));
-    }
-    choice
+    if !choice
       .group_entries
       .iter()
-      .zip(items)
-      .all(|((entry, _), item)| self.array_entry_admits(entry, item, visited, bindings))
+      .all(|(entry, _)| self.fixed_array_entry(entry))
+    {
+      return true;
+    }
+    choice.group_entries.len() == items.len()
+      && choice
+        .group_entries
+        .iter()
+        .zip(items)
+        .all(|((entry, _), item)| self.array_entry_admits(entry, item, bindings))
   }
 
   /// Whether an array entry stands for exactly one item of a known type.
@@ -5456,24 +5527,29 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     }
   }
 
+  /// Domain check for one array item. The item is a different value from
+  /// the enclosing key, so names memoized or visited while checking the key
+  /// say nothing about it: each item starts a fresh walk, keeping only the
+  /// generic bindings in scope.
   fn array_entry_admits(
-    &mut self,
+    &self,
     entry: &GroupEntry<'a>,
     item: &Value,
-    visited: &mut HashSet<String>,
     bindings: &HashMap<&'a str, Type1<'a>>,
   ) -> bool {
-    if !self.fixed_array_entry(entry) {
-      return true;
-    }
+    let mut walk = KeyDomainWalk {
+      state: self.state,
+      memo: HashMap::new(),
+      cut: false,
+    };
     match entry {
       GroupEntry::ValueMemberKey { ge, .. } => ge
         .entry_type
         .type_choices
         .iter()
-        .any(|choice| self.type1_admits(&choice.type1, item, &mut visited.clone(), bindings)),
+        .any(|choice| walk.type1_admits(&choice.type1, item, &mut HashSet::new(), bindings)),
       GroupEntry::TypeGroupname { ge, .. } => {
-        self.typename_admits(&ge.name, None, item, &mut visited.clone(), bindings)
+        walk.typename_admits(&ge.name, None, item, &mut HashSet::new(), bindings)
       }
       GroupEntry::InlineGroup { .. } => true,
     }

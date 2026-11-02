@@ -1273,3 +1273,80 @@ fn json_choice_key_round_ten_cases() {
     );
   }
 }
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_array_choice_keys_check_items_independently() {
+  // A variable-width entry shifts the positions of the items after it.
+  let schema = "m = { * ([* uint, tstr, * uint] / tstr) => any }";
+  check_cbor(schema, "a1836178010200", true);
+  check_cbor(schema, "a182010200", false);
+  let schema = "m = { * ([uint, tstr] / int) => any }";
+  check_cbor(schema, "a18201617800", true);
+  check_cbor(schema, "a182010100", false);
+  // Each item starts its own domain walk.
+  let schema = "m = { * ([a / tstr, a] / tstr) => any }\na = nint";
+  check_cbor(schema, "a18261782000", true);
+  check_cbor(schema, "a18261780100", false);
+  let schema = "m = { * a => any }\na = [a] / uint";
+  check_cbor(schema, "a181810100", true);
+  check_cbor(schema, "a181812000", false);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn fixed_keys_take_pairs_from_movable_claims() {
+  for (schema, json, hex, expected) in [
+    (
+      "m = { (int / tstr) => any, a: uint }",
+      r#"{"a":1,"b":"x"}"#,
+      "a261610161626178",
+      true,
+    ),
+    (
+      "m = { (int / tstr) => any, a: uint }",
+      r#"{"b":"x","a":1}"#,
+      "a261626178616101",
+      true,
+    ),
+    (
+      "m = { tstr => any, a: uint }",
+      r#"{"a":1,"b":"x"}"#,
+      "a261610161626178",
+      true,
+    ),
+    // The other pair does not satisfy the choice member.
+    (
+      "m = { (int / tstr) => uint, a: uint }",
+      r#"{"a":1,"b":"x"}"#,
+      "a261610161626178",
+      false,
+    ),
+    // A cut commits the first matching pair.
+    (
+      "m = { (int / tstr) ^ => any, a: uint }",
+      r#"{"a":1,"b":"x"}"#,
+      "a261610161626178",
+      false,
+    ),
+  ] {
+    #[cfg(feature = "json")]
+    {
+      let result = cddl::validator::validate_json_from_str(
+        schema,
+        json,
+        #[cfg(feature = "additional-controls")]
+        None,
+      );
+      assert_eq!(
+        result.is_ok(),
+        expected,
+        "{schema} JSON: {json}, result: {result:?}"
+      );
+    }
+    #[cfg(feature = "cbor")]
+    check_cbor(schema, hex, expected);
+    let _ = (json, hex);
+  }
+}

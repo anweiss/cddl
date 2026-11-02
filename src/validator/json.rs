@@ -693,6 +693,35 @@ impl<'a> JSONValidator<'a> {
     &mut self,
     entry: &ValueMemberKeyEntry<'a>,
   ) -> std::result::Result<bool, Error> {
+    let claim = MemberClaim {
+      key: String::new(),
+      entry: entry.clone(),
+      context: self.current_claim_context(),
+    };
+    self.reassign_movable_claims(Some(claim), None)
+  }
+
+  /// Free a key that a fixed member needs but a movable claim holds, by
+  /// moving the movable claims one-to-one onto the remaining pairs.
+  fn release_claimed_key(&mut self, key: &str) -> std::result::Result<bool, Error> {
+    let held = self
+      .member_claims
+      .iter()
+      .any(|claim| claim.key == key && !member_key_is_cut(&claim.entry));
+    if !held {
+      return Ok(false);
+    }
+    self.reassign_movable_claims(None, Some(key))
+  }
+
+  /// Solve the one-to-one assignment of the movable claims, plus an optional
+  /// new claim, over the unclaimed and movably claimed pairs other than
+  /// `excluded`, and commit it when every claim gets a pair.
+  fn reassign_movable_claims(
+    &mut self,
+    new_claim: Option<MemberClaim<'a>>,
+    excluded: Option<&str>,
+  ) -> std::result::Result<bool, Error> {
     let Value::Object(entries) = &self.json else {
       return Ok(false);
     };
@@ -716,15 +745,12 @@ impl<'a> JSONValidator<'a> {
     let candidates: Vec<(String, Value)> = entries
       .iter()
       .filter(|(key, _)| {
-        !validated.contains(key) || claims.iter().any(|claim| claim.key == key.as_str())
+        excluded != Some(key.as_str())
+          && (!validated.contains(key) || claims.iter().any(|claim| claim.key == key.as_str()))
       })
       .map(|(key, value)| (key.clone(), value.clone()))
       .collect();
-    claims.push(MemberClaim {
-      key: String::new(),
-      entry: entry.clone(),
-      context: self.current_claim_context(),
-    });
+    claims.extend(new_claim);
     if candidates.len() < claims.len() {
       return Ok(false);
     }
@@ -906,8 +932,27 @@ impl<'a> JSONValidator<'a> {
     Ok(())
   }
 
+  /// The value of an object key no member has claimed yet. A key held by a
+  /// movable claim is released when the claims can move to other pairs.
+  fn unclaimed_object_value(&mut self, key: &str) -> std::result::Result<Option<Value>, Error> {
+    let Value::Object(o) = &self.json else {
+      return Ok(None);
+    };
+    let Some(value) = o.get(key).cloned() else {
+      return Ok(None);
+    };
+    let claimed = self
+      .validated_keys
+      .as_ref()
+      .is_some_and(|keys| keys.iter().any(|claimed| claimed == key));
+    if claimed && !self.release_claimed_key(key)? {
+      return Ok(None);
+    }
+    Ok(Some(value))
+  }
+
   fn validate_object_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error> {
-    if let Value::Object(o) = &self.json {
+    if self.json.is_object() {
       // Bareword member keys are converted to text string values
       if let token::Value::TEXT(t) = value {
         if self.state.is_cut_present {
@@ -921,17 +966,12 @@ impl<'a> JSONValidator<'a> {
         // Retrieve the value from key unless optional/zero or more, in which
         // case advance to next group entry
         #[cfg(feature = "ast-span")]
-        if let Some(v) = o.get(t.as_ref()).filter(|_| {
-          !self
-            .validated_keys
-            .as_ref()
-            .is_some_and(|keys| keys.iter().any(|key| key == t.as_ref()))
-        }) {
+        if let Some(v) = self.unclaimed_object_value(t.as_ref())? {
           self
             .validated_keys
             .get_or_insert_with(Vec::new)
             .push(t.to_string());
-          self.object_value = Some(v.clone());
+          self.object_value = Some(v);
           let _ = write!(self.state.data_location, "/{}", t);
 
           return Ok(());
@@ -950,17 +990,12 @@ impl<'a> JSONValidator<'a> {
         // Retrieve the value from key unless optional/zero or more, in which
         // case advance to next group entry
         #[cfg(not(feature = "ast-span"))]
-        if let Some(v) = o.get(t.as_ref()).filter(|_| {
-          !self
-            .validated_keys
-            .as_ref()
-            .is_some_and(|keys| keys.iter().any(|key| key == t.as_ref()))
-        }) {
+        if let Some(v) = self.unclaimed_object_value(t.as_ref())? {
           self
             .validated_keys
             .get_or_insert_with(Vec::new)
             .push(t.to_string());
-          self.object_value = Some(v.clone());
+          self.object_value = Some(v);
           self.state.data_location.push_str(&format!("/{}", t));
 
           return Ok(());
