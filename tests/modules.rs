@@ -832,7 +832,19 @@ fn an_imported_group_alias_stays_a_group() {
 
   assert!(output.contains("options = (ns.options,)"), "{}", output);
   assert_parses(&output);
+
+  #[cfg(all(
+    feature = "json",
+    not(feature = "lsp"),
+    feature = "additional-controls"
+  ))]
   cddl::validate_json_from_str(&output, "1", None).unwrap();
+  #[cfg(all(
+    feature = "json",
+    not(feature = "lsp"),
+    not(feature = "additional-controls")
+  ))]
+  cddl::validate_json_from_str(&output, "1").unwrap();
 }
 
 #[test]
