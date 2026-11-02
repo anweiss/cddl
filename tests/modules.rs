@@ -819,6 +819,28 @@ fn a_rule_carries_its_noncontiguous_extensions() {
 }
 
 #[test]
+fn spaced_control_operators_keep_their_names_under_a_namespace() {
+  let mut source = MemoryModuleSource::new();
+  source.insert(
+    "m",
+    "size = int\nvalue = bstr . size 4\nother = bstr . ; comment\n  size 8\ntight = bstr. size 2\n",
+  );
+
+  let output = resolve_modules(
+    "start = [ns.value, ns.other, ns.tight]\n;# import m as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+
+  assert!(output.contains("ns.value = bstr . size 4"), "{}", output);
+  assert!(output.contains("  size 8"), "{}", output);
+  assert!(output.contains("ns.tight = bstr. size 2"), "{}", output);
+  assert!(!output.contains("ns.size"), "{}", output);
+  assert_parses(&output);
+}
+
+#[test]
 fn shared_dependencies_are_loaded_once() {
   use cddl::modules::ModuleSource;
   use std::cell::RefCell;

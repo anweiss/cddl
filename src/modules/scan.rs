@@ -264,61 +264,56 @@ pub(crate) fn scan(src: &str) -> Scan {
 
   let mut i = 0usize;
   let mut depth = 0usize;
-  // Byte offset of the previous non-whitespace byte, used to tell a control
-  // operator (`bstr .size 4`, where `.` follows whitespace) from a namespaced
-  // identifier (`cose.label`, where `.` is part of the identifier itself).
-  let mut prev_was_ident_end = false;
-
   while i < bytes.len() {
     let b = bytes[i];
 
     if let Some(end) = literal_end(bytes, i) {
-      prev_was_ident_end = false;
       i = end;
       continue;
     }
 
     match b {
       b' ' | b'\t' | b'\r' | b'\n' => {
-        prev_was_ident_end = false;
         i += 1;
       }
 
       // Comment (including a `;#` directive line) runs to end of line.
       b';' => {
-        prev_was_ident_end = false;
         while i < bytes.len() && bytes[i] != b'\n' {
           i += 1;
         }
       }
 
       b'b' if bytes[i..].starts_with(b"b64'") => {
-        prev_was_ident_end = false;
         i += 3;
       }
 
       b'(' | b'[' | b'{' => {
-        prev_was_ident_end = false;
         depth += 1;
         i += 1;
       }
 
       b')' | b']' | b'}' => {
-        prev_was_ident_end = false;
         depth = depth.saturating_sub(1);
         i += 1;
       }
 
-      // A control operator: a `.` that does not directly follow an identifier
-      // character. The name that follows is an operator name, not a reference.
-      b'.' if !prev_was_ident_end || bytes.get(i + 1) == Some(&b'.') => {
+      // A dot that reaches here is never part of an identifier (`ident_end`
+      // consumes `cose.label` whole), so a single dot introduces a control
+      // operator. The grammar allows spacing and comments between the dot
+      // and the operator name; either way the name is not a reference.
+      b'.' => {
         let start = i;
         i += 1;
         // `..` and `...` are range operators, not control operators.
         while i < bytes.len() && bytes[i] == b'.' {
           i += 1;
         }
-        if i == start + 1 && i < bytes.len() && is_ident_start(bytes[i]) {
+        let single = i == start + 1;
+        if single {
+          i = skip_spacing(bytes, i);
+        }
+        if single && i < bytes.len() && is_ident_start(bytes[i]) {
           let start = i;
           while i < bytes.len() && (is_ident_continue(bytes[i]) || bytes[i] == b'-') {
             i += 1;
@@ -330,39 +325,34 @@ pub(crate) fn scan(src: &str) -> Scan {
             role: IdentRole::ControlName,
           });
         }
-        prev_was_ident_end = false;
       }
 
       // Generic parameters: a `<` group that is immediately followed by an
       // assignment operator, i.e. the head of `messages<a, b> = ...`. Anywhere
       // else a `<` group holds generic *arguments*, whose identifiers are real
       // references and are scanned normally.
-      b'<' if depth == 0 => {
-        match generic_params_end(bytes, i) {
-          Some(close) => {
-            i = skip_spacing(bytes, i + 1);
-            while i < close {
-              if is_ident_start(bytes[i]) {
-                let start = i;
-                i = ident_end(bytes, i);
-                idents.push(IdentToken {
-                  start,
-                  end: i,
-                  text: src[start..i].to_string(),
-                  role: IdentRole::GenericParam,
-                });
-              } else {
-                i += 1;
-              }
-              i = skip_spacing(bytes, i);
+      b'<' if depth == 0 => match generic_params_end(bytes, i) {
+        Some(close) => {
+          i = skip_spacing(bytes, i + 1);
+          while i < close {
+            if is_ident_start(bytes[i]) {
+              let start = i;
+              i = ident_end(bytes, i);
+              idents.push(IdentToken {
+                start,
+                end: i,
+                text: src[start..i].to_string(),
+                role: IdentRole::GenericParam,
+              });
+            } else {
+              i += 1;
             }
-            i = close + 1;
+            i = skip_spacing(bytes, i);
           }
-          None => i += 1,
+          i = close + 1;
         }
-
-        prev_was_ident_end = false;
-      }
+        None => i += 1,
+      },
 
       // Assignment operators: `=`, `/=`, `//=`. `=>` is an entry separator and
       // must not be mistaken for one.
@@ -370,13 +360,11 @@ pub(crate) fn scan(src: &str) -> Scan {
         if depth == 0 {
           top_level_assigns.push(i);
         }
-        prev_was_ident_end = false;
         i += 1;
       }
 
       // Keep a tag's separator out of decimal-fraction scanning.
       b'#' => {
-        prev_was_ident_end = false;
         i += 1;
         if bytes.get(i).is_some_and(u8::is_ascii_digit) {
           i += 1;
@@ -390,7 +378,6 @@ pub(crate) fn scan(src: &str) -> Scan {
       }
 
       b'0'..=b'9' => {
-        prev_was_ident_end = false;
         i = number_end(bytes, i);
       }
 
@@ -407,11 +394,9 @@ pub(crate) fn scan(src: &str) -> Scan {
             IdentRole::Reference
           },
         });
-        prev_was_ident_end = true;
       }
 
       _ => {
-        prev_was_ident_end = false;
         i += 1;
       }
     }
@@ -671,6 +656,22 @@ mod tests {
       .map(|ident| ident.text.as_str())
       .collect();
     assert_eq!(references, ["e5", "p1", "e5"]);
+  }
+
+  #[test]
+  fn spaced_control_names_are_not_references() {
+    let scan = scan("a = bstr . ; note\n size 4\nb = c. size 2\nd = 1 .. e\nf = g.");
+    let controls: Vec<_> = scan
+      .idents
+      .iter()
+      .filter(|ident| ident.role == IdentRole::ControlName)
+      .map(|ident| ident.text.as_str())
+      .collect();
+    assert_eq!(controls, ["size", "size"]);
+    assert!(scan
+      .idents
+      .iter()
+      .any(|ident| ident.text == "e" && ident.role == IdentRole::Reference));
   }
 
   #[test]
