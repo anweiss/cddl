@@ -493,10 +493,11 @@ impl<'a> CBORValidator<'a> {
     let mut claim_generic_contexts = Vec::new();
     let mut entry_indices = Vec::new();
     for (claim_position, claim) in self.single_entry_claims.iter().enumerate() {
+      // A claim recorded by a cut member stays committed to its pair.
       let entry = if claim_position == current_claim_position {
         current_entry.clone()
-      } else if let Some(entry) = &claim.entry {
-        entry.clone()
+      } else if let Some(entry) = claim.entry.as_ref().and_then(Self::movable_claim_entry) {
+        entry
       } else {
         continue;
       };
@@ -844,7 +845,8 @@ impl<'a> CBORValidator<'a> {
 
   /// Move every movable single-entry claim one-to-one onto the pairs other
   /// than `released`, so a fixed member can take it. Only claims recorded
-  /// with their member take part; committed claims keep their pairs.
+  /// with a member that has no cut take part; committed claims keep their
+  /// pairs.
   fn release_single_map_entry<T: std::fmt::Debug + 'static>(
     &mut self,
     entries: &[(Value, Value)],
@@ -854,7 +856,13 @@ impl<'a> CBORValidator<'a> {
     cbor::Error<T>: From<cbor::Error<std::io::Error>>,
   {
     let movable: Vec<usize> = (0..self.single_entry_claims.len())
-      .filter(|position| self.single_entry_claims[*position].entry.is_some())
+      .filter(|position| {
+        self.single_entry_claims[*position]
+          .entry
+          .as_ref()
+          .and_then(Self::movable_claim_entry)
+          .is_some()
+      })
       .collect();
     if !movable
       .iter()

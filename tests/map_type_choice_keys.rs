@@ -1330,6 +1330,18 @@ fn fixed_keys_take_pairs_from_movable_claims() {
       "a261610161626178",
       false,
     ),
+    (
+      "m = { tstr ^ => any, a: uint }",
+      r#"{"a":1,"b":"x"}"#,
+      "a261610161626178",
+      false,
+    ),
+    (
+      "m = { tstr ^ => any, (\"a\" / \"z\") => uint }",
+      r#"{"a":1,"b":"x"}"#,
+      "a261610161626178",
+      false,
+    ),
   ] {
     #[cfg(feature = "json")]
     {
