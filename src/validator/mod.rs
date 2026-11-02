@@ -15,8 +15,8 @@ mod control;
 use crate::ast::Span;
 use crate::{
   ast::{
-    GenericArgs, Group, GroupChoice, GroupEntry, GroupRule, Identifier, MemberKey, Occur, Rule,
-    Type, Type1, Type2, TypeChoice, TypeRule, ValueMemberKeyEntry, CDDL,
+    GenericArgs, Group, GroupChoice, GroupEntry, GroupRule, Identifier, MemberKey, Occur,
+    RangeCtlOp, Rule, Type, Type1, Type2, TypeChoice, TypeRule, ValueMemberKeyEntry, CDDL,
   },
   token::{self, *},
   visitor::Visitor,
@@ -735,8 +735,60 @@ pub(crate) fn choice_member_key<'e, 'a>(
   };
   let (alternatives, acyclic) = member_key_type_alternatives(state, t1);
   // A cut recursive reference must not reach the scalar path, which follows
-  // it without end, even when a single alternative remains.
-  (alternatives.len() > 1 || !acyclic).then_some((t1.as_ref(), alternatives, *is_cut))
+  // it without end, even when a single alternative remains. A control over a
+  // choice (`(int / tstr) .and any`) also matches each key on its own, by
+  // probing the complete constrained type.
+  let choice = alternatives.len() > 1
+    || !acyclic
+    || alternatives
+      .first()
+      .is_some_and(|alternative| control_targets_choice(state, alternative));
+  choice.then_some((t1.as_ref(), alternatives, *is_cut))
+}
+
+/// Whether a type carries a control operator whose target is a choice.
+fn control_targets_choice(state: &ValidationState, t1: &Type1) -> bool {
+  let Some(operator) = &t1.operator else {
+    return false;
+  };
+  if matches!(operator.operator, RangeCtlOp::RangeOp { .. }) {
+    return false;
+  }
+  let mut target = t1.clone();
+  target.operator = None;
+  let (alternatives, acyclic) = member_key_type_alternatives(state, &target);
+  alternatives.len() > 1 || !acyclic
+}
+
+/// How often a generic alias that recurses with changing arguments
+/// (`k<T> = T / k<[T]>`) is unrolled when expanding member-key alternatives.
+const MAX_GENERIC_KEY_UNROLL: usize = 8;
+
+/// A recursion and cache key for one generic instantiation. Arguments are
+/// keyed by their structure rather than their display form, which prints
+/// `1` and `1.0` alike.
+pub(crate) fn generic_instantiation_key<'b, 'a: 'b>(
+  name: &str,
+  args: impl IntoIterator<Item = &'b Type1<'a>>,
+) -> String {
+  let args = args
+    .into_iter()
+    .map(|arg| format!("{arg:?}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  format!("{name}<{args}>")
+}
+
+/// The argument bound to a parameter reference. Socket-prefixed names such
+/// as `$K` are distinct rules, never parameters.
+fn param_binding<'m, 'a>(
+  bindings: &'m HashMap<&'a str, Type1<'a>>,
+  ident: &Identifier,
+) -> Option<&'m Type1<'a>> {
+  if ident.socket.is_some() {
+    return None;
+  }
+  bindings.get(ident.ident)
 }
 
 /// The alternatives one map key may match for a member key type, following
@@ -814,24 +866,16 @@ fn expand_key_generic_alternatives<'a>(
   let resolved = resolved_generic_args(state, args);
   // Instantiations are cached by name and resolved arguments, so a DAG of
   // generic aliases expands each distinct instantiation once.
-  let memo_key = format!(
-    "{}<{}>",
-    key,
-    resolved
-      .iter()
-      .map(|arg| arg.to_string())
-      .collect::<Vec<_>>()
-      .join(", ")
-  );
+  let memo_key = generic_instantiation_key(&key, &resolved);
   if active.contains(&memo_key) {
     // The same instantiation again (`k<T> = T / k<T>`) adds no keys of its
     // own, and probing it would recurse without end.
     return (Vec::new(), false);
   }
-  if active.contains(&key) {
-    // Recursive path with other arguments: keep the instantiation as an
-    // opaque leaf.
-    return (vec![candidate.clone()], false);
+  if active.iter().filter(|name| **name == key).count() >= MAX_GENERIC_KEY_UNROLL {
+    // Recursion with changing arguments is unrolled to a fixed depth and
+    // deeper levels are dropped: probing them would never consume input.
+    return (Vec::new(), false);
   }
   if let Some(cached) = memo.get(&memo_key) {
     return ((**cached).clone(), true);
@@ -872,7 +916,7 @@ fn substitute_generic_params<'a>(
     ..
   } = &t1.type2
   {
-    if let Some(arg) = bindings.get(ident.ident) {
+    if let Some(arg) = param_binding(bindings, ident) {
       let Some(operator) = &t1.operator else {
         return arg.clone();
       };
@@ -909,7 +953,7 @@ fn substitute_type2_params<'a>(
     ..
   } = t2
   {
-    if let Some(arg) = bindings.get(ident.ident) {
+    if let Some(arg) = param_binding(bindings, ident) {
       return bound_type2(arg);
     }
   }
@@ -926,7 +970,9 @@ fn substitute_type2_params<'a>(
     Type2::ParenthesizedType { pt, .. } => {
       substitute_type_params(pt, bindings);
     }
-    Type2::Array { group, .. } | Type2::Map { group, .. } => {
+    Type2::Array { group, .. }
+    | Type2::Map { group, .. }
+    | Type2::ChoiceFromInlineGroup { group, .. } => {
       substitute_group_params(group, bindings);
     }
     Type2::TaggedData { t, .. } => {
@@ -1010,7 +1056,7 @@ fn substitute_group_params<'a>(group: &mut Group<'a>, bindings: &HashMap<&'a str
                     ..
                   },
                 ) => Ok((ident.clone(), generic_args.clone())),
-                _ => Err(arg.clone()),
+                _ => Err(Box::new(arg.clone())),
               })
           } else {
             None
@@ -1028,7 +1074,7 @@ fn substitute_group_params<'a>(group: &mut Group<'a>, bindings: &HashMap<&'a str
                   member_key: None,
                   entry_type: Type {
                     type_choices: vec![TypeChoice {
-                      type1: arg,
+                      type1: *arg,
                       #[cfg(feature = "ast-comments")]
                       comments_before_type: None,
                       #[cfg(feature = "ast-comments")]
@@ -1073,7 +1119,12 @@ fn expand_key_ident_alternatives<'a>(
   active: &mut Vec<String>,
   memo: &mut HashMap<String, Rc<Vec<Type1<'a>>>>,
 ) -> (Vec<Type1<'a>>, bool) {
-  if let Some(arg) = generic_argument_for_param(state, ident.ident) {
+  if let Some(arg) = ident
+    .socket
+    .is_none()
+    .then(|| generic_argument_for_param(state, ident.ident))
+    .flatten()
+  {
     return expand_key_type_alternatives(state, &arg, active, memo);
   }
   let key = qualified_ident_key(ident);
@@ -1160,7 +1211,7 @@ pub(crate) fn resolve_generic_argument<'a>(
     else {
       break;
     };
-    if !seen.insert(ident.ident) {
+    if ident.socket.is_some() || !seen.insert(ident.ident) {
       break;
     }
     match generic_argument_for_param(state, ident.ident) {

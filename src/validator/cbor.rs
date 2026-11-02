@@ -536,11 +536,22 @@ impl<'a> CBORValidator<'a> {
       let entry_index = entry_indices[entry_slot];
       let claim = &mut self.single_entry_claims[claim_position];
       claim.entry_index = entry_index;
-      claim.entry = Some(claim_entries[claim_slot].clone());
+      claim.entry = Self::movable_claim_entry(&claim_entries[claim_slot]);
       claim.generic_context = claim_generic_contexts[claim_slot].clone();
     }
 
     Ok(true)
+  }
+
+  /// The entry a reassigned claim keeps for later retries. A cut member's
+  /// pair stays committed once assigned, as it does when the member matches
+  /// directly.
+  fn movable_claim_entry(entry: &ValueMemberKeyEntry<'a>) -> Option<ValueMemberKeyEntry<'a>> {
+    (!matches!(
+      entry.member_key,
+      Some(MemberKey::Type1 { is_cut: true, .. })
+    ))
+    .then(|| entry.clone())
   }
 
   fn is_unconsumed_map_entry(entry_index: usize, claimed_entries: &[usize]) -> bool {
@@ -5337,14 +5348,14 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     visited: &mut HashSet<String>,
     bindings: &HashMap<&'a str, Type1<'a>>,
   ) -> bool {
-    if let Some(bound) = bindings.get(ident.ident) {
+    if let Some(bound) = bindings.get(ident.ident).filter(|_| ident.socket.is_none()) {
       // Guard recursive parameter bindings such as a self-reference.
       if !visited.insert(ident.ident.to_string()) {
         return true;
       }
       return self.type1_admits(bound, key, visited, bindings);
     }
-    if generic_args.is_none() {
+    if generic_args.is_none() && ident.socket.is_none() {
       if let Some(arg) = generic_argument_for_param(self.state, ident.ident) {
         return self.type1_admits(&arg, key, visited, bindings);
       }
@@ -5415,18 +5426,8 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     // (`k<T> = T / k<T>`) adds no keys of its own; one with other arguments
     // (`k<T> = T / k<[T]>`) stays lenient and the probe decides.
     let name = qualified_ident_key(ident);
-    let instantiation = format!(
-      "{}<{}>",
-      name,
-      params
-        .iter()
-        .map(|param| bound
-          .get(param)
-          .map(|arg| arg.to_string())
-          .unwrap_or_default())
-        .collect::<Vec<_>>()
-        .join(", ")
-    );
+    let instantiation =
+      generic_instantiation_key(&name, params.iter().filter_map(|param| bound.get(param)));
     if !visited.insert(instantiation) {
       self.cut = true;
       return false;
@@ -5519,7 +5520,10 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
       || !(is_ident_string_data_type(cddl, ident)
         || is_ident_byte_string_data_type(cddl, ident)
         || is_ident_bool_data_type(cddl, ident)
-        || matches!(lookup_ident(ident.ident), Token::TRUE | Token::FALSE)
+        || matches!(
+          lookup_ident(ident.ident),
+          Token::TRUE | Token::FALSE | Token::UNDEFINED
+        )
         || is_ident_null_data_type(cddl, ident))
   }
 }

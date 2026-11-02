@@ -387,6 +387,7 @@ impl<'a> JSONValidator<'a> {
     let (min, max) = occurrence_bounds(occurrence);
     let single = max == Some(1);
     let mut count = 0;
+    let mut cut_committed = false;
     let mut value_errors = Vec::new();
     for (key, value) in entries.iter() {
       if max.is_some_and(|max| count >= max) {
@@ -404,6 +405,7 @@ impl<'a> JSONValidator<'a> {
         // A cut commits a matching key to this member, so its failing value
         // rejects the object rather than falling through (RFC 8610 §3.5.4).
         count += usize::from(errors.is_empty());
+        cut_committed |= is_cut;
         self
           .validated_keys
           .get_or_insert_with(Vec::new)
@@ -421,7 +423,9 @@ impl<'a> JSONValidator<'a> {
       }
     }
 
-    if count < min && single && self.reassign_choice_claims(entry)? {
+    // Before a cut member matches a key it has no commitment to keep, so the
+    // retry may still hand it a pair.
+    if count < min && single && !cut_committed && self.reassign_choice_claims(entry)? {
       count += 1;
     }
     if count < min {
@@ -528,6 +532,9 @@ impl<'a> JSONValidator<'a> {
       return Ok(false);
     }
     let mut probe = self.probe_with_context(value.clone(), claim.context.as_ref());
+    // The value's own location keeps recursion guards from mistaking a
+    // nested value for zero-progress recursion at the object's location.
+    probe.state.data_location = format!("{}/{}", self.state.data_location, key);
     probe.visit_type(&claim.entry.entry_type)?;
     Ok(probe.errors.is_empty())
   }
@@ -605,7 +612,9 @@ impl<'a> JSONValidator<'a> {
           keys.retain(|claimed| claimed != key);
         }
       }
-      if !self.reassign_choice_claims(entry)? {
+      // A cut commits the member to the pair whose key it matched; its value
+      // failure must be reported, not retried away.
+      if member_key_is_cut(entry) || !self.reassign_choice_claims(entry)? {
         if let Some(key) = &object_value_key {
           self
             .validated_keys
@@ -631,11 +640,6 @@ impl<'a> JSONValidator<'a> {
     let Value::Object(entries) = &self.json else {
       return Ok(false);
     };
-    // A cut commits the member to the pair whose key it matched; its value
-    // failure must be reported, not retried away.
-    if member_key_is_cut(entry) {
-      return Ok(false);
-    }
     // Pairs claimed under a cut stay committed; only movable claims take
     // part in the retry.
     let movable: Vec<usize> = self
@@ -3500,8 +3504,6 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       Ok(())
     }
   }
-
-  /// Validate the candidate pairs of a repeating member whose key matched a
 
   fn visit_type_groupname_entry(
     &mut self,
