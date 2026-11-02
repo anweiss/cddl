@@ -390,12 +390,15 @@ fn select_named(
   mut alias_sink: Option<(&mut BTreeSet<String>, &mut Vec<String>)>,
 ) -> Result<Vec<String>, ModuleError> {
   let mut names = Vec::new();
+  let mut selected: BTreeSet<String> = BTreeSet::new();
 
   for selector in selectors {
     let written = match selector {
       NameSelector::All => {
         for rule in rules {
-          push_unique(&mut names, rule.name.clone());
+          if selected.insert(rule.name.clone()) {
+            names.push(rule.name.clone());
+          }
         }
         continue;
       }
@@ -435,7 +438,9 @@ fn select_named(
       }
     }
 
-    push_unique(&mut names, resolved);
+    if selected.insert(resolved.clone()) {
+      names.push(resolved);
+    }
   }
 
   Ok(names)
@@ -521,12 +526,6 @@ fn socket_sigils(name: &str) -> usize {
 fn namespaced(name: &str, namespace: &str) -> String {
   let sigils = socket_sigils(name);
   format!("{}{}.{}", &name[..sigils], namespace, &name[sigils..])
-}
-
-fn push_unique(names: &mut Vec<String>, name: String) {
-  if !names.contains(&name) {
-    names.push(name);
-  }
 }
 
 /// Breadth-first transitive closure over rule dependencies, in discovery
@@ -777,6 +776,34 @@ mod tests {
     assert_eq!(rule.parts[0].deps, ["next9999"]);
     assert!(rule.parts[1].extension);
     assert!(rule.parts[1].deps.is_empty());
+  }
+
+  #[test]
+  fn wildcard_selection_lists_each_rule_once_in_source_order() {
+    let mut src = String::new();
+    for n in 0..10_000 {
+      src.push_str(&format!("rule{n} = int\nrule{n} /= tstr\n", n = n));
+    }
+    let rules = rules_of(&src);
+    let index: BTreeMap<&str, &ModuleRule> = rules
+      .iter()
+      .map(|rule| (rule.name.as_str(), rule))
+      .collect();
+    let directive = Directive {
+      kind: DirectiveKind::Include,
+      names: Some(vec![
+        NameSelector::All,
+        NameSelector::Name("rule7".to_string()),
+      ]),
+      filename: "m".to_string(),
+      alias: None,
+      line: 1,
+    };
+    let selectors = directive.names.clone().unwrap();
+    let names = select_named(&directive, &selectors, &rules, &index, None).unwrap();
+    assert_eq!(names.len(), 10_000);
+    assert_eq!(names[0], "rule0");
+    assert_eq!(names[9_999], "rule9999");
   }
 
   #[test]
