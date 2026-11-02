@@ -5161,7 +5161,7 @@ fn key_domain_admits(state: &ValidationState, alternative: &Type1, key: &Value) 
 /// active chain.
 struct KeyDomainWalk<'s, 'a> {
   state: &'s ValidationState<'a>,
-  memo: HashMap<&'a str, bool>,
+  memo: HashMap<String, bool>,
   cut: bool,
 }
 
@@ -5173,7 +5173,7 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     &mut self,
     alternative: &Type1<'a>,
     key: &Value,
-    visited: &mut HashSet<&'a str>,
+    visited: &mut HashSet<String>,
     bindings: &HashMap<&'a str, Type1<'a>>,
   ) -> bool {
     if matches!(
@@ -5181,9 +5181,21 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
         .operator
         .as_ref()
         .map(|operator| &operator.operator),
-      Some(RangeCtlOp::RangeOp { .. })
+      Some(RangeCtlOp::RangeOp { .. }),
     ) {
-      return true;
+      // The probe's range validation enforces the interval, but only for
+      // keys of the endpoint's kind: a numeric range would otherwise admit
+      // byte-string keys, whose lengths compare as numbers.
+      return match &alternative.type2 {
+        Type2::IntValue { .. } | Type2::UintValue { .. } | Type2::FloatValue { .. } => {
+          matches!(key, Value::Integer(_) | Value::Float(_))
+        }
+        Type2::TextValue { .. } => matches!(key, Value::Text(_)),
+        Type2::UTF8ByteString { .. }
+        | Type2::B16ByteString { .. }
+        | Type2::B64ByteString { .. } => matches!(key, Value::Bytes(_)),
+        base => self.type2_admits(base, key, visited, bindings),
+      };
     }
     self.type2_admits(&alternative.type2, key, visited, bindings)
   }
@@ -5193,7 +5205,7 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     &mut self,
     type2: &Type2<'a>,
     key: &Value,
-    visited: &mut HashSet<&'a str>,
+    visited: &mut HashSet<String>,
     bindings: &HashMap<&'a str, Type1<'a>>,
   ) -> bool {
     match type2 {
@@ -5230,12 +5242,12 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     ident: &Identifier<'a>,
     generic_args: Option<&GenericArgs<'a>>,
     key: &Value,
-    visited: &mut HashSet<&'a str>,
+    visited: &mut HashSet<String>,
     bindings: &HashMap<&'a str, Type1<'a>>,
   ) -> bool {
     if let Some(bound) = bindings.get(ident.ident) {
       // Guard recursive parameter bindings such as a self-reference.
-      if !visited.insert(ident.ident) {
+      if !visited.insert(ident.ident.to_string()) {
         return true;
       }
       return self.type1_admits(bound, key, visited, bindings);
@@ -5264,7 +5276,7 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     ident: &Identifier<'a>,
     args: &GenericArgs<'a>,
     key: &Value,
-    visited: &mut HashSet<&'a str>,
+    visited: &mut HashSet<String>,
     bindings: &HashMap<&'a str, Type1<'a>>,
   ) -> bool {
     let types = type_choice_types_from_ident(self.state.cddl, ident);
@@ -5320,15 +5332,17 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     &mut self,
     ident: &Identifier<'a>,
     key: &Value,
-    visited: &mut HashSet<&'a str>,
+    visited: &mut HashSet<String>,
     bindings: &HashMap<&'a str, Type1<'a>>,
   ) -> bool {
+    // Socket-prefixed names (`$s`, `$$s`) are distinct from the plain name.
+    let cache_key = qualified_ident_key(ident);
     if bindings.is_empty() {
-      if let Some(cached) = self.memo.get(ident.ident) {
+      if let Some(cached) = self.memo.get(&cache_key) {
         return *cached;
       }
     }
-    if !visited.insert(ident.ident) {
+    if !visited.insert(cache_key.clone()) {
       self.cut = true;
       return true;
     }
@@ -5342,7 +5356,7 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
         .any(|choice| self.type1_admits(&choice.type1, key, &mut visited.clone(), bindings))
     });
     if bindings.is_empty() && !self.cut {
-      self.memo.insert(ident.ident, admits);
+      self.memo.insert(cache_key, admits);
     }
     admits
   }
@@ -5354,7 +5368,7 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     &mut self,
     ident: &Identifier,
     key: &Value,
-    visited: &mut HashSet<&'a str>,
+    visited: &mut HashSet<String>,
     bindings: &HashMap<&'a str, Type1<'a>>,
   ) -> bool {
     let cddl = self.state.cddl;
@@ -5376,8 +5390,9 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
               .iter()
               .any(|choice| self.type1_admits(&choice.type1, inner, &mut visited.clone(), bindings))
         }
-        // Untagged keys stay lenient here; the probe decides.
-        _ => true,
+        // Untagged keys cannot match a type declared as #6.n(payload); the
+        // scalar probe alone would accept, e.g., an untagged `time` number.
+        _ => false,
       };
     }
     !matches!(key, Value::Tag(..))

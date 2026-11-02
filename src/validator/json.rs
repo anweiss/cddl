@@ -182,6 +182,14 @@ struct MemberClaim<'a> {
   context: Option<ClaimEvalContext<'a>>,
 }
 
+/// Does this member key carry an explicit cut (`^ =>`)?
+fn member_key_is_cut(entry: &ValueMemberKeyEntry) -> bool {
+  matches!(
+    &entry.member_key,
+    Some(MemberKey::Type1 { is_cut: true, .. })
+  )
+}
+
 /// JSON validator type
 #[derive(Clone)]
 pub struct JSONValidator<'a> {
@@ -623,7 +631,24 @@ impl<'a> JSONValidator<'a> {
     let Value::Object(entries) = &self.json else {
       return Ok(false);
     };
-    let mut claims = self.member_claims.clone();
+    // A cut commits the member to the pair whose key it matched; its value
+    // failure must be reported, not retried away.
+    if member_key_is_cut(entry) {
+      return Ok(false);
+    }
+    // Pairs claimed under a cut stay committed; only movable claims take
+    // part in the retry.
+    let movable: Vec<usize> = self
+      .member_claims
+      .iter()
+      .enumerate()
+      .filter(|(_, claim)| !member_key_is_cut(&claim.entry))
+      .map(|(index, _)| index)
+      .collect();
+    let mut claims: Vec<MemberClaim<'a>> = movable
+      .iter()
+      .map(|&index| self.member_claims[index].clone())
+      .collect();
     claims.push(MemberClaim {
       key: String::new(),
       entry: entry.clone(),
@@ -634,11 +659,7 @@ impl<'a> JSONValidator<'a> {
     let candidates: Vec<(String, Value)> = entries
       .iter()
       .filter(|(key, _)| {
-        !validated.contains(key)
-          || self
-            .member_claims
-            .iter()
-            .any(|claim| claim.key == key.as_str())
+        !validated.contains(key) || claims.iter().any(|claim| claim.key == key.as_str())
       })
       .map(|(key, value)| (key.clone(), value.clone()))
       .collect();
@@ -666,13 +687,14 @@ impl<'a> JSONValidator<'a> {
       }
     }
 
-    self.commit_choice_assignment(&claims, &candidates, &pair_owners)
+    self.commit_choice_assignment(&movable, &claims, &candidates, &pair_owners)
   }
 
-  /// Commit a solved assignment: claims move to their new keys and the
-  /// validated-key set follows.
+  /// Commit a solved assignment: movable claims move to their new keys and
+  /// the validated-key set follows. Cut-claimed pairs are untouched.
   fn commit_choice_assignment(
     &mut self,
+    movable: &[usize],
     claims: &[MemberClaim<'a>],
     candidates: &[(String, Value)],
     pair_owners: &[Option<usize>],
@@ -684,26 +706,37 @@ impl<'a> JSONValidator<'a> {
       }
     }
 
-    let old_keys: Vec<&str> = self
-      .member_claims
+    let old_keys: Vec<&str> = claims
       .iter()
       .map(|claim| claim.key.as_str())
+      .filter(|key| !key.is_empty())
       .collect();
     let keys = self.validated_keys.get_or_insert_with(Vec::new);
     keys.retain(|key| !old_keys.contains(&key.as_str()));
-    let mut new_claims = Vec::new();
+    let mut reassigned: Vec<(usize, String)> = Vec::new();
+    let mut new_claim: Option<MemberClaim<'a>> = None;
     for (claim_slot, pair_slot) in assigned.into_iter().enumerate() {
       let Some(pair_slot) = pair_slot else {
         return Ok(false);
       };
-      keys.push(candidates[pair_slot].0.clone());
+      let key = candidates[pair_slot].0.clone();
+      keys.push(key.clone());
       // Retain every assigned claim, including the member that just became
       // satisfiable, so later reassignments can move its pair again.
-      let mut claim = claims[claim_slot].clone();
-      claim.key = candidates[pair_slot].0.clone();
-      new_claims.push(claim);
+      if claim_slot < movable.len() {
+        reassigned.push((movable[claim_slot], key));
+      } else {
+        let mut claim = claims[claim_slot].clone();
+        claim.key = key;
+        new_claim = Some(claim);
+      }
     }
-    self.member_claims = new_claims;
+    for (index, key) in reassigned {
+      self.member_claims[index].key = key;
+    }
+    if let Some(claim) = new_claim {
+      self.member_claims.push(claim);
+    }
     Ok(true)
   }
 
@@ -1668,6 +1701,9 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     let initial_error_count = self.errors.len();
     for group_choice in g.group_choices.iter() {
       let error_count = self.errors.len();
+      // A failed arm must not leave its pair ownership behind for the next.
+      let validated_checkpoint = self.validated_keys.clone();
+      let claims_len = self.member_claims.len();
       self.visit_group_choice(group_choice)?;
       if self.errors.len() == error_count {
         // Disregard invalid group choice validation errors if one of the
@@ -1681,6 +1717,8 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
         return Ok(());
       }
+      self.validated_keys = validated_checkpoint;
+      self.member_claims.truncate(claims_len);
     }
 
     Ok(())

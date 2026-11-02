@@ -589,3 +589,126 @@ fn json_plain_members_trigger_reassignment() {
     assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
   }
 }
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_match_range_domains_by_key_kind() {
+  // A numeric range admits only numeric keys (byte-string lengths would
+  // otherwise compare as numbers); the probe still enforces the interval.
+  check_cbor("m = { * (1..3 / tstr) => any }", "a142010201", false);
+  check_cbor("m = { * (1..3 / tstr) => any }", "a10201", true);
+  check_cbor(
+    "m = { * (small / tstr) => any }\nsmall = 1..3",
+    "a142010201",
+    false,
+  );
+  check_cbor(
+    "m = { * (small / tstr) => any }\nsmall = 1..3",
+    "a10201",
+    true,
+  );
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_require_the_declared_tag() {
+  // time is #6.1(number): an untagged number matches neither alternative.
+  check_cbor("m = { * (time / tstr) => any }", "a10101", false);
+  check_cbor("m = { * (time / tstr) => any }", "a1c10101", true);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_expand_generic_choice_arguments() {
+  // A generic instantiation whose argument is a choice is a choice key:
+  // each pair is matched against the substituted alternatives.
+  let schema = "m = { * key<(int / tstr)> => any }\nkey<K> = K";
+  check_cbor(schema, "a10301", true);
+  check_cbor(schema, "a1617801", true);
+  check_cbor(schema, "a1f501", false);
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_type_choice_keys_expand_generic_choice_arguments() {
+  let schema = "m = { * key<(int / tstr)> => any }\nkey<K> = K";
+  for (json, expected) in [(r#"{"x":1}"#, true), (r#"{"x":"y"}"#, true)] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
+  }
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_socket_prefixed_aliases_do_not_share_domain_cache() {
+  // `$s` and `s` are different identifiers: neither the expansion memo nor
+  // the domain walk may key them by the bare name.
+  let schema = "m = { * (s / $s) => any }\ns = nint\n$s /= tstr";
+  check_cbor(schema, "a1617801", true);
+  check_cbor(schema, "a12001", true);
+  check_cbor(schema, "a10301", false);
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_socket_prefixed_aliases_do_not_share_domain_cache() {
+  let schema = "m = { * (s / $s) => any }\ns = nint\n$s /= tstr";
+  let result = cddl::validator::validate_json_from_str(
+    schema,
+    r#"{"x":1}"#,
+    #[cfg(feature = "additional-controls")]
+    None,
+  );
+  assert!(result.is_ok(), "result: {result:?}");
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_group_choice_arms_do_not_share_claims() {
+  // A failed // arm must not leave its validated keys or member claims
+  // behind for the next arm.
+  let schema = "m = { (int / tstr) => uint, required: null // (int / tstr) => tstr }";
+  for (json, expected) in [
+    (r#"{"a":1,"b":"x"}"#, false),
+    (r#"{"a":"x"}"#, true),
+    (r#"{"a":1,"required":null}"#, true),
+  ] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
+  }
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_cut_members_preserve_value_failures() {
+  // A cut commits the member to the pair whose key it matched; the value
+  // failure is reported, not retried away through reassignment.
+  let schema = "m = { tstr ^ => uint, * any => tstr }";
+  for (json, expected) in [(r#"{"a":"x","b":1}"#, false), (r#"{"a":1,"b":"x"}"#, true)] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
+  }
+}

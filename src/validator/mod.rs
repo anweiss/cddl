@@ -714,6 +714,16 @@ pub(crate) fn occurrence_bounds(occur: Option<Occur>) -> (usize, Option<usize>) 
 
 /// The key type, its alternatives and the cut flag of a member whose key
 /// type is a choice; `None` keeps every other member on its existing path.
+/// A cache/recursion key for an identifier that keeps socket-prefixed names
+/// (`$s`, `$$s`) distinct from the plain name.
+pub(crate) fn qualified_ident_key(ident: &Identifier) -> String {
+  match ident.socket {
+    Some(SocketPlug::TYPE) => format!("${}", ident.ident),
+    Some(SocketPlug::GROUP) => format!("$${}", ident.ident),
+    None => ident.ident.to_string(),
+  }
+}
+
 pub(crate) fn choice_member_key<'e, 'a>(
   state: &ValidationState<'a>,
   entry: &'e ValueMemberKeyEntry<'a>,
@@ -746,8 +756,8 @@ pub(crate) fn member_key_type_alternatives<'a>(
 fn expand_key_type_alternatives<'a>(
   state: &ValidationState<'a>,
   candidate: &Type1<'a>,
-  active: &mut Vec<&'a str>,
-  memo: &mut HashMap<&'a str, Rc<Vec<Type1<'a>>>>,
+  active: &mut Vec<String>,
+  memo: &mut HashMap<String, Rc<Vec<Type1<'a>>>>,
 ) -> (Vec<Type1<'a>>, bool) {
   match &candidate.type2 {
     _ if candidate.operator.is_some() => (vec![candidate.clone()], true),
@@ -767,8 +777,122 @@ fn expand_key_type_alternatives<'a>(
       generic_args: None,
       ..
     } => expand_key_ident_alternatives(state, candidate, ident, active, memo),
+    Type2::Typename {
+      ident,
+      generic_args: Some(args),
+      ..
+    } => expand_key_generic_alternatives(state, candidate, ident, args, active, memo),
     _ => (vec![candidate.clone()], true),
   }
+}
+
+/// Expand a generic instantiation by substituting its arguments, resolved in
+/// the caller's environment, for the rule's parameters. Instantiations are
+/// not cached: the expansion depends on the arguments.
+fn expand_key_generic_alternatives<'a>(
+  state: &ValidationState<'a>,
+  candidate: &Type1<'a>,
+  ident: &Identifier<'a>,
+  args: &GenericArgs<'a>,
+  active: &mut Vec<String>,
+  memo: &mut HashMap<String, Rc<Vec<Type1<'a>>>>,
+) -> (Vec<Type1<'a>>, bool) {
+  let Some(rule) = rule_from_ident(state.cddl, ident) else {
+    return (vec![candidate.clone()], true);
+  };
+  if !matches!(rule, Rule::Type { .. }) {
+    return (vec![candidate.clone()], true);
+  }
+  let Some(params) = generic_params_from_rule(rule) else {
+    return (vec![candidate.clone()], true);
+  };
+  let key = qualified_ident_key(ident);
+  if active.contains(&key) {
+    // Recursive path: keep the instantiation as an opaque leaf.
+    return (vec![candidate.clone()], false);
+  }
+  let bindings: HashMap<&'a str, Type1<'a>> = params
+    .iter()
+    .copied()
+    .zip(resolved_generic_args(state, args))
+    .collect();
+  // Every definition contributes, including `/=` extensions.
+  let types = type_choice_types_from_ident(state.cddl, ident);
+  active.push(key);
+  let mut alternatives = Vec::new();
+  let mut acyclic = true;
+  for rule_type in types {
+    for choice in &rule_type.type_choices {
+      let substituted = substitute_generic_params(&choice.type1, &bindings);
+      let (mut nested, nested_acyclic) =
+        expand_key_type_alternatives(state, &substituted, active, memo);
+      alternatives.append(&mut nested);
+      acyclic &= nested_acyclic;
+    }
+  }
+  active.pop();
+  (alternatives, acyclic)
+}
+
+/// Replace parameter references in a member-key type with their bound
+/// arguments. A bare parameter takes the whole argument; parameters nested
+/// in generic arguments or parenthesized choices are substituted in place.
+fn substitute_generic_params<'a>(
+  t1: &Type1<'a>,
+  bindings: &HashMap<&'a str, Type1<'a>>,
+) -> Type1<'a> {
+  if let Type2::Typename {
+    ident,
+    generic_args: None,
+    ..
+  } = &t1.type2
+  {
+    if let Some(arg) = bindings.get(ident.ident) {
+      let mut substituted = arg.clone();
+      if let Some(operator) = &t1.operator {
+        if substituted.operator.is_none() {
+          substituted.operator = Some(operator.clone());
+        } else {
+          // Composing two operators is ambiguous; keep the type whole.
+          return t1.clone();
+        }
+      }
+      return substituted;
+    }
+  }
+  let mut substituted = t1.clone();
+  substituted.type2 = substitute_type2_params(&t1.type2, bindings);
+  if let Some(operator) = &t1.operator {
+    let mut op = operator.clone();
+    op.type2 = substitute_type2_params(&operator.type2, bindings);
+    substituted.operator = Some(op);
+  }
+  substituted
+}
+
+/// Substitute generic parameters inside a type2 node.
+fn substitute_type2_params<'a>(
+  t2: &Type2<'a>,
+  bindings: &HashMap<&'a str, Type1<'a>>,
+) -> Type2<'a> {
+  let mut substituted = t2.clone();
+  match &mut substituted {
+    Type2::Typename {
+      generic_args: Some(args),
+      ..
+    } => {
+      for arg in args.args.iter_mut() {
+        *arg.arg = substitute_generic_params(&arg.arg, bindings);
+      }
+    }
+    Type2::ParenthesizedType { pt, .. } => {
+      for choice in pt.type_choices.iter_mut() {
+        choice.type1 = substitute_generic_params(&choice.type1, bindings);
+      }
+    }
+    _ => {}
+  }
+  substituted
 }
 
 /// Expand one alias occurrence. Results are cached by name only when no
@@ -778,16 +902,17 @@ fn expand_key_ident_alternatives<'a>(
   state: &ValidationState<'a>,
   candidate: &Type1<'a>,
   ident: &Identifier<'a>,
-  active: &mut Vec<&'a str>,
-  memo: &mut HashMap<&'a str, Rc<Vec<Type1<'a>>>>,
+  active: &mut Vec<String>,
+  memo: &mut HashMap<String, Rc<Vec<Type1<'a>>>>,
 ) -> (Vec<Type1<'a>>, bool) {
   if let Some(arg) = generic_argument_for_param(state, ident.ident) {
     return expand_key_type_alternatives(state, &arg, active, memo);
   }
-  if let Some(cached) = memo.get(ident.ident) {
+  let key = qualified_ident_key(ident);
+  if let Some(cached) = memo.get(&key) {
     return ((**cached).clone(), true);
   }
-  if active.contains(&ident.ident) {
+  if active.contains(&key) {
     // Recursive path: keep the name as an opaque leaf.
     return (vec![candidate.clone()], false);
   }
@@ -795,7 +920,7 @@ fn expand_key_ident_alternatives<'a>(
   if types.is_empty() {
     return (vec![candidate.clone()], true);
   }
-  active.push(ident.ident);
+  active.push(key.clone());
   let mut alternatives = Vec::new();
   let mut acyclic = true;
   for rule_type in types {
@@ -817,7 +942,7 @@ fn expand_key_ident_alternatives<'a>(
         deduplicated.push(alternative.clone());
       }
     }
-    memo.insert(ident.ident, Rc::new(deduplicated));
+    memo.insert(key, Rc::new(deduplicated));
   }
   (alternatives, acyclic)
 }
