@@ -3,7 +3,83 @@
 //! Conformance tests for the CDDL module structure, drawn from the examples in
 //! draft-ietf-cbor-cddl-modules-07.
 
-use cddl::modules::{resolve_modules, MemoryModuleSource, ModuleError, ResolveOptions};
+use cddl::modules::{
+  resolve_modules, MemoryModuleSource, ModuleError, ResolveOptions, ResolvedCddl,
+};
+
+#[test]
+fn owning_document_outlives_input_and_source() {
+  let document = {
+    let mut source = MemoryModuleSource::new();
+    source.insert("numbers", "value = uint\n");
+    let input = String::from("start = n.value\n;# import numbers as n\n");
+    ResolvedCddl::resolve(&input, &source, &ResolveOptions::default()).unwrap()
+  };
+  assert!(document.text().contains("n.value = uint"));
+  assert_eq!(document.parse().unwrap().rules.len(), 2);
+  assert_eq!(document.clone(), document);
+}
+
+#[test]
+fn owning_document_distinguishes_resolution_and_root_parse_errors() {
+  assert!(matches!(
+    ResolvedCddl::resolve(
+      ";# include missing\n",
+      &MemoryModuleSource::new(),
+      &ResolveOptions::default()
+    ),
+    Err(ModuleError::ModuleNotFound { line: 1, .. })
+  ));
+  let document = ResolvedCddl::resolve(
+    "start = {",
+    &MemoryModuleSource::new(),
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(document.parse().is_err());
+}
+
+#[cfg(all(feature = "json", not(feature = "lsp")))]
+#[test]
+fn owning_document_validates_json() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("numbers", "value = uint\n");
+  let document = ResolvedCddl::resolve(
+    "start = value\n;# import numbers\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  #[cfg(feature = "additional-controls")]
+  let validate = |json: &str| document.validate_json(json, None);
+  #[cfg(not(feature = "additional-controls"))]
+  let validate = |json: &str| document.validate_json(json);
+  assert!(validate("1").is_ok());
+  assert!(validate("-1").is_err());
+  assert!(validate("{").is_err());
+}
+
+#[cfg(all(feature = "cbor", not(feature = "lsp")))]
+#[test]
+fn owning_document_validates_cbor() {
+  let document = ResolvedCddl::resolve(
+    "start = n.value\n;# import numbers as n\n",
+    &{
+      let mut source = MemoryModuleSource::new();
+      source.insert("numbers", "value = uint\n");
+      source
+    },
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  #[cfg(feature = "additional-controls")]
+  let validate = |bytes: &[u8]| document.validate_cbor(bytes, None);
+  #[cfg(not(feature = "additional-controls"))]
+  let validate = |bytes: &[u8]| document.validate_cbor(bytes);
+  assert!(validate(&[0x01]).is_ok());
+  assert!(validate(&[0x20]).is_err());
+  assert!(validate(&[]).is_err());
+}
 
 /// The CDDL of RFC 9052 used throughout §2.5 and §2.6 of the specification.
 const RFC9052: &str = r#"COSE_Key = {

@@ -251,18 +251,19 @@
 //!
 //! Resolution is a source-to-source transformation into basic RFC 8610 CDDL,
 //! matching the behavior of the `cddlc -2tcddl` tool described in Appendix B
-//! of the draft. Resolve first, then parse the result:
+//! of the draft. `ResolvedCddl` owns the resolved text and exposes an AST that
+//! borrows it:
 //!
 //! ```ignore
-//! use cddl::modules::{resolve_modules, FsModuleSource, ResolveOptions};
+//! use cddl::modules::{ResolvedCddl, FsModuleSource, ResolveOptions};
 //!
 //! let input = "start = cose.COSE_Key\n;# import rfc9052 as cose\n";
-//! let basic_cddl = resolve_modules(
+//! let document = ResolvedCddl::resolve(
 //!   input,
 //!   &FsModuleSource::from_env(),
 //!   &ResolveOptions::default(),
 //! )?;
-//! let ast = cddl::parser::cddl_from_str(&basic_cddl, false)?;
+//! let ast = document.parse()?;
 //! ```
 //!
 //! Modules are located by filename along `CDDL_INCLUDE_PATH`, whose elements
@@ -278,9 +279,12 @@
 //!
 //! No RFC module collection is bundled; empty search-path elements are skipped.
 //! The playground and language server do not expose module resolution. Callers
-//! resolve then parse in two steps, and resolution removes directives rather
-//! than preserving them in the AST. Directive-like text inside literals is
-//! preserved.
+//! can use `ResolvedCddl` to own resolved text, parse it, and validate JSON or
+//! CBOR on native targets. WASM callers can use `resolve_cddl_modules(input,
+//! modules, start_rule)` with an object mapping module names to text, then pass
+//! the result to existing parser or validator exports. Resolution removes
+//! directives rather than preserving them in the AST. Directive-like text
+//! inside literals is preserved.
 //!
 //! ### CLI
 //!

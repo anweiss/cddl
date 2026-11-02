@@ -26,6 +26,7 @@
 //! ```
 
 mod directive;
+mod document;
 mod resolver;
 mod scan;
 mod source;
@@ -36,6 +37,9 @@ use alloc::{string::String, vec::Vec};
 use core::fmt;
 
 pub use directive::{parse_directives, Directive, DirectiveKind, NameSelector};
+#[cfg(all(target_arch = "wasm32", feature = "std"))]
+pub use document::resolve_cddl_modules;
+pub use document::ResolvedCddl;
 pub use resolver::{resolve_modules, ResolveOptions};
 pub use source::{MemoryModuleSource, ModuleSource};
 
