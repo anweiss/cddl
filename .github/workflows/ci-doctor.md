@@ -27,6 +27,8 @@ engine:
   model: gpt-5.1-codex-mini
 
 safe-outputs:
+  threat-detection:
+    continue-on-error: false
   create-issue:
     expires: 1d
     title-prefix: '[CI Failure Doctor] '
