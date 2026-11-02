@@ -848,6 +848,67 @@ fn an_imported_group_alias_stays_a_group() {
 }
 
 #[test]
+fn a_synthetic_start_rule_rejects_existing_definitions() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("m", "$.start.$ = int\n");
+  let options = ResolveOptions {
+    start_rule: Some("root".to_string()),
+    ..ResolveOptions::default()
+  };
+  for input in [
+    "$.start.$ = int\nroot = tstr\n",
+    "root = tstr\n;# include m\n",
+    "root = tstr\n;# import $.start.$ from m\n",
+  ] {
+    assert!(matches!(
+      resolve_modules(input, &source, &options),
+      Err(ModuleError::Directive { line: 0, .. })
+    ));
+    let output = resolve_modules(input, &source, &ResolveOptions::default()).unwrap();
+    assert_parses(&output);
+  }
+}
+
+#[test]
+fn explicit_prelude_selections_keep_their_unqualified_names() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("m", "int = uint / nint\n");
+  for kind in ["include", "import"] {
+    let input = format!("root = int\n;# {} int from m as ns\n", kind);
+    let output = resolve_modules(&input, &source, &ResolveOptions::default()).unwrap();
+    assert!(output.contains("int = uint / nint"), "{}", output);
+    assert!(!output.contains("ns.int"), "{}", output);
+    assert_parses(&output);
+  }
+}
+
+#[test]
+fn namespace_prefixes_cannot_merge_with_adjacent_numbers() {
+  let mut source = MemoryModuleSource::new();
+  for (namespace, number) in [("e3", "1"), ("a", "0xff"), ("e3", "0b11")] {
+    source.insert("m", &format!("item = int\nvalue = [{}item]\n", number));
+    for kind in ["include", "import"] {
+      let input = format!(
+        "root = {}.value\n;# {} m as {}\n",
+        namespace, kind, namespace
+      );
+      let output = resolve_modules(&input, &source, &ResolveOptions::default()).unwrap();
+      assert!(
+        output.contains(&format!("[{} {}.item]", number, namespace)),
+        "{}",
+        output
+      );
+      assert!(
+        output.contains(&format!("{}.item = int", namespace)),
+        "{}",
+        output
+      );
+      assert_parses(&output);
+    }
+  }
+}
+
+#[test]
 fn tag_heads_and_occurrence_bounds_keep_namespaced_references() {
   let mut source = MemoryModuleSource::new();
   source.insert(
@@ -863,7 +924,7 @@ fn tag_heads_and_occurrence_bounds_keep_namespaced_references() {
   .unwrap();
 
   assert!(
-    output.contains("ns.value = [#7.eq 32, 1*3ns.e3, #7.32ns.e5]"),
+    output.contains("ns.value = [#7.eq 32, 1*3 ns.e3, #7.32 ns.e5]"),
     "{}",
     output
   );

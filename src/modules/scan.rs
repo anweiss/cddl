@@ -430,21 +430,7 @@ pub(crate) fn scan(src: &str) -> Scan {
   // The head of a rule is the last plain reference occurring before its
   // assignment operator; generic parameters and control names are excluded by
   // construction.
-  let mut heads: Vec<(usize, usize)> = Vec::new();
-  for assign in &top_level_assigns {
-    let head = idents
-      .iter()
-      .enumerate()
-      .rev()
-      .find(|(_, id)| id.end <= *assign && id.role == IdentRole::Reference)
-      .map(|(idx, _)| idx);
-
-    if let Some(idx) = head {
-      if !heads.iter().any(|(existing, _)| *existing == idx) {
-        heads.push((idx, *assign));
-      }
-    }
-  }
+  let heads = assignment_heads(&idents, &top_level_assigns);
 
   for (idx, _) in &heads {
     idents[*idx].role = IdentRole::RuleHead;
@@ -489,6 +475,27 @@ pub(crate) fn scan(src: &str) -> Scan {
   Scan { idents, rules }
 }
 
+/// Both lists are source-ordered, so recovering heads needs only one pass.
+fn assignment_heads(idents: &[IdentToken], assigns: &[usize]) -> Vec<(usize, usize)> {
+  let mut heads = Vec::new();
+  let mut cursor = 0;
+  let mut head = None;
+  for assign in assigns {
+    while cursor < idents.len() && idents[cursor].end <= *assign {
+      if idents[cursor].role == IdentRole::Reference {
+        head = Some(cursor);
+      }
+      cursor += 1;
+    }
+    if let Some(idx) = head {
+      if heads.last().map(|(previous, _)| *previous) != Some(idx) {
+        heads.push((idx, *assign));
+      }
+    }
+  }
+  heads
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -503,6 +510,31 @@ mod tests {
       &src[scan.rules[0].start..scan.rules[0].end],
       "label = int / tstr"
     );
+  }
+
+  #[test]
+  fn recovers_many_source_ordered_assignment_heads() {
+    let mut src = String::new();
+    for n in 0..10_000 {
+      src.push_str(&format!("rule{}<a> = [a, int]\n", n));
+    }
+    let scanned = scan(&src);
+    assert_eq!(scanned.rules.len(), 10_000);
+    for (n, rule) in scanned.rules.iter().enumerate() {
+      assert_eq!(rule.name, format!("rule{}", n));
+      assert_eq!(rule.params, ["a"]);
+    }
+  }
+
+  #[test]
+  fn assignment_head_deduplication_keeps_only_the_last_candidate() {
+    let scanned = scan("rule = = int\nnext = tstr\n");
+    let names: Vec<_> = scanned
+      .rules
+      .iter()
+      .map(|rule| rule.name.as_str())
+      .collect();
+    assert_eq!(names, ["rule", "next"]);
   }
 
   #[test]

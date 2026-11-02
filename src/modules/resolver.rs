@@ -75,7 +75,8 @@ const PRELUDE: &[&str] = &[
 #[derive(Debug, Clone, Default)]
 pub struct ResolveOptions {
   /// A start (root) rule, emitted as `$.start.$ = <rule>` per §2.7 of the
-  /// specification. Corresponds to the tool's `-s` flag.
+  /// specification. Corresponds to the tool's `-s` flag. Resolution fails if
+  /// the input or selected module rules already define `$.start.$`.
   pub start_rule: Option<String>,
   /// Directives synthesized from the command line, applied before any
   /// directives found in the input, as `(namespace, module)` pairs. Corresponds
@@ -271,10 +272,22 @@ fn resolve(
     }
   }
 
-  Ok(render(options.start_rule.as_deref(), &body, pulled))
+  render(options.start_rule.as_deref(), &body, pulled, &emitted)
 }
 
-fn render(start_rule: Option<&str>, body: &str, pulled: Vec<String>) -> String {
+fn render(
+  start_rule: Option<&str>,
+  body: &str,
+  pulled: Vec<String>,
+  emitted: &BTreeSet<String>,
+) -> Result<String, ModuleError> {
+  if start_rule.is_some() && emitted.contains("$.start.$") {
+    return Err(ModuleError::Directive {
+      line: 0,
+      message: "the synthetic start rule conflicts with an existing definition".to_string(),
+    });
+  }
+
   let mut output = String::new();
 
   if let Some(start) = start_rule {
@@ -292,7 +305,7 @@ fn render(start_rule: Option<&str>, body: &str, pulled: Vec<String>) -> String {
     output.push('\n');
   }
 
-  output
+  Ok(output)
 }
 
 /// Emit every part of `rule` that is not already supplied: a base definition
@@ -480,7 +493,9 @@ fn validate_module(name: &str, resolved: &str) -> Result<(), ModuleError> {
 /// Resolve a name written in a directive against the directive's namespace.
 fn qualify(written: &str, alias: Option<&str>) -> String {
   match alias {
-    Some(alias) if !written.starts_with(&format!("{}.", alias)) => format!("{}.{}", alias, written),
+    Some(alias) if !PRELUDE.contains(&written) && !written.starts_with(&format!("{}.", alias)) => {
+      format!("{}.{}", alias, written)
+    }
     _ => written.to_string(),
   }
 }
@@ -635,6 +650,12 @@ fn apply_namespace(src: &str, defined: &BTreeSet<String>, namespace: &str) -> St
     };
 
     output.push_str(&src[cursor..ident.start]);
+    // A new prefix can turn an adjacent numeric token into a different one:
+    // `1item` -> `1e3.item`, or `0xffitem` -> `0xffa.item`. Separate the
+    // tokens before rewriting, including renamed generic parameters.
+    if ident.start > 0 && src.as_bytes()[ident.start - 1].is_ascii_alphanumeric() {
+      output.push(' ');
+    }
     output.push_str(&replacement);
     cursor = ident.end;
   }
