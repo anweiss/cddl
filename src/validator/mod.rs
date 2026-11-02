@@ -746,6 +746,25 @@ pub(crate) fn choice_member_key<'e, 'a>(
   choice.then_some((t1.as_ref(), alternatives, *is_cut))
 }
 
+/// The occurrence and bounds of a choice-key member. An indicator inherited
+/// from an enclosing group repeats the whole group: a zero-allowed group's
+/// absence is handled by its own rollback, so inside a present group the
+/// member is still required.
+pub(crate) fn choice_member_occurrence(
+  entry: &ValueMemberKeyEntry,
+  inherited: Option<Occur>,
+) -> (Option<Occur>, usize, Option<usize>) {
+  let own = entry.occur.as_ref().map(|o| o.occur);
+  let occurrence = own.or(inherited);
+  let (min, max) = occurrence_bounds(occurrence);
+  let min = if own.is_none() && inherited.is_some() {
+    min.max(1)
+  } else {
+    min
+  };
+  (occurrence, min, max)
+}
+
 /// Whether a type carries a control operator whose target is a choice.
 fn control_targets_choice(state: &ValidationState, t1: &Type1) -> bool {
   let Some(operator) = &t1.operator else {

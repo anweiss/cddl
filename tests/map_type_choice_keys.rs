@@ -1046,3 +1046,93 @@ fn cbor_generic_choice_keys_substitute_inline_group_choices() {
   check_cbor(schema, "a1617800", true);
   check_cbor(schema, "a1f500", false);
 }
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_choice_key_in_optional_group_is_required_when_group_present() {
+  let schema = "m = { ? ((int / tstr) => uint, flag: bool) }";
+  // {"flag": true}
+  check_cbor(schema, "a164666c6167f5", false);
+  check_cbor(schema, "a261780164666c6167f5", true);
+  check_cbor(schema, "a0", true);
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_choice_key_round_nine_cases() {
+  for (schema, json, expected) in [
+    // A member inside a present optional group is still required.
+    (
+      "m = { ? ((int / tstr) => uint, flag: bool) }",
+      r#"{"flag":true}"#,
+      false,
+    ),
+    (
+      "m = { ? ((int / tstr) => uint, flag: bool) }",
+      r#"{"x":1,"flag":true}"#,
+      true,
+    ),
+    ("m = { ? ((int / tstr) => uint, flag: bool) }", "{}", true),
+    // A claim captured without generic bindings keeps the global meaning
+    // of its names when rechecked inside a generic group.
+    (
+      "m = { X => any, g<(int / tstr)> }\nX = \"a\" / \"b\"\ng<X> = (X => uint)",
+      r#"{"a":1,"z":"x"}"#,
+      false,
+    ),
+    (
+      "m = { X => any, g<(int / tstr)> }\nX = \"a\" / \"b\"\ng<X> = (X => uint)",
+      r#"{"a":"x","z":1}"#,
+      true,
+    ),
+    // Each use of a generic group validates with its own arguments.
+    (
+      "m = { g<any>, g<uint> }\ng<V> = ((int / tstr) => V)",
+      r#"{"a":"x","b":"y"}"#,
+      false,
+    ),
+    (
+      "m = { g<any>, g<uint> }\ng<V> = ((int / tstr) => V)",
+      r#"{"a":"x","b":1}"#,
+      true,
+    ),
+    // An optional member that matched nothing may win a held pair.
+    (
+      "m = { (int / tstr) => any, ? (\"a\" / \"z\") => uint }",
+      r#"{"a":1,"b":"x"}"#,
+      true,
+    ),
+    (
+      "m = { (int / tstr) => any, ? (\"a\" / \"z\") => uint }",
+      r#"{"a":1}"#,
+      true,
+    ),
+  ] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(
+      result.is_ok(),
+      expected,
+      "{schema} JSON: {json}, result: {result:?}"
+    );
+  }
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_optional_choice_member_may_win_a_held_pair() {
+  let schema = "m = { (int / tstr) => any, ? (\"a\" / \"z\") => uint }";
+  // {"a": 1, "b": "x"}
+  check_cbor(schema, "a261610161626178", true);
+  // {"a": 1}
+  check_cbor(schema, "a1616101", true);
+  // {"a": "x", "b": "x"}
+  check_cbor(schema, "a26161617861626178", false);
+}

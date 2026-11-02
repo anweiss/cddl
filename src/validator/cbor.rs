@@ -186,6 +186,21 @@ pub struct CBORValidator<'a> {
 }
 
 impl<'a> CBORValidator<'a> {
+  fn validate_base64_url_tag(&mut self) {
+    if let Value::Tag(33, value) = &self.cbor {
+      if let Value::Text(text) = value.as_ref() {
+        if let Err(error) = base64_url::decode(text) {
+          self.add_error(format!(
+            "expected base64 URL data type, decoding error: {}",
+            error
+          ));
+        }
+        return;
+      }
+    }
+    self.add_error("expected b64url tag 33 with a text payload".into());
+  }
+
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   /// New cborValidation from CDDL AST and cbor value
@@ -617,12 +632,7 @@ impl<'a> CBORValidator<'a> {
     let Value::Map(entries) = self.cbor.clone() else {
       return Ok(());
     };
-    let occurrence = entry
-      .occur
-      .as_ref()
-      .map(|o| o.occur)
-      .or(self.state.occurrence);
-    let (min, max) = occurrence_bounds(occurrence);
+    let (occurrence, min, max) = choice_member_occurrence(entry, self.state.occurrence);
     let single = max == Some(1);
     let mut count = 0;
     let mut cut_committed = false;
@@ -651,21 +661,12 @@ impl<'a> CBORValidator<'a> {
       }
     }
 
-    if count < min && single && !cut_committed {
-      // Prefer the key-matching pair whose value failed; otherwise seed the
-      // reassignment with any unclaimed pair, so the one-to-one allocator can
-      // hand an earlier member a replacement.
-      let mut candidates: Vec<usize> = fallback.into_iter().collect();
-      candidates.extend(
-        (0..entries.len())
-          .filter(|index| Self::is_unconsumed_map_entry(*index, &self.claimed_map_entries)),
-      );
-      for index in candidates {
-        if self.reassign_choice_key_pair::<T>(index, entry)? {
-          count += 1;
-          break;
-        }
-      }
+    if count == 0
+      && single
+      && !cut_committed
+      && self.retry_choice_key_entry::<T>(entry, &entries, alternatives, fallback, min > 0)?
+    {
+      count += 1;
     }
     if count < min {
       if value_errors.is_empty() {
@@ -678,6 +679,60 @@ impl<'a> CBORValidator<'a> {
       self.state.occurrence = None;
     }
     Ok(())
+  }
+
+  /// Retry a single-occurrence member that matched no pair through the
+  /// one-to-one reassignment. An optional member retries only when a pair it
+  /// could take is held elsewhere or failed its value.
+  fn retry_choice_key_entry<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entry: &ValueMemberKeyEntry<'a>,
+    entries: &[(Value, Value)],
+    alternatives: &[Type1<'a>],
+    fallback: Option<usize>,
+    required: bool,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    if !required && fallback.is_none() && !self.choice_key_held::<T>(entries, alternatives)? {
+      return Ok(false);
+    }
+    // Prefer the key-matching pair whose value failed; otherwise seed the
+    // reassignment with any unclaimed pair, so the one-to-one allocator can
+    // hand an earlier member a replacement.
+    let mut candidates: Vec<usize> = fallback.into_iter().collect();
+    candidates.extend(
+      (0..entries.len())
+        .filter(|index| Self::is_unconsumed_map_entry(*index, &self.claimed_map_entries)),
+    );
+    for index in candidates {
+      if self.reassign_choice_key_pair::<T>(index, entry)? {
+        return Ok(true);
+      }
+    }
+    Ok(false)
+  }
+
+  /// Whether another member holds a pair whose key this member's
+  /// alternatives match, so an optional member that matched nothing may
+  /// still win it through reassignment.
+  fn choice_key_held<T: std::fmt::Debug + 'static>(
+    &self,
+    entries: &[(Value, Value)],
+    alternatives: &[Type1<'a>],
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    for (index, (key, _)) in entries.iter().enumerate() {
+      if !Self::is_unconsumed_map_entry(index, &self.claimed_map_entries)
+        && self.map_key_matches_alternatives::<T>(key, alternatives)?
+      {
+        return Ok(true);
+      }
+    }
+    Ok(false)
   }
 
   /// Single-occurrence claims join the one-to-one pair assignment so an
@@ -4116,12 +4171,7 @@ where
             self.add_error(format!("expected URI data type, decoding error: {}", e));
           }
         } else if is_ident_b64url_data_type(self.state.cddl, ident) {
-          if let Err(e) = base64_url::decode(s) {
-            self.add_error(format!(
-              "expected base64 URL data type, decoding error: {}",
-              e
-            ));
-          }
+          self.add_error("expected b64url tag 33 with a text payload".into());
         } else if is_ident_tdate_data_type(self.state.cddl, ident) {
           if let Err(e) = chrono::DateTime::parse_from_rfc3339(s) {
             self.add_error(format!("expected tdate data type, decoding error: {}", e));
@@ -4135,6 +4185,10 @@ where
         Ok(())
       }
       Value::Tag(tag, value) => {
+        if is_ident_b64url_data_type(self.state.cddl, ident) {
+          self.validate_base64_url_tag();
+          return Ok(());
+        }
         if is_ident_bignum_data_type(self.state.cddl, ident) {
           if !(ident_accepts_bignum_tag(self.state.cddl, ident, *tag)
             && matches!(value.as_ref(), Value::Bytes(_)))

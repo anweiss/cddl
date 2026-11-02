@@ -31,6 +31,10 @@ An undefined group socket matches no entries, so `{ * $$s }` accepts an empty
 map. A failed inline group that may occur zero times, such as `? ($$s)`,
 releases its errors and any entries it claimed.
 
+The `b64url` prelude accepts unpadded URL-safe base64 text in JSON. In CBOR it
+requires tag 33 around a text payload and validates that payload with the same
+decoder; untagged text, other tags and non-text payloads are rejected.
+
 The client never imports server internals. Browser modules never import LSP
 sources. ESLint enforces these source boundaries; the generated WASM packages
 are the shared implementation, not hand-maintained JavaScript copies.

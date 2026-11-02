@@ -379,12 +379,7 @@ impl<'a> JSONValidator<'a> {
     let Value::Object(entries) = self.json.clone() else {
       return Ok(());
     };
-    let occurrence = entry
-      .occur
-      .as_ref()
-      .map(|o| o.occur)
-      .or(self.state.occurrence);
-    let (min, max) = occurrence_bounds(occurrence);
+    let (occurrence, min, max) = choice_member_occurrence(entry, self.state.occurrence);
     let single = max == Some(1);
     let mut count = 0;
     let mut cut_committed = false;
@@ -424,21 +419,67 @@ impl<'a> JSONValidator<'a> {
     }
 
     // Before a cut member matches a key it has no commitment to keep, so the
-    // retry may still hand it a pair.
-    if count < min && single && !cut_committed && self.reassign_choice_claims(entry)? {
+    // retry may still hand it a pair. An optional member that matched
+    // nothing retries only for a key another member holds.
+    if count == 0
+      && single
+      && !cut_committed
+      && self.retry_choice_key_entry(entry, &entries, alternatives, min > 0)?
+    {
       count += 1;
     }
     if count < min {
-      if value_errors.is_empty() {
-        self.add_error(format!("object requires entry key of type {}", key_type));
-      } else {
-        self.errors.append(&mut value_errors);
-      }
+      self.report_missing_choice_key(key_type, value_errors);
     }
     if occurrence.is_some() {
       self.state.occurrence = None;
     }
     Ok(())
+  }
+
+  /// Retry a single-occurrence member that matched no pair through the
+  /// one-to-one reassignment. An optional member retries only for a key
+  /// another member holds.
+  fn retry_choice_key_entry(
+    &mut self,
+    entry: &ValueMemberKeyEntry<'a>,
+    entries: &serde_json::Map<String, Value>,
+    alternatives: &[Type1<'a>],
+    required: bool,
+  ) -> std::result::Result<bool, Error> {
+    if !required && !self.choice_key_held(entries, alternatives)? {
+      return Ok(false);
+    }
+    self.reassign_choice_claims(entry)
+  }
+
+  fn report_missing_choice_key(
+    &mut self,
+    key_type: &Type1<'a>,
+    mut value_errors: Vec<ValidationError>,
+  ) {
+    if value_errors.is_empty() {
+      self.add_error(format!("object requires entry key of type {}", key_type));
+    } else {
+      self.errors.append(&mut value_errors);
+    }
+  }
+
+  /// Whether another member holds a key this member's alternatives match.
+  fn choice_key_held(
+    &self,
+    entries: &serde_json::Map<String, Value>,
+    alternatives: &[Type1<'a>],
+  ) -> std::result::Result<bool, Error> {
+    let Some(validated) = &self.validated_keys else {
+      return Ok(false);
+    };
+    for key in entries.keys() {
+      if validated.contains(key) && self.object_key_matches_alternatives(key, alternatives)? {
+        return Ok(true);
+      }
+    }
+    Ok(false)
   }
 
   /// The generic evaluation context to capture with a new claim.
@@ -463,9 +504,17 @@ impl<'a> JSONValidator<'a> {
     context: Option<&ClaimEvalContext<'a>>,
   ) -> JSONValidator<'a> {
     let mut probe = self.new_with_recursion_state(value);
-    if let Some(context) = context {
-      probe.state.generic_rules = context.generic_rules.clone();
-      probe.state.eval_generic_rule = Some(context.rule_name);
+    match context {
+      Some(context) => {
+        probe.state.generic_rules = context.generic_rules.clone();
+        probe.state.eval_generic_rule = Some(context.rule_name);
+      }
+      // A claim captured outside any generic evaluation must not see the
+      // bindings active where it is rechecked.
+      None => {
+        probe.state.generic_rules.clear();
+        probe.state.eval_generic_rule = None;
+      }
     }
     probe
   }
@@ -501,17 +550,18 @@ impl<'a> JSONValidator<'a> {
     key: &str,
     value: &Value,
   ) -> std::result::Result<bool, Error> {
-    let owned_state;
-    let state = match &claim.context {
+    let mut state = self.state.clone();
+    match &claim.context {
       Some(context) => {
-        let mut state = self.state.clone();
         state.generic_rules = context.generic_rules.clone();
         state.eval_generic_rule = Some(context.rule_name);
-        owned_state = state;
-        &owned_state
       }
-      None => &self.state,
-    };
+      None => {
+        state.generic_rules.clear();
+        state.eval_generic_rule = None;
+      }
+    }
+    let state = &state;
     let key_matches = match choice_member_key(state, &claim.entry) {
       Some((_, alternatives, _)) => {
         let mut matched = false;
@@ -3533,7 +3583,10 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
           .iter_mut()
           .find(|gr| gr.name == entry.name.ident)
         {
-          gr.args.extend(resolved_args);
+          // Parameters resolve by position from the start of `args`, so a
+          // repeated use replaces the previous instantiation's arguments;
+          // claims keep their own copy in their captured context.
+          gr.args = resolved_args;
         } else if let Some(params) = generic_params_from_rule(rule) {
           self.state.generic_rules.push(GenericRule {
             name: entry.name.ident,
