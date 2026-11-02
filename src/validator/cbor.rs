@@ -639,8 +639,19 @@ impl<'a> CBORValidator<'a> {
     }
 
     if count < min && single {
-      if let Some(index) = fallback {
-        count += usize::from(self.reassign_choice_key_pair::<T>(index, entry)?);
+      // Prefer the key-matching pair whose value failed; otherwise seed the
+      // reassignment with any unclaimed pair, so the one-to-one allocator can
+      // hand an earlier member a replacement.
+      let mut candidates: Vec<usize> = fallback.into_iter().collect();
+      candidates.extend(
+        (0..entries.len())
+          .filter(|index| Self::is_unconsumed_map_entry(*index, &self.claimed_map_entries)),
+      );
+      for index in candidates {
+        if self.reassign_choice_key_pair::<T>(index, entry)? {
+          count += 1;
+          break;
+        }
       }
     }
     if count < min {
@@ -707,7 +718,6 @@ impl<'a> CBORValidator<'a> {
         continue;
       }
       let mut probe = self.new_with_recursion_state(key.clone());
-      probe.validating_value = true;
       probe.visit_type1(alternative)?;
       if probe.errors.is_empty() {
         return Ok(true);
@@ -730,7 +740,6 @@ impl<'a> CBORValidator<'a> {
     cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
     cv.state.type_group_name_entry = self.state.type_group_name_entry;
     cv.state.data_location = format!("{}/{:?}", self.state.data_location, key);
-    cv.validating_value = true;
     cv.visit_type(entry_type)?;
     Ok(cv.errors)
   }
@@ -4571,16 +4580,12 @@ where
       return walk_inline_group_entry(self, occur, g);
     }
     // A failed group that may occur zero times takes its zero-width path:
-    // drop its errors and return any pairs it claimed to later members.
-    let error_count = self.errors.len();
-    let claimed_map_entries = self.claimed_map_entries.clone();
-    let single_entry_claims = self.single_entry_claims.clone();
+    // restore the complete pre-group state so its errors, claims and
+    // occurrence indicator do not leak into later members.
+    let checkpoint = self.clone();
     walk_inline_group_entry(self, occur, g)?;
-    if self.errors.len() > error_count {
-      self.errors.truncate(error_count);
-      self.claimed_map_entries = claimed_map_entries;
-      self.single_entry_claims = single_entry_claims;
-      self.active_single_entry_claim = None;
+    if self.errors.len() > checkpoint.errors.len() {
+      *self = checkpoint;
     }
     Ok(())
   }
@@ -5150,6 +5155,7 @@ fn prelude_key_domain_admits(cddl: &CDDL, alternative: &Type1, key: &Value) -> b
     || !(is_ident_string_data_type(cddl, ident)
       || is_ident_byte_string_data_type(cddl, ident)
       || is_ident_bool_data_type(cddl, ident)
+      || matches!(lookup_ident(ident.ident), Token::TRUE | Token::FALSE)
       || is_ident_null_data_type(cddl, ident))
 }
 

@@ -177,3 +177,36 @@ fn cbor_failed_optional_group_returns_claimed_pairs() {
     assert_eq!(result.is_ok(), valid, "{schema}: {result:?}");
   }
 }
+
+#[cfg(feature = "cbor")]
+#[test]
+fn cbor_skipped_optional_group_keeps_later_members_required() {
+  // Skipping `? ($$s)` must not leak its `?` into the required `k: int`.
+  for schema in ["m = { ? ($$s), k: int }", "m = { * ($$s), k: int }"] {
+    for (bytes, valid) in [(vec![0xa0], false), (vec![0xa1, 0x61, 0x6b, 0x01], true)] {
+      let result = cddl::validate_cbor_from_slice(
+        schema,
+        &bytes,
+        #[cfg(feature = "additional-controls")]
+        None,
+      );
+      assert_eq!(result.is_ok(), valid, "{schema}: {result:?}");
+    }
+  }
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn json_skipped_optional_group_keeps_later_members_required() {
+  for schema in ["m = { ? ($$s), k: int }", "m = { * ($$s), k: int }"] {
+    for (json, valid) in [("{}", false), (r#"{"k":1}"#, true)] {
+      let result = cddl::validate_json_from_str(
+        schema,
+        json,
+        #[cfg(feature = "additional-controls")]
+        None,
+      );
+      assert_eq!(result.is_ok(), valid, "{schema}: {result:?}");
+    }
+  }
+}

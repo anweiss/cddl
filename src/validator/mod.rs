@@ -727,16 +727,15 @@ pub(crate) fn choice_member_key<'e, 'a>(
 /// The alternatives one map key may match for a member key type, following
 /// parentheses, aliases, `/=` extensions and generic parameters. A type with
 /// a control operator or generic arguments stays whole because it constrains
-/// the complete type rather than one alternative. Recursive names stop after
-/// their first expansion.
+/// the complete type rather than one alternative. Visited names are tracked
+/// per expansion path: sibling aliases expand fully, recursive paths stop.
 pub(crate) fn member_key_type_alternatives<'a>(
   state: &ValidationState<'a>,
   key_type: &Type1<'a>,
 ) -> Vec<Type1<'a>> {
   let mut alternatives = Vec::new();
-  let mut pending = vec![key_type.clone()];
-  let mut visited = HashSet::new();
-  while let Some(candidate) = pending.pop() {
+  let mut pending = vec![(key_type.clone(), HashSet::new())];
+  while let Some((candidate, mut visited)) = pending.pop() {
     let expansion = match &candidate.type2 {
       _ if candidate.operator.is_some() => Vec::new(),
       Type2::ParenthesizedType { pt, .. } => pt
@@ -748,20 +747,32 @@ pub(crate) fn member_key_type_alternatives<'a>(
         ident,
         generic_args: None,
         ..
-      } if visited.insert(ident.ident) => generic_argument_for_param(state, ident.ident)
-        .map(|arg| vec![arg])
-        .unwrap_or_else(|| {
-          type_choice_types_from_ident(state.cddl, ident)
+      } => {
+        // Visited names are tracked per expansion path, so sibling aliases
+        // of the same name still expand fully while recursive paths stop.
+        if !visited.insert(ident.ident) {
+          alternatives.push(candidate);
+          continue;
+        }
+        match generic_argument_for_param(state, ident.ident) {
+          Some(arg) => vec![arg],
+          None => type_choice_types_from_ident(state.cddl, ident)
             .into_iter()
             .flat_map(|t| t.type_choices.iter().map(|choice| choice.type1.clone()))
-            .collect()
-        }),
+            .collect(),
+        }
+      }
       _ => Vec::new(),
     };
     if expansion.is_empty() {
       alternatives.push(candidate);
     } else {
-      pending.extend(expansion.into_iter().rev());
+      pending.extend(
+        expansion
+          .into_iter()
+          .rev()
+          .map(|child| (child, visited.clone())),
+      );
     }
   }
   alternatives

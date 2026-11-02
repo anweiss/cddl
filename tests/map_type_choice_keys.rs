@@ -258,3 +258,75 @@ fn json_type_choice_keys_match_complete_pairs() {
     );
   }
 }
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_check_singleton_and_alias_domains() {
+  // Tagged keys are not booleans, and sibling aliases expand fully:
+  // with `a = nint` and `b = a`, both alternatives reject `{3: 1}`.
+  check_cbor("m = { * (true / false) => any }", "a1c2410101", false);
+  check_cbor("m = { * (true / false) => any }", "a1f501", true);
+  let alias = "m = { * (a / b) => any }\na = nint\nb = a";
+  check_cbor(alias, "a10301", false);
+  check_cbor(alias, "a12001", true);
+  check_cbor(alias, "a1617801", false);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_reassign_claimed_pairs() {
+  // `{"x": 1, 3: 2}`: the second member needs "x", so the first takes 3.
+  let schema = "m = { (int / tstr) => any, (\"x\" / \"y\") => uint }";
+  check_cbor(schema, "a26178010302", true);
+  check_cbor(schema, "a2617861780302", false);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_support_structured_keys_and_nested_values() {
+  // `{{"b": 1}: 1}`: a structured map key can match one alternative.
+  check_cbor(
+    "m = { * ({ tstr => uint } / tstr) => any }",
+    "a1a161620101",
+    true,
+  );
+  check_cbor(
+    "m = { * ({ tstr => uint } / tstr) => any }",
+    "a1a16162617801",
+    false,
+  );
+  // `{"x": {"y": 1}}`: primitive keys keep working inside a map value.
+  check_cbor(
+    "m = { (int / tstr) => { tstr => uint } }",
+    "a16178a1617901",
+    true,
+  );
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_type_choice_keys_reassign_claimed_pairs() {
+  // `{"a": 1, "b": "x"}`: the second member needs "a", so the first
+  // takes "b". No assignment satisfies `{"a": "x", "b": "y"}`.
+  let schema = "m = { (int / tstr) => any, (int / tstr) => uint }";
+  for (json, expected) in [
+    (r#"{"a":1,"b":"x"}"#, true),
+    (r#"{"a":"x","b":"y"}"#, false),
+  ] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(
+      result.is_ok(),
+      expected,
+      "schema: {schema}, JSON: {json}, result: {result:?}"
+    );
+  }
+}

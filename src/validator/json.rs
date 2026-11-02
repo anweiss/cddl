@@ -18,6 +18,29 @@ use std::{
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
 
+/// Finds an augmenting path in the claim-to-pair compatibility graph; the
+/// DFS form of Kuhn's maximum bipartite matching.
+fn augment_choice_assignment(
+  claim_slot: usize,
+  compatibility: &[Vec<bool>],
+  visited_pairs: &mut [bool],
+  pair_owners: &mut [Option<usize>],
+) -> bool {
+  for pair_slot in 0..compatibility[claim_slot].len() {
+    if !compatibility[claim_slot][pair_slot] || visited_pairs[pair_slot] {
+      continue;
+    }
+    visited_pairs[pair_slot] = true;
+    if pair_owners[pair_slot].is_none_or(|owner| {
+      augment_choice_assignment(owner, compatibility, visited_pairs, pair_owners)
+    }) {
+      pair_owners[pair_slot] = Some(claim_slot);
+      return true;
+    }
+  }
+  false
+}
+
 fn is_json_unsigned(cddl: &CDDL, ident: &Identifier) -> bool {
   is_ident_uint_data_type(cddl, ident) || matches!(lookup_ident(ident.ident), Token::UNSIGNED)
 }
@@ -156,6 +179,9 @@ pub struct JSONValidator<'a> {
   cut_value: Option<Cow<'a, str>>,
   // Collect map entry keys that have already been validated
   validated_keys: Option<Vec<String>>,
+  // Complete pairs claimed by single-occurrence choice-key members, retried
+  // as a one-to-one assignment when a later member finds no pair
+  choice_claims: Vec<(String, ValueMemberKeyEntry<'a>)>,
   // Candidate pairs produced while visiting one repeating map member's key.
   // The group entry takes this relay immediately and commits only candidates
   // whose values also match the member.
@@ -174,6 +200,7 @@ impl<'a> JSONValidator<'a> {
       object_value: None,
       cut_value: None,
       validated_keys: None,
+      choice_claims: Vec::new(),
       map_entry_candidates: None,
     }
   }
@@ -189,6 +216,7 @@ impl<'a> JSONValidator<'a> {
       object_value: None,
       cut_value: None,
       validated_keys: None,
+      choice_claims: Vec::new(),
       map_entry_candidates: None,
     }
   }
@@ -265,6 +293,7 @@ impl<'a> JSONValidator<'a> {
       object_value: None,
       cut_value: None,
       validated_keys: None,
+      choice_claims: Vec::new(),
       map_entry_candidates: None,
     }
   }
@@ -280,6 +309,7 @@ impl<'a> JSONValidator<'a> {
       object_value: None,
       cut_value: None,
       validated_keys: None,
+      choice_claims: Vec::new(),
       map_entry_candidates: None,
     }
   }
@@ -322,6 +352,7 @@ impl<'a> JSONValidator<'a> {
       .map(|o| o.occur)
       .or(self.state.occurrence);
     let (min, max) = occurrence_bounds(occurrence);
+    let single = max == Some(1);
     let mut count = 0;
     let mut value_errors = Vec::new();
     for (key, value) in entries.iter() {
@@ -344,12 +375,18 @@ impl<'a> JSONValidator<'a> {
           .validated_keys
           .get_or_insert_with(Vec::new)
           .push(key.clone());
+        if single && errors.is_empty() {
+          self.choice_claims.push((key.clone(), entry.clone()));
+        }
         self.errors.extend(errors);
       } else {
         value_errors = errors;
       }
     }
 
+    if count < min && single && self.reassign_choice_claims(entry)? {
+      count += 1;
+    }
     if count < min {
       if value_errors.is_empty() {
         self.add_error(format!("object requires entry key of type {}", key_type));
@@ -361,6 +398,119 @@ impl<'a> JSONValidator<'a> {
       self.state.occurrence = None;
     }
     Ok(())
+  }
+
+  /// Whether a complete pair satisfies a choice-key member: its key matches
+  /// one alternative and its value validates against the member's type.
+  fn choice_pair_satisfies(
+    &self,
+    entry: &ValueMemberKeyEntry<'a>,
+    key: &str,
+    value: &Value,
+  ) -> std::result::Result<bool, Error> {
+    let Some((_, alternatives, _)) = choice_member_key(&self.state, entry) else {
+      return Ok(false);
+    };
+    if !self.object_key_matches_alternatives(key, &alternatives)? {
+      return Ok(false);
+    }
+    Ok(
+      self
+        .object_value_errors(&entry.entry_type, key, value)?
+        .is_empty(),
+    )
+  }
+
+  /// Retry the single-occurrence choice members as a one-to-one assignment
+  /// of complete pairs, so an earlier member can give up a pair a later
+  /// member needs. Pairs claimed by non-choice members stay fixed.
+  fn reassign_choice_claims(
+    &mut self,
+    entry: &ValueMemberKeyEntry<'a>,
+  ) -> std::result::Result<bool, Error> {
+    let Value::Object(entries) = &self.json else {
+      return Ok(false);
+    };
+    let mut claims = self.choice_claims.clone();
+    claims.push((String::new(), entry.clone()));
+    let empty: Vec<String> = Vec::new();
+    let validated = self.validated_keys.as_ref().unwrap_or(&empty);
+    let candidates: Vec<(String, Value)> = entries
+      .iter()
+      .filter(|(key, _)| {
+        !validated.contains(key)
+          || self
+            .choice_claims
+            .iter()
+            .any(|(k, _)| k.as_str() == key.as_str())
+      })
+      .map(|(key, value)| (key.clone(), value.clone()))
+      .collect();
+    if candidates.len() < claims.len() {
+      return Ok(false);
+    }
+
+    let mut compatibility = vec![vec![false; candidates.len()]; claims.len()];
+    for (claim_slot, (_, claim_entry)) in claims.iter().enumerate() {
+      for (pair_slot, (key, value)) in candidates.iter().enumerate() {
+        compatibility[claim_slot][pair_slot] =
+          self.choice_pair_satisfies(claim_entry, key, value)?;
+      }
+    }
+
+    let mut pair_owners = vec![None; candidates.len()];
+    for claim_slot in 0..claims.len() {
+      let mut visited_pairs = vec![false; candidates.len()];
+      if !augment_choice_assignment(
+        claim_slot,
+        &compatibility,
+        &mut visited_pairs,
+        &mut pair_owners,
+      ) {
+        return Ok(false);
+      }
+    }
+
+    self.commit_choice_assignment(&claims, &candidates, &pair_owners)
+  }
+
+  /// Commit a solved assignment: choice claims move to their new keys and
+  /// the validated-key set follows.
+  fn commit_choice_assignment(
+    &mut self,
+    claims: &[(String, ValueMemberKeyEntry<'a>)],
+    candidates: &[(String, Value)],
+    pair_owners: &[Option<usize>],
+  ) -> std::result::Result<bool, Error> {
+    let mut assigned = vec![None; claims.len()];
+    for (pair_slot, owner) in pair_owners.iter().enumerate() {
+      if let Some(claim_slot) = owner {
+        assigned[*claim_slot] = Some(pair_slot);
+      }
+    }
+
+    let old_keys: Vec<&str> = self
+      .choice_claims
+      .iter()
+      .map(|(key, _)| key.as_str())
+      .collect();
+    let keys = self.validated_keys.get_or_insert_with(Vec::new);
+    keys.retain(|key| !old_keys.contains(&key.as_str()));
+    let mut new_claims = Vec::new();
+    for (claim_slot, pair_slot) in assigned.into_iter().enumerate() {
+      let Some(pair_slot) = pair_slot else {
+        return Ok(false);
+      };
+      keys.push(candidates[pair_slot].0.clone());
+      if claim_slot < self.choice_claims.len() {
+        new_claims.push((
+          candidates[pair_slot].0.clone(),
+          claims[claim_slot].1.clone(),
+        ));
+      }
+    }
+    self.choice_claims = new_claims;
+    Ok(true)
   }
 
   fn object_key_matches_alternatives(
@@ -3282,13 +3432,12 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       return walk_inline_group_entry(self, occur, g);
     }
     // A failed group that may occur zero times takes its zero-width path:
-    // drop its errors and return any members it claimed to later entries.
-    let error_count = self.errors.len();
-    let validated_keys = self.validated_keys.clone();
+    // restore the complete pre-group state so its errors, claimed members
+    // and occurrence indicator do not leak into later entries.
+    let checkpoint = self.clone();
     walk_inline_group_entry(self, occur, g)?;
-    if self.errors.len() > error_count {
-      self.errors.truncate(error_count);
-      self.validated_keys = validated_keys;
+    if self.errors.len() > checkpoint.errors.len() {
+      *self = checkpoint;
     }
     Ok(())
   }
