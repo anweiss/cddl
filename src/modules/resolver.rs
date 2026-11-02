@@ -120,15 +120,25 @@ pub fn resolve_modules(
   source: &dyn ModuleSource,
   options: &ResolveOptions,
 ) -> Result<String, ModuleError> {
-  let mut chain = Vec::new();
-  resolve(input, source, options, &mut chain)
+  resolve(input, source, options, &mut Loader::default())
+}
+
+/// State shared by every module load within one top-level resolution.
+#[derive(Default)]
+struct Loader {
+  /// Modules currently being resolved, outermost first, for cycle detection.
+  chain: Vec<String>,
+  /// Modules already resolved and validated. A module imported along many
+  /// paths would otherwise be reloaded once per path, which grows
+  /// exponentially with the depth of a shared dependency graph.
+  resolved: BTreeMap<String, String>,
 }
 
 fn resolve(
   input: &str,
   source: &dyn ModuleSource,
   options: &ResolveOptions,
-  chain: &mut Vec<String>,
+  loader: &mut Loader,
 ) -> Result<String, ModuleError> {
   let mut directives: Vec<Directive> = options
     .command_line_imports
@@ -162,7 +172,7 @@ fn resolve(
   let mut pulled: Vec<String> = Vec::new();
 
   for directive in &directives {
-    let text = load_module(&directive.filename, directive.line, source, chain)?;
+    let text = load_module(&directive.filename, directive.line, source, loader)?;
 
     let defined: BTreeSet<String> = scan(&text)
       .rules
@@ -410,13 +420,17 @@ fn load_module(
   name: &str,
   line: usize,
   source: &dyn ModuleSource,
-  chain: &mut Vec<String>,
+  loader: &mut Loader,
 ) -> Result<String, ModuleError> {
-  if chain.iter().any(|entry| entry == name) {
-    let mut cycle = chain.clone();
+  if loader.chain.iter().any(|entry| entry == name) {
+    let mut cycle = loader.chain.clone();
     cycle.push(name.to_string());
 
     return Err(ModuleError::CircularReference { chain: cycle });
+  }
+
+  if let Some(resolved) = loader.resolved.get(name) {
+    return Ok(resolved.clone());
   }
 
   let text = source
@@ -426,13 +440,14 @@ fn load_module(
       line,
     })?;
 
-  chain.push(name.to_string());
-  let resolved = resolve(&text, source, &ResolveOptions::default(), chain);
-  chain.pop();
+  loader.chain.push(name.to_string());
+  let resolved = resolve(&text, source, &ResolveOptions::default(), loader);
+  loader.chain.pop();
 
   let resolved = resolved?;
   validate_module(name, &resolved)?;
 
+  loader.resolved.insert(name.to_string(), resolved.clone());
   Ok(resolved)
 }
 
@@ -586,24 +601,63 @@ fn referenced_names(src: &str) -> BTreeSet<String> {
 /// carries the given namespace prefix. Prelude names are left alone.
 fn apply_namespace(src: &str, defined: &BTreeSet<String>, namespace: &str) -> String {
   let scanned = scan(src);
+  let renamed = rename_capturing_params(&scanned.idents, namespace);
   let mut output = String::with_capacity(src.len());
   let mut cursor = 0usize;
 
   for ident in &scanned.idents {
-    if !matches!(ident.role, IdentRole::RuleHead | IdentRole::Reference)
-      || PRELUDE.contains(&ident.text.as_str())
-      || !defined.contains(&ident.text)
-    {
-      continue;
-    }
+    let replacement = match ident.role {
+      IdentRole::GenericParam => match renamed.get(&ident.text) {
+        Some(fresh) => fresh.clone(),
+        None => continue,
+      },
+      IdentRole::RuleHead | IdentRole::Reference
+        if !PRELUDE.contains(&ident.text.as_str()) && defined.contains(&ident.text) =>
+      {
+        format!("{}.{}", namespace, ident.text)
+      }
+      _ => continue,
+    };
 
     output.push_str(&src[cursor..ident.start]);
-    output.push_str(namespace);
-    output.push('.');
-    output.push_str(&ident.text);
+    output.push_str(&replacement);
     cursor = ident.end;
   }
 
   output.push_str(&src[cursor..]);
   output
+}
+
+/// Generic parameters already spelled with the namespace prefix would capture
+/// the module's own names once those are prefixed (`wrapper<ns.item> = [item]`
+/// would turn `item` into the parameter). Map each such parameter to a fresh
+/// name that occurs nowhere in the module and cannot take the prefix.
+fn rename_capturing_params(
+  idents: &[super::scan::IdentToken],
+  namespace: &str,
+) -> BTreeMap<String, String> {
+  let prefix = format!("{}.", namespace);
+  let mut taken: BTreeSet<String> = idents.iter().map(|ident| ident.text.clone()).collect();
+  let mut renamed = BTreeMap::new();
+
+  for ident in idents {
+    if ident.role != IdentRole::GenericParam
+      || !ident.text.starts_with(&prefix)
+      || renamed.contains_key(&ident.text)
+    {
+      continue;
+    }
+
+    let base = ident.text.replace('.', "-");
+    let mut fresh = base.clone();
+    let mut n = 1usize;
+    while taken.contains(&fresh) {
+      fresh = format!("{}-{}", base, n);
+      n += 1;
+    }
+    taken.insert(fresh.clone());
+    renamed.insert(ident.text.clone(), fresh);
+  }
+
+  renamed
 }

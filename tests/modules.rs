@@ -819,6 +819,75 @@ fn a_rule_carries_its_noncontiguous_extensions() {
 }
 
 #[test]
+fn shared_dependencies_are_loaded_once() {
+  use cddl::modules::ModuleSource;
+  use std::cell::RefCell;
+
+  struct Counting {
+    inner: MemoryModuleSource,
+    loads: RefCell<Vec<String>>,
+  }
+
+  impl ModuleSource for Counting {
+    fn load(&self, name: &str) -> Result<Option<String>, ModuleError> {
+      self.loads.borrow_mut().push(name.to_string());
+      self.inner.load(name)
+    }
+  }
+
+  // Each module imports its predecessor twice; without caching the number
+  // of loads doubles with every level.
+  let mut inner = MemoryModuleSource::new();
+  inner.insert("m0", "t0 = int\n");
+  for k in 1..=12 {
+    inner.insert(
+      &format!("m{}", k),
+      &format!(
+        "t{k} = [t{p}]\n;# import m{p}\n;# import m{p}\n",
+        k = k,
+        p = k - 1
+      ),
+    );
+  }
+  let source = Counting {
+    inner,
+    loads: RefCell::new(Vec::new()),
+  };
+
+  let output = resolve_modules(
+    "root = t12\n;# import m12\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+
+  assert_eq!(source.loads.borrow().len(), 13);
+  assert!(output.contains("t0 = int"), "{}", output);
+  assert_parses(&output);
+}
+
+#[test]
+fn namespaced_generic_parameters_do_not_capture_module_names() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("m", "item = int\nwrapper<ns.item> = [item, ns.item]\n");
+
+  let output = resolve_modules(
+    "start = ns.wrapper<tstr>\n;# import m as ns\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+
+  assert!(
+    output.contains("ns.wrapper<ns-item> = [ns.item, ns-item]"),
+    "{}",
+    output
+  );
+  assert!(output.contains("ns.item = int"), "{}", output);
+  assert_parses(&output);
+}
+
+#[test]
 fn an_extension_only_include_suppresses_a_later_base_definition() {
   let mut source = MemoryModuleSource::new();
   source.insert("one", "item /= 1\n");

@@ -107,8 +107,15 @@ pub(super) fn directive_ranges(src: &str) -> Vec<core::ops::Range<usize>> {
   let mut ranges = Vec::new();
   let mut i = 0;
   while i < bytes.len() {
+    // Identifiers and numbers are skipped as whole tokens, so a byte-string
+    // prefix is only recognized where a token can start: the `h` ending
+    // `path` in `path"..."` is not one.
     if let Some(end) = literal_end(bytes, i) {
       i = end;
+    } else if is_ident_start(bytes[i]) {
+      i = ident_end(bytes, i);
+    } else if bytes[i].is_ascii_digit() {
+      i = number_end(bytes, i);
     } else if bytes[i] == b';' {
       let start = i;
       while i < bytes.len() && bytes[i] != b'\n' {
@@ -664,6 +671,14 @@ mod tests {
       .map(|ident| ident.text.as_str())
       .collect();
     assert_eq!(references, ["e5", "p1", "e5"]);
+  }
+
+  #[test]
+  fn byte_string_prefixes_need_a_token_boundary() {
+    let src = "a = { path\"x\\\"\n;# import missing\n\": int }\n;# import real\n";
+    let ranges = directive_ranges(src);
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(&src[ranges[0].clone()], ";# import real\n");
   }
 
   #[test]
