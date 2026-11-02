@@ -649,13 +649,10 @@ impl<'a> JSONValidator<'a> {
       .iter()
       .map(|&index| self.member_claims[index].clone())
       .collect();
-    claims.push(MemberClaim {
-      key: String::new(),
-      entry: entry.clone(),
-      context: self.current_claim_context(),
-    });
     let empty: Vec<String> = Vec::new();
     let validated = self.validated_keys.as_ref().unwrap_or(&empty);
+    // Ownership is checked against the existing movable claims only: the new
+    // claim's empty-key sentinel must not make a real empty-string key movable.
     let candidates: Vec<(String, Value)> = entries
       .iter()
       .filter(|(key, _)| {
@@ -663,6 +660,11 @@ impl<'a> JSONValidator<'a> {
       })
       .map(|(key, value)| (key.clone(), value.clone()))
       .collect();
+    claims.push(MemberClaim {
+      key: String::new(),
+      entry: entry.clone(),
+      context: self.current_claim_context(),
+    });
     if candidates.len() < claims.len() {
       return Ok(false);
     }
@@ -1701,9 +1703,11 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     let initial_error_count = self.errors.len();
     for group_choice in g.group_choices.iter() {
       let error_count = self.errors.len();
-      // A failed arm must not leave its pair ownership behind for the next.
+      // A failed arm must not leave its pair ownership behind for the next:
+      // reassignment may also have moved existing claims, so restore the
+      // complete vector, not just the tail.
       let validated_checkpoint = self.validated_keys.clone();
-      let claims_len = self.member_claims.len();
+      let claims_checkpoint = self.member_claims.clone();
       self.visit_group_choice(group_choice)?;
       if self.errors.len() == error_count {
         // Disregard invalid group choice validation errors if one of the
@@ -1718,7 +1722,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         return Ok(());
       }
       self.validated_keys = validated_checkpoint;
-      self.member_claims.truncate(claims_len);
+      self.member_claims = claims_checkpoint;
     }
 
     Ok(())

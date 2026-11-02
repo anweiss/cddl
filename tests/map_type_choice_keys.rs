@@ -712,3 +712,90 @@ fn json_cut_members_preserve_value_failures() {
     assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
   }
 }
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_empty_string_key_is_not_a_reassignment_sentinel() {
+  // One pair cannot satisfy two required members, even when its key is the
+  // empty string; a real empty-string claim stays movable for valid maps.
+  let schema = "m = { \"\": any, (int / tstr) => uint }";
+  let result = cddl::validator::validate_json_from_str(
+    schema,
+    r#"{"":1}"#,
+    #[cfg(feature = "additional-controls")]
+    None,
+  );
+  assert!(result.is_err(), "result: {result:?}");
+  let schema = "m = { \"\": uint, (int / tstr) => tstr }";
+  let result = cddl::validator::validate_json_from_str(
+    schema,
+    r#"{"":1,"a":"x"}"#,
+    #[cfg(feature = "additional-controls")]
+    None,
+  );
+  assert!(result.is_ok(), "result: {result:?}");
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_failed_group_arm_restores_moved_claims() {
+  // The first arm moves the outer claim to "b" and fails; the retry must see
+  // the original claim on "a" for the second arm to match.
+  let schema = "m = { (int / tstr) => any, ((\"a\" / \"z\") => uint, required: null // (\"a\" / \"y\") => uint) }";
+  for (json, expected) in [
+    (r#"{"a":1,"b":"x"}"#, true),
+    (r#"{"a":1,"required":null}"#, true),
+    (r#"{"a":"x","b":1}"#, false),
+  ] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
+  }
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_resolve_named_range_endpoints() {
+  // A named endpoint contributes its literal kind: `lo..hi` admits the whole
+  // numeric domain, and the probe enforces the resolved bounds.
+  let schema = "m = { * (lo..hi / tstr) => any }\nlo = 1\nhi = 3";
+  check_cbor(schema, "a10201", true);
+  check_cbor(schema, "a10501", false);
+  check_cbor(schema, "a142010201", false);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_substitute_structured_generic_alternatives() {
+  // Parameters inside arrays, maps and tagged payloads are substituted when
+  // a generic choice key expands, so expanded alternatives never probe with
+  // an unbound parameter.
+  let schema = "m = { * key<uint> => any }\nkey<K> = [K] / tstr";
+  check_cbor(schema, "a1810100", true);
+  check_cbor(schema, "a181f500", false);
+  check_cbor(schema, "a1617801", true);
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_type_choice_keys_substitute_structured_generic_alternatives() {
+  let schema = "m = { * key<uint> => any }\nkey<K> = [K] / tstr";
+  for (json, expected) in [(r#"{"x":1}"#, true)] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
+  }
+}

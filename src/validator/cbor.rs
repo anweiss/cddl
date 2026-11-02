@@ -5165,6 +5165,14 @@ struct KeyDomainWalk<'s, 'a> {
   cut: bool,
 }
 
+/// The literal kind of a range endpoint.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EndpointKind {
+  Numeric,
+  Text,
+  Bytes,
+}
+
 impl<'s, 'a> KeyDomainWalk<'s, 'a> {
   /// Domain check for one type. A range operator's interval is enforced by
   /// the probe's range validation; a control operator constrains the
@@ -5185,19 +5193,75 @@ impl<'s, 'a> KeyDomainWalk<'s, 'a> {
     ) {
       // The probe's range validation enforces the interval, but only for
       // keys of the endpoint's kind: a numeric range would otherwise admit
-      // byte-string keys, whose lengths compare as numbers.
-      return match &alternative.type2 {
-        Type2::IntValue { .. } | Type2::UintValue { .. } | Type2::FloatValue { .. } => {
-          matches!(key, Value::Integer(_) | Value::Float(_))
-        }
-        Type2::TextValue { .. } => matches!(key, Value::Text(_)),
-        Type2::UTF8ByteString { .. }
-        | Type2::B16ByteString { .. }
-        | Type2::B64ByteString { .. } => matches!(key, Value::Bytes(_)),
-        base => self.type2_admits(base, key, visited, bindings),
+      // byte-string keys, whose lengths compare as numbers. Named endpoints
+      // resolve to their literal kind, so a `lo..hi` alias range admits the
+      // whole numeric domain instead of the bound's literal value.
+      return match self.range_endpoint_kind(&alternative.type2) {
+        Some(EndpointKind::Numeric) => matches!(key, Value::Integer(_) | Value::Float(_)),
+        Some(EndpointKind::Text) => matches!(key, Value::Text(_)),
+        Some(EndpointKind::Bytes) => matches!(key, Value::Bytes(_)),
+        None => true,
       };
     }
     self.type2_admits(&alternative.type2, key, visited, bindings)
+  }
+
+  /// The literal kind a range endpoint resolves to, following aliases.
+  /// None means unknown or mixed, which keeps the domain permissive and
+  /// leaves the decision to the probe.
+  fn range_endpoint_kind(&self, endpoint: &Type2<'a>) -> Option<EndpointKind> {
+    self.endpoint_kind(endpoint, &mut HashSet::new())
+  }
+
+  fn endpoint_kind(
+    &self,
+    endpoint: &Type2<'a>,
+    visited: &mut HashSet<String>,
+  ) -> Option<EndpointKind> {
+    match endpoint {
+      Type2::IntValue { .. } | Type2::UintValue { .. } | Type2::FloatValue { .. } => {
+        Some(EndpointKind::Numeric)
+      }
+      Type2::TextValue { .. } => Some(EndpointKind::Text),
+      Type2::UTF8ByteString { .. } | Type2::B16ByteString { .. } | Type2::B64ByteString { .. } => {
+        Some(EndpointKind::Bytes)
+      }
+      Type2::Typename {
+        ident,
+        generic_args: None,
+        ..
+      } => {
+        let cddl = self.state.cddl;
+        if ident_numeric_kind(cddl, ident).is_some() {
+          return Some(EndpointKind::Numeric);
+        }
+        if is_ident_string_data_type(cddl, ident) {
+          return Some(EndpointKind::Text);
+        }
+        if is_ident_byte_string_data_type(cddl, ident) {
+          return Some(EndpointKind::Bytes);
+        }
+        if !visited.insert(qualified_ident_key(ident)) {
+          return None;
+        }
+        let mut kind: Option<EndpointKind> = None;
+        for rule_type in type_choice_types_from_ident(cddl, ident) {
+          for choice in &rule_type.type_choices {
+            if choice.type1.operator.is_some() {
+              return None;
+            }
+            let nested = self.endpoint_kind(&choice.type1.type2, visited)?;
+            kind = match (kind, nested) {
+              (None, nested) => Some(nested),
+              (Some(known), nested) if known == nested => Some(known),
+              _ => return None,
+            };
+          }
+        }
+        kind
+      }
+      _ => None,
+    }
   }
 
   /// Domain check for a type2 node: choices admit a key when any arm does.

@@ -11,6 +11,8 @@ pub mod json;
 
 mod control;
 
+#[cfg(feature = "ast-span")]
+use crate::ast::Span;
 use crate::{
   ast::{
     GenericArgs, Group, GroupChoice, GroupEntry, GroupRule, Identifier, MemberKey, Occur, Rule,
@@ -870,7 +872,9 @@ fn substitute_generic_params<'a>(
   substituted
 }
 
-/// Substitute generic parameters inside a type2 node.
+/// Substitute generic parameters inside a type2 node, reaching through
+/// arrays, maps and tagged payloads so expanded alternatives never probe
+/// with an unbound parameter.
 fn substitute_type2_params<'a>(
   t2: &Type2<'a>,
   bindings: &HashMap<&'a str, Type1<'a>>,
@@ -886,13 +890,104 @@ fn substitute_type2_params<'a>(
       }
     }
     Type2::ParenthesizedType { pt, .. } => {
-      for choice in pt.type_choices.iter_mut() {
-        choice.type1 = substitute_generic_params(&choice.type1, bindings);
-      }
+      substitute_type_params(pt, bindings);
+    }
+    Type2::Array { group, .. } | Type2::Map { group, .. } => {
+      substitute_group_params(group, bindings);
+    }
+    Type2::TaggedData { t, .. } => {
+      substitute_type_params(t, bindings);
     }
     _ => {}
   }
   substituted
+}
+
+/// Substitute generic parameters in every choice of a type.
+fn substitute_type_params<'a>(t: &mut Type<'a>, bindings: &HashMap<&'a str, Type1<'a>>) {
+  for choice in t.type_choices.iter_mut() {
+    choice.type1 = substitute_generic_params(&choice.type1, bindings);
+  }
+}
+
+/// Substitute generic parameters through the entries of a group.
+fn substitute_group_params<'a>(group: &mut Group<'a>, bindings: &HashMap<&'a str, Type1<'a>>) {
+  for choice in group.group_choices.iter_mut() {
+    for (entry, _) in choice.group_entries.iter_mut() {
+      match entry {
+        GroupEntry::ValueMemberKey { ge, .. } => {
+          if let Some(MemberKey::Type1 { t1, .. }) = &mut ge.member_key {
+            **t1 = substitute_generic_params(t1, bindings);
+          }
+          substitute_type_params(&mut ge.entry_type, bindings);
+        }
+        GroupEntry::TypeGroupname { ge, .. } => {
+          // An entry that names a parameter directly, as `[K]` does, takes
+          // the bound argument: a bare type name replaces the name, anything
+          // else becomes a value entry for the bound type.
+          let substitution = if ge.generic_args.is_none() && ge.name.socket.is_none() {
+            bindings.get(ge.name.ident).and_then(|arg| {
+              if arg.operator.is_some() {
+                return None;
+              }
+              Some(match &arg.type2 {
+                Type2::Typename {
+                  ident,
+                  generic_args,
+                  ..
+                } => Ok((ident.clone(), generic_args.clone())),
+                _ => Err(arg.clone()),
+              })
+            })
+          } else {
+            None
+          };
+          match substitution {
+            Some(Ok((ident, generic_args))) => {
+              ge.name = ident;
+              ge.generic_args = generic_args;
+            }
+            Some(Err(arg)) => {
+              let occur = ge.occur.clone();
+              *entry = GroupEntry::ValueMemberKey {
+                ge: Box::new(ValueMemberKeyEntry {
+                  occur,
+                  member_key: None,
+                  entry_type: Type {
+                    type_choices: vec![TypeChoice {
+                      type1: arg,
+                      #[cfg(feature = "ast-comments")]
+                      comments_before_type: None,
+                      #[cfg(feature = "ast-comments")]
+                      comments_after_type: None,
+                    }],
+                    #[cfg(feature = "ast-span")]
+                    span: Span::default(),
+                  },
+                }),
+                #[cfg(feature = "ast-span")]
+                span: Span::default(),
+                #[cfg(feature = "ast-comments")]
+                leading_comments: None,
+                #[cfg(feature = "ast-comments")]
+                trailing_comments: None,
+              };
+            }
+            None => {
+              if let Some(args) = &mut ge.generic_args {
+                for arg in args.args.iter_mut() {
+                  *arg.arg = substitute_generic_params(&arg.arg, bindings);
+                }
+              }
+            }
+          }
+        }
+        GroupEntry::InlineGroup { group, .. } => {
+          substitute_group_params(group, bindings);
+        }
+      }
+    }
+  }
 }
 
 /// Expand one alias occurrence. Results are cached by name only when no
