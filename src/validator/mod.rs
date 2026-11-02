@@ -1209,11 +1209,7 @@ pub fn entry_counts_from_group<'a, 'b: 'a>(
             break;
           } else {
             // Single choice case: add the nested count to current count
-            count += if let Some(ec) = nested_entry_counts.first() {
-              ec.count
-            } else {
-              0
-            };
+            count += nested_entry_counts.first().map_or(0, |ec| ec.count);
           }
         }
         GroupEntry::TypeGroupname { ge, .. } => {
@@ -1226,11 +1222,9 @@ pub fn entry_counts_from_group<'a, 'b: 'a>(
           if let Some(gr) = group_rule_from_ident(cddl, &ge.name) {
             if let GroupEntry::InlineGroup { group, .. } = &gr.entry {
               if group.group_choices.len() == 1 {
-                count += if let Some(ec) = entry_counts_from_group(cddl, group).first() {
-                  ec.count
-                } else {
-                  0
-                };
+                count += entry_counts_from_group(cddl, group)
+                  .first()
+                  .map_or(0, |ec| ec.count);
               } else {
                 entry_counts.append(&mut entry_counts_from_group(cddl, group));
               }
