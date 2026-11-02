@@ -13,7 +13,7 @@ jobs:
     if: contains(github.event.release.tag_name, 'vscode-extension') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust
         run: |
@@ -22,7 +22,7 @@ jobs:
 
       - name: Install wasmpack
         run: |
-          cargo install wasm-pack
+          cargo install wasm-pack --version 0.15.0 --locked
 
       - name: Install Node.js
         uses: actions/setup-node@v4
