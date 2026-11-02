@@ -54,6 +54,15 @@ release WASM builds and tests pass. Do not use `npm audit fix --force`.
 Dependabot's seven-day cooldown applies to ordinary updates, not urgent
 security updates.
 
+The root ESLint toolchain and extension packaging tools pin minimatch 11.0.3
+to address GHSA-g3hv-75wg-m249. Extension cleanup and test discovery use glob
+14.0.3 or newer for GHSA-3g3m-2fjr-6pw4. Run `npm run test:dependencies` after
+changing these overrides. The tests exercise the preserved matching and
+discovery APIs used by the affected tools. Do not apply a blanket minimatch
+override to the extension client: vscode-languageclient still calls `makeRe()`,
+which minimatch 11 removed. Its remaining advisory needs an upstream-compatible
+fix, not an incompatible override.
+
 Cargo features are the project's feature flags. `Cargo.toml` defines
 `json`, `cbor`, `additional-controls`, `ast-span`, `ast-comments`, `lsp` and
 the parser-generation options. `lsp` builds a parser-only WASM API, not the
