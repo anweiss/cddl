@@ -13,8 +13,8 @@ mod control;
 
 use crate::{
   ast::{
-    Group, GroupChoice, GroupEntry, GroupRule, Identifier, MemberKey, Occur, Rule, Type, Type1,
-    Type2, TypeChoice, TypeRule, ValueMemberKeyEntry, CDDL,
+    GenericArgs, Group, GroupChoice, GroupEntry, GroupRule, Identifier, MemberKey, Occur, Rule,
+    Type, Type1, Type2, TypeChoice, TypeRule, ValueMemberKeyEntry, CDDL,
   },
   token::{self, *},
   visitor::Visitor,
@@ -832,7 +832,68 @@ fn generic_argument_for_param<'a>(state: &ValidationState<'a>, param: &str) -> O
     .find(|rule| Some(rule.name) == state.eval_generic_rule)?;
   let index = rule.params.iter().position(|p| *p == param)?;
   let start = rule.args.len().checked_sub(rule.params.len())?;
-  rule.args.get(start + index).cloned()
+  let arg = rule.args.get(start + index)?;
+  // A parameter bound only to itself was never given an argument; treating
+  // it as one would recurse without end.
+  if arg.operator.is_none()
+    && matches!(
+      &arg.type2,
+      Type2::Typename {
+        ident,
+        generic_args: None,
+        ..
+      } if ident.ident == param
+    )
+  {
+    return None;
+  }
+  Some(arg.clone())
+}
+
+/// Resolve a generic argument against the rule currently being evaluated, so
+/// a parameter passed through unchanged (`outer<T> = inner<T>`) binds to the
+/// caller's argument instead of to itself. Arguments that are not plain
+/// parameter references stay as written.
+pub(crate) fn resolve_generic_argument<'a>(
+  state: &ValidationState<'a>,
+  arg: &Type1<'a>,
+) -> Type1<'a> {
+  let mut resolved = arg.clone();
+  let mut seen = HashSet::new();
+  loop {
+    if resolved.operator.is_some() {
+      break;
+    }
+    let Type2::Typename {
+      ident,
+      generic_args: None,
+      ..
+    } = &resolved.type2
+    else {
+      break;
+    };
+    if !seen.insert(ident.ident) {
+      break;
+    }
+    match generic_argument_for_param(state, ident.ident) {
+      Some(next) => resolved = next,
+      None => break,
+    }
+  }
+  resolved
+}
+
+/// The arguments of a generic instantiation resolved against the caller's
+/// evaluation environment.
+pub(crate) fn resolved_generic_args<'a>(
+  state: &ValidationState<'a>,
+  args: &GenericArgs<'a>,
+) -> Vec<Type1<'a>> {
+  args
+    .args
+    .iter()
+    .map(|arg| resolve_generic_argument(state, &arg.arg))
+    .collect()
 }
 
 /// Find all group choice alternate rules from a given identifier

@@ -483,3 +483,109 @@ fn cbor_type_choice_keys_reassign_generic_group_claims() {
   check_cbor(schema, "a261610161626178", true);
   check_cbor(schema, "a1616101", false);
 }
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_resolve_nested_generic_aliases() {
+  // Generic arguments resolve in the caller's environment: `inner<T>` inside
+  // `outer<T>` binds T to nint, not to itself.
+  let schema = "m = { * (outer<nint> / tstr) => any }\nouter<T> = inner<T>\ninner<T> = T";
+  check_cbor(schema, "a1617801", true);
+  check_cbor(schema, "a12001", true);
+  check_cbor(schema, "a10301", false);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_admit_range_domains() {
+  // A range alternative admits its whole interval, reached directly or
+  // through an alias; the probe enforces the bounds.
+  check_cbor("m = { * (1..3 / tstr) => any }", "a10201", true);
+  check_cbor("m = { * (1..3 / tstr) => any }", "a10501", false);
+  check_cbor(
+    "m = { * (small / tstr) => any }\nsmall = 1..3",
+    "a10201",
+    true,
+  );
+  check_cbor(
+    "m = { * (small / tstr) => any }\nsmall = 1..3",
+    "a10501",
+    false,
+  );
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_include_generic_alias_extensions() {
+  // `/=` extensions of a generic alias contribute to the key domain under
+  // the same bindings.
+  let schema = "m = { * (key<uint> / tstr) => any }\nkey<T> = T\nkey<T> /= bool";
+  check_cbor(schema, "a1f501", true);
+  check_cbor(schema, "a10301", true);
+  check_cbor(schema, "a12001", false);
+}
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_type_choice_keys_memoize_constrained_alias_domains() {
+  // A constrained alternative walks the alias DAG itself, so the domain walk
+  // memoizes per name: 24 doubling aliases reject {3: 1} instantly instead of
+  // exploring 2^24 branches.
+  let mut schema = String::from("m = { * (k24 .ne 0 / tstr) => any }\nk0 = nint\n");
+  for n in 1..=24 {
+    schema.push_str(&format!("k{n} = k{} / k{}\n", n - 1, n - 1));
+  }
+  check_cbor(&schema, "a10301", false);
+  // The accept path probes core choice validation, which stays exponential
+  // for deep alias DAGs independent of this guard; keep it shallow here.
+  let mut shallow = String::from("m = { * (k3 .ne 0 / tstr) => any }\nk0 = nint\n");
+  for n in 1..=3 {
+    shallow.push_str(&format!("k{n} = k{} / k{}\n", n - 1, n - 1));
+  }
+  check_cbor(&shallow, "a12001", true);
+  check_cbor(&shallow, "a10001", false);
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_generic_groups_inherit_parent_claims() {
+  // The generic-group child shares the parent's ownership ledger, so two
+  // required members need distinct pairs.
+  let schema = "m = { (int / tstr) => any, g<(int / tstr)> }\ng<K> = (K => any)";
+  for (json, expected) in [(r#"{"a":1}"#, false), (r#"{"a":1,"b":2}"#, true)] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
+  }
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_plain_members_trigger_reassignment() {
+  // A failing plain member retries complete-pair assignment too: "b" moves
+  // to the first member and "a" satisfies the uint member.
+  let schema = "m = { (int / tstr) => any, tstr => uint }";
+  for (json, expected) in [
+    (r#"{"a":1,"b":"x"}"#, true),
+    (r#"{"a":"x"}"#, false),
+    (r#"{"a":1}"#, false),
+  ] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), expected, "JSON: {json}, result: {result:?}");
+  }
+}

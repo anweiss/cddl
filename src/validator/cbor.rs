@@ -1150,20 +1150,19 @@ impl<'a> CBORValidator<'a> {
         self.seq_match_leaf(elems, cursor, ctx, |cv| {
           if let Some(ga) = &ge.generic_args {
             if let Some(rule) = rule_from_ident(cv.state.cddl, &ge.name) {
+              let resolved_args = resolved_generic_args(&cv.state, ga);
               if let Some(gr) = cv
                 .state
                 .generic_rules
                 .iter_mut()
                 .find(|gr| gr.name == ge.name.ident)
               {
-                for arg in ga.args.iter() {
-                  gr.args.push((*arg.arg).clone());
-                }
+                gr.args.extend(resolved_args);
               } else if let Some(params) = generic_params_from_rule(rule) {
                 cv.state.generic_rules.push(GenericRule {
                   name: ge.name.ident,
                   params,
-                  args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                  args: resolved_args,
                 });
               }
 
@@ -1250,20 +1249,19 @@ impl<'a> CBORValidator<'a> {
       .map(|_| self.state.generic_rules.clone());
     if let Some(ga) = &ge.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &ge.name) {
+        let resolved_args = resolved_generic_args(&self.state, ga);
         if let Some(gr) = self
           .state
           .generic_rules
           .iter_mut()
           .find(|gr| gr.name == ge.name.ident)
         {
-          for arg in ga.args.iter() {
-            gr.args.push((*arg.arg).clone());
-          }
+          gr.args.extend(resolved_args);
         } else if let Some(params) = generic_params_from_rule(rule) {
           self.state.generic_rules.push(GenericRule {
             name: ge.name.ident,
             params,
-            args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+            args: resolved_args,
           });
         }
 
@@ -1321,20 +1319,19 @@ impl<'a> CBORValidator<'a> {
     let prev_eval = self.state.eval_generic_rule;
     let prev_generic_rules = generic_args.map(|_| self.state.generic_rules.clone());
     if let Some(ga) = generic_args {
+      let resolved_args = resolved_generic_args(&self.state, ga);
       if let Some(gr) = self
         .state
         .generic_rules
         .iter_mut()
         .find(|gr| gr.name == ident.ident)
       {
-        for arg in ga.args.iter() {
-          gr.args.push((*arg.arg).clone());
-        }
+        gr.args.extend(resolved_args);
       } else if let Some(params) = generic_params_from_rule(rule) {
         self.state.generic_rules.push(GenericRule {
           name: ident.ident,
           params,
-          args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+          args: resolved_args,
         });
       }
 
@@ -3436,20 +3433,19 @@ where
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
+            let resolved_args = resolved_generic_args(&self.state, ga);
             if let Some(gr) = self
               .state
               .generic_rules
               .iter_mut()
               .find(|gr| gr.name == ident.ident)
             {
-              for arg in ga.args.iter() {
-                gr.args.push((*arg.arg).clone());
-              }
+              gr.args.extend(resolved_args);
             } else if let Some(params) = generic_params_from_rule(rule) {
               self.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
-                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                args: resolved_args,
               });
             }
 
@@ -3507,20 +3503,19 @@ where
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
+            let resolved_args = resolved_generic_args(&self.state, ga);
             if let Some(gr) = self
               .state
               .generic_rules
               .iter_mut()
               .find(|gr| gr.name == ident.ident)
             {
-              for arg in ga.args.iter() {
-                gr.args.push((*arg.arg).clone());
-              }
+              gr.args.extend(resolved_args);
             } else if let Some(params) = generic_params_from_rule(rule) {
               self.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
-                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                args: resolved_args,
               });
             }
 
@@ -3579,20 +3574,19 @@ where
 
         if let Some(ga) = generic_args {
           if let Some(rule) = unwrap_rule_from_ident(self.state.cddl, ident) {
+            let resolved_args = resolved_generic_args(&self.state, ga);
             if let Some(gr) = self
               .state
               .generic_rules
               .iter_mut()
               .find(|gr| gr.name == ident.ident)
             {
-              for arg in ga.args.iter() {
-                gr.args.push((*arg.arg).clone());
-              }
+              gr.args.extend(resolved_args);
             } else if let Some(params) = generic_params_from_rule(rule) {
               self.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
-                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                args: resolved_args,
               });
             }
 
@@ -4472,20 +4466,19 @@ where
 
     if let Some(ga) = &entry.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &entry.name) {
+        let resolved_args = resolved_generic_args(&self.state, ga);
         if let Some(gr) = self
           .state
           .generic_rules
           .iter_mut()
           .find(|gr| gr.name == entry.name.ident)
         {
-          for arg in ga.args.iter() {
-            gr.args.push((*arg.arg).clone());
-          }
+          gr.args.extend(resolved_args);
         } else if let Some(params) = generic_params_from_rule(rule) {
           self.state.generic_rules.push(GenericRule {
             name: entry.name.ident,
             params,
-            args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+            args: resolved_args,
           });
         }
 
@@ -5151,153 +5144,249 @@ fn numeric_ident_matches_cbor_value(cddl: &CDDL, ident: &Identifier, v: &Value) 
 /// domain: it accepts positive integers for `nint` and ignores unrelated
 /// tags. Check an alternative's own domain before probing it, following
 /// aliases — including generic instantiations and active generic bindings —
-/// to the underlying prelude types, literals and tagged types. Control
-/// operators are ignored here because the probe still enforces them.
+/// to the underlying prelude types, literals and tagged types. Range and
+/// control operators are left to the probe, which enforces them.
 fn key_domain_admits(state: &ValidationState, alternative: &Type1, key: &Value) -> bool {
-  type1_key_domain_admits(
+  KeyDomainWalk {
     state,
-    alternative,
-    key,
-    &mut HashSet::new(),
-    &HashMap::new(),
-  )
+    memo: HashMap::new(),
+    cut: false,
+  }
+  .type1_admits(alternative, key, &mut HashSet::new(), &HashMap::new())
 }
 
-/// Domain check for one type: a control operator constrains the complete
-/// type, so only its target determines the key domain.
-fn type1_key_domain_admits<'a>(
-  state: &ValidationState<'a>,
-  alternative: &Type1<'a>,
-  key: &Value,
-  visited: &mut HashSet<&'a str>,
-  bindings: &HashMap<&'a str, Type1<'a>>,
-) -> bool {
-  type2_key_domain_admits(state, &alternative.type2, key, visited, bindings)
+/// Recursive key-domain check with per-name memoization. Alias results are
+/// cached only while no recursive path has been cut anywhere: a cut keeps
+/// the name as a lenient leaf, making every enclosing result specific to the
+/// active chain.
+struct KeyDomainWalk<'s, 'a> {
+  state: &'s ValidationState<'a>,
+  memo: HashMap<&'a str, bool>,
+  cut: bool,
 }
 
-/// Domain check for a type2 node: choices admit a key when any arm does.
-fn type2_key_domain_admits<'a>(
-  state: &ValidationState<'a>,
-  type2: &Type2<'a>,
-  key: &Value,
-  visited: &mut HashSet<&'a str>,
-  bindings: &HashMap<&'a str, Type1<'a>>,
-) -> bool {
-  match type2 {
-    Type2::ParenthesizedType { pt, .. } => pt.type_choices.iter().any(|choice| {
-      type1_key_domain_admits(state, &choice.type1, key, &mut visited.clone(), bindings)
-    }),
-    Type2::Typename {
-      ident,
-      generic_args,
-      ..
-    } => typename_key_domain_admits(state, ident, generic_args.as_ref(), key, visited, bindings),
-    Type2::IntValue { value, .. } => {
-      matches!(key, Value::Integer(i) if i128::from(*i) == *value as i128)
-    }
-    Type2::UintValue { value, .. } => {
-      matches!(key, Value::Integer(i) if i128::from(*i) == *value as i128)
-    }
-    Type2::FloatValue { value, .. } => matches!(key, Value::Float(f) if f == value),
-    Type2::TextValue { value, .. } => matches!(key, Value::Text(t) if t == value.as_ref()),
-    Type2::UTF8ByteString { value, .. }
-    | Type2::B16ByteString { value, .. }
-    | Type2::B64ByteString { value, .. } => {
-      matches!(key, Value::Bytes(b) if b == value.as_ref())
-    }
-    _ => true,
-  }
-}
-
-/// Domain check for a name: bound generic parameters, generic alias
-/// instantiations, prelude leaves and ordinary aliases.
-fn typename_key_domain_admits<'a>(
-  state: &ValidationState<'a>,
-  ident: &Identifier<'a>,
-  generic_args: Option<&GenericArgs<'a>>,
-  key: &Value,
-  visited: &mut HashSet<&'a str>,
-  bindings: &HashMap<&'a str, Type1<'a>>,
-) -> bool {
-  if let Some(bound) = bindings.get(ident.ident) {
-    return type1_key_domain_admits(state, bound, key, visited, bindings);
-  }
-  if generic_args.is_none() {
-    if let Some(arg) = generic_argument_for_param(state, ident.ident) {
-      return type1_key_domain_admits(state, &arg, key, visited, bindings);
-    }
-  }
-  if let Some(args) = generic_args {
-    let Some(rule) = rule_from_ident(state.cddl, ident) else {
+impl<'s, 'a> KeyDomainWalk<'s, 'a> {
+  /// Domain check for one type. A range operator's interval is enforced by
+  /// the probe's range validation; a control operator constrains the
+  /// complete type, so only its target determines the key domain.
+  fn type1_admits(
+    &mut self,
+    alternative: &Type1<'a>,
+    key: &Value,
+    visited: &mut HashSet<&'a str>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    if matches!(
+      alternative
+        .operator
+        .as_ref()
+        .map(|operator| &operator.operator),
+      Some(RangeCtlOp::RangeOp { .. })
+    ) {
       return true;
-    };
-    let (Some(params), Rule::Type { rule, .. }) = (generic_params_from_rule(rule), rule) else {
+    }
+    self.type2_admits(&alternative.type2, key, visited, bindings)
+  }
+
+  /// Domain check for a type2 node: choices admit a key when any arm does.
+  fn type2_admits(
+    &mut self,
+    type2: &Type2<'a>,
+    key: &Value,
+    visited: &mut HashSet<&'a str>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    match type2 {
+      Type2::ParenthesizedType { pt, .. } => pt
+        .type_choices
+        .iter()
+        .any(|choice| self.type1_admits(&choice.type1, key, &mut visited.clone(), bindings)),
+      Type2::Typename {
+        ident,
+        generic_args,
+        ..
+      } => self.typename_admits(ident, generic_args.as_ref(), key, visited, bindings),
+      Type2::IntValue { value, .. } => {
+        matches!(key, Value::Integer(i) if i128::from(*i) == *value as i128)
+      }
+      Type2::UintValue { value, .. } => {
+        matches!(key, Value::Integer(i) if i128::from(*i) == *value as i128)
+      }
+      Type2::FloatValue { value, .. } => matches!(key, Value::Float(f) if f == value),
+      Type2::TextValue { value, .. } => matches!(key, Value::Text(t) if t == value.as_ref()),
+      Type2::UTF8ByteString { value, .. }
+      | Type2::B16ByteString { value, .. }
+      | Type2::B64ByteString { value, .. } => {
+        matches!(key, Value::Bytes(b) if b == value.as_ref())
+      }
+      _ => true,
+    }
+  }
+
+  /// Domain check for a name: bound generic parameters, generic alias
+  /// instantiations, prelude leaves and ordinary aliases.
+  fn typename_admits(
+    &mut self,
+    ident: &Identifier<'a>,
+    generic_args: Option<&GenericArgs<'a>>,
+    key: &Value,
+    visited: &mut HashSet<&'a str>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    if let Some(bound) = bindings.get(ident.ident) {
+      // Guard recursive parameter bindings such as a self-reference.
+      if !visited.insert(ident.ident) {
+        return true;
+      }
+      return self.type1_admits(bound, key, visited, bindings);
+    }
+    if generic_args.is_none() {
+      if let Some(arg) = generic_argument_for_param(self.state, ident.ident) {
+        return self.type1_admits(&arg, key, visited, bindings);
+      }
+    }
+    if let Some(args) = generic_args {
+      return self.generic_alias_admits(ident, args, key, visited, bindings);
+    }
+    if lookup_ident(ident.ident).in_standard_prelude().is_some()
+      && rule_from_ident(self.state.cddl, ident).is_none()
+    {
+      return self.prelude_admits(ident, key, visited, bindings);
+    }
+    self.alias_admits(ident, key, visited, bindings)
+  }
+
+  /// Domain check for a generic alias instantiation: bind the parameters to
+  /// the arguments resolved in the caller's environment and check every
+  /// contributing definition, including `/=` extensions.
+  fn generic_alias_admits(
+    &mut self,
+    ident: &Identifier<'a>,
+    args: &GenericArgs<'a>,
+    key: &Value,
+    visited: &mut HashSet<&'a str>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    let types = type_choice_types_from_ident(self.state.cddl, ident);
+    if types.is_empty() {
+      return true;
+    }
+    let Some(params) = rule_from_ident(self.state.cddl, ident).and_then(generic_params_from_rule)
+    else {
       return true;
     };
     let mut bound = bindings.clone();
     for (param, arg) in params.iter().zip(args.args.iter()) {
-      bound.insert(param, (*arg.arg).clone());
-    }
-    return rule.value.type_choices.iter().any(|choice| {
-      type1_key_domain_admits(state, &choice.type1, key, &mut visited.clone(), &bound)
-    });
-  }
-  if lookup_ident(ident.ident).in_standard_prelude().is_some()
-    && rule_from_ident(state.cddl, ident).is_none()
-  {
-    return prelude_key_domain_admits(state, ident, key, visited, bindings);
-  }
-  if !visited.insert(ident.ident) {
-    return true;
-  }
-  let types = type_choice_types_from_ident(state.cddl, ident);
-  if types.is_empty() {
-    return true;
-  }
-  types.iter().any(|t| {
-    t.type_choices.iter().any(|choice| {
-      type1_key_domain_admits(state, &choice.type1, key, &mut visited.clone(), bindings)
-    })
-  })
-}
-
-/// Domain of a prelude leaf: numeric ranges, the declared tag and payload
-/// of tagged types such as `time` or `uri`, and no tags at all for plain
-/// scalars.
-fn prelude_key_domain_admits<'a>(
-  state: &ValidationState<'a>,
-  ident: &Identifier,
-  key: &Value,
-  visited: &mut HashSet<&'a str>,
-  bindings: &HashMap<&'a str, Type1<'a>>,
-) -> bool {
-  let cddl = state.cddl;
-  if ident_numeric_kind(cddl, ident).is_some() {
-    return numeric_ident_matches_cbor_value(cddl, ident, key) || is_bignum_value(cddl, ident, key);
-  }
-  if let Some(Type2::TaggedData {
-    tag: Some(TagConstraint::Literal(expected)),
-    t,
-    ..
-  }) = tag_from_token(&lookup_ident(ident.ident))
-  {
-    return match key {
-      Value::Tag(tag, inner) => {
-        *tag == expected
-          && t.type_choices.iter().any(|choice| {
-            type1_key_domain_admits(state, &choice.type1, inner, &mut visited.clone(), bindings)
-          })
+      let mut resolved = (*arg.arg).clone();
+      // Resolve the argument in the caller's environment, so a parameter
+      // passed through unchanged does not bind to itself and recurse.
+      for _ in 0..=bindings.len() {
+        let Type2::Typename {
+          ident: arg_ident,
+          generic_args: None,
+          ..
+        } = &resolved.type2
+        else {
+          break;
+        };
+        let Some(next) = bindings.get(arg_ident.ident) else {
+          break;
+        };
+        resolved = next.clone();
       }
-      // Untagged keys stay lenient here; the probe decides.
-      _ => true,
-    };
+      // Skip self-referential bindings such as T = T.
+      if matches!(
+        &resolved.type2,
+        Type2::Typename {
+          ident: arg_ident,
+          generic_args: None,
+          ..
+        } if arg_ident.ident == *param
+      ) {
+        continue;
+      }
+      bound.insert(param, resolved);
+    }
+    types.iter().any(|t| {
+      t.type_choices
+        .iter()
+        .any(|choice| self.type1_admits(&choice.type1, key, &mut visited.clone(), &bound))
+    })
   }
-  !matches!(key, Value::Tag(..))
-    || !(is_ident_string_data_type(cddl, ident)
-      || is_ident_byte_string_data_type(cddl, ident)
-      || is_ident_bool_data_type(cddl, ident)
-      || matches!(lookup_ident(ident.ident), Token::TRUE | Token::FALSE)
-      || is_ident_null_data_type(cddl, ident))
+
+  /// Domain check for an ordinary alias, memoized per name while the walk
+  /// stays acyclic.
+  fn alias_admits(
+    &mut self,
+    ident: &Identifier<'a>,
+    key: &Value,
+    visited: &mut HashSet<&'a str>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    if bindings.is_empty() {
+      if let Some(cached) = self.memo.get(ident.ident) {
+        return *cached;
+      }
+    }
+    if !visited.insert(ident.ident) {
+      self.cut = true;
+      return true;
+    }
+    let types = type_choice_types_from_ident(self.state.cddl, ident);
+    if types.is_empty() {
+      return true;
+    }
+    let admits = types.iter().any(|t| {
+      t.type_choices
+        .iter()
+        .any(|choice| self.type1_admits(&choice.type1, key, &mut visited.clone(), bindings))
+    });
+    if bindings.is_empty() && !self.cut {
+      self.memo.insert(ident.ident, admits);
+    }
+    admits
+  }
+
+  /// Domain of a prelude leaf: numeric ranges, the declared tag and payload
+  /// of tagged types such as `time` or `uri`, and no tags at all for plain
+  /// scalars.
+  fn prelude_admits(
+    &mut self,
+    ident: &Identifier,
+    key: &Value,
+    visited: &mut HashSet<&'a str>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    let cddl = self.state.cddl;
+    if ident_numeric_kind(cddl, ident).is_some() {
+      return numeric_ident_matches_cbor_value(cddl, ident, key)
+        || is_bignum_value(cddl, ident, key);
+    }
+    if let Some(Type2::TaggedData {
+      tag: Some(TagConstraint::Literal(expected)),
+      t,
+      ..
+    }) = tag_from_token(&lookup_ident(ident.ident))
+    {
+      return match key {
+        Value::Tag(tag, inner) => {
+          *tag == expected
+            && t
+              .type_choices
+              .iter()
+              .any(|choice| self.type1_admits(&choice.type1, inner, &mut visited.clone(), bindings))
+        }
+        // Untagged keys stay lenient here; the probe decides.
+        _ => true,
+      };
+    }
+    !matches!(key, Value::Tag(..))
+      || !(is_ident_string_data_type(cddl, ident)
+        || is_ident_byte_string_data_type(cddl, ident)
+        || is_ident_bool_data_type(cddl, ident)
+        || matches!(lookup_ident(ident.ident), Token::TRUE | Token::FALSE)
+        || is_ident_null_data_type(cddl, ident))
+  }
 }
 /// Is `v` a tagged byte string accepted by the bignum type `ident`?
 fn is_bignum_value(cddl: &CDDL, ident: &Identifier, v: &Value) -> bool {

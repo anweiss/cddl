@@ -524,6 +524,95 @@ impl<'a> JSONValidator<'a> {
     Ok(probe.errors.is_empty())
   }
 
+  /// key-domain type, committing only those whose values also match.
+  fn validate_candidate_pairs(
+    &mut self,
+    entry: &ValueMemberKeyEntry<'a>,
+    candidates: Vec<(String, Value)>,
+    current_location: String,
+  ) -> visitor::Result<Error> {
+    let max_matches = Self::repeating_member_upper_bound(entry).unwrap_or(usize::MAX);
+    let mut match_count = 0;
+
+    for (key, value) in candidates {
+      if match_count >= max_matches {
+        break;
+      }
+
+      let mut jv = self.new_with_recursion_state(value);
+      jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+      jv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+      let _ = write!(
+        jv.state.data_location,
+        "{}/{}",
+        self.state.data_location, key
+      );
+      jv.state.type_group_name_entry = self.state.type_group_name_entry;
+      jv.visit_type(&entry.entry_type)?;
+
+      if jv.errors.is_empty() {
+        self.validated_keys.get_or_insert_with(Vec::new).push(key);
+        match_count += 1;
+      }
+    }
+
+    self.validate_repeating_member_count(entry, match_count);
+    self.state.data_location = current_location;
+    self.state.occurrence = None;
+    Ok(())
+  }
+
+  /// Validate the pair relayed from a key-domain member key. On success the
+  /// member records a movable claim; on failure the tentative key is
+  /// released and every single-occurrence member is retried as a one-to-one
+  /// assignment before the failure is reported.
+  fn validate_relayed_pair(
+    &mut self,
+    entry: &ValueMemberKeyEntry<'a>,
+    value: Value,
+    object_value_key: Option<String>,
+    current_location: String,
+  ) -> visitor::Result<Error> {
+    let mut jv = self.new_with_recursion_state(value);
+    jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+    jv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+    jv.state.data_location.push_str(&self.state.data_location);
+    jv.state.type_group_name_entry = self.state.type_group_name_entry;
+    jv.visit_type(&entry.entry_type)?;
+
+    self.state.data_location = current_location;
+
+    if jv.errors.is_empty() {
+      if let Some(key) = object_value_key {
+        self.member_claims.push(MemberClaim {
+          key,
+          entry: entry.clone(),
+          context: self.current_claim_context(),
+        });
+      }
+      self.errors.append(&mut jv.errors);
+    } else {
+      if let Some(key) = &object_value_key {
+        if let Some(keys) = &mut self.validated_keys {
+          keys.retain(|claimed| claimed != key);
+        }
+      }
+      if !self.reassign_choice_claims(entry)? {
+        if let Some(key) = &object_value_key {
+          self
+            .validated_keys
+            .get_or_insert_with(Vec::new)
+            .push(key.clone());
+        }
+        self.errors.append(&mut jv.errors);
+      }
+    }
+    if entry.occur.is_some() {
+      self.state.occurrence = None;
+    }
+
+    Ok(())
+  }
   /// Retry the single-occurrence members as a one-to-one assignment of
   /// complete pairs, so an earlier member can give up a pair a later member
   /// needs. Choice-key and plain key-domain claims alike may move.
@@ -1076,20 +1165,19 @@ impl<'a> JSONValidator<'a> {
         self.seq_match_leaf(elems, cursor, ctx, |jv| {
           if let Some(ga) = &ge.generic_args {
             if let Some(rule) = rule_from_ident(jv.state.cddl, &ge.name) {
+              let resolved_args = resolved_generic_args(&jv.state, ga);
               if let Some(gr) = jv
                 .state
                 .generic_rules
                 .iter_mut()
                 .find(|gr| gr.name == ge.name.ident)
               {
-                for arg in ga.args.iter() {
-                  gr.args.push((*arg.arg).clone());
-                }
+                gr.args.extend(resolved_args);
               } else if let Some(params) = generic_params_from_rule(rule) {
                 jv.state.generic_rules.push(GenericRule {
                   name: ge.name.ident,
                   params,
-                  args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                  args: resolved_args,
                 });
               }
 
@@ -1173,20 +1261,19 @@ impl<'a> JSONValidator<'a> {
       .map(|_| self.state.generic_rules.clone());
     if let Some(ga) = &ge.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &ge.name) {
+        let resolved_args = resolved_generic_args(&self.state, ga);
         if let Some(gr) = self
           .state
           .generic_rules
           .iter_mut()
           .find(|gr| gr.name == ge.name.ident)
         {
-          for arg in ga.args.iter() {
-            gr.args.push((*arg.arg).clone());
-          }
+          gr.args.extend(resolved_args);
         } else if let Some(params) = generic_params_from_rule(rule) {
           self.state.generic_rules.push(GenericRule {
             name: ge.name.ident,
             params,
-            args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+            args: resolved_args,
           });
         }
 
@@ -1241,20 +1328,19 @@ impl<'a> JSONValidator<'a> {
     let prev_eval = self.state.eval_generic_rule;
     let prev_generic_rules = generic_args.map(|_| self.state.generic_rules.clone());
     if let Some(ga) = generic_args {
+      let resolved_args = resolved_generic_args(&self.state, ga);
       if let Some(gr) = self
         .state
         .generic_rules
         .iter_mut()
         .find(|gr| gr.name == ident.ident)
       {
-        for arg in ga.args.iter() {
-          gr.args.push((*arg.arg).clone());
-        }
+        gr.args.extend(resolved_args);
       } else if let Some(params) = generic_params_from_rule(rule) {
         self.state.generic_rules.push(GenericRule {
           name: ident.ident,
           params,
-          args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+          args: resolved_args,
         });
       }
 
@@ -2714,21 +2800,19 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
+            let resolved_args = resolved_generic_args(&self.state, ga);
             if let Some(gr) = self
               .state
               .generic_rules
               .iter_mut()
               .find(|r| r.name == ident.ident)
             {
-              for arg in ga.args.iter() {
-                gr.args.push((*arg.arg).clone());
-              }
+              gr.args.extend(resolved_args);
             } else if let Some(params) = generic_params_from_rule(rule) {
-              let args_vec: Vec<Type1> = ga.args.iter().cloned().map(|arg| *arg.arg).collect();
               self.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
-                args: args_vec,
+                args: resolved_args,
               });
             }
 
@@ -2786,20 +2870,19 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
+            let resolved_args = resolved_generic_args(&self.state, ga);
             if let Some(gr) = self
               .state
               .generic_rules
               .iter_mut()
               .find(|r| r.name == ident.ident)
             {
-              for arg in ga.args.iter() {
-                gr.args.push((*arg.arg).clone());
-              }
+              gr.args.extend(resolved_args);
             } else if let Some(params) = generic_params_from_rule(rule) {
               self.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
-                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                args: resolved_args,
               });
             }
 
@@ -2849,20 +2932,19 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
         if let Some(ga) = generic_args {
           if let Some(rule) = unwrap_rule_from_ident(self.state.cddl, ident) {
+            let resolved_args = resolved_generic_args(&self.state, ga);
             if let Some(gr) = self
               .state
               .generic_rules
               .iter_mut()
               .find(|gr| gr.name == ident.ident)
             {
-              for arg in ga.args.iter() {
-                gr.args.push((*arg.arg).clone());
-              }
+              gr.args.extend(resolved_args);
             } else if let Some(params) = generic_params_from_rule(rule) {
               self.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
-                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                args: resolved_args,
               });
             }
 
@@ -3363,78 +3445,21 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
     if let Some(candidates) = map_entry_candidates {
       debug_assert!(object_value.is_none());
-      let max_matches = Self::repeating_member_upper_bound(entry).unwrap_or(usize::MAX);
-      let mut match_count = 0;
-
-      for (key, value) in candidates {
-        if match_count == max_matches {
-          break;
-        }
-
-        let mut jv = self.new_with_recursion_state(value);
-        jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-        jv.state.is_multi_group_choice = self.state.is_multi_group_choice;
-        let _ = write!(
-          jv.state.data_location,
-          "{}/{}",
-          self.state.data_location, key
-        );
-        jv.state.type_group_name_entry = self.state.type_group_name_entry;
-        jv.visit_type(&entry.entry_type)?;
-
-        if jv.errors.is_empty() {
-          self.validated_keys.get_or_insert_with(Vec::new).push(key);
-          match_count += 1;
-        }
-      }
-
-      self.validate_repeating_member_count(entry, match_count);
-      self.state.data_location = current_location;
-      self.state.occurrence = None;
-      return Ok(());
+      return self.validate_candidate_pairs(entry, candidates, current_location);
     }
 
     if let Some(v) = object_value {
-      #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-      let mut jv = JSONValidator::new(self.state.cddl, v, self.state.enabled_features.clone());
-      #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-      let mut jv = JSONValidator::new(self.state.cddl, v, self.state.enabled_features);
-      #[cfg(not(feature = "additional-controls"))]
-      let mut jv = JSONValidator::new(self.state.cddl, v);
+      return self.validate_relayed_pair(entry, v, object_value_key, current_location);
+    }
 
-      jv.state.generic_rules = self.state.generic_rules.clone();
-      jv.state.eval_generic_rule = self.state.eval_generic_rule;
-      jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-      jv.state.is_multi_group_choice = self.state.is_multi_group_choice;
-      jv.state.data_location.push_str(&self.state.data_location);
-      jv.state.type_group_name_entry = self.state.type_group_name_entry;
-      jv.visit_type(&entry.entry_type)?;
-
-      self.state.data_location = current_location;
-
-      if jv.errors.is_empty() {
-        // The pair satisfied this single-occurrence member; record a movable
-        // claim so a later member's reassignment can relocate it.
-        if let Some(key) = object_value_key {
-          self.member_claims.push(MemberClaim {
-            key,
-            entry: entry.clone(),
-            context: self.current_claim_context(),
-          });
-        }
-      }
-      self.errors.append(&mut jv.errors);
-      if entry.occur.is_some() {
-        self.state.occurrence = None;
-      }
-
-      Ok(())
-    } else if !self.state.advance_to_next_entry {
+    if !self.state.advance_to_next_entry {
       self.visit_type(&entry.entry_type)
     } else {
       Ok(())
     }
   }
+
+  /// Validate the candidate pairs of a repeating member whose key matched a
 
   fn visit_type_groupname_entry(
     &mut self,
@@ -3457,21 +3482,19 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
     if let Some(ga) = &entry.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &entry.name) {
+        let resolved_args = resolved_generic_args(&self.state, ga);
         if let Some(gr) = self
           .state
           .generic_rules
           .iter_mut()
           .find(|gr| gr.name == entry.name.ident)
         {
-          for arg in ga.args.iter() {
-            gr.args.push((*arg.arg).clone());
-          }
+          gr.args.extend(resolved_args);
         } else if let Some(params) = generic_params_from_rule(rule) {
-          let args_vec: Vec<Type1> = ga.args.iter().cloned().map(|arg| *arg.arg).collect();
           self.state.generic_rules.push(GenericRule {
             name: entry.name.ident,
             params,
-            args: args_vec,
+            args: resolved_args,
           });
         }
 
@@ -3493,23 +3516,27 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         jv.state.generic_rules = self.state.generic_rules.clone();
         jv.state.eval_generic_rule = Some(entry.name.ident);
         jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+        // The child validates the same object, so it inherits the ownership
+        // ledgers and cannot reuse pairs the parent already consumed.
+        jv.validated_keys = self.validated_keys.clone();
+        jv.member_claims = self.member_claims.clone();
         jv.visit_rule(rule)?;
 
         let child_succeeded = jv.errors.is_empty();
         self.errors.append(&mut jv.errors);
 
-        // The child validated the same object in the same group context, so
-        // keys it consumed count toward this validator's unexpected-key
-        // check, and its single-occurrence claims stay movable for later
-        // reassignment under their captured generic bindings.
-        if let Some(keys) = jv.validated_keys {
+        if child_succeeded {
+          // On success the child's ledgers replace the parent's: they carry
+          // every consumed key and each claim's captured generic bindings.
+          self.validated_keys = jv.validated_keys;
+          self.member_claims = jv.member_claims;
+        } else if let Some(keys) = jv.validated_keys {
+          // A failed child still consumed keys that count toward the
+          // unexpected-key check in contexts tolerating the failure.
           self
             .validated_keys
             .get_or_insert_with(Vec::new)
             .extend(keys);
-        }
-        if child_succeeded {
-          self.member_claims.extend(jv.member_claims);
         }
 
         return Ok(());
