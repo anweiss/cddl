@@ -186,6 +186,21 @@ pub struct CBORValidator<'a> {
 }
 
 impl<'a> CBORValidator<'a> {
+  fn validate_base64_url_tag(&mut self) {
+    if let Value::Tag(33, value) = &self.cbor {
+      if let Value::Text(text) = value.as_ref() {
+        if let Err(error) = base64_url::decode(text) {
+          self.add_error(format!(
+            "expected base64 URL data type, decoding error: {}",
+            error
+          ));
+        }
+        return;
+      }
+    }
+    self.add_error("expected b64url tag 33 with a text payload".into());
+  }
+
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   /// New cborValidation from CDDL AST and cbor value
@@ -3937,12 +3952,7 @@ where
             self.add_error(format!("expected URI data type, decoding error: {}", e));
           }
         } else if is_ident_b64url_data_type(self.state.cddl, ident) {
-          if let Err(e) = base64_url::decode(s) {
-            self.add_error(format!(
-              "expected base64 URL data type, decoding error: {}",
-              e
-            ));
-          }
+          self.add_error("expected b64url tag 33 with a text payload".into());
         } else if is_ident_tdate_data_type(self.state.cddl, ident) {
           if let Err(e) = chrono::DateTime::parse_from_rfc3339(s) {
             self.add_error(format!("expected tdate data type, decoding error: {}", e));
@@ -3956,6 +3966,10 @@ where
         Ok(())
       }
       Value::Tag(tag, value) => {
+        if is_ident_b64url_data_type(self.state.cddl, ident) {
+          self.validate_base64_url_tag();
+          return Ok(());
+        }
         if is_ident_bignum_data_type(self.state.cddl, ident) {
           if !(ident_accepts_bignum_tag(self.state.cddl, ident, *tag)
             && matches!(value.as_ref(), Value::Bytes(_)))
