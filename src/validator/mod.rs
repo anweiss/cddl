@@ -11,17 +11,20 @@ pub mod json;
 
 mod control;
 
+#[cfg(feature = "ast-span")]
+use crate::ast::Span;
 use crate::{
   ast::{
-    Group, GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type1, Type2,
-    TypeChoice, TypeRule, CDDL,
+    GenericArgs, Group, GroupChoice, GroupEntry, GroupRule, Identifier, MemberKey, Occur,
+    RangeCtlOp, Rule, Type, Type1, Type2, TypeChoice, TypeRule, ValueMemberKeyEntry, CDDL,
   },
   token::{self, *},
   visitor::Visitor,
 };
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::rc::Rc;
 
 #[cfg(feature = "cbor")]
 use cbor::CBORValidator;
@@ -697,6 +700,681 @@ pub fn type_choice_types_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> V
       _ => None,
     })
     .collect::<Vec<_>>()
+}
+
+/// Lower and optional upper bound of an occurrence indicator; no indicator
+/// means exactly once.
+pub(crate) fn occurrence_bounds(occur: Option<Occur>) -> (usize, Option<usize>) {
+  match occur {
+    None => (1, Some(1)),
+    Some(Occur::Optional { .. }) => (0, Some(1)),
+    Some(Occur::ZeroOrMore { .. }) => (0, None),
+    Some(Occur::OneOrMore { .. }) => (1, None),
+    Some(Occur::Exact { lower, upper, .. }) => (lower.unwrap_or(0), upper),
+  }
+}
+
+/// A cache/recursion key for an identifier that keeps socket-prefixed names
+/// (`$s`, `$$s`) distinct from the plain name.
+pub(crate) fn qualified_ident_key(ident: &Identifier) -> String {
+  match ident.socket {
+    Some(SocketPlug::TYPE) => format!("${}", ident.ident),
+    Some(SocketPlug::GROUP) => format!("$${}", ident.ident),
+    None => ident.ident.to_string(),
+  }
+}
+
+/// The data location of a probe that matches a map key. It differs from the
+/// map's own location and from every value location, so the recursion guard
+/// never mistakes a key for the map or one of its values.
+pub(crate) fn key_probe_location(map_location: &str, key: &impl std::fmt::Debug) -> String {
+  format!("{map_location}#key({key:?})")
+}
+
+/// The key type, its alternatives and the cut flag of a member whose key
+/// type is a choice; `None` keeps every other member on its existing path.
+#[cfg(feature = "json")]
+pub(crate) fn choice_member_key<'e, 'a>(
+  state: &ValidationState<'a>,
+  entry: &'e ValueMemberKeyEntry<'a>,
+) -> Option<(&'e Type1<'a>, Vec<Type1<'a>>, bool)> {
+  choice_member_key_for_depth(state, entry, 0)
+}
+
+/// `choice_member_key` for keys nested up to `key_depth` levels deep.
+pub(crate) fn choice_member_key_for_depth<'e, 'a>(
+  state: &ValidationState<'a>,
+  entry: &'e ValueMemberKeyEntry<'a>,
+  key_depth: usize,
+) -> Option<(&'e Type1<'a>, Vec<Type1<'a>>, bool)> {
+  let Some(MemberKey::Type1 { t1, is_cut, .. }) = &entry.member_key else {
+    return None;
+  };
+  let (alternatives, acyclic) = member_key_type_alternatives_for_depth(state, t1, key_depth);
+  // A cut recursive reference must not reach the scalar path, which follows
+  // it without end, even when a single alternative remains. A control over a
+  // choice (`(int / tstr) .and any`) also matches each key on its own, by
+  // probing the complete constrained type.
+  let choice = alternatives.len() > 1
+    || !acyclic
+    || alternatives
+      .first()
+      .is_some_and(|alternative| control_targets_choice(state, alternative));
+  choice.then_some((t1.as_ref(), alternatives, *is_cut))
+}
+
+/// The occurrence and bounds of a choice-key member. An indicator inherited
+/// from an enclosing group repeats the whole group: a zero-allowed group's
+/// absence is handled by its own rollback, so inside a present group the
+/// member is still required.
+pub(crate) fn choice_member_occurrence(
+  entry: &ValueMemberKeyEntry,
+  inherited: Option<Occur>,
+) -> (Option<Occur>, usize, Option<usize>) {
+  let own = entry.occur.as_ref().map(|o| o.occur);
+  let occurrence = own.or(inherited);
+  let (min, max) = occurrence_bounds(occurrence);
+  let min = if own.is_none() && inherited.is_some() {
+    min.max(1)
+  } else {
+    min
+  };
+  (occurrence, min, max)
+}
+
+/// Whether a type carries a control operator whose target is a choice.
+fn control_targets_choice(state: &ValidationState, t1: &Type1) -> bool {
+  let Some(operator) = &t1.operator else {
+    return false;
+  };
+  if matches!(operator.operator, RangeCtlOp::RangeOp { .. }) {
+    return false;
+  }
+  let mut target = t1.clone();
+  target.operator = None;
+  let (alternatives, acyclic) = member_key_type_alternatives(state, &target);
+  alternatives.len() > 1 || !acyclic
+}
+
+/// How often a generic alias that recurses with changing arguments
+/// (`k<T> = T / k<[T]>`) is unrolled at least when expanding member-key
+/// alternatives. Deeper keys raise the limit to their own nesting depth, up
+/// to a fixed bound that keeps expansion finite for any input.
+const MIN_GENERIC_KEY_UNROLL: usize = 8;
+const MAX_GENERIC_KEY_UNROLL_DEPTH: usize = 64;
+
+/// The total size, in bytes of instantiation keys, that one member-key
+/// expansion may expand. It bounds recursion that branches
+/// (`k<T> = T / k<[T]> / k<[T, T]>`) or doubles its argument however deep
+/// the keys are.
+const MAX_GENERIC_KEY_EXPANSION_SIZE: usize = 1 << 20;
+
+/// State shared by one member-key expansion: the per-name cache, the unroll
+/// limit for recursion with changing arguments and the remaining size budget
+/// of generic instantiations.
+struct KeyExpansion<'a> {
+  memo: HashMap<String, Rc<Vec<Type1<'a>>>>,
+  unroll_limit: usize,
+  budget: usize,
+}
+
+/// A recursion and cache key for one generic instantiation. Arguments are
+/// keyed by their structure rather than their display form, which prints
+/// `1` and `1.0` alike.
+pub(crate) fn generic_instantiation_key<'b, 'a: 'b>(
+  name: &str,
+  args: impl IntoIterator<Item = &'b Type1<'a>>,
+) -> String {
+  let args = args
+    .into_iter()
+    .map(|arg| format!("{arg:?}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  format!("{name}<{args}>")
+}
+
+/// The argument bound to a parameter reference. Socket-prefixed names such
+/// as `$K` are distinct rules, never parameters.
+fn param_binding<'m, 'a>(
+  bindings: &'m HashMap<&'a str, Type1<'a>>,
+  ident: &Identifier,
+) -> Option<&'m Type1<'a>> {
+  if ident.socket.is_some() {
+    return None;
+  }
+  bindings.get(ident.ident)
+}
+
+/// The alternatives one map key may match for a member key type, following
+/// parentheses, aliases, `/=` extensions and generic parameters. A type with
+/// a control operator or generic arguments stays whole because it constrains
+/// the complete type rather than one alternative. Expansion tracks the active
+/// name chain so recursive paths stop, and caches acyclic expansions by name:
+/// an alias subgraph shared by many paths is expanded once, so DAG-shaped
+/// alias hierarchies stay linear instead of exponential.
+pub(crate) fn member_key_type_alternatives<'a>(
+  state: &ValidationState<'a>,
+  key_type: &Type1<'a>,
+) -> (Vec<Type1<'a>>, bool) {
+  member_key_type_alternatives_for_depth(state, key_type, 0)
+}
+
+/// Member-key alternatives for keys nested up to `key_depth` levels deep.
+/// Recursion that wraps its argument (`k<T> = T / k<[T]>`) adds a level per
+/// unrolling, so unrolling past the deepest key keeps keys up to the depth
+/// limit reachable without unbounded expansion.
+pub(crate) fn member_key_type_alternatives_for_depth<'a>(
+  state: &ValidationState<'a>,
+  key_type: &Type1<'a>,
+  key_depth: usize,
+) -> (Vec<Type1<'a>>, bool) {
+  let mut expansion = KeyExpansion {
+    memo: HashMap::new(),
+    unroll_limit: key_depth
+      .saturating_add(2)
+      .clamp(MIN_GENERIC_KEY_UNROLL, MAX_GENERIC_KEY_UNROLL_DEPTH),
+    budget: MAX_GENERIC_KEY_EXPANSION_SIZE,
+  };
+  expand_key_type_alternatives(state, key_type, &mut Vec::new(), &mut expansion)
+}
+
+/// Expand one candidate type into leaf alternatives. The returned flag is
+/// false when a recursive path was cut underneath, making the result specific
+/// to the active chain and unfit for caching by name.
+fn expand_key_type_alternatives<'a>(
+  state: &ValidationState<'a>,
+  candidate: &Type1<'a>,
+  active: &mut Vec<String>,
+  expansion: &mut KeyExpansion<'a>,
+) -> (Vec<Type1<'a>>, bool) {
+  match &candidate.type2 {
+    _ if candidate.operator.is_some() => {
+      expand_controlled_key_alternatives(state, candidate, active, expansion)
+    }
+    Type2::ParenthesizedType { pt, .. } => {
+      let mut alternatives = Vec::new();
+      let mut acyclic = true;
+      for choice in &pt.type_choices {
+        let (mut nested, nested_acyclic) =
+          expand_key_type_alternatives(state, &choice.type1, active, expansion);
+        alternatives.append(&mut nested);
+        acyclic &= nested_acyclic;
+      }
+      (alternatives, acyclic)
+    }
+    Type2::Typename {
+      ident,
+      generic_args: None,
+      ..
+    } => expand_key_ident_alternatives(state, candidate, ident, active, expansion),
+    Type2::Typename {
+      ident,
+      generic_args: Some(args),
+      ..
+    } => expand_key_generic_alternatives(state, candidate, ident, args, active, expansion),
+    _ => (vec![candidate.clone()], true),
+  }
+}
+
+/// A predicate control constrains each value its target admits, so
+/// `(A / B) .ctl C` matches what `A .ctl C / B .ctl C` matches. Distributing
+/// it over the target's alternatives lets a key's domain check and probe
+/// agree on one alternative, and keeps a recursive target under the
+/// expansion guards. Ranges and controls that compute a value from their
+/// target (`.plus`, `.cat`, `.det`) stay whole.
+fn expand_controlled_key_alternatives<'a>(
+  state: &ValidationState<'a>,
+  candidate: &Type1<'a>,
+  active: &mut Vec<String>,
+  expansion: &mut KeyExpansion<'a>,
+) -> (Vec<Type1<'a>>, bool) {
+  let Some(operator) = &candidate.operator else {
+    return (vec![candidate.clone()], true);
+  };
+  if !matches!(
+    &operator.operator,
+    RangeCtlOp::CtlOp { ctrl, .. } if !is_computed_control(ctrl)
+  ) {
+    return (vec![candidate.clone()], true);
+  }
+  let mut target = candidate.clone();
+  target.operator = None;
+  let (targets, acyclic) = expand_key_type_alternatives(state, &target, active, expansion);
+  let alternatives = targets
+    .iter()
+    .map(|target| {
+      let mut constrained = target.clone();
+      constrained.type2 = bound_type2(target);
+      constrained.operator = Some(operator.clone());
+      constrained
+    })
+    .collect();
+  (alternatives, acyclic)
+}
+
+/// Whether a control computes a new value from its target (`.plus`, `.cat`,
+/// `.det`) rather than constraining the target's values.
+pub(crate) fn is_computed_control(ctrl: &ControlOperator) -> bool {
+  #[cfg(feature = "additional-controls")]
+  {
+    matches!(
+      ctrl,
+      ControlOperator::PLUS | ControlOperator::CAT | ControlOperator::DET
+    )
+  }
+  #[cfg(not(feature = "additional-controls"))]
+  {
+    let _ = ctrl;
+    false
+  }
+}
+
+/// Expand a generic instantiation by substituting its arguments, resolved in
+/// the caller's environment, for the rule's parameters. Instantiations are
+/// not cached: the expansion depends on the arguments.
+fn expand_key_generic_alternatives<'a>(
+  state: &ValidationState<'a>,
+  candidate: &Type1<'a>,
+  ident: &Identifier<'a>,
+  args: &GenericArgs<'a>,
+  active: &mut Vec<String>,
+  expansion: &mut KeyExpansion<'a>,
+) -> (Vec<Type1<'a>>, bool) {
+  let Some(rule) = rule_from_ident(state.cddl, ident) else {
+    return (vec![candidate.clone()], true);
+  };
+  if !matches!(rule, Rule::Type { .. }) {
+    return (vec![candidate.clone()], true);
+  }
+  let Some(params) = generic_params_from_rule(rule) else {
+    return (vec![candidate.clone()], true);
+  };
+  let key = qualified_ident_key(ident);
+  let resolved = resolved_generic_args(state, args);
+  // Instantiations are cached by name and resolved arguments, so a DAG of
+  // generic aliases expands each distinct instantiation once.
+  let memo_key = generic_instantiation_key(&key, &resolved);
+  if active.contains(&memo_key) {
+    // The same instantiation again (`k<T> = T / k<T>`) adds no keys of its
+    // own, and probing it would recurse without end.
+    return (Vec::new(), false);
+  }
+  if active.iter().filter(|name| **name == key).count() >= expansion.unroll_limit
+    || memo_key.len() > expansion.budget
+  {
+    // Recursion with changing arguments is unrolled to a bounded depth and
+    // deeper levels are dropped: probing them would never consume input.
+    return (Vec::new(), false);
+  }
+  if let Some(cached) = expansion.memo.get(&memo_key) {
+    return ((**cached).clone(), true);
+  }
+  expansion.budget -= memo_key.len();
+  let bindings: HashMap<&'a str, Type1<'a>> = params.iter().copied().zip(resolved).collect();
+  // Every definition contributes, including `/=` extensions.
+  let types = type_choice_types_from_ident(state.cddl, ident);
+  active.push(key);
+  active.push(memo_key.clone());
+  let mut alternatives = Vec::new();
+  let mut acyclic = true;
+  for rule_type in types {
+    for choice in &rule_type.type_choices {
+      let substituted = substitute_generic_params(&choice.type1, &bindings);
+      let (mut nested, nested_acyclic) =
+        expand_key_type_alternatives(state, &substituted, active, expansion);
+      alternatives.append(&mut nested);
+      acyclic &= nested_acyclic;
+    }
+  }
+  active.truncate(active.len() - 2);
+  if acyclic {
+    expansion
+      .memo
+      .insert(memo_key, Rc::new(deduplicate_alternatives(&alternatives)));
+  }
+  (alternatives, acyclic)
+}
+
+/// Replace parameter references in a member-key type with their bound
+/// arguments. A bare parameter takes the whole argument; parameters nested
+/// in generic arguments or parenthesized choices are substituted in place.
+fn substitute_generic_params<'a>(
+  t1: &Type1<'a>,
+  bindings: &HashMap<&'a str, Type1<'a>>,
+) -> Type1<'a> {
+  if let Type2::Typename {
+    ident,
+    generic_args: None,
+    ..
+  } = &t1.type2
+  {
+    if let Some(arg) = param_binding(bindings, ident) {
+      let Some(operator) = &t1.operator else {
+        return arg.clone();
+      };
+      let mut op = operator.clone();
+      op.type2 = substitute_type2_params(&operator.type2, bindings);
+      let mut substituted = t1.clone();
+      // An argument that carries its own operator is parenthesized so both
+      // constraints apply.
+      substituted.type2 = bound_type2(arg);
+      substituted.operator = Some(op);
+      return substituted;
+    }
+  }
+  let mut substituted = t1.clone();
+  substituted.type2 = substitute_type2_params(&t1.type2, bindings);
+  if let Some(operator) = &t1.operator {
+    let mut op = operator.clone();
+    op.type2 = substitute_type2_params(&operator.type2, bindings);
+    substituted.operator = Some(op);
+  }
+  substituted
+}
+
+/// Substitute generic parameters inside a type2 node, reaching through
+/// arrays, maps and tagged payloads so expanded alternatives never probe
+/// with an unbound parameter.
+fn substitute_type2_params<'a>(
+  t2: &Type2<'a>,
+  bindings: &HashMap<&'a str, Type1<'a>>,
+) -> Type2<'a> {
+  if let Type2::Typename {
+    ident,
+    generic_args: None,
+    ..
+  } = t2
+  {
+    if let Some(arg) = param_binding(bindings, ident) {
+      return bound_type2(arg);
+    }
+  }
+  let mut substituted = t2.clone();
+  match &mut substituted {
+    Type2::Typename {
+      generic_args: Some(args),
+      ..
+    }
+    | Type2::ChoiceFromGroup {
+      generic_args: Some(args),
+      ..
+    }
+    | Type2::Unwrap {
+      generic_args: Some(args),
+      ..
+    } => {
+      for arg in args.args.iter_mut() {
+        *arg.arg = substitute_generic_params(&arg.arg, bindings);
+      }
+    }
+    Type2::ParenthesizedType { pt, .. } => {
+      substitute_type_params(pt, bindings);
+    }
+    Type2::Array { group, .. }
+    | Type2::Map { group, .. }
+    | Type2::ChoiceFromInlineGroup { group, .. } => {
+      substitute_group_params(group, bindings);
+    }
+    Type2::TaggedData { t, .. } => {
+      substitute_type_params(t, bindings);
+    }
+    _ => {}
+  }
+  substituted
+}
+
+/// A bound argument as a type2 node: an unconstrained argument is used
+/// directly, a constrained one is parenthesized to keep its operator.
+fn bound_type2<'a>(arg: &Type1<'a>) -> Type2<'a> {
+  if arg.operator.is_none() {
+    return arg.type2.clone();
+  }
+  Type2::ParenthesizedType {
+    pt: Type {
+      type_choices: vec![TypeChoice {
+        type1: arg.clone(),
+        #[cfg(feature = "ast-comments")]
+        comments_before_type: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_type: None,
+      }],
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    },
+    #[cfg(feature = "ast-span")]
+    span: Span::default(),
+    #[cfg(feature = "ast-comments")]
+    comments_before_type: None,
+    #[cfg(feature = "ast-comments")]
+    comments_after_type: None,
+  }
+}
+
+/// A deduplicated copy of expanded alternatives for the expansion cache; the
+/// caller's list keeps duplicates so a syntactic choice still reads as one.
+fn deduplicate_alternatives<'a>(alternatives: &[Type1<'a>]) -> Vec<Type1<'a>> {
+  let mut deduplicated: Vec<Type1<'a>> = Vec::new();
+  for alternative in alternatives {
+    if !deduplicated.contains(alternative) {
+      deduplicated.push(alternative.clone());
+    }
+  }
+  deduplicated
+}
+
+/// Substitute generic parameters in every choice of a type.
+fn substitute_type_params<'a>(t: &mut Type<'a>, bindings: &HashMap<&'a str, Type1<'a>>) {
+  for choice in t.type_choices.iter_mut() {
+    choice.type1 = substitute_generic_params(&choice.type1, bindings);
+  }
+}
+
+/// Substitute generic parameters through the entries of a group.
+fn substitute_group_params<'a>(group: &mut Group<'a>, bindings: &HashMap<&'a str, Type1<'a>>) {
+  for choice in group.group_choices.iter_mut() {
+    for (entry, _) in choice.group_entries.iter_mut() {
+      match entry {
+        GroupEntry::ValueMemberKey { ge, .. } => {
+          if let Some(MemberKey::Type1 { t1, .. }) = &mut ge.member_key {
+            **t1 = substitute_generic_params(t1, bindings);
+          }
+          substitute_type_params(&mut ge.entry_type, bindings);
+        }
+        GroupEntry::TypeGroupname { ge, .. } => {
+          // An entry that names a parameter directly, as `[K]` does, takes
+          // the bound argument: a bare type name replaces the name, anything
+          // else becomes a value entry for the bound type.
+          let substitution = if ge.generic_args.is_none() && ge.name.socket.is_none() {
+            bindings
+              .get(ge.name.ident)
+              .map(|arg| match (&arg.operator, &arg.type2) {
+                (
+                  None,
+                  Type2::Typename {
+                    ident,
+                    generic_args,
+                    ..
+                  },
+                ) => Ok((ident.clone(), generic_args.clone())),
+                _ => Err(Box::new(arg.clone())),
+              })
+          } else {
+            None
+          };
+          match substitution {
+            Some(Ok((ident, generic_args))) => {
+              ge.name = ident;
+              ge.generic_args = generic_args;
+            }
+            Some(Err(arg)) => {
+              let occur = ge.occur.clone();
+              *entry = GroupEntry::ValueMemberKey {
+                ge: Box::new(ValueMemberKeyEntry {
+                  occur,
+                  member_key: None,
+                  entry_type: Type {
+                    type_choices: vec![TypeChoice {
+                      type1: *arg,
+                      #[cfg(feature = "ast-comments")]
+                      comments_before_type: None,
+                      #[cfg(feature = "ast-comments")]
+                      comments_after_type: None,
+                    }],
+                    #[cfg(feature = "ast-span")]
+                    span: Span::default(),
+                  },
+                }),
+                #[cfg(feature = "ast-span")]
+                span: Span::default(),
+                #[cfg(feature = "ast-comments")]
+                leading_comments: None,
+                #[cfg(feature = "ast-comments")]
+                trailing_comments: None,
+              };
+            }
+            None => {
+              if let Some(args) = &mut ge.generic_args {
+                for arg in args.args.iter_mut() {
+                  *arg.arg = substitute_generic_params(&arg.arg, bindings);
+                }
+              }
+            }
+          }
+        }
+        GroupEntry::InlineGroup { group, .. } => {
+          substitute_group_params(group, bindings);
+        }
+      }
+    }
+  }
+}
+
+/// Expand one alias occurrence. Results are cached by name only when no
+/// recursive path was cut underneath them; a cut makes the result depend on
+/// the active chain.
+fn expand_key_ident_alternatives<'a>(
+  state: &ValidationState<'a>,
+  candidate: &Type1<'a>,
+  ident: &Identifier<'a>,
+  active: &mut Vec<String>,
+  expansion: &mut KeyExpansion<'a>,
+) -> (Vec<Type1<'a>>, bool) {
+  if let Some(arg) = ident
+    .socket
+    .is_none()
+    .then(|| generic_argument_for_param(state, ident.ident))
+    .flatten()
+  {
+    return expand_key_type_alternatives(state, &arg, active, expansion);
+  }
+  let key = qualified_ident_key(ident);
+  if let Some(cached) = expansion.memo.get(&key) {
+    return ((**cached).clone(), true);
+  }
+  if active.contains(&key) {
+    // A union back-reference adds no keys of its own (the least fixed
+    // point), and probing it would recurse without end.
+    return (Vec::new(), false);
+  }
+  let types = type_choice_types_from_ident(state.cddl, ident);
+  if types.is_empty() {
+    return (vec![candidate.clone()], true);
+  }
+  active.push(key.clone());
+  let mut alternatives = Vec::new();
+  let mut acyclic = true;
+  for rule_type in types {
+    for choice in &rule_type.type_choices {
+      let (mut nested, nested_acyclic) =
+        expand_key_type_alternatives(state, &choice.type1, active, expansion);
+      alternatives.append(&mut nested);
+      acyclic &= nested_acyclic;
+    }
+  }
+  active.pop();
+  if acyclic {
+    // Cache a deduplicated copy so alias subgraphs shared by many paths are
+    // expanded once and stay small; the returned list keeps duplicates so a
+    // syntactic choice still reads as a choice to its caller.
+    expansion
+      .memo
+      .insert(key, Rc::new(deduplicate_alternatives(&alternatives)));
+  }
+  (alternatives, acyclic)
+}
+
+/// The argument bound to `param` in the generic rule currently being
+/// evaluated. Arguments accumulate per instantiation, so the current ones
+/// are the trailing `params.len()` entries.
+fn generic_argument_for_param<'a>(state: &ValidationState<'a>, param: &str) -> Option<Type1<'a>> {
+  let rule = state
+    .generic_rules
+    .iter()
+    .find(|rule| Some(rule.name) == state.eval_generic_rule)?;
+  let index = rule.params.iter().position(|p| *p == param)?;
+  let start = rule.args.len().checked_sub(rule.params.len())?;
+  let arg = rule.args.get(start + index)?;
+  // A parameter bound only to itself was never given an argument; treating
+  // it as one would recurse without end.
+  if arg.operator.is_none()
+    && matches!(
+      &arg.type2,
+      Type2::Typename {
+        ident,
+        generic_args: None,
+        ..
+      } if ident.ident == param && ident.socket.is_none()
+    )
+  {
+    return None;
+  }
+  Some(arg.clone())
+}
+
+/// Resolve a generic argument against the rule currently being evaluated, so
+/// a parameter passed through unchanged (`outer<T> = inner<T>`) binds to the
+/// caller's argument instead of to itself. Arguments that are not plain
+/// parameter references stay as written.
+pub(crate) fn resolve_generic_argument<'a>(
+  state: &ValidationState<'a>,
+  arg: &Type1<'a>,
+) -> Type1<'a> {
+  let mut resolved = arg.clone();
+  let mut seen = HashSet::new();
+  loop {
+    if resolved.operator.is_some() {
+      break;
+    }
+    let Type2::Typename {
+      ident,
+      generic_args: None,
+      ..
+    } = &resolved.type2
+    else {
+      break;
+    };
+    if ident.socket.is_some() || !seen.insert(ident.ident) {
+      break;
+    }
+    match generic_argument_for_param(state, ident.ident) {
+      Some(next) => resolved = next,
+      None => break,
+    }
+  }
+  resolved
+}
+
+/// The arguments of a generic instantiation resolved against the caller's
+/// evaluation environment.
+pub(crate) fn resolved_generic_args<'a>(
+  state: &ValidationState<'a>,
+  args: &GenericArgs<'a>,
+) -> Vec<Type1<'a>> {
+  args
+    .args
+    .iter()
+    .map(|arg| resolve_generic_argument(state, &arg.arg))
+    .collect()
 }
 
 /// Find all group choice alternate rules from a given identifier
