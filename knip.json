@@ -16,6 +16,7 @@
         "src/extension.ts",
         "src/test/{index,runTest}.ts",
         "src/test/**/*.test.ts",
+        "scripts/*.cjs",
         "webpack.config.js"
       ],
       "project": ["src/**/*.ts"]
