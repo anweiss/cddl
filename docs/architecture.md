@@ -19,6 +19,10 @@ describe the JavaScript boundary. The language server implements the standard
 Language Server Protocol, with capabilities returned by `initialize`; its
 stdio integration tests check diagnostics, completions and symbols.
 
+The `b64url` prelude accepts unpadded URL-safe base64 text in JSON. In CBOR it
+requires tag 33 around a text payload and validates that payload with the same
+decoder; untagged text, other tags and non-text payloads are rejected.
+
 The client never imports server internals. Browser modules never import LSP
 sources. ESLint enforces these source boundaries; the generated WASM packages
 are the shared implementation, not hand-maintained JavaScript copies.

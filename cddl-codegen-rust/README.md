@@ -103,7 +103,7 @@ result to `OUT_DIR` for `include!`. It is responsible for file I/O and emitting
 The crate compiling the **generated Rust** needs `serde` with its `derive`
 feature in `[dependencies]`. Depending on the schema, it also needs
 `serde_with` with `macros` for byte strings and container encoding adapters,
-`ciborium` for tagged prelude types, and `serde_json` for the default `any`
+`ciborium` for tagged prelude types and explicit CBOR tags, and `serde_json` for the default `any`
 representation. These must not be only build dependencies. Custom type paths
 must resolve in the generated code's module.
 
@@ -111,3 +111,20 @@ The library preserves the macros' existing mappings and limitations; it does
 not enforce all CDDL constraints or validate that custom Rust type strings
 compile. Use the `cddl` validators for data validation and compile the generated
 code in its consumer.
+
+String literals in mixed choices serialize as strings and take precedence over
+typed alternatives when decoding. Quoted text keys using `=>` become named
+fields; typed keys become flattened `entries` maps. Such structs decode through
+a generated map visitor that reads each value in place, so tagged values are
+kept and entries are routed to the first named field or key type that matches.
+JSON object keys are strings, so integer-keyed wildcard entries round-trip
+through CBOR only. An optional wildcard group (`? (* tstr => int)`) decodes to
+`None` when no entry matched and `Some(map)` otherwise. Rule and variant names
+normalize embedded acronyms, for example `hashedURI-map` becomes `HashedUriMap`.
+
+Explicit literal CBOR tags, such as `#6.37(bstr)`, are preserved on struct fields,
+including through aliases and containers. The Rust field retains its inner type;
+generated `serde_with` adapters apply the tag and inner byte-string encoding.
+JSON retains the untagged inner value, and CBOR decoding also accepts untagged
+input. A bare Rust type alias cannot apply an encoding when serialized outside a
+generated field. Non-literal tag constraints are not enforced by code generation.

@@ -54,6 +54,20 @@ release WASM builds and tests pass. Do not use `npm audit fix --force`.
 Dependabot's seven-day cooldown applies to ordinary updates, not urgent
 security updates.
 
+The root, extension and client npm projects override minimatch to 11.0.3 for
+GHSA-g3hv-75wg-m249, and the extension and client use glob 14.0.3 for
+GHSA-3g3m-2fjr-6pw4. Run `npm run test:dependencies` after changing these
+overrides; it exercises the matching and discovery APIs the affected tools use.
+
+minimatch 11 removed `makeRe()`, which vscode-languageclient 10.1.2 and 11.0.0
+still call to reject empty patterns. The client's `postinstall` script,
+`cddl-lsp/client/scripts/patch-languageclient.cjs`, replaces those two checks
+with the equivalent `matcher.set.length === 0` test. It refuses unknown
+language client versions or unexpected source. The client webpack build and
+`npm --prefix cddl-lsp run compile` fail if the patch is missing, for example
+after installing with `--ignore-scripts`. Remove the script, hook and checks
+once a vscode-languageclient release depends on minimatch 11.0.1 or newer.
+
 Cargo features are the project's feature flags. `Cargo.toml` defines
 `json`, `cbor`, `additional-controls`, `ast-span`, `ast-comments`, `lsp` and
 the parser-generation options. `lsp` builds a parser-only WASM API, not the
