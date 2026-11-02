@@ -52,6 +52,10 @@ manifests. Keep the Pest family pinned together at 2.9.4. The earlier 2.8.8
 pin avoided a psm WASM linking failure; 2.9.4 passes both release WASM
 package builds and the Node WASM tests with Rust stable 1.99.1. Validate
 both release WASM builds and tests before upgrading the family again.
+With `std`, Pest 2.9 refuses to parse when less than 64 KiB of native stack
+remains. Native library parse entry points therefore run through
+`stacker::maybe_grow`, and `tests/small_stack.rs` covers 64 KiB threads.
+Callers that use `pest_parser::CddlParser` directly get Pest's behavior.
 Do not use `npm audit fix --force`.
 Dependabot's seven-day cooldown applies to ordinary updates, not urgent
 security updates.

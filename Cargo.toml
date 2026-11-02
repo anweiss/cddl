@@ -88,6 +88,9 @@ pretty_assertions = "1.2.0"
 wasm-bindgen-test = "0.3.65"
 hex = "0.4.3"                # Add hex crate for tests
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+stacker = { version = "0.1.25", optional = true }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.6"
 serde-wasm-bindgen = { version = "0.6.5", optional = true }
@@ -136,6 +139,7 @@ std = [
     "regex",
     "pest/std",
     "itertools/use_std",
+    "dep:stacker",
 ]
 lsp = ["std"]
 additional-controls = []
@@ -146,6 +150,9 @@ ast-parent = []
 json = ["std"]
 cbor = ["std"]
 csv-validate = ["std", "json", "csv"]
+# CDDL module structure (draft-ietf-cbor-cddl-modules-07). Default-off: with the
+# feature disabled, parsing behavior is unchanged from RFC 8610.
+modules = []
 _build-parser = ["dep:pest_generator", "dep:proc-macro2"]
 
 [[bin]]

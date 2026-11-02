@@ -801,12 +801,19 @@ pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
     let pairs = pest_meta::parser::parse(pest_meta::parser::Rule::grammar_rules, &pest)
       .map_err(|e| e.to_string())?;
 
-    let ast = pest_meta::parser::consume_rules(pairs).unwrap();
+    let ast = pest_meta::parser::consume_rules(pairs).map_err(|errors| {
+      errors
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+    })?;
 
     let vm = pest_vm::Vm::new(pest_meta::optimizer::optimize(ast));
 
     let rule = rule.replace('-', "_");
-    let _ = vm.parse(&rule, target).map_err(|e| e.to_string())?;
+    crate::pest_parser::with_parser_stack(|| vm.parse(&rule, target).map(|_| ()))
+      .map_err(|e| e.to_string())?;
   }
 
   Ok(())
@@ -922,6 +929,13 @@ mod tests {
     );
 
     Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn test_abnf_rejects_nullable_left_recursion_without_panicking() {
+    let grammar = "start\nstart = \"x\"\nr = [r] \"y\"\n";
+    assert!(validate_abnf(grammar, "x").is_err());
   }
 
   #[cfg(feature = "additional-controls")]

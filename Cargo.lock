@@ -241,6 +241,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "simplelog",
+ "stacker",
  "uriparse",
  "wasm-bindgen",
  "wasm-bindgen-test",

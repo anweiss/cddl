@@ -11,6 +11,26 @@ mod grammar_tests {
   struct CDDLParser;
 
   #[test]
+  fn dollar_identifiers_preserve_socket_classification() {
+    for input in ["$.start.$ = int", "root = $.start.$\n$.start.$ = int"] {
+      assert!(CDDLParser::parse(Rule::cddl, input).is_ok());
+    }
+    let plain = CDDLParser::parse(Rule::typename, "$.start.$")
+      .unwrap()
+      .next()
+      .unwrap();
+    assert_eq!(plain.into_inner().next().unwrap().as_rule(), Rule::id);
+    for (name, name_rule, socket) in [
+      ("$socket", Rule::typename, Rule::socket_type),
+      ("$$socket", Rule::groupname, Rule::socket_group),
+    ] {
+      let parsed = CDDLParser::parse(name_rule, name).unwrap().next().unwrap();
+      assert_eq!(parsed.into_inner().next().unwrap().as_rule(), socket);
+    }
+    assert!(CDDLParser::parse(Rule::typename, "$$socket").is_err());
+  }
+
+  #[test]
   fn test_basic_type_rule() {
     let input = "myrule = int";
     let result = CDDLParser::parse(Rule::cddl, input);

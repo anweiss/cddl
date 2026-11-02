@@ -418,13 +418,26 @@ impl<'a> CBORValidator<'a> {
     candidate.state.is_multi_type_choice = self.state.is_multi_type_choice;
     candidate.state.is_multi_group_choice = self.state.is_multi_group_choice;
     candidate.state.type_group_name_entry = self.state.type_group_name_entry;
+    // The candidate inherits the recursion guard, so it validates at the
+    // map's own location; at the root location an ancestor's guard would
+    // accept nested values without validating them.
+    candidate.state.data_location = self.state.data_location.clone();
     candidate.probing_single_entry_assignment = true;
 
     // A pair assigned to this member must satisfy it. Do not let an optional
     // occurrence turn a failed key match into a successful absence.
     let mut required_entry = entry.clone();
     required_entry.occur = None;
-    candidate.visit_value_member_key_entry(&required_entry)?;
+    match choice_member_key_for_depth(
+      &candidate.state,
+      &required_entry,
+      map_key_depth(&candidate.cbor),
+    ) {
+      Some((key_type, alternatives, is_cut)) => {
+        candidate.visit_choice_key_entry::<T>(&required_entry, key_type, &alternatives, is_cut)?
+      }
+      None => candidate.visit_value_member_key_entry(&required_entry)?,
+    }
 
     Ok(candidate.errors.is_empty() && candidate.single_entry_claims.len() == 1)
   }
@@ -480,10 +493,11 @@ impl<'a> CBORValidator<'a> {
     let mut claim_generic_contexts = Vec::new();
     let mut entry_indices = Vec::new();
     for (claim_position, claim) in self.single_entry_claims.iter().enumerate() {
+      // A claim recorded by a cut member stays committed to its pair.
       let entry = if claim_position == current_claim_position {
         current_entry.clone()
-      } else if let Some(entry) = &claim.entry {
-        entry.clone()
+      } else if let Some(entry) = claim.entry.as_ref().and_then(Self::movable_claim_entry) {
+        entry
       } else {
         continue;
       };
@@ -546,11 +560,22 @@ impl<'a> CBORValidator<'a> {
       let entry_index = entry_indices[entry_slot];
       let claim = &mut self.single_entry_claims[claim_position];
       claim.entry_index = entry_index;
-      claim.entry = Some(claim_entries[claim_slot].clone());
+      claim.entry = Self::movable_claim_entry(&claim_entries[claim_slot]);
       claim.generic_context = claim_generic_contexts[claim_slot].clone();
     }
 
     Ok(true)
+  }
+
+  /// The entry a reassigned claim keeps for later retries. A cut member's
+  /// pair stays committed once assigned, as it does when the member matches
+  /// directly.
+  fn movable_claim_entry(entry: &ValueMemberKeyEntry<'a>) -> Option<ValueMemberKeyEntry<'a>> {
+    (!matches!(
+      entry.member_key,
+      Some(MemberKey::Type1 { is_cut: true, .. })
+    ))
+    .then(|| entry.clone())
   }
 
   fn is_unconsumed_map_entry(entry_index: usize, claimed_entries: &[usize]) -> bool {
@@ -596,6 +621,344 @@ impl<'a> CBORValidator<'a> {
           .then_some(entry_index)
       })
       .collect()
+  }
+
+  /// Match a member whose key type is a choice against complete map pairs.
+  /// Different keys may satisfy different alternatives, and a pair is claimed
+  /// only when its value also validates, leaving other pairs to later
+  /// members. Occurrence bounds count pairs across all alternatives. Without
+  /// its own indicator, a member repeats with its enclosing group reference.
+  fn visit_choice_key_entry<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entry: &ValueMemberKeyEntry<'a>,
+    key_type: &Type1<'a>,
+    alternatives: &[Type1<'a>],
+    is_cut: bool,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let Value::Map(entries) = self.cbor.clone() else {
+      return Ok(());
+    };
+    let (occurrence, min, max) = choice_member_occurrence(entry, self.state.occurrence);
+    let single = max == Some(1);
+    let mut count = 0;
+    let mut cut_committed = false;
+    let mut value_errors = Vec::new();
+    let mut fallback = None;
+    for (index, (key, value)) in entries.iter().enumerate() {
+      if max.is_some_and(|max| count >= max) {
+        break;
+      }
+      if !Self::is_unconsumed_map_entry(index, &self.claimed_map_entries)
+        || !self.map_key_matches_alternatives::<T>(key, alternatives)?
+      {
+        continue;
+      }
+      let errors = self.map_value_errors::<T>(&entry.entry_type, key, value)?;
+      if errors.is_empty() || is_cut {
+        // A cut commits a matching key to this member, so its failing value
+        // rejects the map rather than falling through (RFC 8610 §3.5.4).
+        count += usize::from(errors.is_empty());
+        cut_committed |= is_cut;
+        self.claim_choice_key_pair(index, entry, single, is_cut);
+        self.errors.extend(errors);
+      } else {
+        fallback.get_or_insert(index);
+        value_errors = errors;
+      }
+    }
+
+    if count == 0
+      && single
+      && !cut_committed
+      && self.retry_choice_key_entry::<T>(entry, &entries, alternatives, fallback, min > 0)?
+    {
+      count += 1;
+    }
+    if count < min {
+      if value_errors.is_empty() {
+        self.add_error(format!("map requires entry key of type {}", key_type));
+      } else {
+        self.errors.append(&mut value_errors);
+      }
+    }
+    if occurrence.is_some() {
+      self.state.occurrence = None;
+    }
+    Ok(())
+  }
+
+  /// Retry a single-occurrence member that matched no pair through the
+  /// one-to-one reassignment. An optional member retries only when a pair it
+  /// could take is held elsewhere or failed its value.
+  fn retry_choice_key_entry<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entry: &ValueMemberKeyEntry<'a>,
+    entries: &[(Value, Value)],
+    alternatives: &[Type1<'a>],
+    fallback: Option<usize>,
+    required: bool,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    if !required && fallback.is_none() && !self.choice_key_held::<T>(entries, alternatives)? {
+      return Ok(false);
+    }
+    // Prefer the key-matching pair whose value failed; otherwise seed the
+    // reassignment with any unclaimed pair, so the one-to-one allocator can
+    // hand an earlier member a replacement.
+    let mut candidates: Vec<usize> = fallback.into_iter().collect();
+    candidates.extend(
+      (0..entries.len())
+        .filter(|index| Self::is_unconsumed_map_entry(*index, &self.claimed_map_entries)),
+    );
+    for index in candidates {
+      if self.reassign_choice_key_pair::<T>(index, entry)? {
+        return Ok(true);
+      }
+    }
+    Ok(false)
+  }
+
+  /// Whether another member holds a pair whose key this member's
+  /// alternatives match, so an optional member that matched nothing may
+  /// still win it through reassignment.
+  fn choice_key_held<T: std::fmt::Debug + 'static>(
+    &self,
+    entries: &[(Value, Value)],
+    alternatives: &[Type1<'a>],
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    for (index, (key, _)) in entries.iter().enumerate() {
+      if !Self::is_unconsumed_map_entry(index, &self.claimed_map_entries)
+        && self.map_key_matches_alternatives::<T>(key, alternatives)?
+      {
+        return Ok(true);
+      }
+    }
+    Ok(false)
+  }
+
+  /// Single-occurrence claims join the one-to-one pair assignment so an
+  /// earlier member can give up a pair that a later member needs.
+  fn claim_choice_key_pair(
+    &mut self,
+    index: usize,
+    entry: &ValueMemberKeyEntry<'a>,
+    single: bool,
+    is_cut: bool,
+  ) {
+    if !single {
+      self.claimed_map_entries.push(index);
+      return;
+    }
+    self.claim_single_map_key(index);
+    self.active_single_entry_claim = None;
+    // A cut commits the pair to this member; a claim without an entry stays
+    // out of the one-to-one reassignment pool.
+    if is_cut {
+      return;
+    }
+    if let Some(claim) = self.single_entry_claims.last_mut() {
+      claim.entry = Some(entry.clone());
+    }
+  }
+
+  /// Try to satisfy a single-occurrence member whose only matching keys are
+  /// held by other members, by reassigning the direct claims one-to-one.
+  fn reassign_choice_key_pair<T: std::fmt::Debug + 'static>(
+    &mut self,
+    index: usize,
+    entry: &ValueMemberKeyEntry<'a>,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    if self.probing_single_entry_assignment {
+      return Ok(false);
+    }
+    self.claim_single_map_key(index);
+    self.active_single_entry_claim = None;
+    let position = self.single_entry_claims.len() - 1;
+    let generic_context = self.current_generic_evaluation_context();
+    if self.try_reassign_failed_single_entries::<T>(position, entry, generic_context)? {
+      return Ok(true);
+    }
+    self.remove_single_map_entry_claim(position);
+    Ok(false)
+  }
+
+  /// Claim the pair whose key is the literal `value` and return a missing
+  /// key error unless the member is optional or under `.ne`/`.default`.
+  fn lookup_literal_map_key<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entries: &[(Value, Value)],
+    value: &token::Value<'a>,
+  ) -> std::result::Result<Option<String>, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let key = token_value_into_cbor_value(value.clone());
+    if let Some((entry_index, _, v)) = self.find_or_release_map_entry::<T>(entries, &key)? {
+      self.claim_single_map_key(entry_index);
+      self.object_value = Some(v);
+      self.state.data_location.push_str(&format!("/{}", value));
+      return Ok(None);
+    }
+    if let Some(Occur::Optional { .. } | Occur::ZeroOrMore { .. }) = self.state.occurrence.take() {
+      self.state.advance_to_next_entry = true;
+      return Ok(None);
+    }
+    if let Some(ControlOperator::NE | ControlOperator::DEFAULT) = &self.state.ctrl {
+      return Ok(None);
+    }
+    Ok(Some(format!("object missing key: {}", value)))
+  }
+
+  /// Find the unclaimed pair with a fixed key. When a movable claim holds
+  /// it, first try to move the movable claims onto other pairs.
+  fn find_or_release_map_entry<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entries: &[(Value, Value)],
+    key: &Value,
+  ) -> std::result::Result<Option<(usize, Value, Value)>, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let found = self.find_single_map_entry_matching(entries, |candidate| candidate == key);
+    if found.is_some() || !self.state.is_member_key || self.probing_single_entry_assignment {
+      return Ok(found);
+    }
+    let Some(index) = entries.iter().position(|(candidate, _)| candidate == key) else {
+      return Ok(None);
+    };
+    if !self.release_single_map_entry::<T>(entries, index)? {
+      return Ok(None);
+    }
+    Ok(self.find_single_map_entry_matching(entries, |candidate| candidate == key))
+  }
+
+  /// Move every movable single-entry claim one-to-one onto the pairs other
+  /// than `released`, so a fixed member can take it. Only claims recorded
+  /// with a member that has no cut take part; committed claims keep their
+  /// pairs.
+  fn release_single_map_entry<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entries: &[(Value, Value)],
+    released: usize,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let movable: Vec<usize> = (0..self.single_entry_claims.len())
+      .filter(|position| {
+        self.single_entry_claims[*position]
+          .entry
+          .as_ref()
+          .and_then(Self::movable_claim_entry)
+          .is_some()
+      })
+      .collect();
+    if !movable
+      .iter()
+      .any(|position| self.single_entry_claims[*position].entry_index == released)
+    {
+      return Ok(false);
+    }
+    let held: Vec<usize> = movable
+      .iter()
+      .map(|position| self.single_entry_claims[*position].entry_index)
+      .collect();
+    let candidates: Vec<usize> = (0..entries.len())
+      .filter(|index| {
+        *index != released
+          && (held.contains(index)
+            || Self::is_unconsumed_map_entry(*index, &self.claimed_map_entries))
+      })
+      .collect();
+    let mut compatibility = vec![vec![false; candidates.len()]; movable.len()];
+    for (claim_slot, position) in movable.iter().enumerate() {
+      let claim = &self.single_entry_claims[*position];
+      let Some(entry) = claim.entry.clone() else {
+        continue;
+      };
+      for (entry_slot, index) in candidates.iter().enumerate() {
+        let (key, value) = entries[*index].clone();
+        compatibility[claim_slot][entry_slot] = self.single_pair_validates_entry::<T>(
+          &entry,
+          claim.generic_context.as_ref(),
+          key,
+          value,
+        )?;
+      }
+    }
+    let mut entry_owners = vec![None; candidates.len()];
+    for claim_slot in 0..movable.len() {
+      let mut visited_entries = vec![false; candidates.len()];
+      if !Self::augment_single_entry_assignment(
+        claim_slot,
+        &compatibility,
+        &mut visited_entries,
+        &mut entry_owners,
+      ) {
+        return Ok(false);
+      }
+    }
+    self
+      .claimed_map_entries
+      .retain(|index| !held.contains(index));
+    for (entry_slot, owner) in entry_owners.into_iter().enumerate() {
+      if let Some(claim_slot) = owner {
+        self.single_entry_claims[movable[claim_slot]].entry_index = candidates[entry_slot];
+        self.claimed_map_entries.push(candidates[entry_slot]);
+      }
+    }
+    Ok(true)
+  }
+
+  fn map_key_matches_alternatives<T: std::fmt::Debug + 'static>(
+    &self,
+    key: &Value,
+    alternatives: &[Type1<'a>],
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    for alternative in alternatives {
+      if !key_domain_admits(&self.state, alternative, key) {
+        continue;
+      }
+      let mut probe = self.new_with_recursion_state(key.clone());
+      probe.state.data_location = key_probe_location(&self.state.data_location, key);
+      probe.visit_type1(alternative)?;
+      if probe.errors.is_empty() {
+        return Ok(true);
+      }
+    }
+    Ok(false)
+  }
+
+  fn map_value_errors<T: std::fmt::Debug + 'static>(
+    &self,
+    entry_type: &Type<'a>,
+    key: &Value,
+    value: &Value,
+  ) -> std::result::Result<Vec<ValidationError>, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let mut cv = self.new_with_recursion_state(value.clone());
+    cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+    cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+    cv.state.type_group_name_entry = self.state.type_group_name_entry;
+    cv.state.data_location = format!("{}/{:?}", self.state.data_location, key);
+    cv.visit_type(entry_type)?;
+    Ok(cv.errors)
   }
 
   fn repeating_member_upper_bound(entry: &ValueMemberKeyEntry<'a>) -> Option<usize> {
@@ -1004,20 +1367,19 @@ impl<'a> CBORValidator<'a> {
         self.seq_match_leaf(elems, cursor, ctx, |cv| {
           if let Some(ga) = &ge.generic_args {
             if let Some(rule) = rule_from_ident(cv.state.cddl, &ge.name) {
+              let resolved_args = resolved_generic_args(&cv.state, ga);
               if let Some(gr) = cv
                 .state
                 .generic_rules
                 .iter_mut()
                 .find(|gr| gr.name == ge.name.ident)
               {
-                for arg in ga.args.iter() {
-                  gr.args.push((*arg.arg).clone());
-                }
+                gr.args.extend(resolved_args);
               } else if let Some(params) = generic_params_from_rule(rule) {
                 cv.state.generic_rules.push(GenericRule {
                   name: ge.name.ident,
                   params,
-                  args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                  args: resolved_args,
                 });
               }
 
@@ -1104,20 +1466,19 @@ impl<'a> CBORValidator<'a> {
       .map(|_| self.state.generic_rules.clone());
     if let Some(ga) = &ge.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &ge.name) {
+        let resolved_args = resolved_generic_args(&self.state, ga);
         if let Some(gr) = self
           .state
           .generic_rules
           .iter_mut()
           .find(|gr| gr.name == ge.name.ident)
         {
-          for arg in ga.args.iter() {
-            gr.args.push((*arg.arg).clone());
-          }
+          gr.args.extend(resolved_args);
         } else if let Some(params) = generic_params_from_rule(rule) {
           self.state.generic_rules.push(GenericRule {
             name: ge.name.ident,
             params,
-            args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+            args: resolved_args,
           });
         }
 
@@ -1175,20 +1536,19 @@ impl<'a> CBORValidator<'a> {
     let prev_eval = self.state.eval_generic_rule;
     let prev_generic_rules = generic_args.map(|_| self.state.generic_rules.clone());
     if let Some(ga) = generic_args {
+      let resolved_args = resolved_generic_args(&self.state, ga);
       if let Some(gr) = self
         .state
         .generic_rules
         .iter_mut()
         .find(|gr| gr.name == ident.ident)
       {
-        for arg in ga.args.iter() {
-          gr.args.push((*arg.arg).clone());
-        }
+        gr.args.extend(resolved_args);
       } else if let Some(params) = generic_params_from_rule(rule) {
         self.state.generic_rules.push(GenericRule {
           name: ident.ident,
           params,
-          args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+          args: resolved_args,
         });
       }
 
@@ -3290,20 +3650,19 @@ where
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
+            let resolved_args = resolved_generic_args(&self.state, ga);
             if let Some(gr) = self
               .state
               .generic_rules
               .iter_mut()
               .find(|gr| gr.name == ident.ident)
             {
-              for arg in ga.args.iter() {
-                gr.args.push((*arg.arg).clone());
-              }
+              gr.args.extend(resolved_args);
             } else if let Some(params) = generic_params_from_rule(rule) {
               self.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
-                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                args: resolved_args,
               });
             }
 
@@ -3361,20 +3720,19 @@ where
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
+            let resolved_args = resolved_generic_args(&self.state, ga);
             if let Some(gr) = self
               .state
               .generic_rules
               .iter_mut()
               .find(|gr| gr.name == ident.ident)
             {
-              for arg in ga.args.iter() {
-                gr.args.push((*arg.arg).clone());
-              }
+              gr.args.extend(resolved_args);
             } else if let Some(params) = generic_params_from_rule(rule) {
               self.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
-                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                args: resolved_args,
               });
             }
 
@@ -3433,20 +3791,19 @@ where
 
         if let Some(ga) = generic_args {
           if let Some(rule) = unwrap_rule_from_ident(self.state.cddl, ident) {
+            let resolved_args = resolved_generic_args(&self.state, ga);
             if let Some(gr) = self
               .state
               .generic_rules
               .iter_mut()
               .find(|gr| gr.name == ident.ident)
             {
-              for arg in ga.args.iter() {
-                gr.args.push((*arg.arg).clone());
-              }
+              gr.args.extend(resolved_args);
             } else if let Some(params) = generic_params_from_rule(rule) {
               self.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
-                args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+                args: resolved_args,
               });
             }
 
@@ -4308,24 +4665,36 @@ where
     &mut self,
     entry: &TypeGroupnameEntry<'a>,
   ) -> visitor::Result<Error<T>> {
+    let group_choice_alternates = group_choice_alternates_from_ident(self.state.cddl, &entry.name);
+    if entry.name.socket == Some(SocketPlug::GROUP)
+      && group_choice_alternates.is_empty()
+      && rule_from_ident(self.state.cddl, &entry.name).is_none()
+    {
+      // An unplugged socket has no matching alternatives (RFC 8610 §3.9).
+      // Only an occurrence allowing zero matches can skip it.
+      if occurrence_bounds(entry.occur.as_ref().map(|o| o.occur)).0 > 0 {
+        self.add_error("undefined group socket requires zero occurrences".into());
+      }
+      return Ok(());
+    }
+
     self.state.type_group_name_entry = Some(entry.name.ident);
 
     if let Some(ga) = &entry.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &entry.name) {
+        let resolved_args = resolved_generic_args(&self.state, ga);
         if let Some(gr) = self
           .state
           .generic_rules
           .iter_mut()
           .find(|gr| gr.name == entry.name.ident)
         {
-          for arg in ga.args.iter() {
-            gr.args.push((*arg.arg).clone());
-          }
+          gr.args.extend(resolved_args);
         } else if let Some(params) = generic_params_from_rule(rule) {
           self.state.generic_rules.push(GenericRule {
             name: entry.name.ident,
             params,
-            args: ga.args.iter().cloned().map(|arg| *arg.arg).collect(),
+            args: resolved_args,
           });
         }
 
@@ -4379,7 +4748,6 @@ where
     }
 
     let error_count = self.errors.len();
-    let group_choice_alternates = group_choice_alternates_from_ident(self.state.cddl, &entry.name);
     if !group_choice_alternates.is_empty() {
       self.state.is_multi_group_choice = true;
     }
@@ -4399,6 +4767,68 @@ where
     walk_type_groupname_entry(self, entry)?;
     self.state.type_group_name_entry = None;
 
+    Ok(())
+  }
+
+  fn visit_group_entry(&mut self, entry: &GroupEntry<'a>) -> visitor::Result<Error<T>> {
+    if let (GroupEntry::ValueMemberKey { ge, .. }, Value::Map(_)) = (entry, &self.cbor) {
+      if let Some((key_type, alternatives, is_cut)) =
+        choice_member_key_for_depth(&self.state, ge, map_key_depth(&self.cbor))
+      {
+        return self.visit_choice_key_entry::<T>(ge, key_type, &alternatives, is_cut);
+      }
+    }
+    if let GroupEntry::TypeGroupname { ge, .. } = entry {
+      if ge.occur.is_some()
+        && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 == 0
+        && matches!(self.cbor, Value::Map(_))
+      {
+        // A failed reference that may occur zero times takes its zero-width
+        // path, exactly like an optional inline group.
+        let checkpoint = self.clone();
+        walk_group_entry(self, entry)?;
+        if self.errors.len() > checkpoint.errors.len() {
+          *self = checkpoint;
+        } else {
+          self.state.occurrence = checkpoint.state.occurrence;
+        }
+        return Ok(());
+      }
+      // A group reference's occurrence applies to the referenced group
+      // alone: once the group has matched, restore the prior indicator so
+      // `? g` cannot relax later required members, mirroring inline groups.
+      let prior_occurrence = self.state.occurrence;
+      let error_count = self.errors.len();
+      walk_group_entry(self, entry)?;
+      if ge.occur.is_some() && self.errors.len() == error_count {
+        self.state.occurrence = prior_occurrence;
+      }
+      return Ok(());
+    }
+    walk_group_entry(self, entry)
+  }
+
+  fn visit_inline_group_entry(
+    &mut self,
+    occur: Option<&Occurrence<'a>>,
+    g: &Group<'a>,
+  ) -> visitor::Result<Error<T>> {
+    let may_be_absent = occurrence_bounds(occur.map(|o| o.occur)).0 == 0;
+    if !may_be_absent || !matches!(self.cbor, Value::Map(_)) {
+      return walk_inline_group_entry(self, occur, g);
+    }
+    // A failed group that may occur zero times takes its zero-width path:
+    // restore the complete pre-group state so its errors, claims and
+    // occurrence indicator do not leak into later members. The group's own
+    // occurrence is consumed by the group, so restore the prior one after a
+    // success as well.
+    let checkpoint = self.clone();
+    walk_inline_group_entry(self, occur, g)?;
+    if self.errors.len() > checkpoint.errors.len() {
+      *self = checkpoint;
+    } else {
+      self.state.occurrence = checkpoint.state.occurrence;
+    }
     Ok(())
   }
 
@@ -4841,61 +5271,8 @@ where
           return Ok(());
         }
 
-        // Retrieve the value from key unless optional/zero or more, in which
-        // case advance to next group entry
-        let k = token_value_into_cbor_value(value.clone());
         let entries = o.clone();
-
-        #[cfg(feature = "ast-span")]
-        if let Some((entry_index, _, v)) =
-          self.find_single_map_entry_matching(&entries, |candidate| candidate == &k)
-        {
-          self.claim_single_map_key(entry_index);
-          self.object_value = Some(v);
-          let _ = write!(self.state.data_location, "/{}", value);
-
-          None
-        } else if let Some(Occur::Optional { .. }) | Some(Occur::ZeroOrMore { .. }) =
-          &self.state.occurrence.take()
-        {
-          self.state.advance_to_next_entry = true;
-          None
-        } else if let Some(Occur::Exact {
-          lower: None,
-          upper: None,
-          ..
-        }) = &self.state.occurrence.take()
-        {
-          // Handle Exact { lower: None, upper: None } as zero-or-more (for backward compatibility)
-          self.state.advance_to_next_entry = true;
-          None
-        } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.state.ctrl
-        {
-          None
-        } else {
-          Some(format!("object missing key: {}", value))
-        }
-
-        #[cfg(not(feature = "ast-span"))]
-        if let Some((entry_index, _, v)) =
-          self.find_single_map_entry_matching(&entries, |candidate| candidate == &k)
-        {
-          self.claim_single_map_key(entry_index);
-          self.object_value = Some(v);
-          self.state.data_location.push_str(&format!("/{}", value));
-
-          None
-        } else if let Some(Occur::Optional {}) | Some(Occur::ZeroOrMore {}) =
-          &self.state.occurrence.take()
-        {
-          self.state.advance_to_next_entry = true;
-          None
-        } else if let Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) = &self.state.ctrl
-        {
-          None
-        } else {
-          Some(format!("object missing key: {}", value))
-        }
+        self.lookup_literal_map_key::<T>(&entries, value)?
       }
       _ => Some(format!("expected {}, got {:?}", value, self.cbor)),
     };
@@ -4940,6 +5317,527 @@ fn numeric_ident_matches_cbor_value(cddl: &CDDL, ident: &Identifier, v: &Value) 
     }
     Value::Float(_) => kind.admits_float(),
     _ => false,
+  }
+}
+
+/// Scalar validation is lenient for some prelude types outside a map key's
+/// domain: it accepts positive integers for `nint` and ignores unrelated
+/// tags. Check an alternative's own domain before probing it, following
+/// aliases — including generic instantiations and active generic bindings —
+/// to the underlying prelude types, literals and tagged types. Range and
+/// control operators are left to the probe, which enforces them.
+fn key_domain_admits(state: &ValidationState, alternative: &Type1, key: &Value) -> bool {
+  KeyDomainWalk {
+    state,
+    memo: HashMap::new(),
+    cut: false,
+  }
+  .type1_admits(alternative, key, &mut HashSet::new(), &HashMap::new())
+}
+
+/// Recursive key-domain check with per-name memoization. Alias results are
+/// cached only while no recursive path has been cut anywhere: a cut treats
+/// the name as an empty leaf, making every enclosing result specific to the
+/// active chain.
+struct KeyDomainWalk<'s, 'a> {
+  state: &'s ValidationState<'a>,
+  memo: HashMap<String, bool>,
+  cut: bool,
+}
+
+/// The literal kind of a range endpoint.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EndpointKind {
+  Numeric,
+  Text,
+  Bytes,
+}
+
+impl<'s, 'a> KeyDomainWalk<'s, 'a> {
+  /// Domain check for one type. A range operator's interval is enforced by
+  /// the probe's range validation; a control operator constrains the
+  /// complete type, so only its target determines the key domain.
+  fn type1_admits(
+    &mut self,
+    alternative: &Type1<'a>,
+    key: &Value,
+    visited: &mut HashSet<String>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    if matches!(
+      alternative
+        .operator
+        .as_ref()
+        .map(|operator| &operator.operator),
+      Some(RangeCtlOp::RangeOp { .. })
+    ) || matches!(
+      alternative
+        .operator
+        .as_ref()
+        .map(|operator| &operator.operator),
+      Some(RangeCtlOp::CtlOp { ctrl, .. }) if is_computed_control(ctrl)
+    ) {
+      // The probe's range validation enforces the interval, but only for
+      // keys of the endpoint's kind: a numeric range would otherwise admit
+      // byte-string keys, whose lengths compare as numbers. Named endpoints
+      // resolve to their literal kind, so a `lo..hi` alias range admits the
+      // whole numeric domain instead of the bound's literal value. Computed
+      // controls (`.plus`, `.cat`, `.det`) produce a value of their target's
+      // kind rather than the target itself, so they get the same check.
+      return match self.range_endpoint_kind(&alternative.type2) {
+        Some(EndpointKind::Numeric) => matches!(key, Value::Integer(_) | Value::Float(_)),
+        Some(EndpointKind::Text) => matches!(key, Value::Text(_)),
+        Some(EndpointKind::Bytes) => matches!(key, Value::Bytes(_)),
+        None => true,
+      };
+    }
+    self.type2_admits(&alternative.type2, key, visited, bindings)
+  }
+
+  /// The literal kind a range endpoint resolves to, following aliases.
+  /// None means unknown or mixed, which keeps the domain permissive and
+  /// leaves the decision to the probe.
+  fn range_endpoint_kind(&self, endpoint: &Type2<'a>) -> Option<EndpointKind> {
+    self.endpoint_kind(endpoint, &mut HashSet::new())
+  }
+
+  fn endpoint_kind(
+    &self,
+    endpoint: &Type2<'a>,
+    visited: &mut HashSet<String>,
+  ) -> Option<EndpointKind> {
+    match endpoint {
+      Type2::IntValue { .. } | Type2::UintValue { .. } | Type2::FloatValue { .. } => {
+        Some(EndpointKind::Numeric)
+      }
+      Type2::TextValue { .. } => Some(EndpointKind::Text),
+      Type2::UTF8ByteString { .. } | Type2::B16ByteString { .. } | Type2::B64ByteString { .. } => {
+        Some(EndpointKind::Bytes)
+      }
+      Type2::Typename {
+        ident,
+        generic_args: None,
+        ..
+      } => {
+        let cddl = self.state.cddl;
+        if ident_numeric_kind(cddl, ident).is_some() {
+          return Some(EndpointKind::Numeric);
+        }
+        if is_ident_string_data_type(cddl, ident) {
+          return Some(EndpointKind::Text);
+        }
+        if is_ident_byte_string_data_type(cddl, ident) {
+          return Some(EndpointKind::Bytes);
+        }
+        if !visited.insert(qualified_ident_key(ident)) {
+          return None;
+        }
+        let mut kind: Option<EndpointKind> = None;
+        for rule_type in type_choice_types_from_ident(cddl, ident) {
+          for choice in &rule_type.type_choices {
+            if choice.type1.operator.is_some() {
+              return None;
+            }
+            let nested = self.endpoint_kind(&choice.type1.type2, visited)?;
+            kind = match (kind, nested) {
+              (None, nested) => Some(nested),
+              (Some(known), nested) if known == nested => Some(known),
+              _ => return None,
+            };
+          }
+        }
+        kind
+      }
+      _ => None,
+    }
+  }
+
+  /// Domain check for a type2 node: choices admit a key when any arm does.
+  fn type2_admits(
+    &mut self,
+    type2: &Type2<'a>,
+    key: &Value,
+    visited: &mut HashSet<String>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    match type2 {
+      Type2::ParenthesizedType { pt, .. } => pt
+        .type_choices
+        .iter()
+        .any(|choice| self.type1_admits(&choice.type1, key, &mut visited.clone(), bindings)),
+      Type2::Typename {
+        ident,
+        generic_args,
+        ..
+      } => self.typename_admits(ident, generic_args.as_ref(), key, visited, bindings),
+      Type2::IntValue { value, .. } => {
+        matches!(key, Value::Integer(i) if i128::from(*i) == *value as i128)
+      }
+      Type2::UintValue { value, .. } => {
+        matches!(key, Value::Integer(i) if i128::from(*i) == *value as i128)
+      }
+      Type2::FloatValue { value, .. } => matches!(key, Value::Float(f) if f == value),
+      Type2::TextValue { value, .. } => matches!(key, Value::Text(t) if t == value.as_ref()),
+      Type2::UTF8ByteString { value, .. }
+      | Type2::B16ByteString { value, .. }
+      | Type2::B64ByteString { value, .. } => {
+        matches!(key, Value::Bytes(b) if b == value.as_ref())
+      }
+      Type2::Array { group, .. } => self.array_admits(group, key, bindings),
+      Type2::Map { group, .. } => self.map_admits(group, key, bindings),
+      _ => true,
+    }
+  }
+
+  /// Domain check for an array type: only array keys qualify. An array of
+  /// fixed entries, each occurring once without a member key, also needs a
+  /// key of the same length whose items each fall in their entry's domain.
+  /// Any variable-width entry shifts the positions of the items after it, so
+  /// such arrays are left to the probe's sequence matching.
+  /// Validating a nested array against a mismatched one costs time
+  /// exponential in its depth, so recursive generic alternatives such as
+  /// `k<T> = T / k<[T]>` are rejected here without being probed.
+  fn array_admits(
+    &mut self,
+    group: &Group<'a>,
+    key: &Value,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    let Value::Array(items) = key else {
+      return false;
+    };
+    let [choice] = group.group_choices.as_slice() else {
+      return true;
+    };
+    if !choice
+      .group_entries
+      .iter()
+      .all(|(entry, _)| self.fixed_array_entry(entry))
+    {
+      return true;
+    }
+    choice.group_entries.len() == items.len()
+      && choice
+        .group_entries
+        .iter()
+        .zip(items)
+        .all(|((entry, _), item)| self.array_entry_admits(entry, item, bindings))
+  }
+
+  /// Whether an array entry stands for exactly one item of a known type.
+  fn fixed_array_entry(&self, entry: &GroupEntry<'a>) -> bool {
+    match entry {
+      GroupEntry::ValueMemberKey { ge, .. } => ge.occur.is_none() && ge.member_key.is_none(),
+      GroupEntry::TypeGroupname { ge, .. } => {
+        ge.occur.is_none() && ge.generic_args.is_none() && !self.names_group(&ge.name)
+      }
+      GroupEntry::InlineGroup { .. } => false,
+    }
+  }
+
+  /// Domain check for one array item.
+  fn array_entry_admits(
+    &self,
+    entry: &GroupEntry<'a>,
+    item: &Value,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    match entry {
+      GroupEntry::ValueMemberKey { ge, .. } => {
+        self.nested_type_admits(&ge.entry_type, item, bindings)
+      }
+      GroupEntry::TypeGroupname { ge, .. } => {
+        self
+          .fresh_walk()
+          .typename_admits(&ge.name, None, item, &mut HashSet::new(), bindings)
+      }
+      GroupEntry::InlineGroup { .. } => true,
+    }
+  }
+
+  /// A walk for a value nested in the key. The nested value differs from
+  /// the enclosing key, so names memoized or visited while checking the key
+  /// say nothing about it: it starts afresh, keeping only the generic
+  /// bindings in scope.
+  fn fresh_walk(&self) -> KeyDomainWalk<'s, 'a> {
+    KeyDomainWalk {
+      state: self.state,
+      memo: HashMap::new(),
+      cut: false,
+    }
+  }
+
+  fn nested_type_admits(
+    &self,
+    t: &Type<'a>,
+    value: &Value,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    let mut walk = self.fresh_walk();
+    t.type_choices
+      .iter()
+      .any(|choice| walk.type1_admits(&choice.type1, value, &mut HashSet::new(), bindings))
+  }
+
+  /// Domain check for a map type: only map keys qualify. A map whose members
+  /// all have a literal key and occur once also needs a key with exactly
+  /// those keys, each value in its member's domain. Other maps are left to
+  /// the probe.
+  fn map_admits(
+    &self,
+    group: &Group<'a>,
+    key: &Value,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    let Value::Map(pairs) = key else {
+      return false;
+    };
+    let [choice] = group.group_choices.as_slice() else {
+      return true;
+    };
+    let mut members = Vec::new();
+    for (entry, _) in &choice.group_entries {
+      let GroupEntry::ValueMemberKey { ge, .. } = entry else {
+        return true;
+      };
+      let literal = match &ge.member_key {
+        _ if ge.occur.is_some() => return true,
+        Some(MemberKey::Bareword { ident, .. }) => Value::Text(ident.ident.to_string()),
+        Some(MemberKey::Value { value, .. }) => token_value_into_cbor_value(value.clone()),
+        _ => return true,
+      };
+      members.push((literal, &ge.entry_type));
+    }
+    members.len() == pairs.len()
+      && members.iter().all(|(literal, entry_type)| {
+        pairs
+          .iter()
+          .any(|(k, v)| k == literal && self.nested_type_admits(entry_type, v, bindings))
+      })
+  }
+
+  /// Whether a bare entry name refers to a group, whose entries spread into
+  /// the array, rather than a type.
+  fn names_group(&self, name: &Identifier<'a>) -> bool {
+    self.state.cddl.rules.iter().any(|rule| {
+      matches!(rule, Rule::Group { rule, .. } if rule.name.ident == name.ident
+        && rule.name.socket == name.socket)
+    })
+  }
+
+  /// Domain check for a name: bound generic parameters, generic alias
+  /// instantiations, prelude leaves and ordinary aliases.
+  fn typename_admits(
+    &mut self,
+    ident: &Identifier<'a>,
+    generic_args: Option<&GenericArgs<'a>>,
+    key: &Value,
+    visited: &mut HashSet<String>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    if let Some(bound) = bindings.get(ident.ident).filter(|_| ident.socket.is_none()) {
+      // Guard recursive parameter bindings such as a self-reference.
+      if !visited.insert(ident.ident.to_string()) {
+        return true;
+      }
+      return self.type1_admits(bound, key, visited, bindings);
+    }
+    if generic_args.is_none() && ident.socket.is_none() {
+      if let Some(arg) = generic_argument_for_param(self.state, ident.ident) {
+        return self.type1_admits(&arg, key, visited, bindings);
+      }
+    }
+    if let Some(args) = generic_args {
+      return self.generic_alias_admits(ident, args, key, visited, bindings);
+    }
+    if lookup_ident(ident.ident).in_standard_prelude().is_some()
+      && rule_from_ident(self.state.cddl, ident).is_none()
+    {
+      return self.prelude_admits(ident, key, visited, bindings);
+    }
+    self.alias_admits(ident, key, visited, bindings)
+  }
+
+  /// Domain check for a generic alias instantiation: bind the parameters to
+  /// the arguments resolved in the caller's environment and check every
+  /// contributing definition, including `/=` extensions.
+  fn generic_alias_admits(
+    &mut self,
+    ident: &Identifier<'a>,
+    args: &GenericArgs<'a>,
+    key: &Value,
+    visited: &mut HashSet<String>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    let types = type_choice_types_from_ident(self.state.cddl, ident);
+    if types.is_empty() {
+      return true;
+    }
+    let Some(params) = rule_from_ident(self.state.cddl, ident).and_then(generic_params_from_rule)
+    else {
+      return true;
+    };
+    let mut bound = bindings.clone();
+    for (param, arg) in params.iter().zip(args.args.iter()) {
+      let mut resolved = (*arg.arg).clone();
+      // Resolve the argument in the caller's environment, so a parameter
+      // passed through unchanged does not bind to itself and recurse.
+      for _ in 0..=bindings.len() {
+        let Type2::Typename {
+          ident: arg_ident,
+          generic_args: None,
+          ..
+        } = &resolved.type2
+        else {
+          break;
+        };
+        let Some(next) = bindings.get(arg_ident.ident) else {
+          break;
+        };
+        resolved = next.clone();
+      }
+      // Skip self-referential bindings such as T = T.
+      if matches!(
+        &resolved.type2,
+        Type2::Typename {
+          ident: arg_ident,
+          generic_args: None,
+          ..
+        } if arg_ident.ident == *param
+      ) {
+        continue;
+      }
+      bound.insert(param, resolved);
+    }
+    // A generic alias met again on this path is cut. The same instantiation
+    // (`k<T> = T / k<T>`) adds no keys of its own; one with other arguments
+    // (`k<T> = T / k<[T]>`) stays lenient and the probe decides.
+    let name = qualified_ident_key(ident);
+    let instantiation =
+      generic_instantiation_key(&name, params.iter().filter_map(|param| bound.get(param)));
+    if !visited.insert(instantiation) {
+      self.cut = true;
+      return false;
+    }
+    if !visited.insert(name) {
+      self.cut = true;
+      return true;
+    }
+    types.iter().any(|t| {
+      t.type_choices
+        .iter()
+        .any(|choice| self.type1_admits(&choice.type1, key, &mut visited.clone(), &bound))
+    })
+  }
+
+  /// Domain check for an ordinary alias, memoized per name while the walk
+  /// stays acyclic.
+  fn alias_admits(
+    &mut self,
+    ident: &Identifier<'a>,
+    key: &Value,
+    visited: &mut HashSet<String>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    // Socket-prefixed names (`$s`, `$$s`) are distinct from the plain name.
+    let cache_key = qualified_ident_key(ident);
+    if bindings.is_empty() {
+      if let Some(cached) = self.memo.get(&cache_key) {
+        return *cached;
+      }
+    }
+    // The walk follows only choices, aliases and parameters, so a name met
+    // again on the same path is a union back-reference that adds no keys of
+    // its own (the least fixed point). Admitting it would instead hand the
+    // recursive alias to a probe that may never terminate.
+    if !visited.insert(cache_key.clone()) {
+      self.cut = true;
+      return false;
+    }
+    let types = type_choice_types_from_ident(self.state.cddl, ident);
+    if types.is_empty() {
+      return true;
+    }
+    let admits = types.iter().any(|t| {
+      t.type_choices
+        .iter()
+        .any(|choice| self.type1_admits(&choice.type1, key, &mut visited.clone(), bindings))
+    });
+    if bindings.is_empty() && !self.cut {
+      self.memo.insert(cache_key, admits);
+    }
+    admits
+  }
+
+  /// Domain of a prelude leaf: numeric ranges, the declared tag and payload
+  /// of tagged types such as `time` or `uri`, and no tags at all for plain
+  /// scalars.
+  fn prelude_admits(
+    &mut self,
+    ident: &Identifier,
+    key: &Value,
+    visited: &mut HashSet<String>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> bool {
+    let cddl = self.state.cddl;
+    if ident_numeric_kind(cddl, ident).is_some() {
+      return numeric_ident_matches_cbor_value(cddl, ident, key)
+        || is_bignum_value(cddl, ident, key);
+    }
+    if let Some(Type2::TaggedData {
+      tag: Some(TagConstraint::Literal(expected)),
+      t,
+      ..
+    }) = tag_from_token(&lookup_ident(ident.ident))
+    {
+      return match key {
+        Value::Tag(tag, inner) => {
+          *tag == expected
+            && t
+              .type_choices
+              .iter()
+              .any(|choice| self.type1_admits(&choice.type1, inner, &mut visited.clone(), bindings))
+        }
+        // Untagged keys cannot match a type declared as #6.n(payload); the
+        // scalar probe alone would accept, e.g., an untagged `time` number.
+        _ => false,
+      };
+    }
+    !matches!(key, Value::Tag(..))
+      || !(is_ident_string_data_type(cddl, ident)
+        || is_ident_byte_string_data_type(cddl, ident)
+        || is_ident_bool_data_type(cddl, ident)
+        || matches!(
+          lookup_ident(ident.ident),
+          Token::TRUE | Token::FALSE | Token::UNDEFINED
+        )
+        || is_ident_null_data_type(cddl, ident))
+  }
+}
+/// The deepest nesting of arrays, maps and tags among a map's keys.
+fn map_key_depth(map: &Value) -> usize {
+  match map {
+    Value::Map(entries) => entries
+      .iter()
+      .map(|(key, _)| value_nesting_depth(key))
+      .max()
+      .unwrap_or(0),
+    _ => 0,
+  }
+}
+
+fn value_nesting_depth(value: &Value) -> usize {
+  match value {
+    Value::Array(items) => 1 + items.iter().map(value_nesting_depth).max().unwrap_or(0),
+    Value::Map(entries) => {
+      1 + entries
+        .iter()
+        .map(|(key, value)| value_nesting_depth(key).max(value_nesting_depth(value)))
+        .max()
+        .unwrap_or(0)
+    }
+    Value::Tag(_, inner) => 1 + value_nesting_depth(inner),
+    _ => 0,
   }
 }
 

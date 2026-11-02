@@ -22,7 +22,7 @@ jobs:
 
       - name: Install wasmpack
         run: |
-          cargo install wasm-pack
+          cargo install wasm-pack --version 0.15.0 --locked
 
       - name: Install Node.js
         uses: actions/setup-node@v4

@@ -513,9 +513,11 @@ const STANDARD_PRELUDE: &[&str] = &[
 
 /// Parse CDDL from string using Pest parser and convert to AST
 pub fn cddl_from_pest_str<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
-  let pairs = CddlParser::parse(Rule::cddl, input).map_err(|e| convert_pest_error(e, input))?;
+  crate::pest_parser::with_parser_stack(|| {
+    let pairs = CddlParser::parse(Rule::cddl, input).map_err(|e| convert_pest_error(e, input))?;
 
-  convert_cddl(pairs, input)
+    convert_cddl(pairs, input)
+  })
 }
 
 /// Parse CDDL from string, converting to AST and checking for undefined references.
@@ -526,6 +528,11 @@ pub fn cddl_from_pest_str<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
 /// socket/plug reference.
 #[cfg(feature = "std")]
 pub fn cddl_from_pest_str_checked<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
+  crate::pest_parser::with_parser_stack(|| cddl_from_pest_str_checked_inner(input))
+}
+
+#[cfg(feature = "std")]
+fn cddl_from_pest_str_checked_inner<'a>(input: &'a str) -> Result<ast::CDDL<'a>, Error> {
   let pairs = CddlParser::parse(Rule::cddl, input).map_err(|e| convert_pest_error(e, input))?;
 
   // Clone pairs so we can check for undefined references after AST conversion
