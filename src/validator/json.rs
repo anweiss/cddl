@@ -337,6 +337,43 @@ impl<'a> JSONValidator<'a> {
     Ok(())
   }
 
+  fn validate_equality_control(
+    &mut self,
+    target: &Type2<'a>,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<Error> {
+    match target {
+      Type2::Typename { ident, .. } => {
+        if is_ident_string_data_type(self.state.cddl, ident)
+          || is_ident_numeric_data_type(self.state.cddl, ident)
+        {
+          return self.visit_type2(controller);
+        }
+      }
+      Type2::Array { .. } => {
+        if let Value::Array(_) = &self.json {
+          self.visit_type2(controller)?;
+          return Ok(());
+        }
+      }
+      Type2::Map { .. } => {
+        if let Value::Object(_) = &self.json {
+          self.state.ctrl = Some(ControlOperator::EQ);
+          self.state.is_ctrl_map_equality = true;
+          self.visit_type2(controller)?;
+          self.state.ctrl = None;
+          self.state.is_ctrl_map_equality = false;
+          return Ok(());
+        }
+      }
+      _ => self.add_error(format!(
+        "target for .eq operator must be a string, numerical, array or map data type, got {}",
+        target
+      )),
+    }
+    Ok(())
+  }
+
   fn validate_object_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error> {
     if let Value::Object(o) = &self.json {
       // Bareword member keys are converted to text string values
@@ -1485,35 +1522,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     }
 
     match ctrl {
-      ControlOperator::EQ => match target {
-        Type2::Typename { ident, .. } => {
-          if is_ident_string_data_type(self.state.cddl, ident)
-            || is_ident_numeric_data_type(self.state.cddl, ident)
-          {
-            return self.visit_type2(controller);
-          }
-        }
-        Type2::Array { .. } => {
-          if let Value::Array(_) = &self.json {
-            self.visit_type2(controller)?;
-            return Ok(());
-          }
-        }
-        Type2::Map { .. } => {
-          if let Value::Object(_) = &self.json {
-            self.state.ctrl = Some(ctrl);
-            self.state.is_ctrl_map_equality = true;
-            self.visit_type2(controller)?;
-            self.state.ctrl = None;
-            self.state.is_ctrl_map_equality = false;
-            return Ok(());
-          }
-        }
-        _ => self.add_error(format!(
-          "target for .eq operator must be a string, numerical, array or map data type, got {}",
-          target
-        )),
-      },
+      ControlOperator::EQ => return self.validate_equality_control(target, controller),
       ControlOperator::NE => match target {
         Type2::Typename { ident, .. } => {
           if is_ident_string_data_type(self.state.cddl, ident)
