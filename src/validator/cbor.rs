@@ -409,7 +409,12 @@ impl<'a> CBORValidator<'a> {
     // occurrence turn a failed key match into a successful absence.
     let mut required_entry = entry.clone();
     required_entry.occur = None;
-    candidate.visit_value_member_key_entry(&required_entry)?;
+    match choice_member_key(&candidate.state, &required_entry) {
+      Some((key_type, alternatives, is_cut)) => {
+        candidate.visit_choice_key_entry::<T>(&required_entry, key_type, &alternatives, is_cut)?
+      }
+      None => candidate.visit_value_member_key_entry(&required_entry)?,
+    }
 
     Ok(candidate.errors.is_empty() && candidate.single_entry_claims.len() == 1)
   }
@@ -581,6 +586,153 @@ impl<'a> CBORValidator<'a> {
           .then_some(entry_index)
       })
       .collect()
+  }
+
+  /// Match a member whose key type is a choice against complete map pairs.
+  /// Different keys may satisfy different alternatives, and a pair is claimed
+  /// only when its value also validates, leaving other pairs to later
+  /// members. Occurrence bounds count pairs across all alternatives. Without
+  /// its own indicator, a member repeats with its enclosing group reference.
+  fn visit_choice_key_entry<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entry: &ValueMemberKeyEntry<'a>,
+    key_type: &Type1<'a>,
+    alternatives: &[Type1<'a>],
+    is_cut: bool,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let Value::Map(entries) = self.cbor.clone() else {
+      return Ok(());
+    };
+    let occurrence = entry
+      .occur
+      .as_ref()
+      .map(|o| o.occur)
+      .or(self.state.occurrence);
+    let (min, max) = occurrence_bounds(occurrence);
+    let single = max == Some(1);
+    let mut count = 0;
+    let mut value_errors = Vec::new();
+    let mut fallback = None;
+    for (index, (key, value)) in entries.iter().enumerate() {
+      if max.is_some_and(|max| count >= max) {
+        break;
+      }
+      if !Self::is_unconsumed_map_entry(index, &self.claimed_map_entries)
+        || !self.map_key_matches_alternatives::<T>(key, alternatives)?
+      {
+        continue;
+      }
+      let errors = self.map_value_errors::<T>(&entry.entry_type, key, value)?;
+      if errors.is_empty() || is_cut {
+        // A cut commits a matching key to this member, so its failing value
+        // rejects the map rather than falling through (RFC 8610 §3.5.4).
+        count += usize::from(errors.is_empty());
+        self.claim_choice_key_pair(index, entry, single);
+        self.errors.extend(errors);
+      } else {
+        fallback.get_or_insert(index);
+        value_errors = errors;
+      }
+    }
+
+    if count < min && single {
+      if let Some(index) = fallback {
+        count += usize::from(self.reassign_choice_key_pair::<T>(index, entry)?);
+      }
+    }
+    if count < min {
+      if value_errors.is_empty() {
+        self.add_error(format!("map requires entry key of type {}", key_type));
+      } else {
+        self.errors.append(&mut value_errors);
+      }
+    }
+    if occurrence.is_some() {
+      self.state.occurrence = None;
+    }
+    Ok(())
+  }
+
+  /// Single-occurrence claims join the one-to-one pair assignment so an
+  /// earlier member can give up a pair that a later member needs.
+  fn claim_choice_key_pair(&mut self, index: usize, entry: &ValueMemberKeyEntry<'a>, single: bool) {
+    if !single {
+      self.claimed_map_entries.push(index);
+      return;
+    }
+    self.claim_single_map_key(index);
+    self.active_single_entry_claim = None;
+    if let Some(claim) = self.single_entry_claims.last_mut() {
+      claim.entry = Some(entry.clone());
+    }
+  }
+
+  /// Try to satisfy a single-occurrence member whose only matching keys are
+  /// held by other members, by reassigning the direct claims one-to-one.
+  fn reassign_choice_key_pair<T: std::fmt::Debug + 'static>(
+    &mut self,
+    index: usize,
+    entry: &ValueMemberKeyEntry<'a>,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    if self.probing_single_entry_assignment {
+      return Ok(false);
+    }
+    self.claim_single_map_key(index);
+    self.active_single_entry_claim = None;
+    let position = self.single_entry_claims.len() - 1;
+    let generic_context = self.current_generic_evaluation_context();
+    if self.try_reassign_failed_single_entries::<T>(position, entry, generic_context)? {
+      return Ok(true);
+    }
+    self.remove_single_map_entry_claim(position);
+    Ok(false)
+  }
+
+  fn map_key_matches_alternatives<T: std::fmt::Debug + 'static>(
+    &self,
+    key: &Value,
+    alternatives: &[Type1<'a>],
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    for alternative in alternatives {
+      if !prelude_key_domain_admits(self.state.cddl, alternative, key) {
+        continue;
+      }
+      let mut probe = self.new_with_recursion_state(key.clone());
+      probe.validating_value = true;
+      probe.visit_type1(alternative)?;
+      if probe.errors.is_empty() {
+        return Ok(true);
+      }
+    }
+    Ok(false)
+  }
+
+  fn map_value_errors<T: std::fmt::Debug + 'static>(
+    &self,
+    entry_type: &Type<'a>,
+    key: &Value,
+    value: &Value,
+  ) -> std::result::Result<Vec<ValidationError>, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let mut cv = self.new_with_recursion_state(value.clone());
+    cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+    cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+    cv.state.type_group_name_entry = self.state.type_group_name_entry;
+    cv.state.data_location = format!("{}/{:?}", self.state.data_location, key);
+    cv.validating_value = true;
+    cv.visit_type(entry_type)?;
+    Ok(cv.errors)
   }
 
   fn repeating_member_upper_bound(entry: &ValueMemberKeyEntry<'a>) -> Option<usize> {
@@ -4294,6 +4446,19 @@ where
     &mut self,
     entry: &TypeGroupnameEntry<'a>,
   ) -> visitor::Result<Error<T>> {
+    let group_choice_alternates = group_choice_alternates_from_ident(self.state.cddl, &entry.name);
+    if entry.name.socket == Some(SocketPlug::GROUP)
+      && group_choice_alternates.is_empty()
+      && rule_from_ident(self.state.cddl, &entry.name).is_none()
+    {
+      // An unplugged socket has no matching alternatives (RFC 8610 §3.9).
+      // Only an occurrence allowing zero matches can skip it.
+      if occurrence_bounds(entry.occur.as_ref().map(|o| o.occur)).0 > 0 {
+        self.add_error("undefined group socket requires zero occurrences".into());
+      }
+      return Ok(());
+    }
+
     self.state.type_group_name_entry = Some(entry.name.ident);
 
     if let Some(ga) = &entry.generic_args {
@@ -4365,7 +4530,6 @@ where
     }
 
     let error_count = self.errors.len();
-    let group_choice_alternates = group_choice_alternates_from_ident(self.state.cddl, &entry.name);
     if !group_choice_alternates.is_empty() {
       self.state.is_multi_group_choice = true;
     }
@@ -4385,6 +4549,39 @@ where
     walk_type_groupname_entry(self, entry)?;
     self.state.type_group_name_entry = None;
 
+    Ok(())
+  }
+
+  fn visit_group_entry(&mut self, entry: &GroupEntry<'a>) -> visitor::Result<Error<T>> {
+    if let (GroupEntry::ValueMemberKey { ge, .. }, Value::Map(_)) = (entry, &self.cbor) {
+      if let Some((key_type, alternatives, is_cut)) = choice_member_key(&self.state, ge) {
+        return self.visit_choice_key_entry::<T>(ge, key_type, &alternatives, is_cut);
+      }
+    }
+    walk_group_entry(self, entry)
+  }
+
+  fn visit_inline_group_entry(
+    &mut self,
+    occur: Option<&Occurrence<'a>>,
+    g: &Group<'a>,
+  ) -> visitor::Result<Error<T>> {
+    let may_be_absent = occurrence_bounds(occur.map(|o| o.occur)).0 == 0;
+    if !may_be_absent || !matches!(self.cbor, Value::Map(_)) {
+      return walk_inline_group_entry(self, occur, g);
+    }
+    // A failed group that may occur zero times takes its zero-width path:
+    // drop its errors and return any pairs it claimed to later members.
+    let error_count = self.errors.len();
+    let claimed_map_entries = self.claimed_map_entries.clone();
+    let single_entry_claims = self.single_entry_claims.clone();
+    walk_inline_group_entry(self, occur, g)?;
+    if self.errors.len() > error_count {
+      self.errors.truncate(error_count);
+      self.claimed_map_entries = claimed_map_entries;
+      self.single_entry_claims = single_entry_claims;
+      self.active_single_entry_claim = None;
+    }
     Ok(())
   }
 
@@ -4927,6 +5124,33 @@ fn numeric_ident_matches_cbor_value(cddl: &CDDL, ident: &Identifier, v: &Value) 
     Value::Float(_) => kind.admits_float(),
     _ => false,
   }
+}
+
+/// Scalar validation is lenient for some prelude types outside a map key's
+/// domain: it accepts positive integers for `nint` and ignores unrelated
+/// tags. Check a prelude key alternative's own domain before probing it.
+fn prelude_key_domain_admits(cddl: &CDDL, alternative: &Type1, key: &Value) -> bool {
+  let Type2::Typename {
+    ident,
+    generic_args: None,
+    ..
+  } = &alternative.type2
+  else {
+    return true;
+  };
+  if lookup_ident(ident.ident).in_standard_prelude().is_none()
+    || rule_from_ident(cddl, ident).is_some()
+  {
+    return true;
+  }
+  if ident_numeric_kind(cddl, ident).is_some() {
+    return numeric_ident_matches_cbor_value(cddl, ident, key) || is_bignum_value(cddl, ident, key);
+  }
+  !matches!(key, Value::Tag(..))
+    || !(is_ident_string_data_type(cddl, ident)
+      || is_ident_byte_string_data_type(cddl, ident)
+      || is_ident_bool_data_type(cddl, ident)
+      || is_ident_null_data_type(cddl, ident))
 }
 
 /// Is `v` a tagged byte string accepted by the bignum type `ident`?

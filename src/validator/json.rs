@@ -300,6 +300,98 @@ impl<'a> JSONValidator<'a> {
     Ok(())
   }
 
+  /// Match a member whose key type is a choice against complete object
+  /// members. Different keys may satisfy different alternatives, and a member
+  /// is claimed only when its value also validates, leaving others to later
+  /// group entries. Occurrence bounds count members across all alternatives.
+  /// Without its own indicator, a member repeats with its enclosing group
+  /// reference.
+  fn visit_choice_key_entry(
+    &mut self,
+    entry: &ValueMemberKeyEntry<'a>,
+    key_type: &Type1<'a>,
+    alternatives: &[Type1<'a>],
+    is_cut: bool,
+  ) -> visitor::Result<Error> {
+    let Value::Object(entries) = self.json.clone() else {
+      return Ok(());
+    };
+    let occurrence = entry
+      .occur
+      .as_ref()
+      .map(|o| o.occur)
+      .or(self.state.occurrence);
+    let (min, max) = occurrence_bounds(occurrence);
+    let mut count = 0;
+    let mut value_errors = Vec::new();
+    for (key, value) in entries.iter() {
+      if max.is_some_and(|max| count >= max) {
+        break;
+      }
+      let claimed = self
+        .validated_keys
+        .as_ref()
+        .is_some_and(|keys| keys.contains(key));
+      if claimed || !self.object_key_matches_alternatives(key, alternatives)? {
+        continue;
+      }
+      let errors = self.object_value_errors(&entry.entry_type, key, value)?;
+      if errors.is_empty() || is_cut {
+        // A cut commits a matching key to this member, so its failing value
+        // rejects the object rather than falling through (RFC 8610 §3.5.4).
+        count += usize::from(errors.is_empty());
+        self
+          .validated_keys
+          .get_or_insert_with(Vec::new)
+          .push(key.clone());
+        self.errors.extend(errors);
+      } else {
+        value_errors = errors;
+      }
+    }
+
+    if count < min {
+      if value_errors.is_empty() {
+        self.add_error(format!("object requires entry key of type {}", key_type));
+      } else {
+        self.errors.append(&mut value_errors);
+      }
+    }
+    if occurrence.is_some() {
+      self.state.occurrence = None;
+    }
+    Ok(())
+  }
+
+  fn object_key_matches_alternatives(
+    &self,
+    key: &str,
+    alternatives: &[Type1<'a>],
+  ) -> std::result::Result<bool, Error> {
+    for alternative in alternatives {
+      let mut probe = self.new_with_recursion_state(Value::String(key.to_string()));
+      probe.visit_type1(alternative)?;
+      if probe.errors.is_empty() {
+        return Ok(true);
+      }
+    }
+    Ok(false)
+  }
+
+  fn object_value_errors(
+    &self,
+    entry_type: &Type<'a>,
+    key: &str,
+    value: &Value,
+  ) -> std::result::Result<Vec<ValidationError>, Error> {
+    let mut jv = self.new_with_recursion_state(value.clone());
+    jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+    jv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+    jv.state.type_group_name_entry = self.state.type_group_name_entry;
+    jv.state.data_location = format!("{}/{}", self.state.data_location, key);
+    jv.visit_type(entry_type)?;
+    Ok(jv.errors)
+  }
   /// Validate every definition contributing to a named type choice from one
   /// error checkpoint. Failed arms are tentative; their errors are retained
   /// only when every arm fails.
@@ -3078,6 +3170,19 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     &mut self,
     entry: &TypeGroupnameEntry<'a>,
   ) -> visitor::Result<Error> {
+    let group_choice_alternates = group_choice_alternates_from_ident(self.state.cddl, &entry.name);
+    if entry.name.socket == Some(SocketPlug::GROUP)
+      && group_choice_alternates.is_empty()
+      && rule_from_ident(self.state.cddl, &entry.name).is_none()
+    {
+      // An unplugged socket has no matching alternatives (RFC 8610 §3.9).
+      // Only an occurrence allowing zero matches can skip it.
+      if occurrence_bounds(entry.occur.as_ref().map(|o| o.occur)).0 > 0 {
+        self.add_error("undefined group socket requires zero occurrences".into());
+      }
+      return Ok(());
+    }
+
     self.state.type_group_name_entry = Some(entry.name.ident);
 
     if let Some(ga) = &entry.generic_args {
@@ -3136,7 +3241,6 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     }
 
     let error_count = self.errors.len();
-    let group_choice_alternates = group_choice_alternates_from_ident(self.state.cddl, &entry.name);
     if !group_choice_alternates.is_empty() {
       self.state.is_multi_group_choice = true;
     }
@@ -3156,6 +3260,36 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     walk_type_groupname_entry(self, entry)?;
     self.state.type_group_name_entry = None;
 
+    Ok(())
+  }
+
+  fn visit_group_entry(&mut self, entry: &GroupEntry<'a>) -> visitor::Result<Error> {
+    if let (GroupEntry::ValueMemberKey { ge, .. }, Value::Object(_)) = (entry, &self.json) {
+      if let Some((key_type, alternatives, is_cut)) = choice_member_key(&self.state, ge) {
+        return self.visit_choice_key_entry(ge, key_type, &alternatives, is_cut);
+      }
+    }
+    walk_group_entry(self, entry)
+  }
+
+  fn visit_inline_group_entry(
+    &mut self,
+    occur: Option<&Occurrence<'a>>,
+    g: &Group<'a>,
+  ) -> visitor::Result<Error> {
+    let may_be_absent = occurrence_bounds(occur.map(|o| o.occur)).0 == 0;
+    if !may_be_absent || !matches!(self.json, Value::Object(_)) {
+      return walk_inline_group_entry(self, occur, g);
+    }
+    // A failed group that may occur zero times takes its zero-width path:
+    // drop its errors and return any members it claimed to later entries.
+    let error_count = self.errors.len();
+    let validated_keys = self.validated_keys.clone();
+    walk_inline_group_entry(self, occur, g)?;
+    if self.errors.len() > error_count {
+      self.errors.truncate(error_count);
+      self.validated_keys = validated_keys;
+    }
     Ok(())
   }
 

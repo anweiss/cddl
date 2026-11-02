@@ -13,8 +13,8 @@ mod control;
 
 use crate::{
   ast::{
-    Group, GroupChoice, GroupEntry, GroupRule, Identifier, Occur, Rule, Type, Type1, Type2,
-    TypeChoice, TypeRule, CDDL,
+    Group, GroupChoice, GroupEntry, GroupRule, Identifier, MemberKey, Occur, Rule, Type, Type1,
+    Type2, TypeChoice, TypeRule, ValueMemberKeyEntry, CDDL,
   },
   token::{self, *},
   visitor::Visitor,
@@ -697,6 +697,87 @@ pub fn type_choice_types_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> V
       _ => None,
     })
     .collect::<Vec<_>>()
+}
+
+/// Lower and optional upper bound of an occurrence indicator; no indicator
+/// means exactly once.
+pub(crate) fn occurrence_bounds(occur: Option<Occur>) -> (usize, Option<usize>) {
+  match occur {
+    None => (1, Some(1)),
+    Some(Occur::Optional { .. }) => (0, Some(1)),
+    Some(Occur::ZeroOrMore { .. }) => (0, None),
+    Some(Occur::OneOrMore { .. }) => (1, None),
+    Some(Occur::Exact { lower, upper, .. }) => (lower.unwrap_or(0), upper),
+  }
+}
+
+/// The key type, its alternatives and the cut flag of a member whose key
+/// type is a choice; `None` keeps every other member on its existing path.
+pub(crate) fn choice_member_key<'e, 'a>(
+  state: &ValidationState<'a>,
+  entry: &'e ValueMemberKeyEntry<'a>,
+) -> Option<(&'e Type1<'a>, Vec<Type1<'a>>, bool)> {
+  let Some(MemberKey::Type1 { t1, is_cut, .. }) = &entry.member_key else {
+    return None;
+  };
+  let alternatives = member_key_type_alternatives(state, t1);
+  (alternatives.len() > 1).then_some((t1.as_ref(), alternatives, *is_cut))
+}
+
+/// The alternatives one map key may match for a member key type, following
+/// parentheses, aliases, `/=` extensions and generic parameters. A type with
+/// a control operator or generic arguments stays whole because it constrains
+/// the complete type rather than one alternative. Recursive names stop after
+/// their first expansion.
+pub(crate) fn member_key_type_alternatives<'a>(
+  state: &ValidationState<'a>,
+  key_type: &Type1<'a>,
+) -> Vec<Type1<'a>> {
+  let mut alternatives = Vec::new();
+  let mut pending = vec![key_type.clone()];
+  let mut visited = HashSet::new();
+  while let Some(candidate) = pending.pop() {
+    let expansion = match &candidate.type2 {
+      _ if candidate.operator.is_some() => Vec::new(),
+      Type2::ParenthesizedType { pt, .. } => pt
+        .type_choices
+        .iter()
+        .map(|choice| choice.type1.clone())
+        .collect(),
+      Type2::Typename {
+        ident,
+        generic_args: None,
+        ..
+      } if visited.insert(ident.ident) => generic_argument_for_param(state, ident.ident)
+        .map(|arg| vec![arg])
+        .unwrap_or_else(|| {
+          type_choice_types_from_ident(state.cddl, ident)
+            .into_iter()
+            .flat_map(|t| t.type_choices.iter().map(|choice| choice.type1.clone()))
+            .collect()
+        }),
+      _ => Vec::new(),
+    };
+    if expansion.is_empty() {
+      alternatives.push(candidate);
+    } else {
+      pending.extend(expansion.into_iter().rev());
+    }
+  }
+  alternatives
+}
+
+/// The argument bound to `param` in the generic rule currently being
+/// evaluated. Arguments accumulate per instantiation, so the current ones
+/// are the trailing `params.len()` entries.
+fn generic_argument_for_param<'a>(state: &ValidationState<'a>, param: &str) -> Option<Type1<'a>> {
+  let rule = state
+    .generic_rules
+    .iter()
+    .find(|rule| Some(rule.name) == state.eval_generic_rule)?;
+  let index = rule.params.iter().position(|p| *p == param)?;
+  let start = rule.args.len().checked_sub(rule.params.len())?;
+  rule.args.get(start + index).cloned()
 }
 
 /// Find all group choice alternate rules from a given identifier

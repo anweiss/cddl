@@ -19,6 +19,18 @@ describe the JavaScript boundary. The language server implements the standard
 Language Server Protocol, with capabilities returned by `initialize`; its
 stdio integration tests check diagnostics, completions and symbols.
 
+Map key type choices match each key independently: `{ * (int / tstr) => any }`
+accepts mixed integer and text keys in CBOR. Named choices and constraints on
+their alternatives are also checked. Such a member claims a key/value pair only
+when the value also matches, so a failing pair stays available to later
+members; with a cut (`^`), a matching key whose value fails rejects the map.
+Occurrence bounds count matching pairs across all alternatives, not separately
+for each alternative.
+
+An undefined group socket matches no entries, so `{ * $$s }` accepts an empty
+map. A failed inline group that may occur zero times, such as `? ($$s)`,
+releases its errors and any entries it claimed.
+
 The client never imports server internals. Browser modules never import LSP
 sources. ESLint enforces these source boundaries; the generated WASM packages
 are the shared implementation, not hand-maintained JavaScript copies.
