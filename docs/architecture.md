@@ -32,6 +32,10 @@ matches but its value does not, the member can be absent, leaving that pair
 for a later member. Skipping restores earlier ownership assignments as well
 as the tentative key; explicit cuts and colon shortcuts still reject a
 matched key with an invalid value.
+Discarded optional value diagnostics remain separate from active errors and are
+reported only if that exact pair is still unclaimed at coverage checking. A later
+successful member suppresses them; map boundaries, replay and validator reuse
+prevent stale diagnostics from leaking into other attempts.
 The `?`, `0*1`, `*1`, `*` and other zero-minimum bounds share this behavior;
 `0*0` skips the member without claiming a pair. If a selected group
 alternative leaves the map uncovered, validation retries the enclosing map
@@ -46,9 +50,11 @@ failed iterations roll back, and zero-width iterations stop repetition.
 The enclosing occurrence is restored after the optional group, without leaking
 it into that group's required members. Failed required choice prefixes stop
 before recording unrelated later decisions; coverage failures still replay.
-Single-member repetitions over plain non-cut string/any prelude key domains enumerate
+Single-member repetitions over non-cut string/any prelude key domains enumerate
 unclaimed pairs once, retaining occurrence bounds and individual movable claims
-without copying a growing ownership ledger for every pair. Earlier movable
+without copying a growing ownership ledger for every pair. Transparent alias chains
+to these domains also batch; constrained, alternative, cyclic or generic-shadowed
+aliases do not bypass their normal validation. Earlier movable
 claims require the ordinary reassignment path instead. Reassignment shares
 compatibility rows for identical members and captured generic bindings, and
 rejects an identical-claim demand exceeding its available matching pairs.
@@ -59,7 +65,8 @@ eligible. Ordinary group guards also recognize consumed map pairs, socket
 prefixes distinguish rule identities, and literal colon labels are not rule
 references. Incremental-only group dispatch uses the same progress guard, and
 generic children retain their selected parameter names without changing the
-caller's bindings.
+caller's bindings. Failed generic children retain consumed keys without duplicating
+the ownership prefix they inherited.
 
 Each top-level `JSONValidator::validate()` call permits 4096 **additional**
 map-candidate replays, shared cumulatively across nested maps and child

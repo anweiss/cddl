@@ -62,6 +62,128 @@ fn cut_and_required_members_do_not_skip_value_errors() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn optional_map_value_diagnostics_survive_only_for_unclaimed_pairs() {
+  for (schema, input, location) in [
+    (
+      r#"root = { ? "port" => uint }"#,
+      r#"{"port":"80"}"#,
+      "/port",
+    ),
+    (
+      r#"root = { g<uint> } g<T> = (? "port" => T)"#,
+      r#"{"port":"80"}"#,
+      "/port",
+    ),
+    (
+      r#"root = { 0*2 "port" => uint }"#,
+      r#"{"port":"80"}"#,
+      "/port",
+    ),
+    ("root = { * (tstr => uint) }", r#"{"port":"80"}"#, "/port"),
+    (
+      r#"root = { ? (? "port" => uint, required: bool) }"#,
+      r#"{"port":"80"}"#,
+      "/port",
+    ),
+    (
+      r#"root = { nested: { ? "port" => uint } }"#,
+      r#"{"nested":{"port":"80"}}"#,
+      "/nested/port",
+    ),
+    (
+      r#"root = { ? "odd/key" => uint }"#,
+      r#"{"odd/key":"80"}"#,
+      "/odd/key",
+    ),
+  ] {
+    let error = cddl::validator::validate_json_from_str(
+      schema,
+      input,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
+    #[cfg(not(target_arch = "wasm32"))]
+    let message = error.to_string();
+    #[cfg(target_arch = "wasm32")]
+    let message = error.as_string().unwrap();
+    assert!(
+      message.contains("expected type uint"),
+      "{}: {}",
+      schema,
+      message
+    );
+    assert!(message.contains(location), "{}: {}", schema, message);
+    for rejected_key in ["port", "odd/key"] {
+      assert!(
+        !message.contains(&format!("unexpected key \"{rejected_key}\"")),
+        "{}: {}",
+        schema,
+        message
+      );
+    }
+  }
+  for schema in [
+    r#"root = { ? "port" => uint, port: tstr }"#,
+    r#"root = { ? "port" => uint // port: tstr }"#,
+    r#"root = { g<uint>, port: tstr } g<T> = (? "port" => T)"#,
+    r#"root = { ? (? "port" => uint, required: bool), * tstr => tstr }"#,
+  ] {
+    assert!(validates(schema, r#"{"port":"80"}"#), "{}", schema);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn repeated_transparent_alias_keys_preserve_bounds_and_claims() {
+  let input = format!(
+    "{{{}}}",
+    (0..256)
+      .map(|n| format!("\"key{n}\":1"))
+      .collect::<Vec<_>>()
+      .join(",")
+  );
+  for schema in [
+    "root = { * (label => any) } label = tstr",
+    "root = { * (label => uint) } label = next next = text",
+    "root = { * fields } fields = (label => uint) label = any",
+    "root = { * fields<uint> } fields<T> = (label => T) label = tstr",
+  ] {
+    assert!(validates(schema, &input), "{}", schema);
+  }
+  assert!(validates(
+    "root = { 0*1 (label => uint), a: uint } label = tstr",
+    r#"{"a":1,"b":2}"#,
+  ));
+  for (schema, input) in [
+    (
+      "root = { 0*1 (label => uint) } label = tstr",
+      r#"{"a":1,"b":2}"#,
+    ),
+    ("root = { 0*0 (label => uint) } label = tstr", r#"{"a":1}"#),
+    (
+      r#"root = { * (label => uint) } label = tstr .regexp "^a$""#,
+      r#"{"b":1}"#,
+    ),
+    (
+      "root = { * fields<uint> } fields<label> = (label => uint) label = tstr",
+      r#"{"a":1}"#,
+    ),
+    (
+      "root = { * fields<uint> } fields<key> = (label => uint) label = key key = tstr",
+      r#"{"a":1}"#,
+    ),
+    (
+      "root = { * (label => uint) } label = next next = label",
+      r#"{"a":1}"#,
+    ),
+  ] {
+    assert!(!validates(schema, input), "{}", schema);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn map_fallthrough_does_not_change_array_sequence_matching() {
   assert!(validates(r#"root = [ ? "a" => uint, bool ]"#, "[true]"));
   assert!(validates(r#"root = [ ? "a" => uint, bool ]"#, "[1,true]"));
