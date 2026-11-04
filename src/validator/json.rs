@@ -373,13 +373,10 @@ impl<'a> JSONValidator<'a> {
   }
 
   fn repeating_member_upper_bound(entry: &ValueMemberKeyEntry<'a>) -> Option<usize> {
-    entry.occur.as_ref().and_then(|occurrence| {
-      if let Occur::Exact { upper, .. } = occurrence.occur {
-        upper
-      } else {
-        None
-      }
-    })
+    entry
+      .occur
+      .as_ref()
+      .and_then(|occurrence| occurrence_bounds(Some(occurrence.occur)).1)
   }
 
   fn validate_repeating_member_count(&mut self, entry: &ValueMemberKeyEntry<'a>, count: usize) {
@@ -711,6 +708,7 @@ impl<'a> JSONValidator<'a> {
     entry: &ValueMemberKeyEntry<'a>,
     candidates: Vec<(String, Value)>,
     current_location: String,
+    single_member_claim: Option<&ValueMemberKeyEntry<'a>>,
   ) -> visitor::Result<Error> {
     let max_matches = Self::repeating_member_upper_bound(entry).unwrap_or(usize::MAX);
     let mut match_count = 0;
@@ -732,6 +730,13 @@ impl<'a> JSONValidator<'a> {
       jv.visit_type(&entry.entry_type)?;
 
       if jv.errors.is_empty() {
+        if let Some(member) = single_member_claim {
+          self.member_claims.push(MemberClaim {
+            key: key.clone(),
+            entry: member.clone(),
+            context: self.current_claim_context(),
+          });
+        }
         self.validated_keys.get_or_insert_with(Vec::new).push(key);
         match_count += 1;
       }
@@ -902,6 +907,128 @@ impl<'a> JSONValidator<'a> {
       .map_or(0, |keys| keys.iter().collect::<HashSet<_>>().len())
   }
 
+  fn rule_recursion_marker(&self, ident: &Identifier<'a>) -> (String, bool) {
+    let consumed = if self.map_choice_search.is_some() {
+      self.claimed_map_key_count()
+    } else {
+      0
+    };
+    let key = format!(
+      "{}\u{0}{}\u{0}{consumed}",
+      qualified_ident_key(ident),
+      self.state.data_location
+    );
+    let recursive =
+      !self.state.is_colon_shortcut_present && self.state.visited_rules.contains(&key);
+    (key, recursive)
+  }
+
+  fn is_unshadowed_batch_key(&self, ident: &Identifier<'a>) -> bool {
+    matches!(ident.ident, "tstr" | "text" | "any")
+      && ident.socket.is_none()
+      && rule_from_ident(self.state.cddl, ident).is_none()
+      && type_choice_types_from_ident(self.state.cddl, ident).is_empty()
+      && !self.state.generic_rules.iter().any(|rule| {
+        Some(rule.name) == self.state.eval_generic_rule && rule.params.contains(&ident.ident)
+      })
+  }
+
+  fn batchable_map_member<'b>(&self, group: &'b Group<'a>) -> Option<&'b ValueMemberKeyEntry<'a>> {
+    let [choice] = group.group_choices.as_slice() else {
+      return None;
+    };
+    let [(GroupEntry::ValueMemberKey { ge, .. }, _)] = choice.group_entries.as_slice() else {
+      return None;
+    };
+    if ge.occur.is_some() {
+      return None;
+    }
+    let Some(MemberKey::Type1 {
+      t1, is_cut: false, ..
+    }) = &ge.member_key
+    else {
+      return None;
+    };
+    let Type2::Typename {
+      ident,
+      generic_args: None,
+      ..
+    } = &t1.type2
+    else {
+      return None;
+    };
+    if t1.operator.is_none() && self.is_unshadowed_batch_key(ident) {
+      Some(ge)
+    } else {
+      None
+    }
+  }
+
+  fn batchable_named_map_member(
+    &self,
+    entry: &TypeGroupnameEntry<'a>,
+  ) -> Option<ValueMemberKeyEntry<'a>> {
+    if !matches!(self.json, Value::Object(_)) {
+      return None;
+    }
+    let occurrence = entry.occur.as_ref()?;
+    if occurrence_bounds(Some(occurrence.occur)).0 != 0
+      || !group_choice_alternates_from_ident(self.state.cddl, &entry.name).is_empty()
+    {
+      return None;
+    }
+    let Rule::Group { rule, .. } = rule_from_ident(self.state.cddl, &entry.name)? else {
+      return None;
+    };
+    if rule.generic_params.as_ref().is_some_and(|params| {
+      params
+        .params
+        .iter()
+        .any(|param| matches!(param.param.ident, "tstr" | "text" | "any"))
+    }) {
+      return None;
+    }
+    let GroupEntry::InlineGroup {
+      occur: None, group, ..
+    } = &rule.entry
+    else {
+      return None;
+    };
+    self.batchable_map_member(group).cloned()
+  }
+
+  fn visit_batched_map_member(
+    &mut self,
+    member: &ValueMemberKeyEntry<'a>,
+    occurrence: &Occurrence<'a>,
+  ) -> Result {
+    let Value::Object(object) = &self.json else {
+      return Ok(());
+    };
+    // Enumerate unclaimed keys once, but retain individual movable claims:
+    // a later literal member may still need to reassign a bounded repetition.
+    let claimed: HashSet<_> = self.validated_keys.iter().flatten().collect();
+    let candidates = object
+      .iter()
+      .filter(|(key, _)| !claimed.contains(key))
+      .map(|(key, value)| (key.clone(), value.clone()))
+      .collect();
+    let checkpoint = self.map_checkpoint();
+    let mut repeated = member.clone();
+    repeated.occur = Some(occurrence.clone());
+    let result = self.validate_candidate_pairs(
+      &repeated,
+      candidates,
+      self.state.data_location.clone(),
+      Some(member),
+    );
+    if result.is_err() {
+      self.restore_map_checkpoint(checkpoint);
+    }
+    self.state.occurrence = None;
+    result
+  }
+
   fn visit_zero_minimum_group<F>(&mut self, max: Option<usize>, mut visit: F) -> Result
   where
     F: FnMut(&mut Self) -> Result,
@@ -944,6 +1071,64 @@ impl<'a> JSONValidator<'a> {
       child.state.visited_rules.insert(key);
     }
     Some(child)
+  }
+
+  fn visit_generic_group_reference(
+    &mut self,
+    entry: &TypeGroupnameEntry<'a>,
+    args: &GenericArgs<'a>,
+    rule: &Rule<'a>,
+  ) -> Result {
+    let resolved_args = resolved_generic_args(&self.state, args);
+    let instance =
+      generic_instantiation_key(&qualified_ident_key(&entry.name), resolved_args.iter());
+    if let Some(gr) = self
+      .state
+      .generic_rules
+      .iter_mut()
+      .find(|gr| gr.name == entry.name.ident)
+    {
+      // Claims retain their own captured bindings when another instantiation
+      // replaces the current positional arguments.
+      gr.args = resolved_args;
+    } else if let Some(params) = generic_params_from_rule(rule) {
+      self.state.generic_rules.push(GenericRule {
+        name: entry.name.ident,
+        params,
+        args: resolved_args,
+      });
+    }
+
+    let Some(mut jv) = self.generic_group_child(instance) else {
+      return Ok(());
+    };
+    jv.state.eval_generic_rule = Some(entry.name.ident);
+    jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+    jv.validated_keys = self.validated_keys.clone();
+    jv.member_claims = self.member_claims.clone();
+    jv.map_choice_search = self.map_choice_search.clone();
+    if let (Some(member), Some(occurrence)) =
+      (self.batchable_named_map_member(entry), entry.occur.as_ref())
+    {
+      jv.visit_batched_map_member(&member, occurrence)?;
+    } else {
+      jv.visit_rule(rule)?;
+    }
+
+    let child_succeeded = jv.errors.is_empty();
+    self.errors.append(&mut jv.errors);
+    if child_succeeded {
+      self.validated_keys = jv.validated_keys;
+      self.member_claims = jv.member_claims;
+    } else if let Some(keys) = jv.validated_keys {
+      // Failed children can still have consumed keys in contexts tolerating
+      // their mismatch; retain those keys for the enclosing coverage check.
+      self
+        .validated_keys
+        .get_or_insert_with(Vec::new)
+        .extend(keys);
+    }
+    Ok(())
   }
 
   /// Validate the pair relayed from a key-domain member key. On success the
@@ -3522,14 +3707,15 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
     // A revisited rule only indicates a cycle when validation has not
     // consumed any input since the previous visit, so recursion is tracked
-    // per data location: `t /= [t]` must recurse into nested elements
+    // per data location and consumed map pairs: `t /= [t]` must recurse
+    // into nested elements
     // (RFC 8610 Appendix A PEG matching) while a zero-progress reference
     // like `a /= a` is still caught at its fixed position. NUL cannot
     // appear in an identifier, so the key is unambiguous.
-    let visited_key = format!("{}\u{0}{}", ident.ident, self.state.data_location);
+    let (visited_key, recursive) = self.rule_recursion_marker(ident);
 
     // Check for recursion before processing the identifier
-    if self.state.visited_rules.contains(&visited_key) {
+    if recursive {
       // We've seen this rule before in the current validation path, indicating a cycle
       self.add_error(format!(
         "Recursive rule reference detected: {}. This may indicate a circular definition in the CDDL schema.",
@@ -3850,7 +4036,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
     if let Some(candidates) = map_entry_candidates {
       debug_assert!(object_value.is_none());
-      return self.validate_candidate_pairs(entry, candidates, current_location);
+      return self.validate_candidate_pairs(entry, candidates, current_location, None);
     }
 
     if let Some(v) = object_value {
@@ -3885,57 +4071,16 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
     if let Some(ga) = &entry.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &entry.name) {
-        let resolved_args = resolved_generic_args(&self.state, ga);
-        let instance = generic_instantiation_key(entry.name.ident, resolved_args.iter());
-        if let Some(gr) = self
-          .state
-          .generic_rules
-          .iter_mut()
-          .find(|gr| gr.name == entry.name.ident)
-        {
-          // Parameters resolve by position from the start of `args`, so a
-          // repeated use replaces the previous instantiation's arguments;
-          // claims keep their own copy in their captured context.
-          gr.args = resolved_args;
-        } else if let Some(params) = generic_params_from_rule(rule) {
-          self.state.generic_rules.push(GenericRule {
-            name: entry.name.ident,
-            params,
-            args: resolved_args,
-          });
-        }
-
-        let Some(mut jv) = self.generic_group_child(instance) else {
-          return Ok(());
-        };
-        jv.state.eval_generic_rule = Some(entry.name.ident);
-        jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-        // The child validates the same object, so it inherits the ownership
-        // ledgers and cannot reuse pairs the parent already consumed.
-        jv.validated_keys = self.validated_keys.clone();
-        jv.member_claims = self.member_claims.clone();
-        jv.map_choice_search = self.map_choice_search.clone();
-        jv.visit_rule(rule)?;
-
-        let child_succeeded = jv.errors.is_empty();
-        self.errors.append(&mut jv.errors);
-
-        if child_succeeded {
-          // On success the child's ledgers replace the parent's: they carry
-          // every consumed key and each claim's captured generic bindings.
-          self.validated_keys = jv.validated_keys;
-          self.member_claims = jv.member_claims;
-        } else if let Some(keys) = jv.validated_keys {
-          // A failed child still consumed keys that count toward the
-          // unexpected-key check in contexts tolerating the failure.
-          self
-            .validated_keys
-            .get_or_insert_with(Vec::new)
-            .extend(keys);
-        }
-
-        return Ok(());
+        return self.visit_generic_group_reference(entry, ga, rule);
       }
+    }
+
+    if let (Some(member), Some(occurrence)) =
+      (self.batchable_named_map_member(entry), entry.occur.as_ref())
+    {
+      let result = self.visit_batched_map_member(&member, occurrence);
+      self.state.type_group_name_entry = None;
+      return result;
     }
 
     let error_count = self.errors.len();
@@ -3980,6 +4125,15 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 == 0
         && matches!(self.json, Value::Object(_))
       {
+        if self.batchable_named_map_member(ge).is_some() {
+          let checkpoint = self.map_checkpoint();
+          let result = self.visit_type_groupname_entry(ge);
+          if result.is_err() {
+            self.restore_map_checkpoint(checkpoint);
+          }
+          self.state.occurrence = None;
+          return result;
+        }
         let max = occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).1;
         let mut required = ge.clone();
         required.occur = None;
@@ -4009,6 +4163,9 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     let may_be_absent = occurrence_bounds(occur.map(|o| o.occur)).0 == 0;
     if !may_be_absent || !matches!(self.json, Value::Object(_)) {
       return walk_inline_group_entry(self, occur, g);
+    }
+    if let (Some(member), Some(occurrence)) = (self.batchable_map_member(g), occur) {
+      return self.visit_batched_map_member(member, occurrence);
     }
     let max = occurrence_bounds(occur.map(|o| o.occur)).1;
     self.visit_zero_minimum_group(max, |validator| validator.visit_group(g))
@@ -4399,6 +4556,12 @@ mod map_replay_budget_tests {
         serde_json::json!({"left":{"x":"value"},"right":"value"}),
         3,
       ),
+      (
+        r#"root = { * members<branch> } members<T> = (tstr => T)
+           branch = { ? "x" => uint // x: tstr }"#,
+        serde_json::json!({"left":{"x":"one"},"right":{"x":"two"}}),
+        2,
+      ),
     ] {
       let cddl = cddl_from_pest_str(schema).unwrap();
       let mut exhausted = limited_validator(&cddl, json.clone(), required - 1);
@@ -4437,6 +4600,18 @@ mod map_replay_budget_tests {
       ),
       (
         "root = { ? (left: branch), * tstr => any }",
+        serde_json::json!({"left":{"x":"value"}}),
+      ),
+      (
+        "root = { * (tstr => branch), * tstr => any }",
+        serde_json::json!({"left":{"x":"value"}}),
+      ),
+      (
+        "root = { * members, * tstr => any } members = (tstr => branch)",
+        serde_json::json!({"left":{"x":"value"}}),
+      ),
+      (
+        "root = { * members<branch>, * tstr => any } members<T> = (tstr => T)",
         serde_json::json!({"left":{"x":"value"}}),
       ),
       ("root = [branch / any]", serde_json::json!([{"x":"value"}])),

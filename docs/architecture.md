@@ -43,10 +43,15 @@ report each distinct diagnostic once rather than repeating it for every path.
 Zero-minimum named and inline groups use state-only transactions for complete
 iterations. Their occurrence never makes required members optional; partial
 failed iterations roll back, and zero-width iterations stop repetition.
+Single-member repetitions over plain non-cut string/any prelude key domains enumerate
+unclaimed pairs once, retaining occurrence bounds and individual movable claims
+without copying a growing ownership ledger for every pair.
 Generic group replay carries recursion context: revisiting the same
 structural instantiation at the same data location without consuming another
 map key rejects that path, while changed arguments and productive calls remain
-eligible.
+eligible. Ordinary group guards also recognize consumed map pairs, socket
+prefixes distinguish rule identities, and literal colon labels are not rule
+references.
 
 Each top-level `JSONValidator::validate()` call permits 4096 **additional**
 map-candidate replays, shared cumulatively across nested maps and child

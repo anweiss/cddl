@@ -144,6 +144,96 @@ fn generic_group_replay_rejects_cycles_but_preserves_productive_calls() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn mixed_group_recursion_recognizes_consumed_map_pairs() {
+  let schema = "root = { g<uint> } g<T> = (tstr => T, ? h) h = (g<uint>,)";
+  assert!(validates(schema, r#"{"a":1,"b":2,"c":3}"#));
+  assert!(!validates(schema, r#"{"a":1,"b":2,"c":false}"#));
+  assert!(!validates(
+    "root = { g<uint> } g<T> = (h,) h = (g<uint>,)",
+    r#"{"a":1}"#,
+  ));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn colon_labels_do_not_collide_with_active_rule_names() {
+  let schema = "root = m m = { g<uint> } g<T> = (m: T)";
+  assert!(validates(schema, r#"{"m":1}"#));
+  assert!(!validates(schema, r#"{"m":false}"#));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn generic_recursion_distinguishes_group_socket_names() {
+  let schema = "root = { g<uint> } g<T> = ($$g<T>,) $$g<T> = (a: T)";
+  assert!(validates(schema, r#"{"a":1}"#));
+  assert!(!validates(schema, r#"{"a":false}"#));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn repeated_single_members_preserve_bounds_and_movable_claims() {
+  let entries = (0..512)
+    .map(|index| format!(r#""k{index:04}":1"#))
+    .collect::<Vec<_>>()
+    .join(",");
+  let input = format!("{{{entries}}}");
+  for group in ["(tstr => uint)", "g", "h<uint>"] {
+    let rules = "g = (tstr => uint) h<T> = (tstr => T)";
+    assert!(validates(
+      &format!("root = {{ * {group} }} {rules}"),
+      &input
+    ));
+    assert!(validates(
+      &format!("root = {{ 0*512 {group} }} {rules}"),
+      &input
+    ));
+    assert!(!validates(
+      &format!("root = {{ 0*511 {group} }} {rules}"),
+      &input
+    ));
+    for occurrence in ["?", "0*1", "*1"] {
+      assert!(validates(
+        &format!("root = {{ {occurrence} {group}, a: uint }} {rules}"),
+        r#"{"a":1,"b":2}"#,
+      ));
+    }
+    assert!(validates(
+      &format!("root = {{ * {group}, * tstr => tstr }} {rules}"),
+      r#"{"a":"text","b":1}"#,
+    ));
+    assert!(!validates(
+      &format!("root = {{ 0*0 {group} }} {rules}"),
+      r#"{"a":1}"#,
+    ));
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn repeated_single_members_do_not_bypass_key_domains() {
+  let constrained = r#"root = { * (key => uint) } key = tstr .regexp "^a$""#;
+  assert!(validates(constrained, "{}"));
+  assert!(!validates(constrained, r#"{"b":1}"#));
+  for schema in [
+    "root = { * (tstr => uint) } tstr = uint",
+    "root = { * g<uint> } g<tstr> = (tstr => uint)",
+    "root = { g<uint> } g<tstr> = (* (tstr => uint))",
+  ] {
+    assert!(!validates(schema, r#"{"a":1}"#), "{}", schema);
+  }
+  assert!(validates(
+    "root = [ * g<uint> ] g<T> = (tstr => T)",
+    "[1,2]",
+  ));
+  assert!(!validates(
+    "root = [ * g<uint> ] g<T> = (tstr => T)",
+    "[true]",
+  ));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn optional_named_groups_do_not_relax_required_siblings() {
   for outer in ["?", "*"] {
     for occurrence in ["?", "0*1", "*1", "*", "0*2"] {
