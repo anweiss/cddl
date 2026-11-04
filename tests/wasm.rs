@@ -62,3 +62,59 @@ fn decoded_byte_literals_format() {
     assert_eq!(Type2::from(value).to_string(), expected);
   }
 }
+
+#[cfg(feature = "modules")]
+#[wasm_bindgen_test]
+fn owning_document_and_javascript_module_map() {
+  use cddl::modules::{resolve_cddl_modules, MemoryModuleSource, ResolveOptions, ResolvedCddl};
+  use wasm_bindgen::JsValue;
+
+  let modules = js_sys::Object::new();
+  js_sys::Reflect::set(
+    &modules,
+    &JsValue::from_str("numbers"),
+    &JsValue::from_str("value = uint\n"),
+  )
+  .unwrap();
+  let output = resolve_cddl_modules(
+    ";# import numbers as n\n",
+    modules.into(),
+    Some("n.value".to_string()),
+  )
+  .unwrap();
+  assert!(output.starts_with("$.start.$ = n.value"));
+  assert!(cddl_from_str(&output).is_ok());
+
+  let document = ResolvedCddl::resolve(
+    &output,
+    &MemoryModuleSource::new(),
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert_eq!(document.parse().unwrap().rules.len(), 2);
+}
+
+#[cfg(feature = "modules")]
+#[wasm_bindgen_test]
+fn javascript_module_map_reports_invalid_inputs() {
+  use cddl::modules::resolve_cddl_modules;
+  use wasm_bindgen::JsValue;
+
+  let error = resolve_cddl_modules("", JsValue::NULL, None).unwrap_err();
+  assert_eq!(
+    error.as_string().unwrap(),
+    "modules must map names to CDDL strings"
+  );
+  let error =
+    resolve_cddl_modules(";# include missing\n", js_sys::Object::new().into(), None).unwrap_err();
+  assert!(error.as_string().unwrap().contains("line 1"));
+
+  let modules = js_sys::Object::new();
+  js_sys::Reflect::set(
+    &modules,
+    &JsValue::from_str("broken"),
+    &JsValue::from_f64(1.0),
+  )
+  .unwrap();
+  assert!(resolve_cddl_modules("", modules.into(), None).is_err());
+}
