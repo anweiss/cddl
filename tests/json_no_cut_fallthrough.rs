@@ -123,6 +123,80 @@ fn failed_replay_reports_each_diagnostic_once() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn generic_group_replay_rejects_cycles_but_preserves_productive_calls() {
+  let recursive = r#"root = { g<uint> } g<T> = (? "a" => T // g<T>)"#;
+  assert!(!validates(recursive, r#"{"extra":null}"#));
+  assert!(validates(recursive, "{}"));
+  assert!(validates(recursive, r#"{"a":1}"#));
+  assert!(validates(
+    "root = { g<uint> } g<T> = (g<T> // a: T)",
+    r#"{"a":1}"#,
+  ));
+  assert!(validates(
+    r#"root = { g<uint> } g<T> = (? "a" => T // g<tstr>)"#,
+    r#"{"a":"value"}"#,
+  ));
+  assert!(validates(
+    "root = { g<uint> } g<T> = (tstr => T, ? g<T>)",
+    r#"{"a":1,"b":2}"#,
+  ));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn optional_named_groups_do_not_relax_required_siblings() {
+  for outer in ["?", "*"] {
+    for occurrence in ["?", "0*1", "*1", "*", "0*2"] {
+      for reference in ["g", "h<uint>"] {
+        let schema = format!(
+          r#"root = {{ {outer} ({occurrence} {reference}, b: uint) }}
+             g = (? "a" => uint)
+             h<T> = (? "a" => T)"#
+        );
+        assert!(validates(&schema, "{}"), "{}", schema);
+        assert!(validates(&schema, r#"{"a":1,"b":2}"#), "{}", schema);
+        assert!(!validates(&schema, r#"{"a":1}"#), "{}", schema);
+      }
+    }
+  }
+  assert!(!validates(
+    "root = { 0*0 g, * tstr => tstr } g = (a: uint)",
+    r#"{"a":1}"#,
+  ));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn zero_minimum_groups_require_complete_iterations() {
+  for occurrence in ["?", "*", "0*2"] {
+    for schema in [
+      format!("root = {{ {occurrence} g }}\ng = (z: uint)\ng //= (a: uint, b: uint)"),
+      format!("root = {{ {occurrence} (a: uint, b: uint) }}"),
+    ] {
+      assert!(validates(&schema, "{}"), "{}", schema);
+      assert!(validates(&schema, r#"{"a":1,"b":2}"#), "{}", schema);
+      assert!(!validates(&schema, r#"{"a":1}"#), "{}", schema);
+    }
+  }
+  for group in ["g", "h<uint>"] {
+    let rules = "g = (tstr => uint)\nh<T> = (tstr => T)";
+    assert!(validates(
+      &format!("root = {{ * {group} }}\n{rules}"),
+      r#"{"a":1,"b":2,"c":3}"#,
+    ));
+    assert!(validates(
+      &format!("root = {{ 0*2 {group} }}\n{rules}"),
+      r#"{"a":1,"b":2}"#,
+    ));
+    assert!(!validates(
+      &format!("root = {{ 0*2 {group} }}\n{rules}"),
+      r#"{"a":1,"b":2,"c":3}"#,
+    ));
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn skipped_member_restores_claims_moved_during_key_lookup() {
   // Looking up "a" moves the first member's claim to "b". Rejecting the
   // optional value must undo that move as well as release its tentative key.

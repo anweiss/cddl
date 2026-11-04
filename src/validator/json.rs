@@ -14,7 +14,10 @@ use std::{
   collections::HashSet,
   convert::TryFrom,
   fmt::{self, Write},
-  sync::{Arc, Mutex},
+  sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+  },
 };
 
 use chrono::{TimeZone, Utc};
@@ -66,6 +69,11 @@ pub enum Error {
   UTF8Parsing(std::str::Utf8Error),
   /// Disabled feature
   DisabledFeature(String),
+  /// Validation stopped before completion because map replay exhausted its budget.
+  ResourceLimit {
+    /// Maximum additional map-candidate replays for this validation.
+    limit: usize,
+  },
 }
 
 impl fmt::Display for Error {
@@ -82,6 +90,10 @@ impl fmt::Display for Error {
       Error::CDDLParsing(error) => write!(f, "error parsing CDDL: {}", error),
       Error::UTF8Parsing(error) => write!(f, "error pasing utf8: {}", error),
       Error::DisabledFeature(feature) => write!(f, "feature {} is not enabled", feature),
+      Error::ResourceLimit { limit } => write!(
+        f,
+        "JSON validation incomplete: the bounded map-choice search exhausted its budget of {limit} additional map-candidate replays"
+      ),
     }
   }
 }
@@ -212,6 +224,32 @@ struct MapChoiceSearch {
   widths: Vec<usize>,
 }
 
+const MAX_ADDITIONAL_MAP_REPLAYS: usize = 4096;
+
+struct MapReplayBudget {
+  limit: usize,
+  remaining: AtomicUsize,
+}
+
+impl MapReplayBudget {
+  fn new(limit: usize) -> Self {
+    Self {
+      limit,
+      remaining: AtomicUsize::new(limit),
+    }
+  }
+
+  fn charge_replay(&self) -> Result {
+    self
+      .remaining
+      .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+        remaining.checked_sub(1)
+      })
+      .map(|_| ())
+      .map_err(|_| Error::ResourceLimit { limit: self.limit })
+  }
+}
+
 impl MapChoiceSearch {
   fn select(&mut self, width: usize) -> usize {
     let depth = self.widths.len();
@@ -263,6 +301,8 @@ pub struct JSONValidator<'a> {
   // Generic group validators share the current map's search. Arc/Mutex
   // preserves the native validator's Send/Sync traits.
   map_choice_search: Option<Arc<Mutex<MapChoiceSearch>>>,
+  // Shared by child validators, deliberately excluded from speculative checkpoints.
+  map_replay_budget: Arc<MapReplayBudget>,
 }
 
 impl<'a> JSONValidator<'a> {
@@ -281,6 +321,7 @@ impl<'a> JSONValidator<'a> {
       object_value_key: None,
       map_entry_candidates: None,
       map_choice_search: None,
+      map_replay_budget: Arc::new(MapReplayBudget::new(MAX_ADDITIONAL_MAP_REPLAYS)),
     }
   }
 
@@ -299,10 +340,11 @@ impl<'a> JSONValidator<'a> {
       object_value_key: None,
       map_entry_candidates: None,
       map_choice_search: None,
+      map_replay_budget: Arc::new(MapReplayBudget::new(MAX_ADDITIONAL_MAP_REPLAYS)),
     }
   }
 
-  fn new_with_recursion_state(&self, json: Value) -> JSONValidator<'a> {
+  fn new_child_validator(&self, json: Value) -> JSONValidator<'a> {
     #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
     let mut jv = JSONValidator::new(self.state.cddl, json, self.state.enabled_features.clone());
     #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
@@ -310,6 +352,20 @@ impl<'a> JSONValidator<'a> {
     #[cfg(not(feature = "additional-controls"))]
     let mut jv = JSONValidator::new(self.state.cddl, json);
 
+    jv.map_replay_budget = self.map_replay_budget.clone();
+    jv
+  }
+
+  fn reset_for_validation(&mut self) {
+    let limit = self.map_replay_budget.limit;
+    let json = std::mem::take(&mut self.json);
+    let mut fresh = self.new_child_validator(json);
+    fresh.map_replay_budget = Arc::new(MapReplayBudget::new(limit));
+    *self = fresh;
+  }
+
+  fn new_with_recursion_state(&self, json: Value) -> JSONValidator<'a> {
+    let mut jv = self.new_child_validator(json);
     jv.state.generic_rules = self.state.generic_rules.clone();
     jv.state.eval_generic_rule = self.state.eval_generic_rule;
     jv.state.visited_rules = self.state.visited_rules.clone();
@@ -378,6 +434,7 @@ impl<'a> JSONValidator<'a> {
       object_value_key: None,
       map_entry_candidates: None,
       map_choice_search: None,
+      map_replay_budget: Arc::new(MapReplayBudget::new(MAX_ADDITIONAL_MAP_REPLAYS)),
     }
   }
 
@@ -396,6 +453,7 @@ impl<'a> JSONValidator<'a> {
       object_value_key: None,
       map_entry_candidates: None,
       map_choice_search: None,
+      map_replay_budget: Arc::new(MapReplayBudget::new(MAX_ADDITIONAL_MAP_REPLAYS)),
     }
   }
 
@@ -812,10 +870,11 @@ impl<'a> JSONValidator<'a> {
         self.errors.extend(choice_errors);
         return Ok(());
       }
+      self.map_replay_budget.charge_replay()?;
     }
   }
 
-  fn visit_zero_minimum_non_cut_member(
+  fn visit_zero_minimum_entry(
     &mut self,
     entry: &GroupEntry<'a>,
     max_occurrences: Option<usize>,
@@ -824,7 +883,7 @@ impl<'a> JSONValidator<'a> {
       self.state.occurrence = None;
       return Ok(());
     }
-    // Zero-minimum non-cut members match complete pairs (RFC 8610 §3.5.4).
+    // A failing zero-minimum entry can take its zero-width path.
     // Key lookup can reassign earlier claims, so skipping a failed member
     // must restore the whole checkpoint, not just release its selected key.
     let checkpoint = self.map_checkpoint();
@@ -834,6 +893,57 @@ impl<'a> JSONValidator<'a> {
     }
     self.state.occurrence = None;
     result
+  }
+
+  fn claimed_map_key_count(&self) -> usize {
+    self
+      .validated_keys
+      .as_ref()
+      .map_or(0, |keys| keys.iter().collect::<HashSet<_>>().len())
+  }
+
+  fn visit_zero_minimum_group<F>(&mut self, max: Option<usize>, mut visit: F) -> Result
+  where
+    F: FnMut(&mut Self) -> Result,
+  {
+    // The occurrence repeats complete groups, not each member inside the group.
+    let group_checkpoint = self.map_checkpoint();
+    let mut count = 0;
+    while max.is_none_or(|max| count < max) {
+      let checkpoint = self.map_checkpoint();
+      let consumed = self.claimed_map_key_count();
+      self.state.occurrence = None;
+      if let Err(error) = visit(self) {
+        self.restore_map_checkpoint(group_checkpoint);
+        self.state.occurrence = None;
+        return Err(error);
+      }
+      if self.errors.len() > checkpoint.errors.len() {
+        self.restore_map_checkpoint(checkpoint);
+        break;
+      }
+      count += 1;
+      if self.claimed_map_key_count() <= consumed {
+        break;
+      }
+    }
+    self.state.occurrence = None;
+    Ok(())
+  }
+
+  fn generic_group_child(&mut self, instance: String) -> Option<JSONValidator<'a>> {
+    let consumed = self.claimed_map_key_count();
+    let key = format!("{instance}\u{0}{}\u{0}{consumed}", self.state.data_location);
+    if self.map_choice_search.is_some() && self.state.visited_rules.contains(&key) {
+      self.add_error("recursive generic group reference without consuming a map entry".into());
+      return None;
+    }
+    let mut child = self.new_with_recursion_state(self.json.clone());
+    child.state.data_location = self.state.data_location.clone();
+    if self.map_choice_search.is_some() {
+      child.state.visited_rules.insert(key);
+    }
+    Some(child)
   }
 
   /// Validate the pair relayed from a key-domain member key. On success the
@@ -1722,16 +1832,7 @@ impl<'a> JSONValidator<'a> {
       None => return Ok(None),
     };
 
-    #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-    let mut jv = JSONValidator::new(self.state.cddl, value, self.state.enabled_features.clone());
-    #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-    let mut jv = JSONValidator::new(self.state.cddl, value, self.state.enabled_features);
-    #[cfg(not(feature = "additional-controls"))]
-    let mut jv = JSONValidator::new(self.state.cddl, value);
-
-    jv.state.generic_rules = self.state.generic_rules.clone();
-    jv.state.eval_generic_rule = self.state.eval_generic_rule;
-    jv.state.visited_rules = self.state.visited_rules.clone();
+    let mut jv = self.new_with_recursion_state(value);
     jv.state.ctrl = self.state.ctrl;
     let _ = write!(
       jv.state.data_location,
@@ -1753,13 +1854,15 @@ impl<'a> JSONValidator<'a> {
 impl<'a> Validator<'a, '_, Error> for JSONValidator<'a> {
   /// Validate
   fn validate(&mut self) -> std::result::Result<(), Error> {
+    self.reset_for_validation();
     for r in self.state.cddl.rules.iter() {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {
         if rule.generic_params.is_none() {
           self.state.is_root = true;
-          self.visit_type_rule(rule)?;
+          let result = self.visit_type_rule(rule);
           self.state.is_root = false;
+          result?;
           break;
         }
       }
@@ -3157,20 +3260,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
               });
             }
 
-            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-            let mut jv = JSONValidator::new(
-              self.state.cddl,
-              self.json.clone(),
-              self.state.enabled_features.clone(),
-            );
-            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-            let mut jv = JSONValidator::new(
-              self.state.cddl,
-              self.json.clone(),
-              self.state.enabled_features,
-            );
-            #[cfg(not(feature = "additional-controls"))]
-            let mut jv = JSONValidator::new(self.state.cddl, self.json.clone());
+            let mut jv = self.new_child_validator(self.json.clone());
 
             jv.state.generic_rules = self.state.generic_rules.clone();
             jv.state.eval_generic_rule = Some(ident.ident);
@@ -3227,20 +3317,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
               });
             }
 
-            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-            let mut jv = JSONValidator::new(
-              self.state.cddl,
-              self.json.clone(),
-              self.state.enabled_features.clone(),
-            );
-            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-            let mut jv = JSONValidator::new(
-              self.state.cddl,
-              self.json.clone(),
-              self.state.enabled_features,
-            );
-            #[cfg(not(feature = "additional-controls"))]
-            let mut jv = JSONValidator::new(self.state.cddl, self.json.clone());
+            let mut jv = self.new_child_validator(self.json.clone());
 
             jv.state.generic_rules = self.state.generic_rules.clone();
             jv.state.eval_generic_rule = Some(ident.ident);
@@ -3289,20 +3366,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
               });
             }
 
-            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-            let mut jv = JSONValidator::new(
-              self.state.cddl,
-              self.json.clone(),
-              self.state.enabled_features.clone(),
-            );
-            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-            let mut jv = JSONValidator::new(
-              self.state.cddl,
-              self.json.clone(),
-              self.state.enabled_features,
-            );
-            #[cfg(not(feature = "additional-controls"))]
-            let mut jv = JSONValidator::new(self.state.cddl, self.json.clone());
+            let mut jv = self.new_child_validator(self.json.clone());
 
             jv.state.generic_rules = self.state.generic_rules.clone();
             jv.state.eval_generic_rule = Some(ident.ident);
@@ -3822,6 +3886,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     if let Some(ga) = &entry.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &entry.name) {
         let resolved_args = resolved_generic_args(&self.state, ga);
+        let instance = generic_instantiation_key(entry.name.ident, resolved_args.iter());
         if let Some(gr) = self
           .state
           .generic_rules
@@ -3840,22 +3905,9 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
           });
         }
 
-        #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-        let mut jv = JSONValidator::new(
-          self.state.cddl,
-          self.json.clone(),
-          self.state.enabled_features.clone(),
-        );
-        #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-        let mut jv = JSONValidator::new(
-          self.state.cddl,
-          self.json.clone(),
-          self.state.enabled_features,
-        );
-        #[cfg(not(feature = "additional-controls"))]
-        let mut jv = JSONValidator::new(self.state.cddl, self.json.clone());
-
-        jv.state.generic_rules = self.state.generic_rules.clone();
+        let Some(mut jv) = self.generic_group_child(instance) else {
+          return Ok(());
+        };
         jv.state.eval_generic_rule = Some(entry.name.ident);
         jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
         // The child validates the same object, so it inherits the ownership
@@ -3920,7 +3972,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       }
       let (min, max) = occurrence_bounds(ge.occur.as_ref().map(|o| o.occur));
       if matches!(&ge.member_key, Some(MemberKey::Type1 { is_cut: false, .. })) && min == 0 {
-        return self.visit_zero_minimum_non_cut_member(entry, max);
+        return self.visit_zero_minimum_entry(entry, max);
       }
     }
     if let GroupEntry::TypeGroupname { ge, .. } = entry {
@@ -3928,16 +3980,12 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 == 0
         && matches!(self.json, Value::Object(_))
       {
-        // A failed reference that may occur zero times takes its zero-width
-        // path, exactly like an optional inline group.
-        let checkpoint = self.clone();
-        walk_group_entry(self, entry)?;
-        if self.errors.len() > checkpoint.errors.len() {
-          *self = checkpoint;
-        } else {
-          self.state.occurrence = checkpoint.state.occurrence;
-        }
-        return Ok(());
+        let max = occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).1;
+        let mut required = ge.clone();
+        required.occur = None;
+        return self.visit_zero_minimum_group(max, |validator| {
+          validator.visit_type_groupname_entry(&required)
+        });
       }
       // A group reference's occurrence applies to the referenced group
       // alone: once the group has matched, restore the prior indicator so
@@ -3962,19 +4010,8 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     if !may_be_absent || !matches!(self.json, Value::Object(_)) {
       return walk_inline_group_entry(self, occur, g);
     }
-    // A failed group that may occur zero times takes its zero-width path:
-    // restore the complete pre-group state so its errors, claimed members
-    // and occurrence indicator do not leak into later entries. The group's
-    // own occurrence is consumed by the group, so restore the prior one
-    // after a success as well.
-    let checkpoint = self.clone();
-    walk_inline_group_entry(self, occur, g)?;
-    if self.errors.len() > checkpoint.errors.len() {
-      *self = checkpoint;
-    } else {
-      self.state.occurrence = checkpoint.state.occurrence;
-    }
-    Ok(())
+    let max = occurrence_bounds(occur.map(|o| o.occur)).1;
+    self.visit_zero_minimum_group(max, |validator| validator.visit_group(g))
   }
 
   fn visit_memberkey(&mut self, mk: &MemberKey<'a>) -> visitor::Result<Error> {
@@ -4292,6 +4329,139 @@ fn is_array_type_rule<'a>(cddl: &'a CDDL<'a>, ident: &Identifier<'a>) -> bool {
 }
 
 #[cfg(test)]
+mod map_replay_budget_tests {
+  use super::*;
+  use crate::pest_bridge::cddl_from_pest_str;
+
+  fn limited_validator<'a>(cddl: &'a CDDL<'a>, json: Value, limit: usize) -> JSONValidator<'a> {
+    #[cfg(feature = "additional-controls")]
+    let mut validator = JSONValidator::new(cddl, json, None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut validator = JSONValidator::new(cddl, json);
+    validator.map_replay_budget = Arc::new(MapReplayBudget::new(limit));
+    validator
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_budget_boundary_and_repeated_validation() {
+    let cddl =
+      cddl_from_pest_str(r#"root = { ? "a" => uint // ? "a" => bool // a: tstr }"#).unwrap();
+    let mut validator = limited_validator(&cddl, serde_json::json!({"a":"value"}), 1);
+    for _ in 0..2 {
+      assert!(matches!(
+        validator.validate(),
+        Err(Error::ResourceLimit { limit: 1 })
+      ));
+      assert!(validator.map_choice_search.is_none());
+      assert!(validator.validated_keys.is_none());
+      assert!(!validator.state.is_root);
+    }
+    validator.map_replay_budget = Arc::new(MapReplayBudget::new(2));
+    for _ in 0..2 {
+      assert!(validator.validate().is_ok());
+      assert_eq!(
+        validator
+          .map_replay_budget
+          .remaining
+          .load(Ordering::Relaxed),
+        0
+      );
+    }
+    let mut invalid = limited_validator(&cddl, serde_json::json!({"a":[]}), 2);
+    assert!(matches!(invalid.validate(), Err(Error::Validation(_))));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_budget_is_cumulative_across_nested_and_child_validators() {
+    for (schema, json, required) in [
+      (
+        r#"root = { left: branch, right: branch }
+           branch = { ? "x" => uint // x: tstr }"#,
+        serde_json::json!({"left":{"x":"one"},"right":{"x":"two"}}),
+        2,
+      ),
+      (
+        r#"root = [* { ? "x" => uint // x: tstr }]"#,
+        serde_json::json!([{"x":"one"},{"x":"two"}]),
+        2,
+      ),
+      (
+        r#"root = { left: branch<tstr>, right: branch<tstr> }
+           branch<T> = { ? "x" => uint // x: T }"#,
+        serde_json::json!({"left":{"x":"one"},"right":{"x":"two"}}),
+        2,
+      ),
+      (
+        r#"root = { (left: branch, right: uint) // (left: branch, right: tstr) }
+           branch = { ? "x" => uint // x: tstr }"#,
+        serde_json::json!({"left":{"x":"value"},"right":"value"}),
+        3,
+      ),
+    ] {
+      let cddl = cddl_from_pest_str(schema).unwrap();
+      let mut exhausted = limited_validator(&cddl, json.clone(), required - 1);
+      assert!(matches!(
+        exhausted.validate(),
+        Err(Error::ResourceLimit { limit }) if limit == required - 1
+      ));
+      let mut sufficient = limited_validator(&cddl, json, required);
+      assert!(sufficient.validate().is_ok());
+      assert_eq!(
+        sufficient
+          .map_replay_budget
+          .remaining
+          .load(Ordering::Relaxed),
+        0
+      );
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_resource_errors_cannot_be_swallowed_as_choice_mismatches() {
+    for (root, json) in [
+      ("root = branch / any", serde_json::json!({"x":"value"})),
+      (
+        "root = { left: branch // * tstr => any }",
+        serde_json::json!({"left":{"x":"value"}}),
+      ),
+      (
+        r#"root = { ? "left" => branch, * tstr => any }"#,
+        serde_json::json!({"left":{"x":"value"}}),
+      ),
+      (
+        "root = { ? members, * tstr => any } members = (left: branch)",
+        serde_json::json!({"left":{"x":"value"}}),
+      ),
+      (
+        "root = { ? (left: branch), * tstr => any }",
+        serde_json::json!({"left":{"x":"value"}}),
+      ),
+      ("root = [branch / any]", serde_json::json!([{"x":"value"}])),
+    ] {
+      let schema = format!("{root}\nbranch = {{ ? \"x\" => uint // x: tstr }}");
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator = limited_validator(&cddl, json, 0);
+      assert!(matches!(
+        validator.validate(),
+        Err(Error::ResourceLimit { limit: 0 })
+      ));
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_initial_paths_do_not_consume_the_budget() {
+    let cddl = cddl_from_pest_str("root = [* { x: uint // x: tstr }]").unwrap();
+    let json = Value::Array((0..128).map(|n| serde_json::json!({"x":n})).collect());
+    let mut validator = limited_validator(&cddl, json, 0);
+    assert!(validator.validate().is_ok());
+  }
+}
+
+#[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
   #![allow(unused_imports)]
@@ -4356,8 +4526,7 @@ mod tests {
       let result = if whole_map {
         validator.visit_closed_map(&group, &["a".into(), "prior".into()])
       } else {
-        validator
-          .visit_zero_minimum_non_cut_member(&group.group_choices[0].group_entries[0].0, Some(1))
+        validator.visit_zero_minimum_entry(&group.group_choices[0].group_entries[0].0, Some(1))
       };
       assert!(matches!(result, Err(Error::UTF8Parsing(_))));
       assert_eq!(validator.validated_keys, Some(vec!["prior".into()]));

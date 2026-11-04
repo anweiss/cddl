@@ -40,6 +40,28 @@ Checkpoints retain mutable validation state without cloning the input object.
 Hard visitor errors restore the checkpoint before propagating to the caller.
 Replay indices are checked before selecting a group, and exhausted searches
 report each distinct diagnostic once rather than repeating it for every path.
+Zero-minimum named and inline groups use state-only transactions for complete
+iterations. Their occurrence never makes required members optional; partial
+failed iterations roll back, and zero-width iterations stop repetition.
+Generic group replay carries recursion context: revisiting the same
+structural instantiation at the same data location without consuming another
+map key rejects that path, while changed arguments and productive calls remain
+eligible.
+
+Each top-level `JSONValidator::validate()` call permits 4096 **additional**
+map-candidate replays, shared cumulatively across nested maps and child
+validators. Initial paths are free, so ordinary large collections that do not
+backtrack do not consume this budget. Speculative rollback does not restore
+spent work. Reusing the validator starts a fresh budget and transient state
+without copying the input JSON.
+
+Exhaustion returns `json::Error::ResourceLimit { limit }`, not
+`Error::Validation`: validation is incomplete, and even a valid document can
+require an alternative beyond the limit. The error propagates rather than
+trying another type/group choice, accepting an optional entry, or returning
+first-path mismatch diagnostics. String-based WASM APIs retain this explanation
+in their error text. This bounds additional map-candidate replays only; it is
+not a blanket CPU, memory, recursion, or denial-of-service guarantee.
 
 An undefined group socket matches no entries, so `{ * $$s }` accepts an empty
 map. A failed inline group that may occur zero times, such as `? ($$s)`,
