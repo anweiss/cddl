@@ -92,9 +92,10 @@ jobs:
       - name: Link release CLI
         run: cargo +stable build --locked --release --bin cddl --target "$RUST_TARGET"
 
-      - name: Test release stack switching
+      - name: Test release small-stack compatibility
         run: |
           cargo +stable test --locked --release -p cddl --test small_stack --target "$RUST_TARGET"
+          cargo +stable test --locked --release -p cddl --lib abnf --target "$RUST_TARGET" -- --list | grep -Fx 'validator::control::tests::test_abnf_on_small_thread_stack: test'
           cargo +stable test --locked --release -p cddl --lib abnf --target "$RUST_TARGET"
 
   wasm-compilation-check:

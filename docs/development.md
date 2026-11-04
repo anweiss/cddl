@@ -12,6 +12,17 @@ The pinned Pest 2.9.5 family does not enable its stack guard on WASM by default.
 Standard macOS WASM builds therefore need no LLVM archiver override. CI links
 both default and LSP release WASM builds on macOS without that workaround.
 
+If custom feature unification intentionally enables `pest/stack-guard` on WASM,
+psm returns to that target's dependency graph. For a `rust_psm_stack_pointer`
+linker error on macOS, use the matching Rust toolchain's LLVM archiver:
+
+```sh
+rustup component add llvm-tools-preview
+export AR_wasm32_unknown_unknown="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-ar"
+```
+
+This conditional recovery is not part of the default setup or CI environment.
+
 The first build downloads Rust crates and may take several minutes. Package
 registries must be reachable during setup. Never commit credentials to solve
 registry access failures. Keep `cargo`, `rustup` and `wasm-pack` on `PATH`.
@@ -70,6 +81,8 @@ no_std targets. It has no effect on WASM.
 CI tests `_build-parser,native-stack,pest/std` without default features and
 continues checking the bare-metal no_std build separately. Native amd64/arm64
 musl jobs link the release CLI and execute the small-stack regressions.
+Those tests check successful parsing and error parity on 64 KiB threads; they
+do not independently measure stack growth or upstream guard activation.
 Callers that use `pest_parser::CddlParser` directly get Pest's behavior.
 Stack checks and growth are not portable stack-overflow or resource guarantees.
 Do not use `npm audit fix --force`.
