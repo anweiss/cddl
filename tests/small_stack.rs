@@ -29,3 +29,23 @@ fn reports_cddl_syntax_errors_on_small_thread_stack() {
   let actual = on_small_stack(move || cddl::cddl_from_str(input, false).unwrap_err());
   assert_eq!(actual, expected);
 }
+
+#[cfg(feature = "std")]
+#[test]
+fn parses_cddl_from_slice_on_small_thread_stack() {
+  let result = on_small_stack(|| {
+    cddl::ast::CDDL::from_slice(b"person = { name: tstr, age: uint }\n")
+      .map(|cddl| cddl.rules.len())
+  });
+  assert_eq!(result, Ok(1));
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn reports_from_slice_errors_on_small_thread_stack() {
+  for input in ["person = {\n", "person = MissingType\n"] {
+    let expected = cddl::ast::CDDL::from_slice(input.as_bytes()).unwrap_err();
+    let actual = on_small_stack(move || cddl::ast::CDDL::from_slice(input.as_bytes()).unwrap_err());
+    assert_eq!(actual, expected);
+  }
+}
