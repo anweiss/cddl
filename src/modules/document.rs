@@ -108,7 +108,7 @@ impl ResolvedCddl {
           std::io::ErrorKind::UnexpectedEof,
           error,
         )),
-        DecodeError::UnexpectedBreak => ciborium::de::Error::Semantic(None, error.to_string()),
+        error => ciborium::de::Error::Semantic(None, error.to_string()),
       })
     })?;
     cbor::CBORValidator::new(
