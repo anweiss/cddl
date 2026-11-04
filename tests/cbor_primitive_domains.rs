@@ -187,3 +187,80 @@ fn constructed_values_cannot_bypass_duplicate_detection() {
     .to_string()
     .contains("duplicate text key"));
 }
+
+#[cfg(feature = "additional-controls")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn computed_numeric_controls_validate_the_result_not_the_operand() {
+  assert!(accepts("x = one .plus 1\none = 1 / uint .eq 1", &[0x02]));
+  assert!(!accepts("x = one .plus 1\none = 1 / uint .eq 1", &[0x01]));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn nested_target_validating_controls_do_not_repeat_target_probes() {
+  for control in ["and", "within", "default"] {
+    let mut schema = String::from("x = n32\nn0 = uint\n");
+    for level in 1..=32 {
+      schema.push_str(&format!("n{level} = n{} .{control} uint\n", level - 1));
+    }
+    assert!(accepts(&schema, &[0x01]), "{}", control);
+    assert!(!accepts(&schema, &[0x20]), "{}", control);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn default_controls_preserve_complete_target_membership() {
+  for target in ["1 / uint", "1 / uint .eq 1"] {
+    assert!(!accepts(
+      &format!("x = t .default 2\nt = {target}"),
+      &[0x20]
+    ));
+    assert!(!accepts(
+      &format!("x = {{ ? a: t .default 2 }}\nt = {target}"),
+      &[0xa1, 0x61, b'a', 0x20]
+    ));
+  }
+  assert!(accepts("x = t .default 2\nt = nint / uint", &[0x20]));
+  assert!(accepts(
+    "x = { ? a: t .default 2 }\nt = nint / uint",
+    &[0xa1, 0x61, b'a', 0x20]
+  ));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn duplicate_text_keys_are_data_errors_not_schema_errors() {
+  let bytes = [0xa2, 0x61, b'a', 0x01, 0x61, b'a', 0x02];
+  #[cfg(feature = "additional-controls")]
+  let error = cddl::validator::validate_cbor_from_slice("x = any", &bytes, None).unwrap_err();
+  #[cfg(not(feature = "additional-controls"))]
+  let error = cddl::validator::validate_cbor_from_slice("x = any", &bytes).unwrap_err();
+  assert!(matches!(
+    error,
+    cddl::validator::cbor::Error::CBORParsing(_)
+  ));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn nontext_equivalent_pairs_still_exercise_claim_propagation() {
+  let bytes = [0xa2, 0x01, 0x61, b'x', 0x01, 0x41, b'z'];
+  for schema in [
+    "m = { ? int => tstr, 1: tstr, ? int => uint }",
+    "g<K,V> = (K => V)\nm = { g<int,tstr>, 1: tstr, ? int => uint }",
+    "g<K,V> = (K => V)\nm = { ? int => tstr, g<int,tstr>, ? int => uint }",
+  ] {
+    #[cfg(feature = "additional-controls")]
+    let error = cddl::validator::validate_cbor_from_slice(schema, &bytes, None).unwrap_err();
+    #[cfg(not(feature = "additional-controls"))]
+    let error = cddl::validator::validate_cbor_from_slice(schema, &bytes).unwrap_err();
+    assert!(matches!(error, cddl::validator::cbor::Error::Validation(_)));
+    assert!(
+      error.to_string().contains("expected type tstr"),
+      "{}",
+      error
+    );
+  }
+}

@@ -395,7 +395,7 @@ pub fn validate_cbor_from_slice(
 ) -> cbor::Result<std::io::Error> {
   let cddl = cddl_from_str(cddl, true).map_err(cbor::Error::CDDLParsing)?;
 
-  let cbor = decode_cbor(cbor_slice).map_err(|e| cbor::Error::CDDLParsing(e.to_string()))?;
+  let cbor = decode_cbor(cbor_slice).map_err(cbor::Error::from_decode_error)?;
 
   let mut cv = CBORValidator::new(&cddl, cbor, enabled_features);
   cv.validate()
@@ -407,7 +407,7 @@ pub fn validate_cbor_from_slice(
 /// Validate CBOR slice from a given CDDL document string
 pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result<std::io::Error> {
   let cddl = cddl_from_str(cddl, true).map_err(cbor::Error::CDDLParsing)?;
-  let cbor = decode_cbor(cbor_slice).map_err(|e| cbor::Error::CDDLParsing(e.to_string()))?;
+  let cbor = decode_cbor(cbor_slice).map_err(cbor::Error::from_decode_error)?;
 
   let mut cv = CBORValidator::new(&cddl, cbor);
   cv.validate()

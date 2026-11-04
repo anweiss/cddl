@@ -125,6 +125,17 @@ impl std::error::Error for ValidationError {
 }
 
 impl<T: std::fmt::Debug> Error<T> {
+  #[cfg(not(target_arch = "wasm32"))]
+  pub(crate) fn from_decode_error(error: super::cbor_value::DecodeError) -> Self {
+    match error {
+      super::cbor_value::DecodeError::DuplicateTextKey => {
+        Self::CBORParsing(ciborium::de::Error::Semantic(None, error.to_string()))
+      }
+      // Preserve the existing public classification of unrelated decode errors.
+      _ => Self::CDDLParsing(error.to_string()),
+    }
+  }
+
   fn from_validator(cv: &CBORValidator, reason: String) -> Self {
     Error::Validation(vec![ValidationError {
       cddl_location: cv.state.cddl_location.clone(),
@@ -2134,6 +2145,7 @@ where
     ctrl: ControlOperator,
     controller: &Type2<'a>,
   ) -> visitor::Result<Error<T>> {
+    let mut numeric_target_validated = false;
     if let Type2::Typename {
       ident: target_ident,
       ..
@@ -2209,14 +2221,17 @@ where
           ));
           return Ok(());
         }
-        // A numeric choice may also contain nonnumeric or constrained arms.
-        // Domain prefilters alone cannot establish target membership.
-        let mut target_validator = self.new_with_recursion_state(self.cbor.clone());
-        target_validator.state.data_location = self.state.data_location.clone();
-        target_validator.visit_type2(target)?;
-        if !target_validator.errors.is_empty() {
-          self.errors.extend(target_validator.errors);
-          return Ok(());
+        if numeric_control_needs_target_probe(&ctrl) {
+          // A numeric choice may also contain nonnumeric or constrained arms.
+          // Domain prefilters alone cannot establish target membership.
+          let mut target_validator = self.new_with_recursion_state(self.cbor.clone());
+          target_validator.state.data_location = self.state.data_location.clone();
+          target_validator.visit_type2(target)?;
+          if !target_validator.errors.is_empty() {
+            self.errors.extend(target_validator.errors);
+            return Ok(());
+          }
+          numeric_target_validated = true;
         }
       } else if is_ident_bool_data_type(self.state.cddl, target_ident)
         && !matches!(self.cbor, Value::Bool(_))
@@ -2308,7 +2323,9 @@ where
       },
       ControlOperator::AND => {
         self.state.ctrl = Some(ctrl);
-        self.visit_type2(target)?;
+        if !numeric_target_validated {
+          self.visit_type2(target)?;
+        }
         self.visit_type2(controller)?;
         self.state.ctrl = None;
         Ok(())
@@ -2316,7 +2333,9 @@ where
       ControlOperator::WITHIN => {
         self.state.ctrl = Some(ctrl);
         let error_count = self.errors.len();
-        self.visit_type2(target)?;
+        if !numeric_target_validated {
+          self.visit_type2(target)?;
+        }
         let no_errors = self.errors.len() == error_count;
         self.visit_type2(controller)?;
         if no_errors && self.errors.len() > error_count {
@@ -2337,7 +2356,9 @@ where
       ControlOperator::DEFAULT => {
         self.state.ctrl = Some(ctrl);
         let error_count = self.errors.len();
-        self.visit_type2(target)?;
+        if !numeric_target_validated {
+          self.visit_type2(target)?;
+        }
         if self.errors.len() != error_count {
           #[cfg(feature = "ast-span")]
           if let Some(Occur::Optional { .. }) = self.state.occurrence.take() {
@@ -5321,6 +5342,16 @@ fn numeric_ident_matches_cbor_value(cddl: &CDDL, ident: &Identifier, v: &Value) 
     }
     Value::Float(_) => kind.admits_float(),
     _ => false,
+  }
+}
+
+fn numeric_control_needs_target_probe(ctrl: &ControlOperator) -> bool {
+  // Computed controls match the result rather than the target operand.
+  // Disabled features must not require target membership.
+  match ctrl {
+    #[cfg(feature = "additional-controls")]
+    ControlOperator::FEATURE => false,
+    _ => !is_computed_control(ctrl),
   }
 }
 
