@@ -38,6 +38,8 @@ alternative leaves the map uncovered, validation retries the enclosing map
 with later alternatives, including choices inside inline and named groups.
 Checkpoints retain mutable validation state without cloning the input object.
 Hard visitor errors restore the checkpoint before propagating to the caller.
+Replay indices are checked before selecting a group, and exhausted searches
+report each distinct diagnostic once rather than repeating it for every path.
 
 An undefined group socket matches no entries, so `{ * $$s }` accepts an empty
 map. A failed inline group that may occur zero times, such as `? ($$s)`,

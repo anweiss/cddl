@@ -11,6 +11,7 @@ use crate::{
 
 use std::{
   borrow::Cow,
+  collections::HashSet,
   convert::TryFrom,
   fmt::{self, Write},
   sync::{Arc, Mutex},
@@ -109,7 +110,7 @@ impl Error {
 }
 
 /// JSON validation error
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ValidationError {
   /// Error message
   pub reason: String,
@@ -223,6 +224,8 @@ impl MapChoiceSearch {
     for depth in (0..self.widths.len()).rev() {
       if self.path[depth] + 1 < self.widths[depth] {
         self.path[depth] += 1;
+        // A changed decision invalidates every dependent choice; unchanged
+        // prefixes replay the same traversal and retain their original widths.
         self.path.truncate(depth + 1);
         self.widths.clear();
         return true;
@@ -726,16 +729,24 @@ impl<'a> JSONValidator<'a> {
     result
   }
 
-  fn planned_group_choice(&self, width: usize) -> Option<usize> {
+  fn planned_group_choice(&self, width: usize) -> std::result::Result<Option<usize>, Error> {
     if width < 2 || self.state.is_group_to_choice_enum {
-      return None;
+      return Ok(None);
     }
-    let search = self.map_choice_search.as_ref()?;
+    let Some(search) = self.map_choice_search.as_ref() else {
+      return Ok(None);
+    };
     let selected = {
       let mut search = search.lock().expect("map choice search lock");
       search.select(width)
     };
-    Some(selected)
+    if selected >= width {
+      return Err(Error::from_validator(
+        self,
+        format!("invalid map group-choice replay index {selected} for {width} alternatives"),
+      ));
+    }
+    Ok(Some(selected))
   }
 
   fn visit_planned_group_reference(
@@ -744,7 +755,7 @@ impl<'a> JSONValidator<'a> {
     alternates: &[&GroupEntry<'a>],
   ) -> visitor::Result<Error> {
     if rule_from_ident(self.state.cddl, &entry.name).is_none() {
-      let selected = self.planned_group_choice(alternates.len()).unwrap_or(0);
+      let selected = self.planned_group_choice(alternates.len())?.unwrap_or(0);
       if let Some(alternate) = alternates.get(selected) {
         return self.visit_group_entry(alternate);
       }
@@ -756,6 +767,18 @@ impl<'a> JSONValidator<'a> {
     Ok(())
   }
 
+  fn visit_selected_group_choice(
+    &mut self,
+    group: &Group<'a>,
+    selected: usize,
+  ) -> visitor::Result<Error> {
+    let choice = group
+      .group_choices
+      .get(selected)
+      .ok_or_else(|| Error::from_validator(self, "invalid map group-choice replay index".into()))?;
+    self.visit_group_choice(choice)
+  }
+
   fn visit_map_candidates(
     &mut self,
     group: &Group<'a>,
@@ -765,6 +788,7 @@ impl<'a> JSONValidator<'a> {
     let checkpoint = self.map_checkpoint();
     let error_count = self.errors.len();
     let mut choice_errors = Vec::new();
+    let mut seen_errors = HashSet::new();
     loop {
       if let Err(error) = self.visit_group(group) {
         self.restore_map_checkpoint(checkpoint);
@@ -774,7 +798,11 @@ impl<'a> JSONValidator<'a> {
       if self.errors.len() == error_count {
         return Ok(());
       }
-      choice_errors.extend(self.errors.drain(error_count..));
+      for error in self.errors.drain(error_count..) {
+        if seen_errors.insert(error.clone()) {
+          choice_errors.push(error);
+        }
+      }
       self.restore_map_checkpoint(checkpoint.clone());
       let has_next = {
         let mut search = search.lock().expect("map choice search lock");
@@ -1802,7 +1830,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       self.state.is_multi_group_choice = true;
     }
 
-    if let Some(selected) = self.planned_group_choice(group_choice_alternates.len() + 1) {
+    if let Some(selected) = self.planned_group_choice(group_choice_alternates.len() + 1)? {
       let entry = group_choice_alternates
         .get(selected)
         .copied()
@@ -1979,8 +2007,8 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
     self.state.is_ctrl_map_equality = false;
 
-    if let Some(selected) = self.planned_group_choice(g.group_choices.len()) {
-      return self.visit_group_choice(&g.group_choices[selected]);
+    if let Some(selected) = self.planned_group_choice(g.group_choices.len())? {
+      return self.visit_selected_group_choice(g, selected);
     }
 
     let initial_error_count = self.errors.len();
@@ -4270,6 +4298,31 @@ mod tests {
 
   use super::*;
   use indoc::indoc;
+
+  #[test]
+  fn stale_map_replay_index_returns_an_error_without_panicking() -> std::result::Result<(), String>
+  {
+    let cddl = cddl_from_str("root = { a: uint // b: uint }", true)?;
+    let Rule::Type { rule, .. } = &cddl.rules[0] else {
+      panic!("expected type rule");
+    };
+    let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+      panic!("expected map");
+    };
+    #[cfg(feature = "additional-controls")]
+    let mut validator = JSONValidator::new(&cddl, serde_json::json!({"a": 1}), None);
+    #[cfg(not(feature = "additional-controls"))]
+    let mut validator = JSONValidator::new(&cddl, serde_json::json!({"a": 1}));
+    validator.map_choice_search = Some(Arc::new(Mutex::new(MapChoiceSearch {
+      path: vec![2],
+      widths: Vec::new(),
+    })));
+    let error = validator.visit_group(group).unwrap_err();
+    assert!(error
+      .to_string()
+      .contains("invalid map group-choice replay"));
+    Ok(())
+  }
 
   #[cfg(feature = "additional-controls")]
   #[test]

@@ -77,6 +77,52 @@ fn map_fallthrough_does_not_change_array_sequence_matching() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn replay_handles_different_widths_after_optional_group_rollback() {
+  let schema = r#"
+    root = {
+      ? (x: uint // y: uint // z: uint),
+      ((a: uint // b: uint // c: uint) // (d: uint // e: uint)),
+      tail: bool
+    }
+  "#;
+  for key in ["a", "b", "c", "d", "e"] {
+    assert!(validates(schema, &format!(r#"{{"{key}":1,"tail":true}}"#)));
+  }
+  assert!(!validates(schema, r#"{"unknown":1,"tail":true}"#));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn failed_replay_reports_each_diagnostic_once() {
+  for (schema, json, count) in [
+    (
+      "root = { (? a: uint // ? b: uint), (? c: uint // ? d: uint) }",
+      r#"{"unexpected":1}"#,
+      1,
+    ),
+    (
+      "root = { left: { ? a: uint }, right: { ? a: uint } }",
+      r#"{"left":{"unexpected":1},"right":{"unexpected":1}}"#,
+      2,
+    ),
+  ] {
+    #[cfg(feature = "additional-controls")]
+    let error = cddl::validator::validate_json_from_str(schema, json, None).unwrap_err();
+    #[cfg(not(feature = "additional-controls"))]
+    let error = cddl::validator::validate_json_from_str(schema, json).unwrap_err();
+    #[cfg(not(target_arch = "wasm32"))]
+    let message = error.to_string();
+    #[cfg(target_arch = "wasm32")]
+    let message = error.as_string().expect("validation error message");
+    assert_eq!(
+      message.matches("unexpected key \"unexpected\"").count(),
+      count
+    );
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn skipped_member_restores_claims_moved_during_key_lookup() {
   // Looking up "a" moves the first member's claim to "b". Rejecting the
   // optional value must undo that move as well as release its tentative key.
