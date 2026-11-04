@@ -61,12 +61,47 @@ jobs:
   compilation-check:
     uses: ./.github/workflows/compilation-check.yml
 
+  musl-release-check:
+    name: Musl release and small-stack tests
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.os }}
+    env:
+      RUST_TARGET: ${{ matrix.target }}
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
+      CARGO_PROFILE_RELEASE_LTO: thin
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Install native musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools musl-dev build-essential
+          rustup update stable
+          rustup target add "$RUST_TARGET" --toolchain stable
+
+      - name: Link release CLI
+        run: cargo +stable build --locked --release --bin cddl --target "$RUST_TARGET"
+
+      - name: Test release stack switching
+        run: cargo +stable test --locked --release -p cddl --test small_stack --target "$RUST_TARGET"
+
   wasm-compilation-check:
     strategy:
       matrix:
         rust_toolchain: [stable]
+        os: [ubuntu-latest, macOS-latest]
     name: Compilation check for wasm target
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
@@ -77,6 +112,13 @@ jobs:
           rustup install ${{ matrix.rust_toolchain }}
           rustup target add wasm32-unknown-unknown
 
+      - name: Use LLVM archiver for macOS WASM release linking
+        if: runner.os == 'macOS'
+        run: |
+          rustup component add llvm-tools-preview
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          echo "AR_wasm32_unknown_unknown=$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-ar" >> "$GITHUB_ENV"
+
       - name: Check compilation for wasm target
         run: |
           cargo +${{ matrix.rust_toolchain }} check -p cddl -p cddl-codegen-rust --lib --target wasm32-unknown-unknown
@@ -84,6 +126,11 @@ jobs:
       - name: Check compilation for wasm target (modules)
         run: |
           cargo +${{ matrix.rust_toolchain }} check -p cddl --lib --target wasm32-unknown-unknown --features modules
+
+      - name: Link release WASM with default and LSP features
+        run: |
+          cargo +${{ matrix.rust_toolchain }} build --locked -p cddl --lib --release --target wasm32-unknown-unknown
+          cargo +${{ matrix.rust_toolchain }} build --locked -p cddl --lib --release --target wasm32-unknown-unknown --features lsp
 
   test-suite:
     strategy:
