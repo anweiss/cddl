@@ -93,7 +93,9 @@ jobs:
         run: cargo +stable build --locked --release --bin cddl --target "$RUST_TARGET"
 
       - name: Test release stack switching
-        run: cargo +stable test --locked --release -p cddl --test small_stack --target "$RUST_TARGET"
+        run: |
+          cargo +stable test --locked --release -p cddl --test small_stack --target "$RUST_TARGET"
+          cargo +stable test --locked --release -p cddl --lib abnf --target "$RUST_TARGET"
 
   wasm-compilation-check:
     strategy:
@@ -111,13 +113,6 @@ jobs:
           rustup update
           rustup install ${{ matrix.rust_toolchain }}
           rustup target add wasm32-unknown-unknown
-
-      - name: Use LLVM archiver for macOS WASM release linking
-        if: runner.os == 'macOS'
-        run: |
-          rustup component add llvm-tools-preview
-          host=$(rustc -vV | sed -n 's/^host: //p')
-          echo "AR_wasm32_unknown_unknown=$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-ar" >> "$GITHUB_ENV"
 
       - name: Check compilation for wasm target
         run: |
