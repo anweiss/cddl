@@ -13,6 +13,7 @@ use std::{
   borrow::Cow,
   convert::TryFrom,
   fmt::{self, Write},
+  sync::{Arc, Mutex},
 };
 
 use chrono::{TimeZone, Utc};
@@ -190,6 +191,47 @@ fn member_key_is_cut(entry: &ValueMemberKeyEntry) -> bool {
   )
 }
 
+#[derive(Clone)]
+struct MapCheckpoint<'a> {
+  state: super::ValidationState<'a>,
+  errors: Vec<ValidationError>,
+  object_value: Option<Value>,
+  cut_value: Option<Cow<'a, str>>,
+  validated_keys: Option<Vec<String>>,
+  member_claims: Vec<MemberClaim<'a>>,
+  object_value_key: Option<String>,
+  map_entry_candidates: Option<Vec<(String, Value)>>,
+}
+
+/// Replay group alternatives lazily, including choices inside named groups.
+/// A path is accepted only after the enclosing map has complete coverage.
+#[derive(Default)]
+struct MapChoiceSearch {
+  path: Vec<usize>,
+  widths: Vec<usize>,
+}
+
+impl MapChoiceSearch {
+  fn select(&mut self, width: usize) -> usize {
+    let depth = self.widths.len();
+    self.widths.push(width);
+    self.path.get(depth).copied().unwrap_or(0)
+  }
+
+  fn advance(&mut self) -> bool {
+    self.path.resize(self.widths.len(), 0);
+    for depth in (0..self.widths.len()).rev() {
+      if self.path[depth] + 1 < self.widths[depth] {
+        self.path[depth] += 1;
+        self.path.truncate(depth + 1);
+        self.widths.clear();
+        return true;
+      }
+    }
+    false
+  }
+}
+
 /// JSON validator type
 #[derive(Clone)]
 pub struct JSONValidator<'a> {
@@ -215,6 +257,9 @@ pub struct JSONValidator<'a> {
   // The group entry takes this relay immediately and commits only candidates
   // whose values also match the member.
   map_entry_candidates: Option<Vec<(String, Value)>>,
+  // Generic group validators share the current map's search. Arc/Mutex
+  // preserves the native validator's Send/Sync traits.
+  map_choice_search: Option<Arc<Mutex<MapChoiceSearch>>>,
 }
 
 impl<'a> JSONValidator<'a> {
@@ -232,6 +277,7 @@ impl<'a> JSONValidator<'a> {
       member_claims: Vec::new(),
       object_value_key: None,
       map_entry_candidates: None,
+      map_choice_search: None,
     }
   }
 
@@ -249,6 +295,7 @@ impl<'a> JSONValidator<'a> {
       member_claims: Vec::new(),
       object_value_key: None,
       map_entry_candidates: None,
+      map_choice_search: None,
     }
   }
 
@@ -327,6 +374,7 @@ impl<'a> JSONValidator<'a> {
       member_claims: Vec::new(),
       object_value_key: None,
       map_entry_candidates: None,
+      map_choice_search: None,
     }
   }
 
@@ -344,6 +392,7 @@ impl<'a> JSONValidator<'a> {
       member_claims: Vec::new(),
       object_value_key: None,
       map_entry_candidates: None,
+      map_choice_search: None,
     }
   }
 
@@ -633,17 +682,112 @@ impl<'a> JSONValidator<'a> {
     Ok(())
   }
 
+  fn map_checkpoint(&self) -> MapCheckpoint<'a> {
+    MapCheckpoint {
+      state: self.state.clone(),
+      errors: self.errors.clone(),
+      object_value: self.object_value.clone(),
+      cut_value: self.cut_value.clone(),
+      validated_keys: self.validated_keys.clone(),
+      member_claims: self.member_claims.clone(),
+      object_value_key: self.object_value_key.clone(),
+      map_entry_candidates: self.map_entry_candidates.clone(),
+    }
+  }
+
+  fn restore_map_checkpoint(&mut self, checkpoint: MapCheckpoint<'a>) {
+    self.state = checkpoint.state;
+    self.errors = checkpoint.errors;
+    self.object_value = checkpoint.object_value;
+    self.cut_value = checkpoint.cut_value;
+    self.validated_keys = checkpoint.validated_keys;
+    self.member_claims = checkpoint.member_claims;
+    self.object_value_key = checkpoint.object_value_key;
+    self.map_entry_candidates = checkpoint.map_entry_candidates;
+  }
+
+  fn validate_map_coverage(&mut self, keys: &[String]) {
+    for key in keys {
+      if !self
+        .validated_keys
+        .as_ref()
+        .is_some_and(|claimed| claimed.contains(key))
+      {
+        self.add_error(format!("unexpected key {:?}", key));
+      }
+    }
+  }
+
+  fn visit_closed_map(&mut self, group: &Group<'a>, keys: &[String]) -> visitor::Result<Error> {
+    let search = Arc::new(Mutex::new(MapChoiceSearch::default()));
+    let previous_search = self.map_choice_search.replace(search.clone());
+    let result = self.visit_map_candidates(group, keys, &search);
+    self.map_choice_search = previous_search;
+    result
+  }
+
+  fn planned_group_choice(&self, width: usize) -> Option<usize> {
+    if width < 2 || self.state.is_group_to_choice_enum {
+      return None;
+    }
+    self
+      .map_choice_search
+      .as_ref()
+      .map(|search| search.lock().expect("map choice search lock").select(width))
+  }
+
+  fn visit_planned_group_reference(
+    &mut self,
+    entry: &TypeGroupnameEntry<'a>,
+    alternates: &[&GroupEntry<'a>],
+  ) -> visitor::Result<Error> {
+    if rule_from_ident(self.state.cddl, &entry.name).is_none() {
+      let selected = self.planned_group_choice(alternates.len()).unwrap_or(0);
+      if let Some(alternate) = alternates.get(selected) {
+        return self.visit_group_entry(alternate);
+      }
+    }
+    // The rule visitor records incremental alternatives once, together
+    // with the base definition, in the enclosing map's replay path.
+    walk_type_groupname_entry(self, entry)?;
+    self.state.type_group_name_entry = None;
+    Ok(())
+  }
+
+  fn visit_map_candidates(
+    &mut self,
+    group: &Group<'a>,
+    keys: &[String],
+    search: &Mutex<MapChoiceSearch>,
+  ) -> visitor::Result<Error> {
+    let checkpoint = self.map_checkpoint();
+    let error_count = self.errors.len();
+    let mut choice_errors = Vec::new();
+    loop {
+      self.visit_group(group)?;
+      self.validate_map_coverage(keys);
+      if self.errors.len() == error_count {
+        return Ok(());
+      }
+      choice_errors.extend(self.errors.drain(error_count..));
+      self.restore_map_checkpoint(checkpoint.clone());
+      if !search.lock().expect("map choice search lock").advance() {
+        self.errors.extend(choice_errors);
+        return Ok(());
+      }
+    }
+  }
+
   fn visit_optional_non_cut_member(&mut self, entry: &GroupEntry<'a>) -> visitor::Result<Error> {
     // Optional non-cut members match complete pairs (RFC 8610 §3.5.4).
     // Key lookup can reassign earlier claims, so skipping a failed member
     // must restore the whole checkpoint, not just release its selected key.
-    let checkpoint = self.clone();
+    let checkpoint = self.map_checkpoint();
     walk_group_entry(self, entry)?;
     if self.errors.len() > checkpoint.errors.len() {
-      *self = checkpoint;
-    } else {
-      self.state.occurrence = checkpoint.state.occurrence;
+      self.restore_map_checkpoint(checkpoint);
     }
+    self.state.occurrence = None;
     Ok(())
   }
 
@@ -1641,6 +1785,14 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       self.state.is_multi_group_choice = true;
     }
 
+    if let Some(selected) = self.planned_group_choice(group_choice_alternates.len() + 1) {
+      let entry = group_choice_alternates
+        .get(selected)
+        .copied()
+        .unwrap_or(&gr.entry);
+      return self.visit_group_entry(entry);
+    }
+
     let error_count = self.errors.len();
     for ge in group_choice_alternates {
       let cur_errors = self.errors.len();
@@ -1809,6 +1961,10 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     }
 
     self.state.is_ctrl_map_equality = false;
+
+    if let Some(selected) = self.planned_group_choice(g.group_choices.len()) {
+      return self.visit_group_choice(&g.group_choices[selected]);
+    }
 
     let initial_error_count = self.errors.len();
     for group_choice in g.group_choices.iter() {
@@ -2872,19 +3028,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
           #[allow(clippy::needless_collect)]
           let o = o.keys().cloned().collect::<Vec<_>>();
 
-          self.visit_group(group)?;
-
-          // A key is unexpected unless some group entry consumed its complete
-          // key/value pair (validated_keys of None is an empty consumed set).
-          for k in o.into_iter() {
-            if !self
-              .validated_keys
-              .as_ref()
-              .is_some_and(|keys| keys.contains(&k))
-            {
-              self.add_error(format!("unexpected key {:?}", k));
-            }
-          }
+          self.visit_closed_map(group, &o)?;
 
           self.state.is_cut_present = false;
           self.cut_value = None;
@@ -3673,6 +3817,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         // ledgers and cannot reuse pairs the parent already consumed.
         jv.validated_keys = self.validated_keys.clone();
         jv.member_claims = self.member_claims.clone();
+        jv.map_choice_search = self.map_choice_search.clone();
         jv.visit_rule(rule)?;
 
         let child_succeeded = jv.errors.is_empty();
@@ -3701,6 +3846,10 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       self.state.is_multi_group_choice = true;
     }
 
+    if self.map_choice_search.is_some() {
+      return self.visit_planned_group_reference(entry, &group_choice_alternates);
+    }
+
     for ge in group_choice_alternates {
       let cur_errors = self.errors.len();
       self.visit_group_entry(ge)?;
@@ -3725,10 +3874,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         return self.visit_choice_key_entry(ge, key_type, &alternatives, is_cut);
       }
       if matches!(&ge.member_key, Some(MemberKey::Type1 { is_cut: false, .. }))
-        && matches!(
-          ge.occur.as_ref().map(|o| o.occur),
-          Some(Occur::Optional { .. })
-        )
+        && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)) == (0, Some(1))
       {
         return self.visit_optional_non_cut_member(entry);
       }
