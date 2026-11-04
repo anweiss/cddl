@@ -276,7 +276,7 @@ function isParserErrorLike(err) {
 // Decoding failures surfaced by the WASM CBOR decoder, which are reported
 // before any schema constraint is evaluated.
 const CBOR_DECODE_ERROR =
-  /^(syntax error at offset\b|unexpected end of input\b|unexpected break\b|i\/o error:)/i;
+  /^(syntax error at offset\b|unexpected end of input\b|unexpected break\b|unexpected key: duplicate text key in CBOR map\b|i\/o error:)/i;
 
 /** @type {(detail: string) => boolean} */
 function isCborDecodeError(detail) {

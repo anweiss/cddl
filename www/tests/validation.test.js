@@ -25,6 +25,16 @@ describe('real WASM instance validation', () => {
     ).toBe(true);
     expect(validate({ kind: 'cbor', text: '01 02' }).title).toBe('Invalid CBOR input');
   });
+  it('classifies duplicate text keys as invalid CBOR rather than a schema mismatch', () => {
+    const result = validate({
+      kind: 'cbor',
+      cddl: 'root = any',
+      text: 'a2 61 61 01 61 61 02',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.title).toBe('Invalid CBOR input');
+    expect(result.detail).toContain('duplicate text key');
+  });
   it.each([
     ['root = { count: uint }', '{"count":-1}'],
     ['root = [uint]', '[-1]'],

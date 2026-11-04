@@ -229,6 +229,80 @@ fn default_controls_preserve_complete_target_membership() {
   ));
 }
 
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn comparison_controllers_do_not_constrain_the_instance_domain() {
+  for (operator, controller, value) in [
+    ("gt", "nint .eq -1", 0x00),
+    ("ge", "nint .eq -1", 0x00),
+    ("lt", "uint .eq 1", 0x20),
+    ("le", "uint .eq 1", 0x20),
+    ("ne", "nint .eq -1", 0x00),
+  ] {
+    assert!(
+      accepts(
+        &format!("x = int .{operator} bound\nbound = {controller}"),
+        &[value]
+      ),
+      "{}",
+      operator
+    );
+  }
+  assert!(!accepts("x = int .gt bound\nbound = nint .eq -1", &[0x21]));
+  assert!(!accepts("x = uint .gt bound\nbound = nint .eq -1", &[0x20]));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn repeated_numeric_alias_probes_remain_bounded() {
+  for (controller, depth) in [("n", 32), ("alias", 16)] {
+    let mut schema = format!("x = n{depth}\nn0 = uint .eq 1\nalias0 = n0\n");
+    for level in 1..=depth {
+      schema.push_str(&format!(
+        "n{level} = n{0} .eq {controller}{0}\nalias{level} = n{level}\n",
+        level - 1
+      ));
+    }
+    assert!(accepts(&schema, &[0x01]));
+    assert!(!accepts(&schema, &[0x02]));
+  }
+  assert!(!accepts(
+    "x = [cell, cell]\ncell = uint .eq 1",
+    &[0x82, 0x01, 0x02]
+  ));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn numeric_probe_cache_preserves_generic_context() {
+  let rules = "\ncheck<T,U> = bound<T> .eq U\nbound<T> = uint .eq T";
+  assert!(!accepts(
+    &format!("x = check<0,1> / check<1,0>{rules}"),
+    &[0x00]
+  ));
+  assert!(accepts(&format!("x = check<1,1>{rules}"), &[0x01]));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn recursive_assumptions_are_not_cached_as_membership() {
+  use cddl::validator::{cbor::CBORValidator, cbor_value::Value, Validator};
+  let cddl = cddl::cddl_from_str("x = t .eq 0\nt = uint .eq 1", false).unwrap();
+  let value = Value::Integer(0.into());
+  #[cfg(feature = "additional-controls")]
+  let mut validator = CBORValidator::new(&cddl, value, None);
+  #[cfg(not(feature = "additional-controls"))]
+  let mut validator = CBORValidator::new(&cddl, value);
+  validator.state.visited_rules.insert("t\0".into());
+  assert!(
+    Validator::<cddl::validator::cbor::Error<std::io::Error>>::validate(&mut validator).is_ok()
+  );
+  validator.state.visited_rules.clear();
+  assert!(
+    Validator::<cddl::validator::cbor::Error<std::io::Error>>::validate(&mut validator).is_err()
+  );
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn duplicate_text_keys_are_data_errors_not_schema_errors() {

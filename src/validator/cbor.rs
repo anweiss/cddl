@@ -11,8 +11,10 @@ use crate::{
 
 use std::{
   borrow::Cow,
+  collections::HashSet,
   convert::TryFrom,
   fmt::{self, Write},
+  sync::{Arc, Mutex},
 };
 
 use super::cbor_value::{decode_cbor, has_duplicate_text_keys, Value};
@@ -162,6 +164,16 @@ struct SingleMapEntryClaim<'a> {
   generic_context: Option<GenericEvaluationContext<'a>>,
 }
 
+#[derive(Eq, Hash, PartialEq)]
+struct NumericTargetProbeKey {
+  cddl: usize,
+  target: String,
+  data_location: String,
+  generic_rule: Option<String>,
+  generic_rules: String,
+  features: String,
+}
+
 /// cbor validator type
 #[derive(Clone)]
 pub struct CBORValidator<'a> {
@@ -186,6 +198,9 @@ pub struct CBORValidator<'a> {
   // Isolated compatibility probes must not recursively start another map
   // assignment search when the tested pair does not match.
   probing_single_entry_assignment: bool,
+  // Shared only by clones and target probes of this immutable CBOR value.
+  numeric_target_checks: Arc<Mutex<HashSet<NumericTargetProbeKey>>>,
+  numeric_probe_recursions: Arc<Mutex<usize>>,
   // Candidate batch produced while visiting one repeating map member's key.
   // `visit_value_member_key_entry` immediately takes this relay field so the
   // physical indices cannot affect a later group entry.
@@ -225,6 +240,8 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
+      numeric_target_checks: Arc::default(),
+      numeric_probe_recursions: Arc::default(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -245,6 +262,8 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
+      numeric_target_checks: Arc::default(),
+      numeric_probe_recursions: Arc::default(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -265,6 +284,8 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
+      numeric_target_checks: Arc::default(),
+      numeric_probe_recursions: Arc::default(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -285,6 +306,8 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
+      numeric_target_checks: Arc::default(),
+      numeric_probe_recursions: Arc::default(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -294,6 +317,72 @@ impl<'a> CBORValidator<'a> {
   /// Extract the underlying CBOR Value.
   pub fn extract_cbor(self) -> Value {
     self.cbor
+  }
+
+  fn numeric_target_probe_key(&self, target: &Type2<'a>) -> NumericTargetProbeKey {
+    #[cfg(feature = "additional-controls")]
+    let features = format!("{:?}", self.state.enabled_features);
+    #[cfg(not(feature = "additional-controls"))]
+    let features = String::new();
+    NumericTargetProbeKey {
+      cddl: self.state.cddl as *const CDDL<'a> as usize,
+      target: target.to_string(),
+      data_location: self.state.data_location.clone(),
+      generic_rule: self.state.eval_generic_rule.map(str::to_owned),
+      generic_rules: format!("{:?}", self.state.generic_rules),
+      features,
+    }
+  }
+
+  fn probe_numeric_target<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let key = self.numeric_target_probe_key(target);
+    if self
+      .numeric_target_checks
+      .lock()
+      .is_ok_and(|checks| checks.contains(&key))
+    {
+      return Ok(true);
+    }
+
+    let mut probe = self.new_with_recursion_state(self.cbor.clone());
+    probe.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
+    probe.state.data_location = self.state.data_location.clone();
+    let recursion_count = self
+      .numeric_probe_recursions
+      .lock()
+      .ok()
+      .map(|count| *count);
+    probe.visit_type2(target)?;
+    if !probe.errors.is_empty() {
+      self.errors.extend(probe.errors);
+      return Ok(false);
+    }
+    // A recursion guard assumes membership rather than proving it. Such a
+    // result must never become reusable evidence in a different alias path.
+    if recursion_count.is_some_and(|count| {
+      count != usize::MAX
+        && self
+          .numeric_probe_recursions
+          .lock()
+          .is_ok_and(|current| *current == count)
+    }) {
+      if let Ok(mut checks) = self.numeric_target_checks.lock() {
+        checks.insert(key);
+      }
+    }
+    Ok(true)
+  }
+
+  fn note_numeric_probe_recursion(&self) {
+    if let Ok(mut count) = self.numeric_probe_recursions.lock() {
+      *count = count.saturating_add(1);
+    }
   }
 
   fn validate_equality_control<T: std::fmt::Debug + 'static>(
@@ -1125,6 +1214,7 @@ impl<'a> CBORValidator<'a> {
     cv.state.generic_rules = self.state.generic_rules.clone();
     cv.state.eval_generic_rule = self.state.eval_generic_rule;
     cv.state.visited_rules = self.state.visited_rules.clone();
+    cv.numeric_probe_recursions = Arc::clone(&self.numeric_probe_recursions);
     cv
   }
 
@@ -2221,14 +2311,12 @@ where
           ));
           return Ok(());
         }
-        if numeric_control_needs_target_probe(&ctrl) {
+        if numeric_control_needs_target_probe(&ctrl)
+          && !is_comparison_controller(self.state.ctrl.as_ref())
+        {
           // A numeric choice may also contain nonnumeric or constrained arms.
           // Domain prefilters alone cannot establish target membership.
-          let mut target_validator = self.new_with_recursion_state(self.cbor.clone());
-          target_validator.state.data_location = self.state.data_location.clone();
-          target_validator.visit_type2(target)?;
-          if !target_validator.errors.is_empty() {
-            self.errors.extend(target_validator.errors);
+          if !self.probe_numeric_target::<T>(target)? {
             return Ok(());
           }
           numeric_target_validated = true;
@@ -4209,6 +4297,7 @@ where
         if self.state.visited_rules.contains(&visited_key) {
           // We've already validated this rule in the current validation path
           // This is a recursive reference, so we allow it and assume it's valid
+          self.note_numeric_probe_recursion();
           return Ok(());
         }
 
@@ -4225,6 +4314,7 @@ where
       // 2.2.2). Such a choice has no base rule for `rule_from_ident` to find.
       if !type_choice_types_from_ident(self.state.cddl, ident).is_empty() {
         if self.state.visited_rules.contains(&visited_key) {
+          self.note_numeric_probe_recursion();
           return Ok(());
         }
 
@@ -5353,6 +5443,20 @@ fn numeric_control_needs_target_probe(ctrl: &ControlOperator) -> bool {
     ControlOperator::FEATURE => false,
     _ => !is_computed_control(ctrl),
   }
+}
+
+fn is_comparison_controller(ctrl: Option<&ControlOperator>) -> bool {
+  matches!(
+    ctrl,
+    Some(
+      ControlOperator::EQ
+        | ControlOperator::NE
+        | ControlOperator::LT
+        | ControlOperator::LE
+        | ControlOperator::GT
+        | ControlOperator::GE
+    )
+  )
 }
 
 fn structural_prelude_type<'a>(token: &Token, value: &Value) -> Option<Type2<'a>> {
