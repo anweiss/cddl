@@ -174,6 +174,13 @@ struct NumericTargetProbeKey {
   features: String,
 }
 
+#[derive(Clone)]
+struct ControllerDomain<'a> {
+  target: Type2<'a>,
+  generic_rules: Vec<GenericRule<'a>>,
+  generic_rule: Option<&'a str>,
+}
+
 /// cbor validator type
 #[derive(Clone)]
 pub struct CBORValidator<'a> {
@@ -198,9 +205,10 @@ pub struct CBORValidator<'a> {
   // Isolated compatibility probes must not recursively start another map
   // assignment search when the tested pair does not match.
   probing_single_entry_assignment: bool,
-  // Shared only by clones and target probes of this immutable CBOR value.
+  // Shared only by validator copies of this immutable CBOR value.
   numeric_target_checks: Arc<Mutex<HashSet<NumericTargetProbeKey>>>,
   numeric_probe_recursions: Arc<Mutex<usize>>,
+  controller_domains: Vec<ControllerDomain<'a>>,
   // Candidate batch produced while visiting one repeating map member's key.
   // `visit_value_member_key_entry` immediately takes this relay field so the
   // physical indices cannot affect a later group entry.
@@ -242,6 +250,7 @@ impl<'a> CBORValidator<'a> {
       probing_single_entry_assignment: false,
       numeric_target_checks: Arc::default(),
       numeric_probe_recursions: Arc::default(),
+      controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -264,6 +273,7 @@ impl<'a> CBORValidator<'a> {
       probing_single_entry_assignment: false,
       numeric_target_checks: Arc::default(),
       numeric_probe_recursions: Arc::default(),
+      controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -286,6 +296,7 @@ impl<'a> CBORValidator<'a> {
       probing_single_entry_assignment: false,
       numeric_target_checks: Arc::default(),
       numeric_probe_recursions: Arc::default(),
+      controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -308,6 +319,7 @@ impl<'a> CBORValidator<'a> {
       probing_single_entry_assignment: false,
       numeric_target_checks: Arc::default(),
       numeric_probe_recursions: Arc::default(),
+      controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -324,12 +336,32 @@ impl<'a> CBORValidator<'a> {
     let features = format!("{:?}", self.state.enabled_features);
     #[cfg(not(feature = "additional-controls"))]
     let features = String::new();
+    // Identifier evaluation reads leading arguments, while argument forwarding
+    // reads the latest bindings. Intermediate instantiation history is unused.
+    let generic_rules = self
+      .state
+      .generic_rules
+      .iter()
+      .map(|rule| {
+        let count = rule.params.len();
+        (
+          rule.name,
+          &rule.params,
+          &rule.args[..count.min(rule.args.len())],
+          rule
+            .args
+            .len()
+            .checked_sub(count)
+            .map(|start| &rule.args[start..]),
+        )
+      })
+      .collect::<Vec<_>>();
     NumericTargetProbeKey {
       cddl: self.state.cddl as *const CDDL<'a> as usize,
-      target: target.to_string(),
+      target: format!("{target:?}"),
       data_location: self.state.data_location.clone(),
       generic_rule: self.state.eval_generic_rule.map(str::to_owned),
-      generic_rules: format!("{:?}", self.state.generic_rules),
+      generic_rules: format!("{generic_rules:?}"),
       features,
     }
   }
@@ -385,6 +417,50 @@ impl<'a> CBORValidator<'a> {
     }
   }
 
+  fn visit_numeric_controller<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    self.controller_domains.push(ControllerDomain {
+      target: target.clone(),
+      generic_rules: self.state.generic_rules.clone(),
+      generic_rule: self.state.eval_generic_rule,
+    });
+    let result = self.visit_type2(controller);
+    self.controller_domains.pop();
+    result
+  }
+
+  fn controller_value_matches_domains<T: std::fmt::Debug + 'static>(
+    &mut self,
+    value: &token::Value<'a>,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    for domain in self.controller_domains.clone() {
+      // Controller values are a different operand from the instance and get
+      // fresh membership caches, even if the two happen to have equal values.
+      let mut probe = self.new_with_recursion_state(token_value_into_cbor_value(value.clone()));
+      probe.state.generic_rules = domain.generic_rules;
+      probe.state.eval_generic_rule = domain.generic_rule;
+      probe.state.data_location = self.state.data_location.clone();
+      probe.visit_type2(&domain.target)?;
+      if !probe.errors.is_empty() {
+        for error in &mut probe.errors {
+          error.reason = format!("numeric controller: {}", error.reason);
+        }
+        self.errors.extend(probe.errors);
+        return Ok(false);
+      }
+    }
+    Ok(true)
+  }
+
   fn validate_equality_control<T: std::fmt::Debug + 'static>(
     &mut self,
     target: &Type2<'a>,
@@ -398,6 +474,11 @@ impl<'a> CBORValidator<'a> {
         if is_ident_string_data_type(self.state.cddl, ident)
           || is_ident_numeric_data_type(self.state.cddl, ident)
         {
+          if is_numeric_controller_context(self.state.ctrl.as_ref())
+            && is_ident_numeric_data_type(self.state.cddl, ident)
+          {
+            return self.visit_numeric_controller::<T>(target, controller);
+          }
           return self.visit_type2(controller);
         }
       }
@@ -1827,6 +1908,9 @@ where
   cbor::Error<T>: From<cbor::Error<std::io::Error>>,
 {
   fn validate(&mut self) -> std::result::Result<(), cbor::Error<T>> {
+    self.numeric_target_checks = Arc::default();
+    self.numeric_probe_recursions = Arc::default();
+    self.controller_domains.clear();
     // RFC 8949 sections 5.3.1 and 5.6.1: text map keys compare byte-for-byte,
     // independently of their wire encoding and of the enclosing CDDL type.
     if has_duplicate_text_keys(&self.cbor) {
@@ -2312,7 +2396,7 @@ where
           return Ok(());
         }
         if numeric_control_needs_target_probe(&ctrl)
-          && !is_comparison_controller(self.state.ctrl.as_ref())
+          && !is_numeric_controller_context(self.state.ctrl.as_ref())
         {
           // A numeric choice may also contain nonnumeric or constrained arms.
           // Domain prefilters alone cannot establish target membership.
@@ -3864,6 +3948,14 @@ where
             cv.state.generic_rules = self.state.generic_rules.clone();
             cv.state.eval_generic_rule = Some(ident.ident);
             cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+            cv.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
+            cv.numeric_probe_recursions = Arc::clone(&self.numeric_probe_recursions);
+            if is_numeric_controller_context(self.state.ctrl.as_ref())
+              && matches!(self.cbor, Value::Integer(_) | Value::Float(_))
+            {
+              cv.state.ctrl = self.state.ctrl;
+              cv.controller_domains = self.controller_domains.clone();
+            }
             cv.visit_rule(rule)?;
 
             self.errors.append(&mut cv.errors);
@@ -4966,6 +5058,9 @@ where
   }
 
   fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error<T>> {
+    if !self.controller_value_matches_domains::<T>(value)? {
+      return Ok(());
+    }
     let error: Option<String> = match &self.cbor {
       Value::Integer(i) => match value {
         token::Value::INT(v) => match &self.state.ctrl {
@@ -5445,11 +5540,13 @@ fn numeric_control_needs_target_probe(ctrl: &ControlOperator) -> bool {
   }
 }
 
-fn is_comparison_controller(ctrl: Option<&ControlOperator>) -> bool {
+fn is_numeric_controller_context(ctrl: Option<&ControlOperator>) -> bool {
+  // Equality already checks the instance against the controller's own value.
   matches!(
     ctrl,
     Some(
-      ControlOperator::EQ
+      ControlOperator::SIZE
+        | ControlOperator::BITS
         | ControlOperator::NE
         | ControlOperator::LT
         | ControlOperator::LE

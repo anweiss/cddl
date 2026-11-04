@@ -254,6 +254,25 @@ fn comparison_controllers_do_not_constrain_the_instance_domain() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn comparison_controllers_respect_their_own_domains() {
+  for (schema, value) in [
+    ("x = int .lt bound\nbound = uint .eq -1", 0x21),
+    ("x = int .gt bound\nbound = nint .eq 1", 0x02),
+    ("x = int .gt bound\nbound = uint .eq -1", 0x00),
+    ("x = int .gt bound\nbound = nint .eq one\none = 1", 0x02),
+    ("x = int .lt bound<-1>\nbound<T> = uint .eq T", 0x21),
+  ] {
+    assert!(!accepts(schema, &[value]), "{}", schema);
+  }
+  assert!(accepts("x = int .lt bound\nbound = uint .eq 1", &[0x21]));
+  assert!(accepts(
+    "x = int .gt bound<-1>\nbound<T> = nint .eq T",
+    &[0x00]
+  ));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn repeated_numeric_alias_probes_remain_bounded() {
   for (controller, depth) in [("n", 32), ("alias", 16)] {
     let mut schema = format!("x = n{depth}\nn0 = uint .eq 1\nalias0 = n0\n");
@@ -275,12 +294,43 @@ fn repeated_numeric_alias_probes_remain_bounded() {
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn numeric_probe_cache_preserves_generic_context() {
+  assert!(!accepts(
+    "x = g<1> .and nint / g<1.0> .and uint\ng<T> = uint .eq T",
+    &[0x01]
+  ));
   let rules = "\ncheck<T,U> = bound<T> .eq U\nbound<T> = uint .eq T";
   assert!(!accepts(
     &format!("x = check<0,1> / check<1,0>{rules}"),
     &[0x00]
   ));
   assert!(accepts(&format!("x = check<1,1>{rules}"), &[0x01]));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn numeric_size_and_bits_controllers_use_counts_not_instances() {
+  let rules = "\nbound = one .eq 1\none = uint .eq 1";
+  assert!(accepts(
+    &format!("x = uint .size bound{rules}"),
+    &[0x18, 0xff]
+  ));
+  assert!(!accepts(
+    &format!("x = uint .size bound{rules}"),
+    &[0x19, 0x01, 0x00]
+  ));
+  assert!(accepts(&format!("x = uint .bits bound{rules}"), &[0x02]));
+  assert!(!accepts(&format!("x = uint .bits bound{rules}"), &[0x01]));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn repeated_generic_numeric_alias_probes_remain_bounded() {
+  let mut schema = String::from("x = n32<1>\nn0<T> = uint .eq T\n");
+  for level in 1..=32 {
+    schema.push_str(&format!("n{level}<T> = n{0}<T> .eq n{0}<T>\n", level - 1));
+  }
+  assert!(accepts(&schema, &[0x01]));
+  assert!(!accepts(&schema, &[0x02]));
 }
 
 #[cfg(not(target_arch = "wasm32"))]
