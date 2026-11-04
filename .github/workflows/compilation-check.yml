@@ -44,3 +44,9 @@ jobs:
           RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
         run: |
           cargo "+$RUST_TOOLCHAIN" check -p cddl --lib --no-default-features --features _build-parser --target thumbv7em-none-eabihf
+
+      - name: Check compilation with no default features (ast-span)
+        env:
+          RUST_TOOLCHAIN: ${{ matrix.rust_toolchain }}
+        run: |
+          cargo "+$RUST_TOOLCHAIN" check --locked -p cddl --lib --no-default-features --features ast-span,_build-parser --target thumbv7em-none-eabihf

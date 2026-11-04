@@ -16,6 +16,32 @@ successful run when investigating a slowdown. The early static phase should
 fail before expensive browser tests. The existing cross-platform Rust CI
 remains authoritative for MSRV and feature compatibility.
 
+## CI Failure Doctor safety gate
+
+CI Failure Doctor observes failed `Build and Test` runs on `main`; it does not
+check out the failed run's head. The generated activation condition also
+rejects a missing workflow-run repository, a different repository ID, or a
+fork. The agent job has read-only repository permissions. Separate jobs apply
+issue/comment outputs and maintain cache memory.
+
+Keep `safe-outputs.threat-detection.continue-on-error: false` in
+`.github/workflows/ci-doctor.md`. Regenerate the lock with gh-aw v1.0.1 instead
+of editing it. The generated detector installation and conclusion steps must
+not tolerate failure. A missing detector, failed installation, crashed
+detector or invalid verdict must fail the detection job, blocking both
+`safe_outputs` and `update_cache_memory`. An explicit no-output/no-scan-needed
+result may succeed without running the detector. Do not substitute detection
+job success for a verdict while enabling warning-mode error tolerance.
+
+After a compiler upgrade, inspect the generated job permissions and gates.
+The activation job can report setup failures as issues; the conclusion and
+safe-output jobs can write issues and pull-request comments; the cache job
+can write Actions caches. No agent job needs those write permissions.
+Synthetic detector-failure checks and PR CI do not exercise the full hosted
+`workflow_run`/Copilot path. A maintainer should observe its first eligible
+run and verify detector results, output limits and cache behavior. Do not
+manufacture a failed CI run or dispatch publishing workflows just to test it.
+
 ## Smoke checks and rollback
 
 For a staged static deployment, confirm the HTML, hashed JavaScript, editor and
