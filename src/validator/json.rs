@@ -633,6 +633,20 @@ impl<'a> JSONValidator<'a> {
     Ok(())
   }
 
+  fn visit_optional_non_cut_member(&mut self, entry: &GroupEntry<'a>) -> visitor::Result<Error> {
+    // Optional non-cut members match complete pairs (RFC 8610 §3.5.4).
+    // Key lookup can reassign earlier claims, so skipping a failed member
+    // must restore the whole checkpoint, not just release its selected key.
+    let checkpoint = self.clone();
+    walk_group_entry(self, entry)?;
+    if self.errors.len() > checkpoint.errors.len() {
+      *self = checkpoint;
+    } else {
+      self.state.occurrence = checkpoint.state.occurrence;
+    }
+    Ok(())
+  }
+
   /// Validate the pair relayed from a key-domain member key. On success the
   /// member records a movable claim; on failure the tentative key is
   /// released and every single-occurrence member is retried as a one-to-one
@@ -3709,6 +3723,14 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     if let (GroupEntry::ValueMemberKey { ge, .. }, Value::Object(_)) = (entry, &self.json) {
       if let Some((key_type, alternatives, is_cut)) = choice_member_key(&self.state, ge) {
         return self.visit_choice_key_entry(ge, key_type, &alternatives, is_cut);
+      }
+      if matches!(&ge.member_key, Some(MemberKey::Type1 { is_cut: false, .. }))
+        && matches!(
+          ge.occur.as_ref().map(|o| o.occur),
+          Some(Occur::Optional { .. })
+        )
+      {
+        return self.visit_optional_non_cut_member(entry);
       }
     }
     if let GroupEntry::TypeGroupname { ge, .. } = entry {

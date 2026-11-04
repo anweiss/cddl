@@ -27,6 +27,12 @@ members; with a cut (`^`), a matching key whose value fails rejects the map.
 Occurrence bounds count matching pairs across all alternatives, not separately
 for each alternative.
 
+Optional JSON members without a cut also match complete pairs. If a key
+matches but its value does not, the member can be absent, leaving that pair
+for a later member. Skipping restores earlier ownership assignments as well
+as the tentative key; explicit cuts and colon shortcuts still reject a
+matched key with an invalid value.
+
 An undefined group socket matches no entries, so `{ * $$s }` accepts an empty
 map. A failed inline group that may occur zero times, such as `? ($$s)`,
 releases its errors and any entries it claimed.
