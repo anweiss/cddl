@@ -301,6 +301,10 @@ JSON, CBOR, and CSV validation all require `std` .
 
 A few convenience features have been included to make the AST more concise and for enabling additional functionality. You can build with `default-features = false` for a `no_std` build and selectively enable any of the features below.
 
+**`--feature native-stack`**
+
+Grow the native stack around library parsing and ABNF validation. Enabled by `std`. Minimal native applications can enable it independently when another dependency enables `pest/std` and parsing must work on small-stack threads. This uses the host standard library through `stacker`; do not enable it for bare-metal targets. It has no effect on WASM or direct calls to `pest_parser::CddlParser`.
+
 **`--feature ast-span`**
 
 Add the `Span` type to the AST for keeping track of the position of the lexer and parser. Enabled by default.
@@ -734,7 +738,7 @@ The lexer and parser can be used in a `no_std` context (including bare-metal tar
 cddl = { version = "0.10.7", default-features = false }
 ```
 
-When the `std` feature is disabled, the crate declares `#![no_std]` and relies on `core` and `alloc` only. All std-only dependencies (codespan-reporting, hexf-parse, regex, simplelog, log, pest_vm, pest_meta, abnf_to_pest) are gated behind the `std` feature flag and will not be compiled.
+When the `std` feature is disabled, the crate declares `#![no_std]`. With `native-stack` also disabled, parsing relies on `core` and `alloc` only. The optional `native-stack` feature is for native hosts with a standard library, not bare-metal builds. The validator and diagnostic dependencies (codespan-reporting, hexf-parse, regex, simplelog, log, pest_vm, pest_meta, abnf_to_pest) are gated behind the `std` feature flag and will not be compiled.
 
 Zero-copy parsing is implemented to the extent that is possible. Allocation is required for error handling, diagnostics, and AST construction.
 

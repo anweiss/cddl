@@ -114,6 +114,12 @@ jobs:
       - name: Test standalone derive consumer
         run: cargo +${{ matrix.rust_toolchain }} test --locked --manifest-path cddl-derive/tests/consumer/Cargo.toml
 
+      - name: Test native stack growth without cddl std
+        run: cargo +${{ matrix.rust_toolchain }} test --locked -p cddl --no-default-features --features _build-parser,native-stack,pest/std --test small_stack
+
+      - name: Check minimal parser with unified pest std
+        run: cargo +${{ matrix.rust_toolchain }} check --locked -p cddl --lib --no-default-features --features _build-parser,pest/std
+
   wasm-test-suite:
     name: wasm test suite
     runs-on: ubuntu-latest

@@ -768,6 +768,7 @@ pub struct CollectedError {
 ///   3. All errors are deduplicated, and sorted by position.
 #[cfg(target_arch = "wasm32")]
 pub fn validate_cddl(input: &str, check_refs: bool) -> Vec<CollectedError> {
+  // WASM has no native stack-growth wrapper; both parse paths below run directly.
   // 1. Full-document parse
   match CddlParser::parse(Rule::cddl, input) {
     Ok(pairs) => {

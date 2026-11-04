@@ -320,6 +320,14 @@
 //! A few convenience features have been included to make the AST more concise
 //! and for enabling additional functionality.
 //!
+//! **`--feature native-stack`**
+//!
+//! Grow the native stack around library parsing and ABNF validation. Enabled
+//! by `std`, or independently for minimal native builds when another dependency
+//! enables `pest/std`. This uses the host standard library through `stacker`;
+//! leave it disabled on bare-metal targets. It has no effect on WASM or direct
+//! calls to `pest_parser::CddlParser`.
+//!
 //! **`--feature ast-span`**
 //!
 //! Add the `Span` type to the AST for keeping track of the position of the

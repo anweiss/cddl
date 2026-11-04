@@ -32,17 +32,17 @@ pub use generated::*;
 // Pest refuses to enter a rule with less than 64 KiB of native stack left, so
 // callers on small threads would fail before parsing anything. Switching to a
 // heap-allocated segment keeps headroom for the parse and the AST conversion.
-#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "native-stack", not(target_arch = "wasm32")))]
 const PARSER_RED_ZONE: usize = 256 * 1024;
-#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "native-stack", not(target_arch = "wasm32")))]
 const PARSER_STACK_SIZE: usize = 2 * 1024 * 1024;
 
-#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "native-stack", not(target_arch = "wasm32")))]
 pub(crate) fn with_parser_stack<R>(parse: impl FnOnce() -> R) -> R {
   stacker::maybe_grow(PARSER_RED_ZONE, PARSER_STACK_SIZE, parse)
 }
 
-#[cfg(not(all(feature = "std", not(target_arch = "wasm32"))))]
+#[cfg(not(all(feature = "native-stack", not(target_arch = "wasm32"))))]
 pub(crate) fn with_parser_stack<R>(parse: impl FnOnce() -> R) -> R {
   parse()
 }

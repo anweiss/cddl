@@ -782,6 +782,11 @@ pub fn plus_operation<'a>(
 
 #[cfg(feature = "additional-controls")]
 pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
+  crate::pest_parser::with_parser_stack(|| validate_abnf_inner(abnf, target))
+}
+
+#[cfg(feature = "additional-controls")]
+fn validate_abnf_inner(abnf: &str, target: &str) -> Result<(), String> {
   let abnf = abnf.trim();
   if let Some(idx) = abnf.find('\n') {
     let (rule, abnf) = abnf.split_at(idx);
@@ -812,8 +817,7 @@ pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
     let vm = pest_vm::Vm::new(pest_meta::optimizer::optimize(ast));
 
     let rule = rule.replace('-', "_");
-    crate::pest_parser::with_parser_stack(|| vm.parse(&rule, target).map(|_| ()))
-      .map_err(|e| e.to_string())?;
+    vm.parse(&rule, target).map_err(|e| e.to_string())?;
   }
 
   Ok(())
@@ -929,6 +933,18 @@ mod tests {
     );
 
     Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn test_abnf_on_small_thread_stack() {
+    let result = std::thread::Builder::new()
+      .stack_size(64 * 1024)
+      .spawn(|| validate_abnf("start\nstart = \"x\"\n", "x"))
+      .unwrap()
+      .join()
+      .unwrap();
+    assert_eq!(result, Ok(()));
   }
 
   #[cfg(feature = "additional-controls")]

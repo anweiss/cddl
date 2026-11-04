@@ -8,6 +8,17 @@ pins Python tooling, installs wasm-pack 0.15.0 if absent, builds web and
 Node/LSP WASM artifacts and installs `.githooks/pre-commit`. No secret values,
 `.env` files, databases or network services are required at runtime.
 
+On macOS, configure a WASM-aware archiver before setup or either WASM build:
+
+```sh
+rustup component add llvm-tools
+export AR_wasm32_unknown_unknown="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-ar"
+```
+
+Use the same Rust toolchain for these commands and the build. Apple's `ar` can
+omit `psm`'s precompiled WASM object, causing an undefined
+`rust_psm_stack_pointer` symbol at link time even when `cargo check` passes.
+
 The first build downloads Rust crates and may take several minutes. Package
 registries must be reachable during setup. Never commit credentials to solve
 registry access failures. Keep `cargo`, `rustup` and `wasm-pack` on `PATH`.
@@ -54,7 +65,16 @@ package builds and the Node WASM tests with Rust stable 1.99.1. Validate
 both release WASM builds and tests before upgrading the family again.
 With `std`, Pest 2.9 refuses to parse when less than 64 KiB of native stack
 remains. Native library parse entry points therefore run through
-`stacker::maybe_grow`, and `tests/small_stack.rs` covers 64 KiB threads.
+`stacker::maybe_grow`, including the entire ABNF grammar-to-VM validation path.
+`tests/small_stack.rs` and the ABNF unit test cover 64 KiB threads.
+The `std` feature enables `native-stack` automatically. Native applications
+using `default-features = false` must enable `native-stack` if another dependency
+enables `pest/std` through Cargo feature unification and they need small-stack
+parsing. This opt-in uses the host standard library through `stacker` without
+enabling the other `cddl/std` functionality; leave it disabled on bare-metal
+no_std targets. It has no effect on WASM.
+CI tests `_build-parser,native-stack,pest/std` without default features and
+continues checking the bare-metal no_std build separately.
 Callers that use `pest_parser::CddlParser` directly get Pest's behavior.
 Do not use `npm audit fix --force`.
 Dependabot's seven-day cooldown applies to ordinary updates, not urgent

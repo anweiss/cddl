@@ -139,8 +139,10 @@ std = [
     "regex",
     "pest/std",
     "itertools/use_std",
-    "dep:stacker",
+    "native-stack",
 ]
+# Opt in independently when another dependency enables pest/std on a native host.
+native-stack = ["dep:stacker"]
 lsp = ["std"]
 additional-controls = []
 freezer = ["fancy-regex"]
