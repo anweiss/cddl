@@ -1694,7 +1694,9 @@ fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
     None,
   )
   .unwrap_err();
-  assert!(error.to_string().contains("expected type tstr"));
+  // Duplicate text keys are now rejected at the CBOR validity boundary,
+  // before the schema can diagnose the second pair's value.
+  assert!(error.to_string().contains("duplicate text key"));
 
   // A generic child that validates the same map must propagate both claim
   // ledgers. Otherwise the following literal reclaims the child's first pair
@@ -1707,7 +1709,7 @@ fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
     None,
   )
   .unwrap_err();
-  assert!(error.to_string().contains("expected type tstr"));
+  assert!(error.to_string().contains("duplicate text key"));
 
   // Once the only pair has been claimed, a later optional literal is absent.
   // A later required literal cannot reuse that pair.
@@ -1749,7 +1751,7 @@ fn validate_single_type_domain_map_entries_do_not_hide_equivalent_pairs() {
   )
   .unwrap_err();
   assert!(
-    error.to_string().contains("expected type tstr"),
+    error.to_string().contains("duplicate text key"),
     "{}",
     error
   );

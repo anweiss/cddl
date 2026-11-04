@@ -9,14 +9,13 @@ use crate::{
   visitor::{self, *},
 };
 
-use core::convert::TryInto;
 use std::{
   borrow::Cow,
   convert::TryFrom,
   fmt::{self, Write},
 };
 
-use super::cbor_value::{decode_cbor, Value};
+use super::cbor_value::{decode_cbor, has_duplicate_text_keys, Value};
 use chrono::{TimeZone, Utc};
 use serde_json;
 
@@ -1083,12 +1082,14 @@ impl<'a> CBORValidator<'a> {
     } else if ident_numeric_kind(self.state.cddl, ident).is_some() {
       let cddl = self.state.cddl;
       self.find_single_map_entry_matching(entries, |key| {
-        numeric_ident_matches_cbor_value(cddl, ident, key)
+        numeric_ident_matches_cbor_value(cddl, ident, key) || is_bignum_value(cddl, ident, key)
       })
     } else if is_ident_bool_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Bool(_)))
     } else if is_ident_null_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Null))
+    } else if matches!(lookup_ident(ident.ident), Token::UNDEFINED) {
+      self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Simple(23)))
     } else if is_ident_byte_string_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Bytes(_)))
     } else if is_ident_bignum_data_type(self.state.cddl, ident) {
@@ -1725,6 +1726,12 @@ where
   cbor::Error<T>: From<cbor::Error<std::io::Error>>,
 {
   fn validate(&mut self) -> std::result::Result<(), cbor::Error<T>> {
+    // RFC 8949 sections 5.3.1 and 5.6.1: text map keys compare byte-for-byte,
+    // independently of their wire encoding and of the enclosing CDDL type.
+    if has_duplicate_text_keys(&self.cbor) {
+      self.add_error("unexpected key: duplicate text key in CBOR map".into());
+      return Err(Error::Validation(self.errors.clone()));
+    }
     for r in self.state.cddl.rules.iter() {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {
@@ -2191,30 +2198,18 @@ where
       {
         self.add_error(format!("expected type bstr, got {:?}", self.cbor));
         return Ok(());
-      } else if is_ident_uint_data_type(self.state.cddl, target_ident) {
-        // For uint, we need to check that it's an integer and it's non-negative,
-        // then fall through so the control operator is enforced
-        match &self.cbor {
-          Value::Integer(i) if i128::from(*i) >= 0 => {}
-          _ => {
-            self.add_error(format!("expected type uint, got {:?}", self.cbor));
-            return Ok(());
-          }
+      } else if ident_numeric_kind(self.state.cddl, target_ident).is_some() {
+        let admits = KeyDomainWalk {
+          state: &self.state,
+          memo: HashMap::new(),
+          cut: false,
         }
-      } else if let Some(kind) = ident_numeric_kind(self.state.cddl, target_ident) {
-        let matches_kind = match kind {
-          NumericKind::Int => matches!(self.cbor, Value::Integer(_)),
-          NumericKind::Float => matches!(self.cbor, Value::Float(_)),
-          // e.g. number = int / float, which admits both
-          NumericKind::Both => matches!(self.cbor, Value::Integer(_) | Value::Float(_)),
-        };
-        if !matches_kind {
-          let expected = match kind {
-            NumericKind::Int => "int".to_string(),
-            NumericKind::Float => "float".to_string(),
-            NumericKind::Both => target_ident.to_string(),
-          };
-          self.add_error(format!("expected type {}, got {:?}", expected, self.cbor));
+        .type2_admits(target, &self.cbor, &mut HashSet::new(), &HashMap::new());
+        if !admits {
+          self.add_error(format!(
+            "expected type {}, got {:?}",
+            target_ident, self.cbor
+          ));
           return Ok(());
         }
       } else if is_ident_bool_data_type(self.state.cddl, target_ident)
@@ -4236,16 +4231,16 @@ where
       }
     }
 
-    // Handle standard prelude tagged types (decfrac, bigfloat) through the generic TaggedData path
+    // Preserve the semantic checks for dates/time and base64url. Other tagged
+    // prelude leaves use their declared tag and payload type.
     let token = lookup_ident(ident.ident);
-    if let Token::DECFRAC | Token::BIGFLOAT = token {
-      if let Some(tagged_data_type) = tag_from_token(&token) {
-        return self.visit_type2(&tagged_data_type);
-      }
+    if let Some(tagged_data_type) = structural_prelude_type(&token, &self.cbor) {
+      return self.visit_type2(&tagged_data_type);
     }
 
     match &self.cbor {
       Value::Null if is_ident_null_data_type(self.state.cddl, ident) => Ok(()),
+      Value::Simple(23) if matches!(token, Token::UNDEFINED) => Ok(()),
       Value::Bytes(_) if is_ident_byte_string_data_type(self.state.cddl, ident) => Ok(()),
       Value::Bool(b) => {
         if is_ident_bool_data_type(self.state.cddl, ident) {
@@ -4260,13 +4255,7 @@ where
         Ok(())
       }
       Value::Integer(i) => {
-        if is_ident_uint_data_type(self.state.cddl, ident) {
-          if i128::from(*i).is_negative() {
-            self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
-          }
-
-          Ok(())
-        } else if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_int) {
+        if numeric_ident_matches_cbor_value(self.state.cddl, ident, &self.cbor) {
           Ok(())
         } else if is_ident_time_data_type(self.state.cddl, ident) {
           if let chrono::LocalResult::None =
@@ -4327,10 +4316,8 @@ where
           self.validate_base64_url_tag();
           return Ok(());
         }
-        if is_ident_bignum_data_type(self.state.cddl, ident) {
-          if !(ident_accepts_bignum_tag(self.state.cddl, ident, *tag)
-            && matches!(value.as_ref(), Value::Bytes(_)))
-          {
+        if has_bignum_domain(self.state.cddl, ident) {
+          if !is_bignum_value(self.state.cddl, ident, &self.cbor) {
             self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
           }
           return Ok(());
@@ -4353,8 +4340,10 @@ where
           1 => {
             if is_ident_time_data_type(self.state.cddl, ident) {
               if let Value::Integer(value) = *value.as_ref() {
-                let dt = Utc.timestamp_opt(value.try_into().unwrap(), 0);
-                if let chrono::LocalResult::None = dt {
+                let valid = i64::try_from(value)
+                  .ok()
+                  .is_some_and(|seconds| Utc.timestamp_opt(seconds, 0).single().is_some());
+                if !valid {
                   self.add_error(format!(
                     "expected time data type, invalid UNIX timestamp {:?}",
                     self.cbor
@@ -4377,7 +4366,7 @@ where
               self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
             }
           }
-          _ => (),
+          _ => self.add_error(format!("expected type {}, got {:?}", ident, self.cbor)),
         }
 
         Ok(())
@@ -4460,7 +4449,10 @@ where
               Some(Self::collect_unconsumed_map_entries_matching(
                 m,
                 claimed_entries,
-                |key| numeric_ident_matches_cbor_value(cddl, ident, key),
+                |key| {
+                  numeric_ident_matches_cbor_value(cddl, ident, key)
+                    || is_bignum_value(cddl, ident, key)
+                },
               ))
             } else if is_ident_bool_data_type(self.state.cddl, ident) {
               Some(Self::collect_unconsumed_map_entries_matching(
@@ -4479,6 +4471,12 @@ where
                 m,
                 claimed_entries,
                 |key| matches!(key, Value::Null),
+              ))
+            } else if matches!(token, Token::UNDEFINED) {
+              Some(Self::collect_unconsumed_map_entries_matching(
+                m,
+                claimed_entries,
+                |key| matches!(key, Value::Simple(23)),
               ))
             } else if is_ident_bignum_data_type(self.state.cddl, ident) {
               let cddl = self.state.cddl;
@@ -5320,9 +5318,18 @@ fn numeric_ident_matches_cbor_value(cddl: &CDDL, ident: &Identifier, v: &Value) 
   }
 }
 
-/// Scalar validation is lenient for some prelude types outside a map key's
-/// domain: it accepts positive integers for `nint` and ignores unrelated
-/// tags. Check an alternative's own domain before probing it, following
+fn structural_prelude_type<'a>(token: &Token, value: &Value) -> Option<Type2<'a>> {
+  if matches!(token, Token::DECFRAC | Token::BIGFLOAT)
+    || (matches!(value, Value::Tag(..))
+      && !matches!(token, Token::TDATE | Token::TIME | Token::B64URL))
+  {
+    tag_from_token(token)
+  } else {
+    None
+  }
+}
+
+/// Check an alternative's own domain before probing it, following
 /// aliases — including generic instantiations and active generic bindings —
 /// to the underlying prelude types, literals and tagged types. Range and
 /// control operators are left to the probe, which enforces them.
@@ -5844,7 +5851,15 @@ fn value_nesting_depth(value: &Value) -> usize {
 /// Is `v` a tagged byte string accepted by the bignum type `ident`?
 fn is_bignum_value(cddl: &CDDL, ident: &Identifier, v: &Value) -> bool {
   matches!(v, Value::Tag(tag, inner)
-    if ident_accepts_bignum_tag(cddl, ident, *tag) && matches!(inner.as_ref(), Value::Bytes(_)))
+    if (ident_accepts_bignum_tag(cddl, ident, *tag)
+      || matches!((lookup_ident(ident.ident), *tag),
+        (Token::UNSIGNED, 2) | (Token::INTEGER, 2 | 3)))
+      && matches!(inner.as_ref(), Value::Bytes(_)))
+}
+
+fn has_bignum_domain(cddl: &CDDL, ident: &Identifier) -> bool {
+  is_ident_bignum_data_type(cddl, ident)
+    || matches!(lookup_ident(ident.ident), Token::UNSIGNED | Token::INTEGER)
 }
 
 /// Converts a CDDL value type to our custom CBOR Value

@@ -1,5 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
+#[path = "cbor_primitive_domains.rs"]
+mod cbor_primitive_domains;
+
 use wasm_bindgen_test::*;
 
 use cddl::{ast::Type2, cddl_from_str, token::ByteValue};
