@@ -51,6 +51,8 @@ impl ResolvedCddl {
   }
 
   /// Parse an AST borrowing the owned text, on native and WASM targets alike.
+  ///
+  /// This checks basic CDDL syntax, not whether all rule references are defined.
   pub fn parse(&self) -> crate::parser::Result<crate::ast::CDDL<'_>> {
     crate::pest_bridge::cddl_from_pest_str(&self.text)
   }

@@ -117,6 +117,69 @@ fn owning_document_distinguishes_resolution_and_root_parse_errors() {
   assert!(document.parse().is_err());
 }
 
+#[cfg(all(any(feature = "json", feature = "cbor"), not(feature = "lsp")))]
+#[test]
+fn owning_document_validation_rejects_undefined_rules() {
+  let document = ResolvedCddl::resolve(
+    "start = undefined_rule\n",
+    &MemoryModuleSource::new(),
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(document.parse().is_ok());
+  #[cfg(feature = "json")]
+  assert!(matches!(
+    document.validate_json(
+      "1",
+      #[cfg(feature = "additional-controls")]
+      None,
+    ),
+    Err(cddl::validator::json::Error::Validation(_))
+  ));
+  #[cfg(feature = "cbor")]
+  assert!(matches!(
+    document.validate_cbor(
+      &[0x01],
+      #[cfg(feature = "additional-controls")]
+      None,
+    ),
+    Err(cddl::validator::cbor::Error::Validation(_))
+  ));
+}
+
+#[cfg(all(any(feature = "json", feature = "cbor"), not(feature = "lsp")))]
+#[test]
+fn owning_document_validation_failures_are_silent() {
+  assert_silent_validation("owning_document_validation_failures_are_silent", || {
+    let document = ResolvedCddl::resolve(
+      "start = uint\n",
+      &MemoryModuleSource::new(),
+      &ResolveOptions::default(),
+    )
+    .unwrap();
+    #[cfg(feature = "json")]
+    for json in ["-1", "{"] {
+      assert!(document
+        .validate_json(
+          json,
+          #[cfg(feature = "additional-controls")]
+          None,
+        )
+        .is_err());
+    }
+    #[cfg(feature = "cbor")]
+    for cbor in [&[0x20][..], &[]] {
+      assert!(document
+        .validate_cbor(
+          cbor,
+          #[cfg(feature = "additional-controls")]
+          None,
+        )
+        .is_err());
+    }
+  });
+}
+
 #[cfg(all(feature = "json", not(feature = "lsp")))]
 #[test]
 fn owning_document_validates_json() {

@@ -278,7 +278,8 @@
 //! broken document. The same check applies on native and WASM targets.
 //!
 //! No RFC module collection is bundled; empty search-path elements are skipped.
-//! The playground and language server do not expose module resolution. Callers
+//! The playground UI and language-server integration do not yet use module
+//! resolution. Callers
 //! can use `ResolvedCddl` to own resolved text, parse it, and validate JSON or
 //! CBOR on native targets. WASM callers can use `resolve_cddl_modules(input,
 //! modules, start_rule)` with an object mapping module names to text, then pass
