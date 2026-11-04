@@ -24,6 +24,17 @@ fn assert_silent_validation(test_name: &str, validate: impl FnOnce()) {
     .unwrap();
   assert!(output.status.success(), "validation subprocess failed");
   assert!(output.stderr.is_empty(), "validation wrote to stderr");
+  assert!(
+    String::from_utf8_lossy(&output.stdout).contains("test result: ok. 1 passed; 0 failed;"),
+    "validation subprocess did not run exactly one test"
+  );
+}
+
+#[cfg(all(any(feature = "json", feature = "cbor"), not(feature = "lsp")))]
+#[test]
+#[should_panic(expected = "validation subprocess did not run exactly one test")]
+fn owning_document_silent_validation_rejects_missing_tests() {
+  assert_silent_validation("<missing validation test>", || {});
 }
 
 #[cfg(all(feature = "json", not(feature = "lsp")))]
