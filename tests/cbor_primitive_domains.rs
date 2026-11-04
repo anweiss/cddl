@@ -40,6 +40,17 @@ fn integer_signs_and_controls() {
     &[0x20]
   ));
   assert!(!accepts("x = unsigned .eq 1", &[0x00]));
+  for other in ["bool", "null", "undefined", "#7.23"] {
+    assert!(!accepts(
+      &format!("x = alias .eq -1\nalias = unsigned / {other}"),
+      &[0x20]
+    ));
+  }
+  assert!(!accepts("x = uint .eq [1]", &[0x81, 0x01]));
+  assert!(!accepts(
+    "x = alias .eq 0\nalias = unsigned .gt 10",
+    &[0x00]
+  ));
   for (major, valid, invalid) in [(0x1b, "unsigned", "nint"), (0x3b, "nint", "unsigned")] {
     let bytes = [major, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
     assert!(accepts(&format!("x = {valid}"), &bytes));

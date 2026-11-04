@@ -2199,17 +2199,23 @@ where
         self.add_error(format!("expected type bstr, got {:?}", self.cbor));
         return Ok(());
       } else if ident_numeric_kind(self.state.cddl, target_ident).is_some() {
-        let admits = KeyDomainWalk {
-          state: &self.state,
-          memo: HashMap::new(),
-          cut: false,
-        }
-        .type2_admits(target, &self.cbor, &mut HashSet::new(), &HashMap::new());
-        if !admits {
+        if !matches!(
+          self.cbor,
+          Value::Integer(_) | Value::Float(_) | Value::Tag(..)
+        ) {
           self.add_error(format!(
-            "expected type {}, got {:?}",
+            "expected numeric type {}, got {:?}",
             target_ident, self.cbor
           ));
+          return Ok(());
+        }
+        // A numeric choice may also contain nonnumeric or constrained arms.
+        // Domain prefilters alone cannot establish target membership.
+        let mut target_validator = self.new_with_recursion_state(self.cbor.clone());
+        target_validator.state.data_location = self.state.data_location.clone();
+        target_validator.visit_type2(target)?;
+        if !target_validator.errors.is_empty() {
+          self.errors.extend(target_validator.errors);
           return Ok(());
         }
       } else if is_ident_bool_data_type(self.state.cddl, target_ident)
