@@ -247,6 +247,26 @@ fn owning_document_json_forwards_enabled_features() {
   assert!(document.validate_json("-1", Some(&[])).is_ok());
 }
 
+#[cfg(all(
+  feature = "additional-controls",
+  feature = "cbor",
+  not(feature = "lsp")
+))]
+#[test]
+fn owning_document_cbor_forwards_enabled_features() {
+  let document = ResolvedCddl::resolve(
+    "start = 1 .feature \"fixed\"\n",
+    &MemoryModuleSource::new(),
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(document.validate_cbor(&[0x01], Some(&["fixed"])).is_ok());
+  assert!(document.validate_cbor(&[0x02], Some(&["fixed"])).is_err());
+  assert!(document.validate_cbor(&[0x02], Some(&["other"])).is_ok());
+  assert!(document.validate_cbor(&[0x02], Some(&[])).is_ok());
+  assert!(document.validate_cbor(&[0x02], None).is_ok());
+}
+
 /// The CDDL of RFC 9052 used throughout §2.5 and §2.6 of the specification.
 const RFC9052: &str = r#"COSE_Key = {
   1 => tstr / int,
