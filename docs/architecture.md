@@ -32,10 +32,12 @@ matches but its value does not, the member can be absent, leaving that pair
 for a later member. Skipping restores earlier ownership assignments as well
 as the tentative key; explicit cuts and colon shortcuts still reject a
 matched key with an invalid value.
-The `?`, `0*1` and `*1` spellings share this behavior. If a selected group
+The `?`, `0*1`, `*1`, `*` and other zero-minimum bounds share this behavior;
+`0*0` skips the member without claiming a pair. If a selected group
 alternative leaves the map uncovered, validation retries the enclosing map
 with later alternatives, including choices inside inline and named groups.
 Checkpoints retain mutable validation state without cloning the input object.
+Hard visitor errors restore the checkpoint before propagating to the caller.
 
 An undefined group socket matches no entries, so `{ * $$s }` accepts an empty
 map. A failed inline group that may occur zero times, such as `? ($$s)`,

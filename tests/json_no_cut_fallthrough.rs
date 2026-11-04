@@ -4,6 +4,12 @@
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test;
 
+#[cfg(not(target_arch = "wasm32"))]
+const _: fn() = || {
+  fn assert_send_sync<T: Send + Sync>() {}
+  assert_send_sync::<cddl::validator::json::JSONValidator<'static>>();
+};
+
 fn validates(schema: &str, instance: &str) -> bool {
   cddl::validator::validate_json_from_str(
     schema,
@@ -17,7 +23,7 @@ fn validates(schema: &str, instance: &str) -> bool {
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn optional_non_cut_members_leave_failed_pairs_for_later_members() {
-  for occurrence in ["?", "0*1", "*1"] {
+  for occurrence in ["?", "0*1", "*1", "*", "0*2", "0*0"] {
     for key in [r#""extension""#, "tstr", "any"] {
       let schema = format!(
         "root = {{ {} {} => uint, * tstr => tstr }}",
@@ -27,6 +33,10 @@ fn optional_non_cut_members_leave_failed_pairs_for_later_members() {
       assert!(!validates(&schema, r#"{"extension":false}"#), "{}", schema);
     }
   }
+  assert!(!validates(
+    r#"root = { 0*0 "a" => uint, * tstr => tstr }"#,
+    r#"{"a":1}"#,
+  ));
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
@@ -38,6 +48,7 @@ fn cut_and_required_members_do_not_skip_value_errors() {
     "? extension: uint",
     r#"? "extension": uint"#,
     r#""extension" => uint"#,
+    r#"1*2 "extension" => uint"#,
     "tstr => uint",
   ] {
     let schema = format!("root = {{ {}, * tstr => any }}", member);
@@ -47,6 +58,21 @@ fn cut_and_required_members_do_not_skip_value_errors() {
       schema
     );
   }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn map_fallthrough_does_not_change_array_sequence_matching() {
+  assert!(validates(r#"root = [ ? "a" => uint, bool ]"#, "[true]"));
+  assert!(validates(r#"root = [ ? "a" => uint, bool ]"#, "[1,true]"));
+  assert!(!validates(
+    r#"root = [ ? "a" => uint, bool ]"#,
+    r#"["wrong",true]"#,
+  ));
+  assert!(validates(
+    "root = [ (bool // int, tstr) ]",
+    r#"[1,"value"]"#,
+  ));
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]

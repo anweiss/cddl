@@ -730,10 +730,12 @@ impl<'a> JSONValidator<'a> {
     if width < 2 || self.state.is_group_to_choice_enum {
       return None;
     }
-    self
-      .map_choice_search
-      .as_ref()
-      .map(|search| search.lock().expect("map choice search lock").select(width))
+    let search = self.map_choice_search.as_ref()?;
+    let selected = {
+      let mut search = search.lock().expect("map choice search lock");
+      search.select(width)
+    };
+    Some(selected)
   }
 
   fn visit_planned_group_reference(
@@ -764,31 +766,46 @@ impl<'a> JSONValidator<'a> {
     let error_count = self.errors.len();
     let mut choice_errors = Vec::new();
     loop {
-      self.visit_group(group)?;
+      if let Err(error) = self.visit_group(group) {
+        self.restore_map_checkpoint(checkpoint);
+        return Err(error);
+      }
       self.validate_map_coverage(keys);
       if self.errors.len() == error_count {
         return Ok(());
       }
       choice_errors.extend(self.errors.drain(error_count..));
       self.restore_map_checkpoint(checkpoint.clone());
-      if !search.lock().expect("map choice search lock").advance() {
+      let has_next = {
+        let mut search = search.lock().expect("map choice search lock");
+        search.advance()
+      };
+      if !has_next {
         self.errors.extend(choice_errors);
         return Ok(());
       }
     }
   }
 
-  fn visit_optional_non_cut_member(&mut self, entry: &GroupEntry<'a>) -> visitor::Result<Error> {
-    // Optional non-cut members match complete pairs (RFC 8610 §3.5.4).
+  fn visit_zero_minimum_non_cut_member(
+    &mut self,
+    entry: &GroupEntry<'a>,
+    max_occurrences: Option<usize>,
+  ) -> visitor::Result<Error> {
+    if max_occurrences == Some(0) {
+      self.state.occurrence = None;
+      return Ok(());
+    }
+    // Zero-minimum non-cut members match complete pairs (RFC 8610 §3.5.4).
     // Key lookup can reassign earlier claims, so skipping a failed member
     // must restore the whole checkpoint, not just release its selected key.
     let checkpoint = self.map_checkpoint();
-    walk_group_entry(self, entry)?;
-    if self.errors.len() > checkpoint.errors.len() {
+    let result = walk_group_entry(self, entry);
+    if result.is_err() || self.errors.len() > checkpoint.errors.len() {
       self.restore_map_checkpoint(checkpoint);
     }
     self.state.occurrence = None;
-    Ok(())
+    result
   }
 
   /// Validate the pair relayed from a key-domain member key. On success the
@@ -3873,10 +3890,9 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       if let Some((key_type, alternatives, is_cut)) = choice_member_key(&self.state, ge) {
         return self.visit_choice_key_entry(ge, key_type, &alternatives, is_cut);
       }
-      if matches!(&ge.member_key, Some(MemberKey::Type1 { is_cut: false, .. }))
-        && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)) == (0, Some(1))
-      {
-        return self.visit_optional_non_cut_member(entry);
+      let (min, max) = occurrence_bounds(ge.occur.as_ref().map(|o| o.occur));
+      if matches!(&ge.member_key, Some(MemberKey::Type1 { is_cut: false, .. })) && min == 0 {
+        return self.visit_zero_minimum_non_cut_member(entry, max);
       }
     }
     if let GroupEntry::TypeGroupname { ge, .. } = entry {
@@ -4254,6 +4270,51 @@ mod tests {
 
   use super::*;
   use indoc::indoc;
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn map_transactions_restore_state_after_hard_errors() {
+    let cddl = cddl_from_str(r#"root = { ? "a" => uint .feature 'enabled' }"#, true).unwrap();
+    let Rule::Type { rule, .. } = &cddl.rules[0] else {
+      panic!("type rule")
+    };
+    let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+      panic!("map type")
+    };
+    let mut group = group.clone();
+    let GroupEntry::ValueMemberKey { ge, .. } = &mut group.group_choices[0].group_entries[0].0
+    else {
+      panic!("member entry")
+    };
+    ge.entry_type.type_choices[0]
+      .type1
+      .operator
+      .as_mut()
+      .unwrap()
+      .type2 = Type2::from(token::ByteValue::UTF8(vec![0xff].into()));
+    for whole_map in [false, true] {
+      let mut validator = JSONValidator::new(
+        &cddl,
+        serde_json::json!({"a": 1, "prior": true}),
+        Some(&["enabled"]),
+      );
+      validator.validated_keys = Some(vec!["prior".into()]);
+      validator.state.data_location = "/root".into();
+      let result = if whole_map {
+        validator.visit_closed_map(&group, &["a".into(), "prior".into()])
+      } else {
+        validator
+          .visit_zero_minimum_non_cut_member(&group.group_choices[0].group_entries[0].0, Some(1))
+      };
+      assert!(matches!(result, Err(Error::UTF8Parsing(_))));
+      assert_eq!(validator.validated_keys, Some(vec!["prior".into()]));
+      assert_eq!(validator.state.data_location, "/root");
+      assert!(validator.state.occurrence.is_none());
+      assert!(validator.object_value.is_none());
+      assert!(validator.object_value_key.is_none());
+      assert!(validator.map_choice_search.is_none());
+    }
+  }
 
   #[test]
   fn validate_number_accepts_float_and_int() -> std::result::Result<(), Box<dyn std::error::Error>>
