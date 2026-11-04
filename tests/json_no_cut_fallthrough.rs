@@ -185,6 +185,10 @@ fn repeated_single_members_preserve_bounds_and_movable_claims() {
       &input
     ));
     assert!(validates(
+      &format!("root = {{ version: bool, * {group} }} {rules}"),
+      &format!(r#"{{"version":true,{entries}}}"#),
+    ));
+    assert!(validates(
       &format!("root = {{ 0*512 {group} }} {rules}"),
       &input
     ));
@@ -229,6 +233,72 @@ fn repeated_single_members_do_not_bypass_key_domains() {
   assert!(!validates(
     "root = [ * g<uint> ] g<T> = (tstr => T)",
     "[true]",
+  ));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn map_review_batches_allow_prior_claim_reassignment() {
+  for group in ["(tstr => uint)", "g", "h<uint>"] {
+    let schema =
+      format!("root = {{ tstr => any, ? {group} }} g = (tstr => uint) h<T> = (tstr => T)");
+    assert!(validates(&schema, r#"{"a":1,"b":"text"}"#), "{}", schema);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn map_review_optional_groups_restore_enclosing_occurrence() {
+  for group in ["(a: uint)", "(tstr => uint)", "g", "h<uint>"] {
+    let schema =
+      format!("root = {{ + (? {group}, tstr => tstr) }} g = (tstr => uint) h<T> = (tstr => T)");
+    assert!(validates(&schema, r#"{"x":"1","y":"2"}"#), "{}", schema);
+    assert!(!validates(&schema, r#"{"x":"1","y":false}"#), "{}", schema);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn map_review_generic_batch_bindings_are_child_local() {
+  assert!(validates(
+    "root = { g<uint> } g<T> = (* $$g<T>,) $$g<U> = (tstr => U)",
+    r#"{"a":1}"#,
+  ));
+  let schema = "root = { g<uint> } g<T> = (0*1 $$g<tstr>, z: T) $$g<U> = (tstr => U)";
+  assert!(validates(schema, r#"{"a":"text","z":1}"#));
+  assert!(!validates(schema, r#"{"a":"text","z":false}"#));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn map_review_required_choices_prune_failed_prefixes() {
+  let schema = format!(
+    "root = {{ {} }}",
+    (0..13)
+      .map(|index| format!("(a{index}: uint // b{index}: uint)"))
+      .collect::<Vec<_>>()
+      .join(",")
+  );
+  let input = format!(
+    "{{{}}}",
+    (0..13)
+      .map(|index| format!(r#""b{index}":1"#))
+      .collect::<Vec<_>>()
+      .join(",")
+  );
+  assert!(validates(&schema, &input));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn incremental_only_group_cycles_require_progress() {
+  assert!(!validates(
+    r#"root = { g } g //= (? "a" => uint) g //= (h,) h //= (h,)"#,
+    r#"{"extra":1}"#,
+  ));
+  assert!(validates(
+    "root = { g } g //= (tstr => uint, ? g)",
+    r#"{"a":1,"b":2,"c":3}"#,
   ));
 }
 

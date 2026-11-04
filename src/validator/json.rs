@@ -27,10 +27,17 @@ use serde_json::Value;
 /// DFS form of Kuhn's maximum bipartite matching.
 fn augment_choice_assignment(
   claim_slot: usize,
-  compatibility: &[Vec<bool>],
+  compatibility: &[Arc<Vec<bool>>],
   visited_pairs: &mut [bool],
   pair_owners: &mut [Option<usize>],
 ) -> bool {
+  for (pair_slot, compatible) in compatibility[claim_slot].iter().enumerate() {
+    if *compatible && !visited_pairs[pair_slot] && pair_owners[pair_slot].is_none() {
+      visited_pairs[pair_slot] = true;
+      pair_owners[pair_slot] = Some(claim_slot);
+      return true;
+    }
+  }
   for pair_slot in 0..compatibility[claim_slot].len() {
     if !compatibility[claim_slot][pair_slot] || visited_pairs[pair_slot] {
       continue;
@@ -186,6 +193,20 @@ struct ClaimEvalContext<'a> {
   generic_rules: Vec<GenericRule<'a>>,
 }
 
+impl PartialEq for ClaimEvalContext<'_> {
+  fn eq(&self, other: &Self) -> bool {
+    self.rule_name == other.rule_name
+      && self.generic_rules.len() == other.generic_rules.len()
+      && self
+        .generic_rules
+        .iter()
+        .zip(&other.generic_rules)
+        .all(|(left, right)| {
+          left.name == right.name && left.params == right.params && left.args == right.args
+        })
+  }
+}
+
 /// A complete object pair claimed by a single-occurrence member: choice-key
 /// members and plain key-domain members alike, so reassignment can move any
 /// of them when a later member finds no pair of its own.
@@ -194,6 +215,46 @@ struct MemberClaim<'a> {
   key: String,
   entry: ValueMemberKeyEntry<'a>,
   context: Option<ClaimEvalContext<'a>>,
+}
+
+type ClaimCompatibility = Vec<Arc<Vec<bool>>>;
+
+fn claim_compatibility<'a, F>(
+  claims: &[MemberClaim<'a>],
+  pair_count: usize,
+  mut probe: F,
+) -> std::result::Result<Option<ClaimCompatibility>, Error>
+where
+  F: FnMut(&MemberClaim<'a>, usize) -> std::result::Result<bool, Error>,
+{
+  let mut classes: Vec<(usize, Arc<Vec<bool>>, usize, usize)> = Vec::new();
+  let mut rows = Vec::with_capacity(claims.len());
+  for (index, claim) in claims.iter().enumerate() {
+    let existing = classes.iter_mut().find(|(representative, _, _, _)| {
+      let prior = &claims[*representative];
+      prior.entry == claim.entry && prior.context == claim.context
+    });
+    if let Some((_, row, demand, capacity)) = existing {
+      *demand += 1;
+      if *demand > *capacity {
+        return Ok(None);
+      }
+      rows.push(row.clone());
+    } else {
+      let row = Arc::new(
+        (0..pair_count)
+          .map(|pair| probe(claim, pair))
+          .collect::<std::result::Result<Vec<_>, _>>()?,
+      );
+      let capacity = row.iter().filter(|matches| **matches).count();
+      if capacity == 0 {
+        return Ok(None);
+      }
+      rows.push(row.clone());
+      classes.push((index, row, 1, capacity));
+    }
+  }
+  Ok(Some(rows))
 }
 
 /// Does this member key carry an explicit cut (`^ =>`)?
@@ -820,7 +881,7 @@ impl<'a> JSONValidator<'a> {
     if rule_from_ident(self.state.cddl, &entry.name).is_none() {
       let selected = self.planned_group_choice(alternates.len())?.unwrap_or(0);
       if let Some(alternate) = alternates.get(selected) {
-        return self.visit_group_entry(alternate);
+        return self.visit_incremental_group_alternative(&entry.name, alternate);
       }
     }
     // The rule visitor records incremental alternatives once, together
@@ -828,6 +889,22 @@ impl<'a> JSONValidator<'a> {
     walk_type_groupname_entry(self, entry)?;
     self.state.type_group_name_entry = None;
     Ok(())
+  }
+
+  fn visit_incremental_group_alternative(
+    &mut self,
+    name: &Identifier<'a>,
+    alternate: &GroupEntry<'a>,
+  ) -> Result {
+    let (marker, recursive) = self.rule_recursion_marker(name);
+    if recursive {
+      self.add_error("recursive incremental group reference without consuming a map entry".into());
+      return Ok(());
+    }
+    self.state.visited_rules.insert(marker.clone());
+    let result = self.visit_group_entry(alternate);
+    self.state.visited_rules.remove(&marker);
+    result
   }
 
   fn visit_selected_group_choice(
@@ -934,6 +1011,14 @@ impl<'a> JSONValidator<'a> {
   }
 
   fn batchable_map_member<'b>(&self, group: &'b Group<'a>) -> Option<&'b ValueMemberKeyEntry<'a>> {
+    if self.member_claims.iter().any(|claim| {
+      matches!(
+        &claim.entry.member_key,
+        Some(MemberKey::Type1 { is_cut: false, .. })
+      )
+    }) {
+      return None;
+    }
     let [choice] = group.group_choices.as_slice() else {
       return None;
     };
@@ -1002,6 +1087,7 @@ impl<'a> JSONValidator<'a> {
     member: &ValueMemberKeyEntry<'a>,
     occurrence: &Occurrence<'a>,
   ) -> Result {
+    let prior_occurrence = self.state.occurrence;
     let Value::Object(object) = &self.json else {
       return Ok(());
     };
@@ -1025,7 +1111,7 @@ impl<'a> JSONValidator<'a> {
     if result.is_err() {
       self.restore_map_checkpoint(checkpoint);
     }
-    self.state.occurrence = None;
+    self.state.occurrence = prior_occurrence;
     result
   }
 
@@ -1033,6 +1119,7 @@ impl<'a> JSONValidator<'a> {
   where
     F: FnMut(&mut Self) -> Result,
   {
+    let prior_occurrence = self.state.occurrence;
     // The occurrence repeats complete groups, not each member inside the group.
     let group_checkpoint = self.map_checkpoint();
     let mut count = 0;
@@ -1042,7 +1129,7 @@ impl<'a> JSONValidator<'a> {
       self.state.occurrence = None;
       if let Err(error) = visit(self) {
         self.restore_map_checkpoint(group_checkpoint);
-        self.state.occurrence = None;
+        self.state.occurrence = prior_occurrence;
         return Err(error);
       }
       if self.errors.len() > checkpoint.errors.len() {
@@ -1054,7 +1141,7 @@ impl<'a> JSONValidator<'a> {
         break;
       }
     }
-    self.state.occurrence = None;
+    self.state.occurrence = prior_occurrence;
     Ok(())
   }
 
@@ -1082,7 +1169,10 @@ impl<'a> JSONValidator<'a> {
     let resolved_args = resolved_generic_args(&self.state, args);
     let instance =
       generic_instantiation_key(&qualified_ident_key(&entry.name), resolved_args.iter());
-    if let Some(gr) = self
+    let Some(mut jv) = self.generic_group_child(instance) else {
+      return Ok(());
+    };
+    if let Some(gr) = jv
       .state
       .generic_rules
       .iter_mut()
@@ -1090,18 +1180,16 @@ impl<'a> JSONValidator<'a> {
     {
       // Claims retain their own captured bindings when another instantiation
       // replaces the current positional arguments.
+      gr.params = generic_params_from_rule(rule).unwrap_or_default();
       gr.args = resolved_args;
     } else if let Some(params) = generic_params_from_rule(rule) {
-      self.state.generic_rules.push(GenericRule {
+      jv.state.generic_rules.push(GenericRule {
         name: entry.name.ident,
         params,
         args: resolved_args,
       });
     }
 
-    let Some(mut jv) = self.generic_group_child(instance) else {
-      return Ok(());
-    };
     jv.state.eval_generic_rule = Some(entry.name.ident);
     jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
     jv.validated_keys = self.validated_keys.clone();
@@ -1127,6 +1215,27 @@ impl<'a> JSONValidator<'a> {
         .validated_keys
         .get_or_insert_with(Vec::new)
         .extend(keys);
+    }
+    Ok(())
+  }
+
+  fn visit_group_sequence(&mut self, choice: &GroupChoice<'a>) -> Result {
+    for (entry, _) in &choice.group_entries {
+      let error_count = self.errors.len();
+      self.visit_group_entry(entry)?;
+      // Later siblings cannot repair an already-reported required mismatch.
+      // Do not record their choices in this failed replay prefix.
+      if self.errors.len() > error_count
+        && self.map_choice_search.as_ref().is_some_and(|search| {
+          !search
+            .lock()
+            .expect("map choice search lock")
+            .widths
+            .is_empty()
+        })
+      {
+        break;
+      }
     }
     Ok(())
   }
@@ -1236,15 +1345,15 @@ impl<'a> JSONValidator<'a> {
       .iter()
       .map(|&index| self.member_claims[index].clone())
       .collect();
-    let empty: Vec<String> = Vec::new();
-    let validated = self.validated_keys.as_ref().unwrap_or(&empty);
+    let validated: HashSet<_> = self.validated_keys.iter().flatten().collect();
+    let movable_keys: HashSet<_> = claims.iter().map(|claim| claim.key.as_str()).collect();
     // Ownership is checked against the existing movable claims only: the new
     // claim's empty-key sentinel must not make a real empty-string key movable.
     let candidates: Vec<(String, Value)> = entries
       .iter()
       .filter(|(key, _)| {
         excluded != Some(key.as_str())
-          && (!validated.contains(key) || claims.iter().any(|claim| claim.key == key.as_str()))
+          && (!validated.contains(key) || movable_keys.contains(key.as_str()))
       })
       .map(|(key, value)| (key.clone(), value.clone()))
       .collect();
@@ -1253,12 +1362,13 @@ impl<'a> JSONValidator<'a> {
       return Ok(false);
     }
 
-    let mut compatibility = vec![vec![false; candidates.len()]; claims.len()];
-    for (claim_slot, claim) in claims.iter().enumerate() {
-      for (pair_slot, (key, value)) in candidates.iter().enumerate() {
-        compatibility[claim_slot][pair_slot] = self.pair_satisfies_member(claim, key, value)?;
-      }
-    }
+    let Some(compatibility) = claim_compatibility(&claims, candidates.len(), |claim, pair| {
+      let (key, value) = &candidates[pair];
+      self.pair_satisfies_member(claim, key, value)
+    })?
+    else {
+      return Ok(false);
+    };
 
     let mut pair_owners = vec![None; candidates.len()];
     for claim_slot in 0..claims.len() {
@@ -1292,7 +1402,7 @@ impl<'a> JSONValidator<'a> {
       }
     }
 
-    let old_keys: Vec<&str> = claims
+    let old_keys: HashSet<&str> = claims
       .iter()
       .map(|claim| claim.key.as_str())
       .filter(|key| !key.is_empty())
@@ -2362,11 +2472,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       return Ok(());
     }
 
-    for (ge, _) in gc.group_entries.iter() {
-      self.visit_group_entry(ge)?;
-    }
-
-    Ok(())
+    self.visit_group_sequence(gc)
   }
 
   fn visit_range(
@@ -4126,12 +4232,13 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         && matches!(self.json, Value::Object(_))
       {
         if self.batchable_named_map_member(ge).is_some() {
+          let prior_occurrence = self.state.occurrence;
           let checkpoint = self.map_checkpoint();
           let result = self.visit_type_groupname_entry(ge);
           if result.is_err() {
             self.restore_map_checkpoint(checkpoint);
           }
-          self.state.occurrence = None;
+          self.state.occurrence = prior_occurrence;
           return result;
         }
         let max = occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).1;
@@ -4501,6 +4608,63 @@ mod map_replay_budget_tests {
 
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
   #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_identical_claims_share_probes_but_not_generic_bindings() {
+    let cddl =
+      cddl_from_pest_str("root = { tstr => uint } integer = uint text-value = tstr").unwrap();
+    let Rule::Type { rule, .. } = &cddl.rules[0] else {
+      panic!("root type")
+    };
+    let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+      panic!("map")
+    };
+    let validator = limited_validator(&cddl, serde_json::json!({}), 0);
+    let member = validator.batchable_map_member(group).unwrap().clone();
+    let mut claims: Vec<_> = (0..64)
+      .map(|index| MemberClaim {
+        key: index.to_string(),
+        entry: member.clone(),
+        context: None,
+      })
+      .collect();
+    let mut probes = 0;
+    let incompatible = claim_compatibility(&claims, 64, |_, pair| {
+      probes += 1;
+      Ok(pair < 63)
+    })
+    .unwrap();
+    assert!(incompatible.is_none());
+    assert_eq!(probes, 64);
+    let rows = claim_compatibility(&claims, 64, |_, _| Ok(true))
+      .unwrap()
+      .unwrap();
+    assert!(Arc::ptr_eq(&rows[0], &rows[63]));
+
+    for (claim, rule) in claims.iter_mut().zip(&cddl.rules[1..]) {
+      let Rule::Type { rule, .. } = rule else {
+        panic!("argument type")
+      };
+      claim.context = Some(ClaimEvalContext {
+        rule_name: "g",
+        generic_rules: vec![GenericRule {
+          name: "g",
+          params: vec!["T"],
+          args: vec![rule.value.type_choices[0].type1.clone()],
+        }],
+      });
+    }
+    probes = 0;
+    let rows = claim_compatibility(&claims[..2], 2, |_, _| {
+      probes += 1;
+      Ok(true)
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(probes, 4);
+    assert!(!Arc::ptr_eq(&rows[0], &rows[1]));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
   fn map_replay_budget_boundary_and_repeated_validation() {
     let cddl =
       cddl_from_pest_str(r#"root = { ? "a" => uint // ? "a" => bool // a: tstr }"#).unwrap();
@@ -4527,6 +4691,31 @@ mod map_replay_budget_tests {
     }
     let mut invalid = limited_validator(&cddl, serde_json::json!({"a":[]}), 2);
     assert!(matches!(invalid.validate(), Err(Error::Validation(_))));
+
+    let schema = format!(
+      "root = {{ {} }}",
+      (0..13)
+        .map(|index| format!("(a{index}: uint // b{index}: uint)"))
+        .collect::<Vec<_>>()
+        .join(",")
+    );
+    let cddl = cddl_from_pest_str(&schema).unwrap();
+    let input = Value::Object(
+      (0..13)
+        .map(|index| (format!("b{index}"), serde_json::json!(1)))
+        .collect(),
+    );
+    let mut pruned = limited_validator(&cddl, input.clone(), 13);
+    assert!(pruned.validate().is_ok());
+    assert_eq!(
+      pruned.map_replay_budget.remaining.load(Ordering::Relaxed),
+      0
+    );
+    let mut exhausted = limited_validator(&cddl, input, 12);
+    assert!(matches!(
+      exhausted.validate(),
+      Err(Error::ResourceLimit { limit: 12 })
+    ));
   }
 
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
