@@ -56,33 +56,51 @@ impl ResolvedCddl {
   }
 
   /// Validate JSON against the resolved document using the existing validator.
+  ///
+  /// Parsing errors are returned without writing diagnostics to stderr.
   #[cfg(all(feature = "json", not(feature = "lsp"), not(target_arch = "wasm32")))]
   pub fn validate_json(
     &self,
     json: &str,
     #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
   ) -> crate::validator::json::Result {
-    crate::validator::validate_json_from_str(
-      &self.text,
+    use crate::validator::{json, Validator};
+
+    let cddl = self
+      .parse()
+      .map_err(|error| json::Error::CDDLParsing(error.to_string()))?;
+    let json = serde_json::from_str(json).map_err(json::Error::JSONParsing)?;
+    json::JSONValidator::new(
+      &cddl,
       json,
       #[cfg(feature = "additional-controls")]
       enabled_features,
     )
+    .validate()
   }
 
   /// Validate CBOR against the resolved document using the existing validator.
+  ///
+  /// Parsing errors are returned without writing diagnostics to stderr.
   #[cfg(all(feature = "cbor", not(feature = "lsp"), not(target_arch = "wasm32")))]
   pub fn validate_cbor(
     &self,
     cbor: &[u8],
     #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
   ) -> crate::validator::cbor::Result<std::io::Error> {
-    crate::validator::validate_cbor_from_slice(
-      &self.text,
+    use crate::validator::{cbor, cbor_value::decode_cbor, Validator};
+
+    let cddl = self
+      .parse()
+      .map_err(|error| cbor::Error::CDDLParsing(error.to_string()))?;
+    let cbor = decode_cbor(cbor).map_err(|error| cbor::Error::CDDLParsing(error.to_string()))?;
+    cbor::CBORValidator::new(
+      &cddl,
       cbor,
       #[cfg(feature = "additional-controls")]
       enabled_features,
     )
+    .validate()
   }
 }
 
