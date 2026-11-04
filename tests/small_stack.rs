@@ -1,4 +1,4 @@
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(all(feature = "native-stack", not(target_arch = "wasm32")))]
 
 use std::thread;
 
@@ -24,6 +24,8 @@ fn parses_cddl_on_small_thread_stack() {
 
 #[test]
 fn reports_cddl_syntax_errors_on_small_thread_stack() {
-  let result = on_small_stack(|| cddl::cddl_from_str("person = {\n", false).is_err());
-  assert!(result);
+  let input = "person = {\n";
+  let expected = cddl::cddl_from_str(input, false).unwrap_err();
+  let actual = on_small_stack(move || cddl::cddl_from_str(input, false).unwrap_err());
+  assert_eq!(actual, expected);
 }

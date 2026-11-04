@@ -117,8 +117,8 @@ jobs:
       - name: Test native stack growth without cddl std
         run: cargo +${{ matrix.rust_toolchain }} test --locked -p cddl --no-default-features --features _build-parser,native-stack,pest/std --test small_stack
 
-      - name: Check minimal parser with unified pest std
-        run: cargo +${{ matrix.rust_toolchain }} check --locked -p cddl --lib --no-default-features --features _build-parser,pest/std
+      - name: Check small-stack tests are disabled without native stack growth
+        run: cargo +${{ matrix.rust_toolchain }} test --locked -p cddl --no-default-features --features _build-parser,pest/std --test small_stack
 
   wasm-test-suite:
     name: wasm test suite
