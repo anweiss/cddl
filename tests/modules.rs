@@ -145,7 +145,14 @@ fn owning_document_validates_cbor() {
   let validate = |bytes: &[u8]| document.validate_cbor(bytes);
   assert!(validate(&[0x01]).is_ok());
   assert!(validate(&[0x20]).is_err());
-  assert!(validate(&[]).is_err());
+  for bytes in [&[][..], &[0x18], &[0xff], &[0x01, 0x02]] {
+    let error = validate(bytes).unwrap_err();
+    assert!(matches!(
+      error,
+      cddl::validator::cbor::Error::CBORParsing(_)
+    ));
+    assert!(error.to_string().starts_with("error parsing cbor:"));
+  }
 }
 
 #[cfg(all(

@@ -82,18 +82,33 @@ impl ResolvedCddl {
   /// Validate CBOR against the resolved document using the existing validator.
   ///
   /// Parsing errors are returned without writing diagnostics to stderr.
+  /// Invalid schemas produce `CDDLParsing`; malformed CBOR produces `CBORParsing`.
   #[cfg(all(feature = "cbor", not(feature = "lsp"), not(target_arch = "wasm32")))]
   pub fn validate_cbor(
     &self,
     cbor: &[u8],
     #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
   ) -> crate::validator::cbor::Result<std::io::Error> {
-    use crate::validator::{cbor, cbor_value::decode_cbor, Validator};
+    use crate::validator::{
+      cbor,
+      cbor_value::{decode_cbor, DecodeError},
+      Validator,
+    };
 
     let cddl = self
       .parse()
       .map_err(|error| cbor::Error::CDDLParsing(error.to_string()))?;
-    let cbor = decode_cbor(cbor).map_err(|error| cbor::Error::CDDLParsing(error.to_string()))?;
+    let cbor = decode_cbor(cbor).map_err(|error| {
+      cbor::Error::CBORParsing(match error {
+        DecodeError::Io(error) => ciborium::de::Error::Io(error),
+        DecodeError::Syntax(offset) => ciborium::de::Error::Syntax(offset),
+        DecodeError::UnexpectedEof => ciborium::de::Error::Io(std::io::Error::new(
+          std::io::ErrorKind::UnexpectedEof,
+          error,
+        )),
+        DecodeError::UnexpectedBreak => ciborium::de::Error::Semantic(None, error.to_string()),
+      })
+    })?;
     cbor::CBORValidator::new(
       &cddl,
       cbor,
