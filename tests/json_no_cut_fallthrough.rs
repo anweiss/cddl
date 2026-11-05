@@ -135,6 +135,79 @@ fn optional_map_value_diagnostics_survive_only_for_unclaimed_pairs() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn pruned_map_paths_do_not_report_unvisited_keys() {
+  let message = |schema: &str, input: &str| {
+    let error = cddl::validator::validate_json_from_str(
+      schema,
+      input,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
+    #[cfg(not(target_arch = "wasm32"))]
+    let message = error.to_string();
+    #[cfg(target_arch = "wasm32")]
+    let message = error.as_string().unwrap();
+    message
+  };
+  for (schema, input, location) in [
+    (
+      "root = { (a: uint // b: uint), c: uint, d: uint }",
+      r#"{"a":1,"c":"x","d":1}"#,
+      "/c",
+    ),
+    (
+      "root = { g<uint> } g<T> = ((a: T // b: T), c: T, d: T)",
+      r#"{"a":1,"c":"x","d":1}"#,
+      "/c",
+    ),
+    (
+      "root = { nested: { (a: uint // b: uint), c: uint, d: uint }, kept: uint }",
+      r#"{"nested":{"a":1,"c":"x","d":1},"kept":1}"#,
+      "/nested/c",
+    ),
+  ] {
+    let error = message(schema, input);
+    assert!(
+      error.contains("expected type uint"),
+      "{}: {}",
+      schema,
+      error
+    );
+    assert!(error.contains(location), "{}: {}", schema, error);
+    assert!(
+      !error.contains("unexpected key \"d\""),
+      "{}: {}",
+      schema,
+      error
+    );
+  }
+  for (schema, input) in [
+    (
+      "root = { c: uint, d: uint }",
+      r#"{"c":"x","d":1,"extra":2}"#,
+    ),
+    (
+      "root = { ? (a: uint, x: uint // b: uint, x: uint), d: uint, bad: bool }",
+      r#"{"a":"x","b":"x","d":1,"bad":0,"extra":2}"#,
+    ),
+    (
+      "root = { (a: bool, d: uint // a: uint, d: uint) }",
+      r#"{"a":1,"d":1,"extra":2}"#,
+    ),
+  ] {
+    let error = message(schema, input);
+    assert!(
+      error.contains("unexpected key \"extra\""),
+      "{}: {}",
+      schema,
+      error
+    );
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn repeated_transparent_alias_keys_preserve_bounds_and_claims() {
   let input = format!(
     "{{{}}}",

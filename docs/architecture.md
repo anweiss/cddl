@@ -30,8 +30,8 @@ for each alternative.
 Optional JSON members without a cut also match complete pairs. If a key
 matches but its value does not, the member can be absent, leaving that pair
 for a later member. Skipping restores earlier ownership assignments as well
-as the tentative key; explicit cuts and colon shortcuts still reject a
-matched key with an invalid value.
+as the tentative key. This member-level fallthrough path excludes explicit cuts
+and colon shortcuts; it does not establish conformance of every existing cut path.
 Discarded optional value diagnostics remain separate from active errors and are
 reported only if that exact pair is still unclaimed at coverage checking. A later
 successful member suppresses them; map boundaries, replay and validator reuse
@@ -50,6 +50,11 @@ failed iterations roll back, and zero-width iterations stop repetition.
 The enclosing occurrence is restored after the optional group, without leaking
 it into that group's required members. Failed required choice prefixes stop
 before recording unrelated later decisions; coverage failures still replay.
+Failed attempts that actually skip siblings do not check coverage against their
+incomplete ownership ledger. This traversal marker is restored on optional
+rollback and isolated across maps, retries and reuse. Otherwise-successful
+attempts always check coverage, and complete failed traversals retain their
+coverage diagnostics.
 Optional choices whose every arm starts with a required literal key missing from
 the input are skipped before registering replay decisions. This proof excludes
 controls, optional first entries and shadowed names; it does not guess whether
@@ -58,8 +63,13 @@ Single-member repetitions over non-cut string/any prelude key domains enumerate
 unclaimed pairs once, retaining occurrence bounds and individual movable claims
 without copying a growing ownership ledger for every pair. Transparent alias chains
 to these domains also batch; constrained, alternative, cyclic or generic-shadowed
-aliases do not bypass their normal validation. Earlier movable
-claims require the ordinary reassignment path instead. Reassignment shares
+aliases do not bypass their normal validation. Earlier movable claims normally
+require the ordinary reassignment path. Plain-key batches may proceed when every
+remaining value provably matches an unshadowed `tstr`, `text`, `uint` or `any`
+value type, including a resolved generic argument: no mismatch can trigger a
+reassignment. This proof inspects the caller's data without cloning it or running
+extra validation. Constraints, shadows and uncertain remaining values retain
+the ordinary path. Reassignment shares
 compatibility rows for identical members and captured generic bindings, and
 rejects an identical-claim demand exceeding its available matching pairs.
 Only a single interchangeable claim class prefers free pairs before displacement;

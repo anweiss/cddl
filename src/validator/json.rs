@@ -285,6 +285,7 @@ struct MapCheckpoint<'a> {
   deferred_map_errors: Vec<(String, ValidationError)>,
   object_value_key: Option<String>,
   map_entry_candidates: Option<Vec<(String, Value)>>,
+  map_traversal_pruned: bool,
 }
 
 /// Replay group alternatives lazily, including choices inside named groups.
@@ -293,6 +294,7 @@ struct MapCheckpoint<'a> {
 struct MapChoiceSearch {
   path: Vec<usize>,
   widths: Vec<usize>,
+  traversal_pruned: bool,
 }
 
 const MAX_ADDITIONAL_MAP_REPLAYS: usize = 4096;
@@ -329,6 +331,7 @@ impl MapChoiceSearch {
   }
 
   fn advance(&mut self) -> bool {
+    self.traversal_pruned = false;
     self.path.resize(self.widths.len(), 0);
     for depth in (0..self.widths.len()).rev() {
       if self.path[depth] + 1 < self.widths[depth] {
@@ -845,6 +848,7 @@ impl<'a> JSONValidator<'a> {
       deferred_map_errors: self.deferred_map_errors.clone(),
       object_value_key: self.object_value_key.clone(),
       map_entry_candidates: self.map_entry_candidates.clone(),
+      map_traversal_pruned: self.map_traversal_pruned(),
     }
   }
 
@@ -858,6 +862,21 @@ impl<'a> JSONValidator<'a> {
     self.deferred_map_errors = checkpoint.deferred_map_errors;
     self.object_value_key = checkpoint.object_value_key;
     self.map_entry_candidates = checkpoint.map_entry_candidates;
+    if let Some(search) = &self.map_choice_search {
+      search
+        .lock()
+        .expect("map choice search lock")
+        .traversal_pruned = checkpoint.map_traversal_pruned;
+    }
+  }
+
+  fn map_traversal_pruned(&self) -> bool {
+    self.map_choice_search.as_ref().is_some_and(|search| {
+      search
+        .lock()
+        .expect("map choice search lock")
+        .traversal_pruned
+    })
   }
 
   fn validate_map_coverage(&mut self, keys: &[String]) {
@@ -999,7 +1018,10 @@ impl<'a> JSONValidator<'a> {
         self.restore_map_checkpoint(checkpoint);
         return Err(error);
       }
-      self.validate_map_coverage(keys);
+      // Pruning only suppresses diagnostics on an already-failed candidate.
+      if self.errors.len() == error_count || !self.map_traversal_pruned() {
+        self.validate_map_coverage(keys);
+      }
       if self.errors.len() == error_count {
         return Ok(());
       }
@@ -1127,15 +1149,14 @@ impl<'a> JSONValidator<'a> {
     &self,
     group: &'b Group<'a>,
     params: Option<&GenericParams<'a>>,
+    pair_source: &Self,
   ) -> Option<&'b ValueMemberKeyEntry<'a>> {
-    if self.member_claims.iter().any(|claim| {
+    let has_movable_claims = pair_source.member_claims.iter().any(|claim| {
       matches!(
         &claim.entry.member_key,
         Some(MemberKey::Type1 { is_cut: false, .. })
       )
-    }) {
-      return None;
-    }
+    });
     let [choice] = group.group_choices.as_slice() else {
       return None;
     };
@@ -1152,7 +1173,7 @@ impl<'a> JSONValidator<'a> {
       return None;
     };
     if choice_member_key(&self.state, ge).is_some() {
-      return Some(ge);
+      return (!has_movable_claims).then_some(ge);
     }
     let Type2::Typename {
       ident,
@@ -1162,11 +1183,56 @@ impl<'a> JSONValidator<'a> {
     else {
       return None;
     };
-    if t1.operator.is_none() && self.is_unshadowed_batch_key(ident, params) {
+    if t1.operator.is_none()
+      && self.is_unshadowed_batch_key(ident, params)
+      && (!has_movable_claims
+        || pair_source.batch_covers_unclaimed_values(self.batch_value_predicate(&ge.entry_type)))
+    {
       Some(ge)
     } else {
       None
     }
+  }
+
+  fn batch_value_predicate(&self, value_type: &Type<'a>) -> Option<fn(&Value) -> bool> {
+    let [choice] = value_type.type_choices.as_slice() else {
+      return None;
+    };
+    let resolved = resolve_generic_argument(&self.state, &choice.type1);
+    let Type2::Typename {
+      ident,
+      generic_args: None,
+      ..
+    } = &resolved.type2
+    else {
+      return None;
+    };
+    if resolved.operator.is_some()
+      || ident.socket.is_some()
+      || self.batch_key_is_parameter(ident, None)
+      || rule_from_ident(self.state.cddl, ident).is_some()
+      || !type_choice_types_from_ident(self.state.cddl, ident).is_empty()
+    {
+      return None;
+    }
+    match ident.ident {
+      "tstr" | "text" => Some(Value::is_string),
+      "uint" => Some(Value::is_u64),
+      "any" => Some(|_| true),
+      _ => None,
+    }
+  }
+
+  fn batch_covers_unclaimed_values(&self, predicate: Option<fn(&Value) -> bool>) -> bool {
+    let (Value::Object(object), Some(matches)) = (&self.json, predicate) else {
+      return false;
+    };
+    let claimed: HashSet<_> = self.validated_keys.iter().flatten().collect();
+    // With plain string keys and no remaining value mismatch, the incremental
+    // path never reassigns earlier claims. Otherwise keep that path unchanged.
+    object
+      .iter()
+      .all(|(key, value)| claimed.contains(key) || matches(value))
   }
 
   fn batchable_named_map_member(
@@ -1195,7 +1261,6 @@ impl<'a> JSONValidator<'a> {
     if let Some(args) = entry.generic_args.as_ref().filter(|_| !bindings_ready) {
       // Resolve in the caller's scope, never again after entering the callee.
       let mut scoped = self.new_with_recursion_state(Value::Null);
-      scoped.member_claims = self.member_claims.clone();
       scoped.set_generic_group_bindings(
         entry.name.ident,
         resolved_generic_args(&self.state, args),
@@ -1208,11 +1273,11 @@ impl<'a> JSONValidator<'a> {
         }),
       );
       scoped
-        .batchable_map_member(group, rule.generic_params.as_ref())
+        .batchable_map_member(group, rule.generic_params.as_ref(), self)
         .cloned()
     } else {
       self
-        .batchable_map_member(group, rule.generic_params.as_ref())
+        .batchable_map_member(group, rule.generic_params.as_ref(), self)
         .cloned()
     }
   }
@@ -1473,21 +1538,19 @@ impl<'a> JSONValidator<'a> {
   }
 
   fn visit_group_sequence(&mut self, choice: &GroupChoice<'a>) -> Result {
-    for (entry, _) in &choice.group_entries {
+    for (index, (entry, _)) in choice.group_entries.iter().enumerate() {
       let error_count = self.errors.len();
       self.visit_group_entry(entry)?;
       // Later siblings cannot repair an already-reported required mismatch.
       // Do not record their choices in this failed replay prefix.
-      if self.errors.len() > error_count
-        && self.map_choice_search.as_ref().is_some_and(|search| {
-          !search
-            .lock()
-            .expect("map choice search lock")
-            .widths
-            .is_empty()
-        })
-      {
-        break;
+      if self.errors.len() > error_count {
+        if let Some(search) = &self.map_choice_search {
+          let mut search = search.lock().expect("map choice search lock");
+          if !search.widths.is_empty() {
+            search.traversal_pruned |= index + 1 < choice.group_entries.len();
+            break;
+          }
+        }
       }
     }
     Ok(())
@@ -4520,7 +4583,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     if self.optional_choices_definitely_absent(g, None) {
       return Ok(());
     }
-    if let (Some(member), Some(occurrence)) = (self.batchable_map_member(g, None), occur) {
+    if let (Some(member), Some(occurrence)) = (self.batchable_map_member(g, None, self), occur) {
       return self.visit_batched_map_member(member, occurrence);
     }
     let max = occurrence_bounds(occur.map(|o| o.occur)).1;
@@ -4867,7 +4930,10 @@ mod map_replay_budget_tests {
       panic!("map")
     };
     let validator = limited_validator(&cddl, serde_json::json!({}), 0);
-    let member = validator.batchable_map_member(group, None).unwrap().clone();
+    let member = validator
+      .batchable_map_member(group, None, &validator)
+      .unwrap()
+      .clone();
     let mut claims: Vec<_> = (0..64)
       .map(|index| MemberClaim {
         key: index.to_string(),
@@ -5169,6 +5235,80 @@ mod map_replay_budget_tests {
     let mut validator = limited_validator(&cddl, serde_json::json!({"m":1}), 0);
     assert!(validator.validate().is_ok());
   }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_complete_remaining_pairs_can_batch_after_movable_claims() {
+    for (schema, eligible, valid) in [
+      ("root = { * (tstr => uint), * (tstr => tstr) }", true, true),
+      (
+        "root = { * fields<uint>, * fields<tstr> } fields<T> = (tstr => T)",
+        true,
+        true,
+      ),
+      (
+        "root = { 0*1 (tstr => uint), * (tstr => tstr), * tstr => uint }",
+        false,
+        true,
+      ),
+      (
+        "root = { * (tstr => uint), * (tstr => (tstr .size 1)) }",
+        false,
+        true,
+      ),
+      (
+        "root = { * (tstr => tstr), * (tstr => uint) } uint = tstr",
+        false,
+        false,
+      ),
+    ] {
+      let cddl = cddl_from_pest_str(schema).unwrap();
+      let Rule::Type { rule, .. } = &cddl.rules[0] else {
+        panic!("expected type rule");
+      };
+      let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+        panic!("expected map");
+      };
+      let entries = &group.group_choices[0].group_entries;
+      let mut validator =
+        limited_validator(&cddl, serde_json::json!({"a":1,"b":2,"c":"x","d":"y"}), 0);
+      validator.visit_group_entry(&entries[0].0).unwrap();
+      assert!(!validator.member_claims.is_empty());
+      let member = match &entries[1].0 {
+        GroupEntry::InlineGroup { group, .. } => validator
+          .batchable_map_member(group, None, &validator)
+          .cloned(),
+        GroupEntry::TypeGroupname { ge, .. } => validator.batchable_named_map_member(ge, false),
+        _ => panic!("expected repeated group"),
+      };
+      assert_eq!(member.is_some(), eligible, "{schema}");
+      assert_eq!(validator.validate().is_ok(), valid, "{schema}");
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_pruned_coverage_resets_on_reuse() {
+    let cddl = cddl_from_pest_str("root = { (a: uint // b: uint), c: uint, d: uint }").unwrap();
+    let input = serde_json::json!({"a":1,"c":"x","d":1});
+    let mut validator = limited_validator(&cddl, input.clone(), 1);
+    let error = validator.validate().unwrap_err().to_string();
+    assert!(error.contains("expected type uint"));
+    assert!(!error.contains("unexpected key \"d\""));
+    validator.json = serde_json::json!({"a":1,"c":1,"d":1,"extra":2});
+    assert!(validator
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("unexpected key \"extra\""));
+    validator.json = serde_json::json!({"a":1,"c":1,"d":1});
+    assert!(validator.validate().is_ok());
+    let mut exhausted = limited_validator(&cddl, input, 0);
+    assert!(matches!(
+      exhausted.validate(),
+      Err(Error::ResourceLimit { limit: 0 })
+    ));
+  }
 }
 
 #[cfg(test)]
@@ -5195,7 +5335,7 @@ mod tests {
     let mut validator = JSONValidator::new(&cddl, serde_json::json!({"a": 1}));
     validator.map_choice_search = Some(Arc::new(Mutex::new(MapChoiceSearch {
       path: vec![2],
-      widths: Vec::new(),
+      ..MapChoiceSearch::default()
     })));
     let error = validator.visit_group(group).unwrap_err();
     assert!(error
