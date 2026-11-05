@@ -376,13 +376,27 @@ fn map_fallthrough_does_not_change_array_sequence_matching() {
 fn replay_handles_different_widths_after_optional_group_rollback() {
   let schema = r#"
     root = {
-      ? (x: uint // y: uint // z: uint),
+      ? (x: uint / bool // y: uint / bool // z: uint / bool),
       ((a: uint // b: uint // c: uint) // (d: uint // e: uint)),
+      ? x: tstr,
       tail: bool
     }
   "#;
   for key in ["a", "b", "c", "d", "e"] {
     assert!(validates(schema, &format!(r#"{{"{key}":1,"tail":true}}"#)));
+    assert!(validates(
+      schema,
+      &format!(r#"{{"x":1,"{key}":1,"tail":true}}"#),
+    ));
+    assert!(validates(
+      schema,
+      &format!(r#"{{"x":"text","{key}":1,"tail":true}}"#),
+    ));
+    assert!(!validates(
+      schema,
+      &format!(r#"{{"{key}":"wrong","tail":true}}"#),
+    ));
+    assert!(!validates(schema, &format!(r#"{{"{key}":1}}"#)));
   }
   assert!(!validates(schema, r#"{"unknown":1,"tail":true}"#));
 }
@@ -391,6 +405,11 @@ fn replay_handles_different_widths_after_optional_group_rollback() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn failed_replay_reports_each_diagnostic_once() {
   for (schema, json, count) in [
+    (
+      "root = { (a: uint / bool // b: uint / bool) }",
+      r#"{"a":1,"b":1,"unexpected":1}"#,
+      1,
+    ),
     (
       "root = { (? a: uint // ? b: uint), (? c: uint // ? d: uint) }",
       r#"{"unexpected":1}"#,
@@ -402,6 +421,7 @@ fn failed_replay_reports_each_diagnostic_once() {
       2,
     ),
   ] {
+    assert!(!validates(schema, json));
     #[cfg(feature = "additional-controls")]
     let error = cddl::validator::validate_json_from_str(schema, json, None).unwrap_err();
     #[cfg(not(feature = "additional-controls"))]

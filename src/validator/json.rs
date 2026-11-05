@@ -5104,6 +5104,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     debug_assert!(self.object_value.is_none());
     self.map_entry_candidates = None;
     self.object_value = None;
+    self.state.advance_to_next_entry = false;
 
     if let Some(occur) = &entry.occur {
       self.visit_occurrence(occur)?;
@@ -5111,28 +5112,34 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
     let current_location = self.state.data_location.clone();
 
-    let (map_entry_candidates, object_value, object_value_key) = if let Some(mk) = &entry.member_key
-    {
-      let error_count = self.errors.len();
-      self.state.is_member_key = true;
-      let member_key_result = self.visit_memberkey(mk);
-      self.state.is_member_key = false;
+    let (map_entry_candidates, object_value, object_value_key, skip_value) =
+      if let Some(mk) = &entry.member_key {
+        let error_count = self.errors.len();
+        self.state.is_member_key = true;
+        let member_key_result = self.visit_memberkey(mk);
+        self.state.is_member_key = false;
 
-      let map_entry_candidates = self.map_entry_candidates.take();
-      let object_value = self.object_value.take();
-      let object_value_key = self.object_value_key.take();
-      member_key_result?;
+        let map_entry_candidates = self.map_entry_candidates.take();
+        let object_value = self.object_value.take();
+        let object_value_key = self.object_value_key.take();
+        // Absence skips only this member's value, never a later sibling's.
+        let skip_value = std::mem::take(&mut self.state.advance_to_next_entry);
+        member_key_result?;
 
-      // Move to next entry if member key validation fails
-      if self.errors.len() != error_count {
-        self.state.advance_to_next_entry = true;
-        return Ok(());
-      }
+        // Move to next entry if member key validation fails
+        if self.errors.len() != error_count {
+          return Ok(());
+        }
 
-      (map_entry_candidates, object_value, object_value_key)
-    } else {
-      (None, None, None)
-    };
+        (
+          map_entry_candidates,
+          object_value,
+          object_value_key,
+          skip_value,
+        )
+      } else {
+        (None, None, None, false)
+      };
 
     if let Some(candidates) = map_entry_candidates {
       debug_assert!(object_value.is_none());
@@ -5143,7 +5150,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       return self.validate_relayed_pair(entry, v, object_value_key, current_location);
     }
 
-    if !self.state.advance_to_next_entry {
+    if !skip_value {
       self.visit_type(&entry.entry_type)
     } else {
       Ok(())
@@ -6378,6 +6385,74 @@ mod map_replay_budget_tests {
         );
       } else {
         assert!(result.is_ok());
+      }
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_empty_arms_do_not_skip_sibling_values() {
+    for aliases in [65, 64] {
+      let rules = (0..aliases - 1)
+        .map(|i| format!("v{i} = v{}", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+      for prefix in [
+        r#"(? "a" => uint // 0*0 "b" => uint)"#,
+        r#"(0*0 "b" => uint // ? "a" => uint)"#,
+        r#"(? a: uint // 0*0 "b" => uint)"#,
+        r#"(? "a" => uint // 0*1 "b" => uint)"#,
+        r#"(? "a" => uint // * "b" => uint)"#,
+        r#"(? "a" => uint // ? missing)"#,
+        r#"(? missing // ? "a" => uint)"#,
+        r#"(? "a" => uint // ? ("b" => uint))"#,
+        r#"? "a" => uint"#,
+      ] {
+        let schema = format!(
+          "root = {{ {prefix}, 0*1 absent: v0 }} / any
+           missing = (b: uint) {rules} v{} = uint",
+          aliases - 1
+        );
+        let cddl = cddl_from_pest_str(&schema).unwrap();
+        let mut validator = limited_validator(&cddl, serde_json::json!({"extra":1}), 1);
+        let result = validator.validate();
+        if aliases == 65 {
+          assert!(
+            matches!(result, Err(Error::RecursionLimit { limit: 64 })),
+            "{}: {:?}",
+            prefix,
+            result
+          );
+        } else {
+          assert!(result.is_ok(), "{}: {:?}", prefix, result);
+        }
+      }
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_deduplicates_diagnostics_after_actual_replay() {
+    let cddl = cddl_from_pest_str("root = { (a: uint / bool // b: uint / bool) }").unwrap();
+    for budget in [0, 1] {
+      let mut validator = limited_validator(
+        &cddl,
+        serde_json::json!({"a":1,"b":1,"unexpected":1}),
+        budget,
+      );
+      let result = validator.validate();
+      if budget == 0 {
+        assert!(matches!(result, Err(Error::ResourceLimit { limit: 0 })));
+      } else {
+        assert!(matches!(&result, Err(Error::Validation(_))));
+        assert_eq!(
+          result
+            .unwrap_err()
+            .to_string()
+            .matches("unexpected key \"unexpected\"")
+            .count(),
+          1
+        );
       }
     }
   }

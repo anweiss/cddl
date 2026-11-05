@@ -77,6 +77,8 @@ also retain only their first outcome. This includes named-group DAGs and
 zero-minimum occurrence ranges, not just `?` literal members. No value is evaluated by
 this proof. Named depth requirements remain checked; present keys, dynamic keys,
 generic named references, cycles and explicit cuts retain ordinary choice handling.
+An absent member's skip flag is consumed by that member, so an absent `?` arm
+cannot suppress a later sibling's value where a zero-maximum arm would not.
 Zero-minimum colon members with occurrence ranges rather than `?` are excluded
 from both absence-based proofs: quoted keys can still report an absent key, and
 bareword keys can evaluate their values despite being absent. That evaluation
@@ -143,7 +145,8 @@ the ownership prefix they inherited.
 Each top-level `JSONValidator::validate()` call permits 4096 **additional**
 map-candidate replays, shared cumulatively across nested maps and child
 validators. Initial paths are free, so ordinary large collections that do not
-backtrack do not consume this budget. Speculative rollback does not restore
+backtrack do not consume this budget; their number and size are not bounded
+by the replay counter. Speculative rollback does not restore
 spent work. Reusing the validator starts a fresh budget and transient state
 without copying the input JSON.
 
@@ -155,8 +158,9 @@ first-path mismatch diagnostics. String-based WASM APIs retain this explanation
 in their error text. This bounds additional map-candidate replays only; it is
 not a blanket CPU, memory, recursion, or denial-of-service guarantee.
 
-Separately, JSON map validation permits at most 64 simultaneously active named-rule
-calls. Productive flat-map recursion is therefore bounded even when it consumes
+Separately, named-rule calls made while map-candidate search is active in their
+visitor share a limit of 64 simultaneously active calls. Productive flat-map
+recursion is therefore bounded even when it consumes
 keys without replaying candidates. Exceeding this depth returns the distinct hard
 `json::Error::RecursionLimit { limit }`; it is not replay-budget exhaustion or an
 ordinary mismatch and cannot be swallowed by optional entries or type choices.
@@ -170,6 +174,8 @@ markers are checked before acquiring another slot, preserving ordinary cycle
 mismatch and alternative fallback at the depth boundary.
 Non-progress recursion retains its ordinary validation diagnostic. This limit
 bounds named-rule calls during map validation, not every possible AST traversal.
+In particular, scalar-value children without an active map search do not acquire
+these depth slots.
 
 An undefined group socket matches no entries, so `{ * $$s }` accepts an empty
 map. A failed inline group that may occur zero times, such as `? ($$s)`,
