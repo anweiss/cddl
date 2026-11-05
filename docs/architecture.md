@@ -77,9 +77,11 @@ also retain only their first outcome. This includes named-group DAGs and zero-
 minimum occurrence ranges, not just `?` literal members. No value is evaluated by
 this proof. Named depth requirements remain checked; present keys, dynamic keys,
 generic named references, cycles and explicit cuts retain ordinary choice handling.
-Bounded quoted-colon members are excluded because their existing visitor can
-still report an absent key. Direct zero-maximum cut members are also excluded;
-an occurrence bound alone does not establish empty success for those visitors.
+Zero-minimum colon members with occurrence ranges rather than `?` are excluded
+from both absence-based proofs: quoted keys can still report an absent key, and
+bareword keys can evaluate their values despite being absent. That evaluation
+can itself raise a hard depth error. Direct zero-maximum cut members are also
+excluded; a bound alone does not establish empty success for those visitors.
 Optional choices are skipped before registering replay decisions only when every
 arm provably fails without evaluating an earlier value or reassigning a claimed key.
 The proof can cross absent plain `?` literal members, then recognize a missing

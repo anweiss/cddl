@@ -1558,9 +1558,10 @@ impl<'a> JSONValidator<'a> {
   ) -> Option<()> {
     if let GroupEntry::ValueMemberKey { ge, .. } = entry {
       if member_key_is_cut(ge)
-        || (!proof.inspect_values
-          && matches!(&ge.member_key, Some(MemberKey::Value { .. }))
-          && group_entry_bounds(entry).0 == 0
+        || (matches!(
+          &ge.member_key,
+          Some(MemberKey::Bareword { .. } | MemberKey::Value { .. })
+        ) && group_entry_bounds(entry).0 == 0
           && !matches!(
             ge.occur.as_ref().map(|occur| occur.occur),
             Some(Occur::Optional { .. })
@@ -6287,6 +6288,61 @@ mod map_replay_budget_tests {
       let cddl = cddl_from_pest_str(&schema).unwrap();
       let mut validator = limited_validator(&cddl, serde_json::json!({}), 1);
       assert!(validator.validate().is_ok(), "{}", member);
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_empty_proof_retains_bounded_bareword_values() {
+    let mut failures = Vec::new();
+    for occurrence in ["0*1", "*1", "0*2", "0*0", "*", "?"] {
+      let schema = format!("root = {{ ({occurrence} a: 1 // ? b: uint) }}");
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator = limited_validator(&cddl, serde_json::json!({}), 1);
+      if validator.validate().is_err() {
+        failures.push(occurrence);
+      }
+    }
+    assert!(failures.is_empty(), "{:?}", failures);
+    for quoted in [false, true] {
+      let suffix = (0..13)
+        .map(|i| {
+          if quoted {
+            format!("(? \"a{i}\": 1 // ? \"b{i}\": 1)")
+          } else {
+            format!("(? a{i}: 1 // ? b{i}: 1)")
+          }
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+      let schema = format!("root = {{ (? \"k\" => uint // m: uint), {suffix} }}");
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator = limited_validator(&cddl, serde_json::json!({"m":1}), 1);
+      assert!(validator.validate().is_ok());
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_unknown_key_proof_retains_absent_bareword_value_depth() {
+    for aliases in [65, 64] {
+      let rules = (0..aliases - 1)
+        .map(|i| format!("v{i} = v{}", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+      let schema = format!(
+        "root = {{ fixed: uint // 0*1 absent: v0 }} {rules} v{} = uint",
+        aliases - 1
+      );
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator =
+        limited_validator(&cddl, serde_json::json!({"fixed":1,"unknown":true}), 1);
+      let result = validator.validate();
+      if aliases == 65 {
+        assert!(matches!(result, Err(Error::RecursionLimit { limit: 64 })));
+      } else {
+        assert!(matches!(result, Err(Error::Validation(_))));
+      }
     }
   }
 
