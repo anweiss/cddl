@@ -164,7 +164,10 @@ Exhaustion returns `json::Error::ResourceLimit { limit }`, not
 require an alternative beyond the limit. The error propagates rather than
 trying another type/group choice, accepting an optional entry, or returning
 first-path mismatch diagnostics. String-based WASM APIs retain this explanation
-in their error text. This bounds additional map-candidate replays only; it is
+in their error text. The playground recognizes the JSON incomplete-validation
+message and reports "Validation incomplete", not instance nonconformance,
+while retaining the limit explanation and an unsuccessful result.
+This bounds additional map-candidate replays only; it is
 not a blanket CPU, memory, recursion, or denial-of-service guarantee.
 
 Separately, named-rule calls made while map-candidate search is active in their
