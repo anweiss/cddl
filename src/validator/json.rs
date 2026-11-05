@@ -244,6 +244,37 @@ struct MemberClaim<'a> {
 
 type ClaimCompatibility = Vec<Arc<Vec<bool>>>;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProvenScalarType {
+  Uint,
+  Other,
+}
+
+enum KeyProofStep<'b, 'a> {
+  Entry(&'b GroupEntry<'a>),
+  Exit(&'a str),
+}
+
+struct LiteralKeyProof<'b, 'a> {
+  keys: HashSet<String>,
+  pending: Vec<KeyProofStep<'b, 'a>>,
+  active: HashSet<&'a str>,
+  complete: HashSet<&'a str>,
+}
+
+impl<'b, 'a> LiteralKeyProof<'b, 'a> {
+  fn push_group(&mut self, group: &'b Group<'a>) {
+    self
+      .pending
+      .extend(group.group_choices.iter().flat_map(|choice| {
+        choice
+          .group_entries
+          .iter()
+          .map(|(entry, _)| KeyProofStep::Entry(entry))
+      }));
+  }
+}
+
 fn compatibility_classes(rows: &[Arc<Vec<bool>>]) -> (Vec<usize>, usize) {
   let mut classes = HashMap::new();
   let indices = rows
@@ -1041,13 +1072,15 @@ impl<'a> JSONValidator<'a> {
     let error_count = self.errors.len();
     let mut choice_errors = Vec::new();
     let mut seen_errors = HashSet::new();
+    let has_unknown_key = self.provably_unknown_map_key(group);
     loop {
       if let Err(error) = self.visit_group(group) {
         self.restore_map_checkpoint(checkpoint);
         return Err(error);
       }
       // Pruning only suppresses diagnostics on an already-failed candidate.
-      if self.errors.len() == error_count || !self.map_traversal_pruned() {
+      let matched_before_coverage = self.errors.len() == error_count;
+      if matched_before_coverage || !self.map_traversal_pruned() {
         self.validate_map_coverage(keys);
       }
       if self.errors.len() == error_count {
@@ -1059,6 +1092,10 @@ impl<'a> JSONValidator<'a> {
         }
       }
       self.restore_map_checkpoint(checkpoint.clone());
+      if matched_before_coverage && has_unknown_key {
+        self.errors.extend(choice_errors);
+        return Ok(());
+      }
       let has_next = {
         let mut search = search.lock().expect("map choice search lock");
         search.advance()
@@ -1258,6 +1295,173 @@ impl<'a> JSONValidator<'a> {
     }
   }
 
+  fn proven_scalar_type(
+    &self,
+    value_type: &Type<'a>,
+    params: Option<&GenericParams<'a>>,
+  ) -> Option<ProvenScalarType> {
+    if self.state.generic_rules.iter().any(|rule| {
+      Some(rule.name) == self.state.eval_generic_rule && rule.args.len() != rule.params.len()
+    }) {
+      return None;
+    }
+    let [choice] = value_type.type_choices.as_slice() else {
+      return None;
+    };
+    if choice.type1.operator.is_some() {
+      return None;
+    }
+    let Type2::Typename {
+      ident,
+      generic_args: None,
+      ..
+    } = &choice.type1.type2
+    else {
+      return None;
+    };
+    let mut ident = ident;
+    let mut visited = HashSet::new();
+    loop {
+      if ident.socket.is_some()
+        || self.batch_key_is_parameter(ident, params)
+        || !visited.insert(ident.ident)
+      {
+        return None;
+      }
+      let definitions = type_choice_types_from_ident(self.state.cddl, ident);
+      let Some(rule) = rule_from_ident(self.state.cddl, ident) else {
+        if !definitions.is_empty() {
+          return None;
+        }
+        return match ident.ident {
+          "uint" => Some(ProvenScalarType::Uint),
+          "tstr" | "text" | "any" | "int" | "nint" | "number" | "bool" | "true" | "false"
+          | "null" | "nil" => Some(ProvenScalarType::Other),
+          _ => None,
+        };
+      };
+      let Rule::Type { rule, .. } = rule else {
+        return None;
+      };
+      if rule.generic_params.is_some()
+        || definitions.len() != 1
+        || token::lookup_ident(ident.ident)
+          .in_standard_prelude()
+          .is_some()
+      {
+        return None;
+      }
+      let [choice] = rule.value.type_choices.as_slice() else {
+        return None;
+      };
+      if choice.type1.operator.is_some() {
+        return None;
+      }
+      let Type2::Typename {
+        ident: next,
+        generic_args: None,
+        ..
+      } = &choice.type1.type2
+      else {
+        return None;
+      };
+      ident = next;
+    }
+  }
+
+  fn provably_unknown_map_key(&self, group: &Group<'a>) -> bool {
+    let Value::Object(object) = &self.json else {
+      return false;
+    };
+    if self.state.ctrl.is_some()
+      || self.state.is_group_to_choice_enum
+      || self.state.eval_generic_rule.is_some()
+      || self.state.is_cut_present
+      || self.cut_value.is_some()
+      || !self.member_claims.is_empty()
+      || self
+        .validated_keys
+        .as_ref()
+        .is_some_and(|keys| !keys.is_empty())
+    {
+      return false;
+    }
+    let mut proof = LiteralKeyProof {
+      keys: HashSet::new(),
+      pending: Vec::new(),
+      active: HashSet::new(),
+      complete: HashSet::new(),
+    };
+    proof.push_group(group);
+    while let Some(step) = proof.pending.pop() {
+      match step {
+        KeyProofStep::Exit(name) => {
+          proof.active.remove(name);
+          proof.complete.insert(name);
+        }
+        KeyProofStep::Entry(entry) => {
+          if self.add_literal_key_proof(entry, &mut proof).is_none() {
+            return false;
+          }
+        }
+      }
+    }
+    // Unknown values are never visited by a literal-key-only schema. Known
+    // structured values retain the normal path and its nested hard errors.
+    object.iter().all(|(key, value)| {
+      !proof.keys.contains(key) || !matches!(value, Value::Array(_) | Value::Object(_))
+    }) && object.keys().any(|key| !proof.keys.contains(key))
+  }
+
+  fn add_literal_key_proof<'b>(
+    &'b self,
+    entry: &'b GroupEntry<'a>,
+    proof: &mut LiteralKeyProof<'b, 'a>,
+  ) -> Option<()> {
+    match entry {
+      GroupEntry::ValueMemberKey { ge, .. } => {
+        if member_key_is_cut(ge) || self.proven_scalar_type(&ge.entry_type, None).is_none() {
+          return None;
+        }
+        proof
+          .keys
+          .insert(self.plain_literal_key(entry, None)?.to_owned());
+      }
+      GroupEntry::InlineGroup { group, .. } => proof.push_group(group),
+      GroupEntry::TypeGroupname { ge, .. } => self.add_named_key_proof(ge, proof)?,
+    }
+    Some(())
+  }
+
+  fn add_named_key_proof<'b>(
+    &'b self,
+    entry: &'b TypeGroupnameEntry<'a>,
+    proof: &mut LiteralKeyProof<'b, 'a>,
+  ) -> Option<()> {
+    if entry.generic_args.is_some()
+      || entry.name.socket.is_some()
+      || self.batch_key_is_parameter(&entry.name, None)
+      || !group_choice_alternates_from_ident(self.state.cddl, &entry.name).is_empty()
+    {
+      return None;
+    }
+    let Rule::Group { rule, .. } = rule_from_ident(self.state.cddl, &entry.name)? else {
+      return None;
+    };
+    if rule.generic_params.is_some() {
+      return None;
+    }
+    if proof.complete.contains(entry.name.ident) {
+      return Some(());
+    }
+    if !proof.active.insert(entry.name.ident) {
+      return None;
+    }
+    proof.pending.push(KeyProofStep::Exit(entry.name.ident));
+    proof.pending.push(KeyProofStep::Entry(&rule.entry));
+    Some(())
+  }
+
   fn batch_covers_unclaimed_values(&self, predicate: Option<fn(&Value) -> bool>) -> bool {
     let (Value::Object(object), Some(matches)) = (&self.json, predicate) else {
       return false;
@@ -1436,17 +1640,7 @@ impl<'a> JSONValidator<'a> {
     {
       return false;
     }
-    let [choice] = entry.entry_type.type_choices.as_slice() else {
-      return false;
-    };
-    let Type2::Typename { ident, .. } = &choice.type1.type2 else {
-      return false;
-    };
-    ident.ident == "uint"
-      && !self.batch_key_is_parameter(ident, params)
-      && self
-        .batch_value_predicate(&entry.entry_type)
-        .is_some_and(|matches| !matches(value))
+    self.proven_scalar_type(&entry.entry_type, params) == Some(ProvenScalarType::Uint)
   }
 
   fn optional_choice_definitely_fails(
@@ -5463,6 +5657,191 @@ mod map_replay_budget_tests {
 
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
   #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_alias_impossibility_preserves_binding_and_budget_rules() {
+    let entries = (0..14)
+      .map(|i| format!("? (a{i}: alias // b{i}: alias)"))
+      .collect::<Vec<_>>()
+      .join(",");
+    let schema = format!(
+      "root = {{ ? (k: uint // m: uint), {entries}, * tstr => tstr }} alias = link link = uint"
+    );
+    let cddl = cddl_from_pest_str(&schema).unwrap();
+    let mut input = serde_json::json!({"m":1});
+    for i in 0..14 {
+      input[format!("a{i}")] = Value::String("text".into());
+      input[format!("b{i}")] = Value::String("text".into());
+    }
+    let mut validator = limited_validator(&cddl, input.clone(), 1);
+    assert!(validator.validate().is_ok());
+    let mut exhausted = limited_validator(&cddl, input, 0);
+    assert!(matches!(
+      exhausted.validate(),
+      Err(Error::ResourceLimit { limit: 0 })
+    ));
+    for schema in [
+      "root = { ? (a: alias // b: alias), * tstr => 0 } alias = uint uint = tstr",
+      "root = { ? (a: alias // b: alias), * tstr => 0 } alias = uint alias /= tstr",
+      "root = { ? g<tstr>, * tstr => 0 } g<alias> = (a: alias // b: alias) alias = uint",
+    ] {
+      let cddl = cddl_from_pest_str(schema).unwrap();
+      let mut validator = limited_validator(&cddl, serde_json::json!({"a":"text"}), 0);
+      assert!(validator.validate().is_ok(), "{}", schema);
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_unknown_keys_do_not_enumerate_irrelevant_choices() {
+    for named in [false, true] {
+      let mut entries = Vec::new();
+      let mut rules = Vec::new();
+      let mut input = serde_json::json!({});
+      for i in 0..13 {
+        let body = format!("(a{i}: uint // b{i}: uint)");
+        if named {
+          entries.push(format!("? g{i}"));
+          rules.push(format!("g{i} = {body}"));
+        } else {
+          entries.push(format!("? {body}"));
+        }
+        input[format!("a{i}")] = Value::from(1);
+      }
+      let schema = format!("root = {{ {} }} {}", entries.join(","), rules.join("\n"));
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut valid = limited_validator(&cddl, input.clone(), 0);
+      assert!(valid.validate().is_ok());
+      input["unknown"] = Value::Bool(true);
+      let mut invalid = limited_validator(&cddl, input, 0);
+      let Error::Validation(errors) = invalid.validate().unwrap_err() else {
+        panic!("provably unknown key must not exhaust the replay budget");
+      };
+      assert_eq!(errors.len(), 1);
+      assert!(errors[0].reason.contains("unexpected key \"unknown\""));
+    }
+    for schema in [
+      "root = { fixed: uint // * tstr => any }",
+      "root = { fixed: uint // all } all = (* tstr => any)",
+      "root = { fixed: uint // unknown: uint, fixed: uint }",
+    ] {
+      let cddl = cddl_from_pest_str(schema).unwrap();
+      let input = serde_json::json!({"fixed":1,"unknown":2});
+      let mut valid = limited_validator(&cddl, input.clone(), 1);
+      assert!(valid.validate().is_ok(), "{}", schema);
+      let mut exhausted = limited_validator(&cddl, input, 0);
+      assert!(matches!(
+        exhausted.validate(),
+        Err(Error::ResourceLimit { limit: 0 })
+      ));
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_unknown_key_proof_retains_effects_and_recursive_paths() {
+    for schema in [
+      "root = { fixed: uint // fixed: uint .size 1 }",
+      "root = { fixed: uint // dynamic } dynamic = (fixed: uint) dynamic //= (* tstr => any)",
+      "root = { fixed: uint // dynamic<uint> } dynamic<T> = (fixed: T)",
+      "root = { fixed: uint // recurse } recurse = (? recurse, fixed: uint)",
+      "root = { fixed: uint // \"fixed\" ^ => uint }",
+    ] {
+      let cddl = cddl_from_pest_str(schema).unwrap();
+      let mut validator =
+        limited_validator(&cddl, serde_json::json!({"fixed":1,"unknown":true}), 0);
+      assert!(
+        matches!(validator.validate(), Err(Error::ResourceLimit { limit: 0 })),
+        "{}",
+        schema
+      );
+    }
+    let cddl =
+      cddl_from_pest_str("root = { fixed: any // fixed: branch } branch = { x: uint // x: tstr }")
+        .unwrap();
+    let mut validator = limited_validator(
+      &cddl,
+      serde_json::json!({"fixed":{"x":"text"},"unknown":true}),
+      1,
+    );
+    assert!(matches!(
+      validator.validate(),
+      Err(Error::ResourceLimit { limit: 1 })
+    ));
+
+    // Shared named groups form a DAG, not a recursion cycle. Both alternatives
+    // must contribute their literal keys before the proof can reject another key.
+    let cddl = cddl_from_pest_str(
+      "root = { left // right } left = (common,) right = (common, other: uint) common = (fixed: alias) alias = uint",
+    ).unwrap();
+    let mut valid = limited_validator(&cddl, serde_json::json!({"fixed":1,"other":2}), 1);
+    assert!(valid.validate().is_ok());
+    let mut invalid = limited_validator(&cddl, serde_json::json!({"fixed":1,"unknown":[]}), 0);
+    assert!(matches!(invalid.validate(), Err(Error::Validation(_))));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_alias_proof_declines_cycles_controls_and_incremental_bindings() {
+    for definitions in [
+      "alias = link link = alias",
+      "alias = uint .size 1",
+      "alias = uint alias /= tstr",
+      "alias = pick<uint> pick<T> = T",
+      "alias = any any = uint",
+    ] {
+      let schema = format!("root = {{ ? (a: alias // b: alias) }} {definitions}");
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let Rule::Type { rule, .. } = &cddl.rules[0] else {
+        panic!("root type")
+      };
+      let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+        panic!("map")
+      };
+      let GroupEntry::InlineGroup { group, .. } = &group.group_choices[0].group_entries[0].0 else {
+        panic!("choices")
+      };
+      let validator = limited_validator(&cddl, serde_json::json!({"a":"text","b":"text"}), 0);
+      assert!(
+        !validator.optional_choices_definitely_fail(group, None),
+        "{}",
+        schema
+      );
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_unknown_key_rejection_restores_failed_candidate_state() {
+    let cddl = cddl_from_pest_str("root = { fixed: uint // other: uint }").unwrap();
+    let Rule::Type { rule, .. } = &cddl.rules[0] else {
+      panic!("root")
+    };
+    let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+      panic!("map")
+    };
+    let mut validator = limited_validator(&cddl, serde_json::json!({"fixed":1,"unknown":true}), 0);
+    validator.state.data_location = "/outer".into();
+    let outer = Arc::new(Mutex::new(MapChoiceSearch::default()));
+    validator.map_choice_search = Some(outer.clone());
+    validator
+      .visit_closed_map(group, &["fixed".into(), "unknown".into()])
+      .unwrap();
+    assert_eq!(validator.errors.len(), 1);
+    assert!(validator.errors[0]
+      .reason
+      .contains("unexpected key \"unknown\""));
+    assert!(validator.validated_keys.is_none());
+    assert!(validator.member_claims.is_empty());
+    assert!(validator.object_value.is_none());
+    assert!(validator.object_value_key.is_none());
+    assert_eq!(validator.state.data_location, "/outer");
+    assert!(Arc::ptr_eq(
+      validator.map_choice_search.as_ref().unwrap(),
+      &outer
+    ));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
   fn map_replay_proven_optional_choices_preserve_required_diagnostics() {
     for domain in ["alias", "uint"] {
       let schema = format!(
@@ -5852,6 +6231,47 @@ mod tests {
       } else {
         assert!(matches!(result, Err(Error::UTF8Parsing(_))));
       }
+      assert!(validator.member_claims.is_empty());
+      assert!(validator.map_choice_search.is_none());
+    }
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn unknown_key_proof_preserves_later_alternative_hard_errors() {
+    for aliased in [false, true] {
+      let schema = if aliased {
+        "root = { fixed: uint // fixed: alias } alias = uint .feature 'enabled'"
+      } else {
+        "root = { fixed: uint // fixed: uint .feature 'enabled' }"
+      };
+      let mut cddl = cddl_from_str(schema, true).unwrap();
+      let controller = if aliased {
+        let Rule::Type { rule, .. } = &mut cddl.rules[1] else {
+          panic!("alias")
+        };
+        &mut rule.value.type_choices[0].type1
+      } else {
+        let Rule::Type { rule, .. } = &mut cddl.rules[0] else {
+          panic!("root")
+        };
+        let Type2::Map { group, .. } = &mut rule.value.type_choices[0].type1.type2 else {
+          panic!("map")
+        };
+        let GroupEntry::ValueMemberKey { ge, .. } = &mut group.group_choices[1].group_entries[0].0
+        else {
+          panic!("alternative")
+        };
+        &mut ge.entry_type.type_choices[0].type1
+      };
+      controller.operator.as_mut().unwrap().type2 =
+        Type2::from(token::ByteValue::UTF8(vec![0xff].into()));
+      let mut validator = JSONValidator::new(
+        &cddl,
+        serde_json::json!({"fixed":1,"unknown":true}),
+        Some(&["enabled"]),
+      );
+      assert!(matches!(validator.validate(), Err(Error::UTF8Parsing(_))));
       assert!(validator.member_claims.is_empty());
       assert!(validator.map_choice_search.is_none());
     }

@@ -58,14 +58,25 @@ coverage diagnostics.
 Optional choices are skipped before registering replay decisions only when every
 arm provably fails without evaluating an earlier value or reassigning a claimed key.
 The proof can cross absent plain `?` literal members, then recognize a missing
-required literal key or an unclaimed string against plain, unshadowed `uint`.
-The latter excludes controls, generic shadows, explicit/inherited cuts, claimed
+required literal key or an unclaimed string against plain, unshadowed `uint`,
+including transparent, single-definition type-alias chains. Alias cycles,
+incremental definitions, generic bindings and redefined prelude names decline
+this proof. The latter also excludes controls, explicit/inherited cuts, claimed
 keys and non-string values. Present optional prefixes retain ordinary traversal,
 including hard errors. These required failures roll back without deferred
 optional-member diagnostics. No visitor probes, failure cache or budget changes
 are involved; arbitrary value constraints are not inferred impossible.
 Newly proven failures retain a single-outcome search node when an iteration would
 have run, preserving later required-mismatch pruning without adding alternatives.
+Closed maps also prove an input key impossible to claim when every alternative
+contains only literal keys and hard-error-free scalar value types. The proof
+unions keys across inline and non-generic named groups using an explicit worklist;
+completed groups are shared, while recursive groups decline the proof.
+It runs no visitors and stops replay only **after** ordinary traversal succeeds
+and coverage fails, retaining that traversal's actual coverage diagnostics.
+Dynamic keys, controls, cuts, incremental/generic groups, inherited claims and
+structured values at known keys retain ordinary replay and hard-error ordering.
+Unknown-key values need not be scalar because no member can evaluate them.
 The existing missing-first-key shortcut and zero-iteration groups remain unrecorded.
 Single-member repetitions over non-cut string/any prelude key domains enumerate
 unclaimed pairs once, retaining occurrence bounds and individual movable claims
