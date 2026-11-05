@@ -73,14 +73,15 @@ Nodes recorded only under scalar suppression do not authorize pruning outside
 that sequence. Ordinary decisions, including coalesced equivalent alternatives,
 retain their original pruning context.
 Choices whose arms contain only zero-minimum entries with absent literal keys
-also retain only their first outcome. This includes named-group DAGs and zero-
-minimum occurrence ranges, not just `?` literal members. No value is evaluated by
+also retain only their first outcome. This includes named-group DAGs and
+zero-minimum occurrence ranges, not just `?` literal members. No value is evaluated by
 this proof. Named depth requirements remain checked; present keys, dynamic keys,
 generic named references, cycles and explicit cuts retain ordinary choice handling.
 Zero-minimum colon members with occurrence ranges rather than `?` are excluded
 from both absence-based proofs: quoted keys can still report an absent key, and
 bareword keys can evaluate their values despite being absent. That evaluation
-can itself raise a hard depth error. Direct zero-maximum cut members are also
+can itself raise a hard depth error. The same exclusion applies to the
+hard-error-free sequence proof used for suppression. Direct zero-maximum cut members are also
 excluded; a bound alone does not establish empty success for those visitors.
 Optional choices are skipped before registering replay decisions only when every
 arm provably fails without evaluating an earlier value or reassigning a claimed key.
@@ -159,8 +160,9 @@ calls. Productive flat-map recursion is therefore bounded even when it consumes
 keys without replaying candidates. Exceeding this depth returns the distinct hard
 `json::Error::RecursionLimit { limit }`; it is not replay-budget exhaustion or an
 ordinary mismatch and cannot be swallowed by optional entries or type choices.
-An `Arc`-shared active-call counter covers generic children, and scoped guards
-release depth on success and all error paths. Top-level reuse starts fresh.
+Child visitors inherit the current validation's `Arc`-shared counters, including
+generic children. Scoped guards release active depth on success and error paths;
+each top-level `validate()` starts with fresh replay and depth counters.
 Both generic and non-generic batched named calls acquire a slot. Batch eligibility
 counts transparent key-alias depth and any pending named call; optional named
 proofs cannot bypass the reference's own depth check. Generic zero-progress

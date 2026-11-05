@@ -1,6 +1,8 @@
 #![cfg(feature = "json")]
 #![cfg(not(feature = "lsp"))]
 
+use cddl::validator::Validator;
+
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -11,13 +13,41 @@ const _: fn() = || {
 };
 
 fn validates(schema: &str, instance: &str) -> bool {
-  cddl::validator::validate_json_from_str(
+  let cddl = cddl::pest_bridge::cddl_from_pest_str(schema).expect("valid CDDL fixture");
+  let json = serde_json::from_str(instance).expect("valid JSON fixture");
+  let mut validator = cddl::validator::json::JSONValidator::new(
+    &cddl,
+    json,
+    #[cfg(feature = "additional-controls")]
+    None,
+  );
+  let result = validator.validate();
+  let valid = match &result {
+    Ok(()) => true,
+    Err(cddl::validator::json::Error::Validation(_)) => false,
+    Err(error) => panic!("unexpected hard validation error: {}", error),
+  };
+  let exported = cddl::validator::validate_json_from_str(
     schema,
     instance,
     #[cfg(feature = "additional-controls")]
     None,
-  )
-  .is_ok()
+  );
+  #[cfg(not(target_arch = "wasm32"))]
+  assert!(
+    matches!(
+      &exported,
+      Ok(()) | Err(cddl::validator::json::Error::Validation(_))
+    ),
+    "unexpected hard error from string API: {:?}",
+    exported
+  );
+  #[cfg(target_arch = "wasm32")]
+  if let (Err(expected), Err(actual)) = (&result, &exported) {
+    assert_eq!(actual.as_string(), Some(expected.to_string()));
+  }
+  assert_eq!(exported.is_ok(), valid, "typed and string APIs differ");
+  valid
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
@@ -242,6 +272,8 @@ fn repeated_transparent_alias_keys_preserve_bounds_and_claims() {
       "root = { * fields<uint> } fields<label> = (label => uint) label = tstr",
       r#"{"a":1}"#,
     ),
+    // Preserve the existing visitor's alias-binding result; this is a
+    // compatibility check, not a claim about CDDL lexical scoping.
     (
       "root = { * fields<uint> } fields<key> = (label => uint) label = key key = tstr",
       r#"{"a":1}"#,

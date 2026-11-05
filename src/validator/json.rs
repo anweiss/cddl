@@ -377,6 +377,20 @@ fn group_entry_bounds(entry: &GroupEntry<'_>) -> (usize, Option<usize>) {
   occurrence_bounds(occur.map(|occur| occur.occur))
 }
 
+fn bounded_zero_minimum_colon(entry: &GroupEntry<'_>) -> bool {
+  let GroupEntry::ValueMemberKey { ge, .. } = entry else {
+    return false;
+  };
+  matches!(
+    &ge.member_key,
+    Some(MemberKey::Bareword { .. } | MemberKey::Value { .. })
+  ) && group_entry_bounds(entry).0 == 0
+    && !matches!(
+      ge.occur.as_ref().map(|occur| occur.occur),
+      Some(Occur::Optional { .. })
+    )
+}
+
 #[derive(Clone)]
 struct MapCheckpoint<'a> {
   state: super::ValidationState<'a>,
@@ -1557,16 +1571,7 @@ impl<'a> JSONValidator<'a> {
     proof: &mut LiteralKeyProof<'b, 'a>,
   ) -> Option<()> {
     if let GroupEntry::ValueMemberKey { ge, .. } = entry {
-      if member_key_is_cut(ge)
-        || (matches!(
-          &ge.member_key,
-          Some(MemberKey::Bareword { .. } | MemberKey::Value { .. })
-        ) && group_entry_bounds(entry).0 == 0
-          && !matches!(
-            ge.occur.as_ref().map(|occur| occur.occur),
-            Some(Occur::Optional { .. })
-          ))
-      {
+      if member_key_is_cut(ge) || bounded_zero_minimum_colon(entry) {
         return None;
       }
     }
@@ -2202,7 +2207,10 @@ impl<'a> JSONValidator<'a> {
     let GroupEntry::ValueMemberKey { ge, .. } = entry else {
       return false;
     };
-    if member_key_is_cut(ge) || self.proven_scalar_type(&ge.entry_type, None).is_none() {
+    if member_key_is_cut(ge)
+      || bounded_zero_minimum_colon(entry)
+      || self.proven_scalar_type(&ge.entry_type, None).is_none()
+    {
       return false;
     }
     if self.plain_literal_key(entry, None).is_some() {
@@ -6342,6 +6350,34 @@ mod map_replay_budget_tests {
         assert!(matches!(result, Err(Error::RecursionLimit { limit: 64 })));
       } else {
         assert!(matches!(result, Err(Error::Validation(_))));
+      }
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_suppression_preserves_absent_bareword_value_depth() {
+    for aliases in [65, 64] {
+      let rules = (0..aliases - 1)
+        .map(|i| format!("v{i} = v{}", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+      let schema = format!(
+        "root = {{ required: uint, (a: uint // 0*1 absent: v0) }} / any
+         {rules} v{} = uint",
+        aliases - 1
+      );
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator = limited_validator(&cddl, serde_json::json!({"required":"text"}), 1);
+      let result = validator.validate();
+      if aliases == 65 {
+        assert!(
+          matches!(result, Err(Error::RecursionLimit { limit: 64 })),
+          "{:?}",
+          result
+        );
+      } else {
+        assert!(result.is_ok());
       }
     }
   }
