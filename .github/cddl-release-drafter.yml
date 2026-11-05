@@ -1,5 +1,11 @@
-name-template: 'v$NEXT_PATCH_VERSION'
-tag-template: 'v$NEXT_PATCH_VERSION'
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+# Pre-1.0 policy: breaking changes require a minor draft; revisit in #712 before 1.0.
+version-resolver:
+  minor:
+    labels:
+      - 'breaking-change'
+  default: patch
 change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
 template: |
   ## What's Changed
@@ -10,7 +16,7 @@ template: |
 
   ## Full Changelog
 
-  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$NEXT_PATCH_VERSION
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
 
 categories:
   - title: '🚀 Features'
