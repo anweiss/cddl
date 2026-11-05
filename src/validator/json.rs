@@ -1195,6 +1195,13 @@ impl<'a> JSONValidator<'a> {
   }
 
   fn batch_value_predicate(&self, value_type: &Type<'a>) -> Option<fn(&Value) -> bool> {
+    // The value visitor and argument resolver index differently when bindings
+    // accumulate or arity differs. Do not prove equivalence in that case.
+    if self.state.generic_rules.iter().any(|rule| {
+      Some(rule.name) == self.state.eval_generic_rule && rule.args.len() != rule.params.len()
+    }) {
+      return None;
+    }
     let [choice] = value_type.type_choices.as_slice() else {
       return None;
     };
@@ -5284,6 +5291,11 @@ mod map_replay_budget_tests {
       assert_eq!(member.is_some(), eligible, "{schema}");
       assert_eq!(validator.validate().is_ok(), valid, "{schema}");
     }
+    let cddl =
+      cddl_from_pest_str("root = { tstr => any, * fields<uint, tstr> } fields<T> = (tstr => T)")
+        .unwrap();
+    let mut validator = limited_validator(&cddl, serde_json::json!({"a":1,"b":"x"}), 0);
+    assert!(validator.validate().is_ok());
   }
 
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]

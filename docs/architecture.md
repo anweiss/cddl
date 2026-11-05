@@ -68,8 +68,8 @@ require the ordinary reassignment path. Plain-key batches may proceed when every
 remaining value provably matches an unshadowed `tstr`, `text`, `uint` or `any`
 value type, including a resolved generic argument: no mismatch can trigger a
 reassignment. This proof inspects the caller's data without cloning it or running
-extra validation. Constraints, shadows and uncertain remaining values retain
-the ordinary path. Reassignment shares
+extra validation. Constraints, shadows, mismatched generic binding counts and
+uncertain remaining values retain the ordinary path. Reassignment shares
 compatibility rows for identical members and captured generic bindings, and
 rejects an identical-claim demand exceeding its available matching pairs.
 Only a single interchangeable claim class prefers free pairs before displacement;
