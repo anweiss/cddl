@@ -1603,7 +1603,11 @@ impl<'a> JSONValidator<'a> {
     entry: &'b TypeGroupnameEntry<'a>,
     proof: &mut LiteralKeyProof<'b, 'a>,
   ) -> Option<()> {
-    if entry.generic_args.is_some()
+    if entry
+      .occur
+      .as_ref()
+      .is_some_and(|occur| occurrence_bounds(Some(occur.occur)).0 > 0)
+      || entry.generic_args.is_some()
       || entry.name.socket.is_some()
       || self.batch_key_is_parameter(&entry.name, None)
       || !group_choice_alternates_from_ident(self.state.cddl, &entry.name).is_empty()
@@ -6582,6 +6586,44 @@ mod map_replay_budget_tests {
           }
         }
         assert!(failures.is_empty(), "{:#?}", failures);
+      }
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_named_occurrence_proofs_preserve_depth() {
+    for occurrence in ["+", "1*1", "1*2"] {
+      for (entries, pending) in [
+        (format!("fixed: uint // {occurrence} fields"), 1),
+        (r#"(? "a" => uint // ? outer)"#.into(), 2),
+      ] {
+        for depth in [65, 64] {
+          let aliases = depth - pending;
+          let rules = (0..aliases - 1)
+            .map(|i| format!("v{i} = v{}", i + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
+          let schema = format!(
+            "root = {{ {entries} }} / any fields = (absent: v0,)
+             outer = ({occurrence} fields,) {rules} v{} = uint",
+            aliases - 1
+          );
+          let cddl = cddl_from_pest_str(&schema).unwrap();
+          let mut validator =
+            limited_validator(&cddl, serde_json::json!({"fixed":1,"unknown":true}), 1);
+          let result = validator.validate();
+          if depth == 65 {
+            assert!(
+              matches!(result, Err(Error::RecursionLimit { limit: 64 })),
+              "{}: {:?}",
+              entries,
+              result
+            );
+          } else {
+            assert!(result.is_ok(), "{}: {:?}", entries, result);
+          }
+        }
       }
     }
   }

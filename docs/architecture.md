@@ -80,7 +80,7 @@ generic named references, cycles and explicit cuts retain ordinary choice handli
 Inherited occurrence state also retains ordinary choice handling: an empty arrow
 member can clear that state while an empty named group restores it, changing how
 a later member consumes pairs. Literal-key and scalar-sequence proofs decline
-inherited occurrences and explicitly required inline-group occurrences, whose
+inherited occurrences and explicitly required inline or named-group occurrences, whose
 children can evaluate absent bareword values under the enclosing occurrence.
 An absent member's skip flag is consumed by that member, so an absent `?` arm
 cannot suppress a later sibling's value where a zero-maximum arm would not.
