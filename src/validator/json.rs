@@ -31,6 +31,8 @@ fn augment_choice_assignment(
   visited_pairs: &mut [bool],
   pair_owners: &mut [Option<usize>],
   interchangeable: bool,
+  classes: &[usize],
+  positions: &mut [usize],
 ) -> bool {
   if interchangeable {
     for (pair_slot, compatible) in compatibility[claim_slot].iter().enumerate() {
@@ -41,25 +43,39 @@ fn augment_choice_assignment(
       }
     }
   }
-  for pair_slot in 0..compatibility[claim_slot].len() {
-    if !compatibility[claim_slot][pair_slot] || visited_pairs[pair_slot] {
+  let mut claim = claim_slot;
+  let mut path = Vec::new();
+  loop {
+    let class = classes[claim];
+    let mut next = None;
+    // Earlier slots in this class are incompatible or permanently visited
+    // during this augmentation. Sharing the cursor preserves DFS order.
+    while positions[class] < compatibility[claim].len() {
+      let pair = positions[class];
+      positions[class] += 1;
+      if compatibility[claim][pair] && !visited_pairs[pair] {
+        next = Some(pair);
+        break;
+      }
+    }
+    let Some(pair_slot) = next else {
+      let Some((parent, _)) = path.pop() else {
+        return false;
+      };
+      claim = parent;
+      continue;
+    };
+    visited_pairs[pair_slot] = true;
+    path.push((claim, pair_slot));
+    if let Some(owner) = pair_owners[pair_slot] {
+      claim = owner;
       continue;
     }
-    visited_pairs[pair_slot] = true;
-    if pair_owners[pair_slot].is_none_or(|owner| {
-      augment_choice_assignment(
-        owner,
-        compatibility,
-        visited_pairs,
-        pair_owners,
-        interchangeable,
-      )
-    }) {
-      pair_owners[pair_slot] = Some(claim_slot);
-      return true;
+    for (claim, pair) in path {
+      pair_owners[pair] = Some(claim);
     }
+    return true;
   }
-  false
 }
 
 fn is_json_unsigned(cddl: &CDDL, ident: &Identifier) -> bool {
@@ -227,6 +243,18 @@ struct MemberClaim<'a> {
 }
 
 type ClaimCompatibility = Vec<Arc<Vec<bool>>>;
+
+fn compatibility_classes(rows: &[Arc<Vec<bool>>]) -> (Vec<usize>, usize) {
+  let mut classes = HashMap::new();
+  let indices = rows
+    .iter()
+    .map(|row| {
+      let next = classes.len();
+      *classes.entry(Arc::as_ptr(row)).or_insert(next)
+    })
+    .collect();
+  (indices, classes.len())
+}
 
 fn claim_compatibility<'a, F>(
   claims: &[MemberClaim<'a>],
@@ -1697,17 +1725,19 @@ impl<'a> JSONValidator<'a> {
     let mut pair_owners = vec![None; candidates.len()];
     // Different classes must retain the original displacement order: which
     // pairs remain free can determine whether a later table member succeeds.
-    let interchangeable = compatibility
-      .first()
-      .is_none_or(|first| compatibility.iter().all(|row| Arc::ptr_eq(first, row)));
+    let (classes, class_count) = compatibility_classes(&compatibility);
+    let interchangeable = class_count < 2;
     for claim_slot in 0..claims.len() {
       let mut visited_pairs = vec![false; candidates.len()];
+      let mut positions = vec![0; class_count];
       if !augment_choice_assignment(
         claim_slot,
         &compatibility,
         &mut visited_pairs,
         &mut pair_owners,
         interchangeable,
+        &classes,
+        &mut positions,
       ) {
         return Ok(false);
       }
@@ -5320,6 +5350,109 @@ mod map_replay_budget_tests {
       exhausted.validate(),
       Err(Error::ResourceLimit { limit: 0 })
     ));
+  }
+
+  fn reference_assignment(
+    claim: usize,
+    rows: &[Arc<Vec<bool>>],
+    visited: &mut [bool],
+    owners: &mut [Option<usize>],
+    checks: &mut usize,
+  ) -> bool {
+    for pair in 0..rows[claim].len() {
+      *checks += 1;
+      if !rows[claim][pair] || visited[pair] {
+        continue;
+      }
+      visited[pair] = true;
+      if owners[pair].is_none_or(|owner| reference_assignment(owner, rows, visited, owners, checks))
+      {
+        owners[pair] = Some(claim);
+        return true;
+      }
+    }
+    false
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_class_cursors_preserve_dfs_assignments() {
+    for pattern in 0usize..512 {
+      for share_rows in [false, true] {
+        let mut rows: ClaimCompatibility = Vec::new();
+        for claim in 0..3 {
+          let values: Vec<_> = (0..3)
+            .map(|pair| pattern & (1 << (claim * 3 + pair)) != 0)
+            .collect();
+          let row = if share_rows {
+            rows
+              .iter()
+              .find(|row| row.as_ref() == &values)
+              .cloned()
+              .unwrap_or_else(|| Arc::new(values))
+          } else {
+            Arc::new(values)
+          };
+          rows.push(row);
+        }
+        let (classes, count) = compatibility_classes(&rows);
+        let mut actual = vec![None; 3];
+        let mut expected = actual.clone();
+        for claim in 0..3 {
+          let matched = augment_choice_assignment(
+            claim,
+            &rows,
+            &mut [false; 3],
+            &mut actual,
+            false,
+            &classes,
+            &mut vec![0; count],
+          );
+          let reference =
+            reference_assignment(claim, &rows, &mut [false; 3], &mut expected, &mut 0);
+          assert_eq!(matched, reference);
+          assert_eq!(actual, expected, "graph {pattern}, sharing {share_rows}");
+        }
+      }
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_mixed_classes_bound_pair_scans() {
+    let pairs = 257;
+    let mut rows = vec![Arc::new(vec![true; pairs]); pairs - 1];
+    rows.push(Arc::new(vec![true; pairs]));
+    let (classes, class_count) = compatibility_classes(&rows);
+    let mut actual = vec![None; pairs];
+    let mut expected = actual.clone();
+    let mut scans = 0;
+    let mut reference_scans = 0;
+    for claim in 0..rows.len() {
+      let mut positions = vec![0; class_count];
+      assert!(augment_choice_assignment(
+        claim,
+        &rows,
+        &mut vec![false; pairs],
+        &mut actual,
+        false,
+        &classes,
+        &mut positions,
+      ));
+      scans += positions.iter().sum::<usize>();
+      assert!(reference_assignment(
+        claim,
+        &rows,
+        &mut vec![false; pairs],
+        &mut expected,
+        &mut reference_scans,
+      ));
+      assert_eq!(actual, expected);
+    }
+    assert!(scans > 0 && scans <= class_count * pairs * rows.len());
+    assert!(reference_scans > scans * 8);
+    #[cfg(not(target_arch = "wasm32"))]
+    eprintln!("mixed-class pair scans: {scans}; reference: {reference_scans}");
   }
 }
 

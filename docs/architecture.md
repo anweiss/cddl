@@ -73,7 +73,10 @@ uncertain remaining values retain the ordinary path. Reassignment shares
 compatibility rows for identical members and captured generic bindings, and
 rejects an identical-claim demand exceeding its available matching pairs.
 Only a single interchangeable claim class prefers free pairs before displacement;
-different classes retain their original assignment order for later members.
+mixed classes retain DFS displacement order while sharing a per-class scan cursor
+within each augmentation. Already-incompatible or visited slots cannot become
+eligible during that search. An explicit path stack avoids recursive depth growth;
+neither optimization changes the replay-budget policy.
 Single-member choice-key repetitions also enumerate pairs once, probing each
 key domain and value under the selected generic bindings while retaining
 individual claims and occurrence bounds.

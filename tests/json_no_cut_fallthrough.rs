@@ -261,6 +261,19 @@ fn heterogeneous_claims_preserve_displacement_order_for_later_members() {
   let schema = "root = { tstr => (1 / bool), tstr => uint, b: uint, * tstr => uint }";
   assert!(validates(schema, r#"{"a":1,"b":2,"c":3,"d":true}"#));
   assert!(!validates(schema, r#"{"a":1,"b":2,"c":3,"d":"wrong"}"#));
+  let mixed = r#"root = { 0*256 (tstr => uint), tstr => any, "k0000" => uint, * tstr => uint }"#;
+  let input = format!(
+    "{{{}}}",
+    (0..258)
+      .map(|key| format!("\"k{key:04}\":1"))
+      .collect::<Vec<_>>()
+      .join(",")
+  );
+  assert!(validates(mixed, &input));
+  assert!(!validates(
+    mixed,
+    &input.replace("\"k0000\":1", "\"k0000\":\"wrong\""),
+  ));
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
