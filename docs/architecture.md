@@ -47,10 +47,13 @@ report each distinct diagnostic once rather than repeating it for every path.
 Zero-minimum named and inline groups use state-only transactions for complete
 iterations. Their occurrence never makes required members optional; partial
 failed iterations roll back, and zero-width iterations stop repetition.
-Generic repetitions recycle their immutable input between fresh child contexts,
-copying the object once for the entire occurrence rather than once per iteration. Generic
-bindings, recursion markers and transaction state are still rebuilt for each
-iteration; children do not retain a previous iteration's evaluation state.
+Same-object child validators share immutable JSON input through `Arc<Value>`,
+including generic references inside inline repetitions and nested generic groups.
+Creating each child clones only the shared handle, not the complete object.
+Generic bindings, recursion markers and transaction state are still rebuilt for
+each iteration; children do not retain a previous iteration's evaluation state.
+An occurrence with maximum zero returns before entering its named rule or
+acquiring a depth slot, including otherwise-batchable generic references.
 The enclosing occurrence is restored after the optional group, without leaking
 it into that group's required members. Failed required choice prefixes stop
 before recording unrelated later decisions; coverage failures still replay.
@@ -62,11 +65,15 @@ coverage diagnostics.
 If a required mismatch precedes every replay decision, later choices become
 single-outcome nodes only for a proven hard-error-free scalar sequence.
 Its first traversal and pruning context remain intact; optional rollback restores
-replay eligibility. Controlled values, named calls, inherited movable claims and
-structured input retain ordinary replay, including later-alternative hard errors.
-Choices whose arms consist entirely of absent plain optional literal members
-also retain only their first outcome. No value is evaluated by this proof, and
-present keys or cuts retain ordinary choice handling.
+replay eligibility. Suppression is scoped to the proven sequence and cannot leak
+from a nested scalar group into effectful enclosing siblings. Controlled values,
+named calls, inherited movable claims and structured input retain ordinary replay,
+including later-alternative hard errors.
+Choices whose arms contain only zero-minimum entries with absent literal keys
+also retain only their first outcome. This includes named-group DAGs and zero-
+minimum occurrence ranges, not just `?` literal members. No value is evaluated by
+this proof. Named depth requirements remain checked; present keys, dynamic keys,
+generic named references, cycles and explicit cuts retain ordinary choice handling.
 Optional choices are skipped before registering replay decisions only when every
 arm provably fails without evaluating an earlier value or reassigning a claimed key.
 The proof can cross absent plain `?` literal members, then recognize a missing
