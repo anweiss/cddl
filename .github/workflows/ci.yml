@@ -142,6 +142,12 @@ jobs:
         run: |
           wasm-pack test --node -- --test wasm
 
+      - name: Test wasm library regressions
+        run: wasm-pack test --node -- --lib
+
+      - name: Test JSON-only wasm library regressions
+        run: wasm-pack test --node -- --no-default-features --features json --lib
+
       - name: Test wasm module resolution
         run: wasm-pack test --node -- --features modules --test wasm
 

@@ -1526,6 +1526,7 @@ impl<'a> JSONValidator<'a> {
       return false;
     };
     if self.state.ctrl.is_some()
+      || self.state.occurrence.is_some()
       || self.state.is_group_to_choice_enum
       || self.state.eval_generic_rule.is_some()
       || self.state.is_cut_present
@@ -1586,7 +1587,12 @@ impl<'a> JSONValidator<'a> {
           .keys
           .insert(self.plain_literal_key(entry, None)?.to_owned());
       }
-      GroupEntry::InlineGroup { group, .. } => proof.push_group(group),
+      GroupEntry::InlineGroup { occur, group, .. } => {
+        if occur.is_some() && group_entry_bounds(entry).0 > 0 {
+          return None;
+        }
+        proof.push_group(group);
+      }
       GroupEntry::TypeGroupname { ge, .. } => self.add_named_key_proof(ge, proof)?,
     }
     Some(())
@@ -1895,6 +1901,7 @@ impl<'a> JSONValidator<'a> {
       return false;
     };
     if self.map_choice_search.is_none()
+      || self.state.occurrence.is_some()
       || self.state.ctrl.is_some()
       || self.state.is_group_to_choice_enum
       || self.state.is_cut_present
@@ -2175,6 +2182,7 @@ impl<'a> JSONValidator<'a> {
       return false;
     };
     if self.state.ctrl.is_some()
+      || self.state.occurrence.is_some()
       || self.state.is_group_to_choice_enum
       || self.state.eval_generic_rule.is_some()
       || !self.member_claims.is_empty()
@@ -2192,7 +2200,10 @@ impl<'a> JSONValidator<'a> {
     while let Some(entry) = pending.pop() {
       match entry {
         GroupEntry::ValueMemberKey { .. } if self.map_member_is_effect_free(entry) => {}
-        GroupEntry::InlineGroup { group, .. } => {
+        GroupEntry::InlineGroup { occur, group, .. } => {
+          if occur.is_some() && group_entry_bounds(entry).0 > 0 {
+            return false;
+          }
           pending.extend(
             group
               .group_choices
@@ -6516,6 +6527,63 @@ mod map_replay_budget_tests {
       }
     }
     assert!(failures.is_empty(), "{:#?}", failures);
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_empty_arms_preserve_inherited_occurrence() {
+    for occurrence in ["+", "1*2"] {
+      for arms in [
+        r#"? "a" => uint // ? missing"#,
+        r#"? missing // ? "a" => uint"#,
+      ] {
+        let schema =
+          format!("root = {{ {occurrence} (({arms}), tstr => tstr) }} missing = (b: uint,)");
+        let cddl = cddl_from_pest_str(&schema).unwrap();
+        let mut validator = limited_validator(&cddl, serde_json::json!({"x":"one","y":"two"}), 1);
+        assert!(validator.validate().is_ok(), "{}", schema);
+        let mut invalid = limited_validator(&cddl, serde_json::json!({"x":"one","y":false}), 1);
+        assert!(matches!(invalid.validate(), Err(Error::Validation(_))));
+      }
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_inline_occurrence_proofs_preserve_depth() {
+    let mut failures = Vec::new();
+    for aliases in [65, 64] {
+      let rules = (0..aliases - 1)
+        .map(|i| format!("v{i} = v{}", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+      for occurrence in ["+", "1*1", "1*2"] {
+        for entries in [
+          format!("fixed: uint // {occurrence} (absent: v0,)"),
+          format!("required: uint, (a: uint // {occurrence} (absent: v0,))"),
+        ] {
+          let schema = format!(
+            "root = {{ {entries} }} / any {rules} v{} = uint",
+            aliases - 1
+          );
+          let cddl = cddl_from_pest_str(&schema).unwrap();
+          let mut validator = limited_validator(
+            &cddl,
+            serde_json::json!({"fixed":1,"required":"text","unknown":true}),
+            2,
+          );
+          let result = validator.validate();
+          if aliases == 65 {
+            if !matches!(result, Err(Error::RecursionLimit { limit: 64 })) {
+              failures.push(format!("{}: {:?}", entries, result));
+            }
+          } else {
+            assert!(result.is_ok(), "{}: {:?}", entries, result);
+          }
+        }
+        assert!(failures.is_empty(), "{:#?}", failures);
+      }
+    }
   }
 
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]

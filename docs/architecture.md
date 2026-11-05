@@ -77,6 +77,11 @@ also retain only their first outcome. This includes named-group DAGs and
 zero-minimum occurrence ranges, not just `?` literal members. No value is evaluated by
 this proof. Named depth requirements remain checked; present keys, dynamic keys,
 generic named references, cycles and explicit cuts retain ordinary choice handling.
+Inherited occurrence state also retains ordinary choice handling: an empty arrow
+member can clear that state while an empty named group restores it, changing how
+a later member consumes pairs. Literal-key and scalar-sequence proofs decline
+inherited occurrences and explicitly required inline-group occurrences, whose
+children can evaluate absent bareword values under the enclosing occurrence.
 An absent member's skip flag is consumed by that member, so an absent `?` arm
 cannot suppress a later sibling's value where a zero-maximum arm would not.
 Explicit colon occurrence operators other than `?` are excluded from the
@@ -89,7 +94,7 @@ excluded; a bound alone does not establish empty success for those visitors.
 Optional choices are skipped before registering replay decisions only when every
 arm provably fails without evaluating an earlier value or reassigning a claimed key.
 The proof can cross absent plain `?` literal members, then recognize a missing
-required literal key or an unclaimed string against plain, unshadowed `uint`,
+unquantified required literal key or an unclaimed string against plain, unshadowed `uint`,
 including transparent, single-definition type-alias chains. Alias cycles,
 incremental definitions, generic bindings and redefined prelude names decline
 this proof. The latter also excludes controls, explicit/inherited cuts, claimed
@@ -176,10 +181,14 @@ counts transparent key-alias depth and any pending named call; optional named
 proofs cannot bypass the reference's own depth check. Generic zero-progress
 markers are checked before acquiring another slot, preserving ordinary cycle
 mismatch and alternative fallback at the depth boundary.
-Non-progress recursion retains its ordinary validation diagnostic. This limit
-bounds named-rule calls during map validation, not every possible AST traversal.
+Detected zero-progress revisits retain their ordinary validation diagnostic.
+A long chain of previously unseen names can reach the depth limit before a
+cycle closes; that remains a hard error. This limit bounds named-rule calls
+during map validation, not every possible AST traversal.
 In particular, scalar-value children without an active map search do not acquire
 these depth slots.
+Hosted WASM validation runs the library regression suite in both default and
+JSON-only configurations, alongside the existing integration suites.
 
 An undefined group socket matches no entries, so `{ * $$s }` accepts an empty
 map. A failed inline group that may occur zero times, such as `? ($$s)`,

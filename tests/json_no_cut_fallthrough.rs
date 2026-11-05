@@ -554,7 +554,7 @@ fn repeated_single_members_do_not_bypass_key_domains() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
-fn map_review_batches_allow_prior_claim_reassignment() {
+fn map_batches_allow_prior_claim_reassignment() {
   for group in ["(tstr => uint)", "g", "h<uint>"] {
     let schema =
       format!("root = {{ tstr => any, ? {group} }} g = (tstr => uint) h<T> = (tstr => T)");
@@ -564,7 +564,7 @@ fn map_review_batches_allow_prior_claim_reassignment() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
-fn map_review_optional_groups_restore_enclosing_occurrence() {
+fn map_optional_groups_restore_enclosing_occurrence() {
   for group in ["(a: uint)", "(tstr => uint)", "g", "h<uint>"] {
     let schema =
       format!("root = {{ + (? {group}, tstr => tstr) }} g = (tstr => uint) h<T> = (tstr => T)");
@@ -575,7 +575,7 @@ fn map_review_optional_groups_restore_enclosing_occurrence() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
-fn map_review_generic_batch_bindings_are_child_local() {
+fn map_generic_batch_bindings_are_child_local() {
   assert!(validates(
     "root = { g<uint> } g<T> = (* $$g<T>,) $$g<U> = (tstr => U)",
     r#"{"a":1}"#,
@@ -587,7 +587,7 @@ fn map_review_generic_batch_bindings_are_child_local() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
-fn map_review_required_choices_prune_failed_prefixes() {
+fn map_required_choices_prune_failed_prefixes() {
   let schema = format!(
     "root = {{ {} }}",
     (0..13)
