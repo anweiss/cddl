@@ -1383,7 +1383,7 @@ impl<'a> JSONValidator<'a> {
     Ok(())
   }
 
-  fn required_literal_key<'b>(
+  fn plain_literal_key<'b>(
     &self,
     entry: &'b GroupEntry<'a>,
     params: Option<&GenericParams<'a>>,
@@ -1391,9 +1391,6 @@ impl<'a> JSONValidator<'a> {
     let GroupEntry::ValueMemberKey { ge, .. } = entry else {
       return None;
     };
-    if occurrence_bounds(ge.occur.as_ref().map(|occur| occur.occur)).0 == 0 {
-      return None;
-    }
     let key = match &ge.member_key {
       Some(MemberKey::Bareword { ident, .. })
         if ident.socket.is_none()
@@ -1420,7 +1417,73 @@ impl<'a> JSONValidator<'a> {
     (key != "any").then_some(key)
   }
 
-  fn optional_choices_definitely_absent(
+  fn required_uint_definitely_mismatches(
+    &self,
+    entry: &ValueMemberKeyEntry<'a>,
+    key: &str,
+    value: &Value,
+    params: Option<&GenericParams<'a>>,
+  ) -> bool {
+    if entry.occur.is_some()
+      || member_key_is_cut(entry)
+      || self.state.is_cut_present
+      || self.cut_value.is_some()
+      || !value.is_string()
+      || self
+        .validated_keys
+        .as_ref()
+        .is_some_and(|keys| keys.iter().any(|claimed| claimed == key))
+    {
+      return false;
+    }
+    let [choice] = entry.entry_type.type_choices.as_slice() else {
+      return false;
+    };
+    let Type2::Typename { ident, .. } = &choice.type1.type2 else {
+      return false;
+    };
+    ident.ident == "uint"
+      && !self.batch_key_is_parameter(ident, params)
+      && self
+        .batch_value_predicate(&entry.entry_type)
+        .is_some_and(|matches| !matches(value))
+  }
+
+  fn optional_choice_definitely_fails(
+    &self,
+    choice: &GroupChoice<'a>,
+    object: &serde_json::Map<String, Value>,
+    params: Option<&GenericParams<'a>>,
+  ) -> bool {
+    for (entry, _) in &choice.group_entries {
+      let GroupEntry::ValueMemberKey { ge, .. } = entry else {
+        return false;
+      };
+      let Some(key) = self.plain_literal_key(entry, params) else {
+        return false;
+      };
+      let required = occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 > 0;
+      if let Some(value) = object.get(key) {
+        return required && self.required_uint_definitely_mismatches(ge, key, value, params);
+      }
+      if required {
+        return true;
+      }
+      // Only absent plain optional members can be crossed without evaluating
+      // a value, recording a claim, or deferring a value error.
+      if member_key_is_cut(ge)
+        || !matches!(
+          ge.occur.as_ref().map(|o| o.occur),
+          Some(Occur::Optional { .. })
+        )
+      {
+        return false;
+      }
+    }
+    false
+  }
+
+  fn optional_choices_definitely_fail(
     &self,
     group: &Group<'a>,
     params: Option<&GenericParams<'a>>,
@@ -1436,18 +1499,15 @@ impl<'a> JSONValidator<'a> {
       return false;
     }
     // A planned choice stops on its first required mismatch. Prove that
-    // every arm fails there before recording any useless replay decisions.
-    // Do not skip earlier values, controls, optional entries or rule lookups.
-    group.group_choices.iter().all(|choice| {
-      choice
-        .group_entries
-        .first()
-        .and_then(|(entry, _)| self.required_literal_key(entry, params))
-        .is_some_and(|key| !object.contains_key(key))
-    })
+    // every arm fails without any earlier value evaluation or claimed-key
+    // reassignment. A required failure is rolled back, not deferred.
+    group
+      .group_choices
+      .iter()
+      .all(|choice| self.optional_choice_definitely_fails(choice, object, params))
   }
 
-  fn optional_named_choices_definitely_absent(&self, entry: &TypeGroupnameEntry<'a>) -> bool {
+  fn optional_named_choices_definitely_fail(&self, entry: &TypeGroupnameEntry<'a>) -> bool {
     if !group_choice_alternates_from_ident(self.state.cddl, &entry.name).is_empty() {
       return false;
     }
@@ -1460,11 +1520,11 @@ impl<'a> JSONValidator<'a> {
     else {
       return false;
     };
-    self.optional_choices_definitely_absent(group, rule.generic_params.as_ref())
+    self.optional_choices_definitely_fail(group, rule.generic_params.as_ref())
   }
 
   fn visit_optional_named_group(&mut self, entry: &TypeGroupnameEntry<'a>) -> Result {
-    if self.optional_named_choices_definitely_absent(entry) {
+    if self.optional_named_choices_definitely_fail(entry) {
       return Ok(());
     }
     if self.batchable_named_map_member(entry, false).is_some() {
@@ -4617,7 +4677,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     if !may_be_absent || !matches!(self.json, Value::Object(_)) {
       return walk_inline_group_entry(self, occur, g);
     }
-    if self.optional_choices_definitely_absent(g, None) {
+    if self.optional_choices_definitely_fail(g, None) {
       return Ok(());
     }
     if let (Some(member), Some(occurrence)) = (self.batchable_map_member(g, None, self), occur) {
@@ -5229,12 +5289,21 @@ mod map_replay_budget_tests {
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
   #[cfg_attr(not(target_arch = "wasm32"), test)]
   fn map_replay_absent_optional_choices_do_not_multiply_paths() {
-    for form in 0..3 {
+    for form in 0..9 {
       let mut entries = Vec::new();
       let mut rules = Vec::new();
+      let mut input = serde_json::json!({"m":1});
       for index in 0..14 {
-        let body = format!("(a{index}: uint // b{index}: uint)");
-        match form {
+        let body = if form / 3 == 1 {
+          format!("(? p{index}: uint, a{index}: uint // ? q{index}: uint, b{index}: uint)")
+        } else {
+          if form / 3 == 2 {
+            input[format!("a{index}")] = Value::String("text".into());
+            input[format!("b{index}")] = Value::String("text".into());
+          }
+          format!("(a{index}: uint // b{index}: uint)")
+        };
+        match form % 3 {
           0 => entries.push(format!("? {body}")),
           1 => {
             entries.push(format!("? g{index}"));
@@ -5247,12 +5316,12 @@ mod map_replay_budget_tests {
         }
       }
       let schema = format!(
-        "root = {{ ? (k: uint // m: uint), {} }} {}",
+        "root = {{ ? (k: uint // m: uint), {}, * tstr => tstr }} {}",
         entries.join(","),
         rules.join("\n")
       );
       let cddl = cddl_from_pest_str(&schema).unwrap();
-      let mut validator = limited_validator(&cddl, serde_json::json!({"m":1}), 1);
+      let mut validator = limited_validator(&cddl, input.clone(), 1);
       assert!(validator.validate().is_ok(), "{}", schema);
       assert_eq!(
         validator
@@ -5261,7 +5330,7 @@ mod map_replay_budget_tests {
           .load(Ordering::Relaxed),
         0
       );
-      let mut exhausted = limited_validator(&cddl, serde_json::json!({"m":1}), 0);
+      let mut exhausted = limited_validator(&cddl, input, 0);
       assert!(matches!(
         exhausted.validate(),
         Err(Error::ResourceLimit { limit: 0 })
@@ -5271,6 +5340,79 @@ mod map_replay_budget_tests {
       cddl_from_pest_str("root = { ? (? a: uint, m: uint // ? b: uint, m: uint) }").unwrap();
     let mut validator = limited_validator(&cddl, serde_json::json!({"m":1}), 0);
     assert!(validator.validate().is_ok());
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_optional_impossibility_keeps_effectful_paths() {
+    for (body, input, proof) in [
+      ("a: uint // b: uint", r#"{"a":"text","b":"text"}"#, true),
+      ("? p: uint, a: uint // ? q: uint, b: uint", "{}", true),
+      ("? p: uint, a: uint // b: uint", r#"{"p":1}"#, false),
+      (
+        r#""a" ^ => uint // "b" ^ => uint"#,
+        r#"{"a":"text","b":"text"}"#,
+        false,
+      ),
+      (
+        "a: uint .size 1 // b: uint",
+        r#"{"a":"text","b":"text"}"#,
+        false,
+      ),
+      ("a: uint // b: tstr", r#"{"a":"text","b":"text"}"#, false),
+      ("a: uint // b: uint", r#"{"a":[],"b":[]}"#, false),
+    ] {
+      let schema = format!("root = {{ ? ({body}) }}");
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let Rule::Type { rule, .. } = &cddl.rules[0] else {
+        panic!("type rule")
+      };
+      let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+        panic!("map")
+      };
+      let GroupEntry::InlineGroup { group, .. } = &group.group_choices[0].group_entries[0].0 else {
+        panic!("inline group")
+      };
+      let mut validator = limited_validator(&cddl, serde_json::from_str(input).unwrap(), 0);
+      validator.map_choice_search = Some(Arc::new(Mutex::new(MapChoiceSearch::default())));
+      assert_eq!(
+        validator.optional_choices_definitely_fail(group, None),
+        proof,
+        "{schema}"
+      );
+      if input.contains("\"a\":\"text\"") && proof {
+        validator.validated_keys = Some(vec!["a".into()]);
+        assert!(!validator.optional_choices_definitely_fail(group, None));
+        validator.validated_keys = None;
+        validator.cut_value = Some("outer".into());
+        assert!(!validator.optional_choices_definitely_fail(group, None));
+      }
+    }
+    for schema in [
+      "root = { ? (a: uint // b: uint), * tstr => 0 } uint = tstr",
+      "root = { ? (a: uint // b: uint), * tstr => 0 } uint /= tstr",
+      "root = { ? g<tstr>, * tstr => 0 } g<uint> = (a: uint // b: uint)",
+      "root = { ? g<tstr>, * tstr => 0 } g<T> = (a: T // b: T)",
+    ] {
+      let cddl = cddl_from_pest_str(schema).unwrap();
+      let mut validator = limited_validator(&cddl, serde_json::json!({"a":"text"}), 0);
+      assert!(validator.validate().is_ok(), "{}", schema);
+    }
+    for input in [serde_json::json!({"required":1}), serde_json::json!({})] {
+      let cddl = cddl_from_pest_str(
+        "root = { ? (? p: uint, a: uint // ? q: uint, b: uint), required: uint }",
+      )
+      .unwrap();
+      let mut validator = limited_validator(&cddl, input.clone(), 0);
+      assert_eq!(
+        validator.validate().is_ok(),
+        input.get("required").is_some()
+      );
+      assert_eq!(
+        validator.validate().is_ok(),
+        input.get("required").is_some()
+      );
+    }
   }
 
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
@@ -5530,6 +5672,73 @@ mod tests {
       assert!(validator.object_value.is_none());
       assert!(validator.object_value_key.is_none());
       assert!(validator.map_choice_search.is_none());
+    }
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn optional_impossibility_proof_preserves_hard_error_order_and_rollback() {
+    let cddl = cddl_from_str(
+      "root = { ? (? \"a\" => uint .feature 'enabled', x: uint // b: uint) }",
+      true,
+    )
+    .unwrap();
+    let Rule::Type { rule, .. } = &cddl.rules[0] else {
+      panic!("type rule")
+    };
+    let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+      panic!("map")
+    };
+    let mut group = group.clone();
+    let GroupEntry::InlineGroup { group: choices, .. } =
+      &mut group.group_choices[0].group_entries[0].0
+    else {
+      panic!("inline group")
+    };
+    let GroupEntry::ValueMemberKey { ge, .. } = &mut choices.group_choices[0].group_entries[0].0
+    else {
+      panic!("prefix")
+    };
+    ge.entry_type.type_choices[0]
+      .type1
+      .operator
+      .as_mut()
+      .unwrap()
+      .type2 = Type2::from(token::ByteValue::UTF8(vec![0xff].into()));
+    for present in [false, true] {
+      let input = if present {
+        serde_json::json!({"a":1})
+      } else {
+        serde_json::json!({})
+      };
+      let mut validator = JSONValidator::new(&cddl, input, Some(&["enabled"]));
+      validator.state.data_location = "/root".into();
+      validator.state.is_multi_group_choice = true;
+      let outer = Arc::new(Mutex::new(MapChoiceSearch {
+        path: vec![1],
+        widths: vec![2],
+        ..MapChoiceSearch::default()
+      }));
+      validator.map_choice_search = Some(outer.clone());
+      let result = validator.visit_closed_map(&group, &[]);
+      if present {
+        assert!(matches!(result, Err(Error::UTF8Parsing(_))));
+      } else {
+        assert!(result.is_ok());
+      }
+      assert_eq!(validator.state.data_location, "/root");
+      assert!(validator.state.occurrence.is_none());
+      assert!(validator.validated_keys.is_none());
+      assert!(validator.member_claims.is_empty());
+      assert!(validator.deferred_map_errors.is_empty());
+      assert!(validator.state.is_multi_group_choice);
+      assert!(Arc::ptr_eq(
+        validator.map_choice_search.as_ref().unwrap(),
+        &outer
+      ));
+      let outer = outer.lock().unwrap();
+      assert_eq!(outer.path, [1]);
+      assert_eq!(outer.widths, [2]);
     }
   }
 

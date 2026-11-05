@@ -55,10 +55,15 @@ incomplete ownership ledger. This traversal marker is restored on optional
 rollback and isolated across maps, retries and reuse. Otherwise-successful
 attempts always check coverage, and complete failed traversals retain their
 coverage diagnostics.
-Optional choices whose every arm starts with a required literal key missing from
-the input are skipped before registering replay decisions. This proof excludes
-controls, optional first entries and shadowed names; it does not guess whether
-arbitrary value constraints can match.
+Optional choices are skipped before registering replay decisions only when every
+arm provably fails without evaluating an earlier value or reassigning a claimed key.
+The proof can cross absent plain `?` literal members, then recognize a missing
+required literal key or an unclaimed string against plain, unshadowed `uint`.
+The latter excludes controls, generic shadows, explicit/inherited cuts, claimed
+keys and non-string values. Present optional prefixes retain ordinary traversal,
+including hard errors. These required failures roll back without deferred
+optional-member diagnostics. No visitor probes, failure cache or budget changes
+are involved; arbitrary value constraints are not inferred impossible.
 Single-member repetitions over non-cut string/any prelude key domains enumerate
 unclaimed pairs once, retaining occurrence bounds and individual movable claims
 without copying a growing ownership ledger for every pair. Transparent alias chains
