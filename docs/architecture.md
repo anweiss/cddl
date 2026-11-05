@@ -79,11 +79,12 @@ this proof. Named depth requirements remain checked; present keys, dynamic keys,
 generic named references, cycles and explicit cuts retain ordinary choice handling.
 An absent member's skip flag is consumed by that member, so an absent `?` arm
 cannot suppress a later sibling's value where a zero-maximum arm would not.
-Zero-minimum colon members with occurrence ranges rather than `?` are excluded
-from both absence-based proofs: quoted keys can still report an absent key, and
-bareword keys can evaluate their values despite being absent. That evaluation
-can itself raise a hard depth error. The same exclusion applies to the
-hard-error-free sequence proof used for suppression. Direct zero-maximum cut members are also
+Explicit colon occurrence operators other than `?` are excluded from the
+literal-key proofs: quoted keys can still report an absent key, and bareword
+keys can evaluate their values despite being absent. This includes required
+ranges and `+`, not only zero-minimum ranges. That evaluation can itself raise
+a hard depth error. The same exclusion applies to optional-failure proofs and
+the hard-error-free sequence proof used for suppression. Direct zero-maximum cut members are also
 excluded; a bound alone does not establish empty success for those visitors.
 Optional choices are skipped before registering replay decisions only when every
 arm provably fails without evaluating an earlier value or reassigning a claimed key.
@@ -121,8 +122,11 @@ remaining value provably matches an unshadowed `tstr`, `text`, `uint` or `any`
 value type, including a resolved generic argument: no mismatch can trigger a
 reassignment. This proof inspects the caller's data without cloning it or running
 extra validation. Constraints, shadows, mismatched generic binding counts and
-uncertain remaining values retain the ordinary path. Reassignment shares
-compatibility rows for identical members and captured generic bindings, and
+uncertain remaining values retain the ordinary path.
+Named-group batching and optional-failure proofs also decline references that
+name an active generic parameter, preserving parameter lookup before global
+rule lookup.
+Reassignment shares compatibility rows for identical members and captured generic bindings, and
 rejects an identical-claim demand exceeding its available matching pairs.
 Only a single interchangeable claim class prefers free pairs before displacement;
 mixed classes retain DFS displacement order while sharing a per-class scan cursor
@@ -160,8 +164,8 @@ not a blanket CPU, memory, recursion, or denial-of-service guarantee.
 
 Separately, named-rule calls made while map-candidate search is active in their
 visitor share a limit of 64 simultaneously active calls. Productive flat-map
-recursion is therefore bounded even when it consumes
-keys without replaying candidates. Exceeding this depth returns the distinct hard
+recursion is therefore bounded even when it consumes keys without replaying
+candidates. Exceeding this depth returns the distinct hard
 `json::Error::RecursionLimit { limit }`; it is not replay-budget exhaustion or an
 ordinary mismatch and cannot be swallowed by optional entries or type choices.
 Child visitors inherit the current validation's `Arc`-shared counters, including

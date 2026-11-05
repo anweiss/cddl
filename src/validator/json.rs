@@ -377,18 +377,17 @@ fn group_entry_bounds(entry: &GroupEntry<'_>) -> (usize, Option<usize>) {
   occurrence_bounds(occur.map(|occur| occur.occur))
 }
 
-fn bounded_zero_minimum_colon(entry: &GroupEntry<'_>) -> bool {
+fn non_optional_colon_occurrence(entry: &GroupEntry<'_>) -> bool {
   let GroupEntry::ValueMemberKey { ge, .. } = entry else {
     return false;
   };
   matches!(
     &ge.member_key,
     Some(MemberKey::Bareword { .. } | MemberKey::Value { .. })
-  ) && group_entry_bounds(entry).0 == 0
-    && !matches!(
-      ge.occur.as_ref().map(|occur| occur.occur),
-      Some(Occur::Optional { .. })
-    )
+  ) && ge
+    .occur
+    .as_ref()
+    .is_some_and(|occur| !matches!(occur.occur, Occur::Optional { .. }))
 }
 
 #[derive(Clone)]
@@ -1571,7 +1570,7 @@ impl<'a> JSONValidator<'a> {
     proof: &mut LiteralKeyProof<'b, 'a>,
   ) -> Option<()> {
     if let GroupEntry::ValueMemberKey { ge, .. } = entry {
-      if member_key_is_cut(ge) || bounded_zero_minimum_colon(entry) {
+      if member_key_is_cut(ge) || non_optional_colon_occurrence(entry) {
         return None;
       }
     }
@@ -1656,6 +1655,7 @@ impl<'a> JSONValidator<'a> {
     }
     let occurrence = entry.occur.as_ref()?;
     if occurrence_bounds(Some(occurrence.occur)).0 != 0
+      || self.batch_key_is_parameter(&entry.name, None)
       || !group_choice_alternates_from_ident(self.state.cddl, &entry.name).is_empty()
     {
       return None;
@@ -1839,6 +1839,9 @@ impl<'a> JSONValidator<'a> {
       let GroupEntry::ValueMemberKey { ge, .. } = entry else {
         return false;
       };
+      if non_optional_colon_occurrence(entry) {
+        return false;
+      }
       let Some(key) = self.plain_literal_key(entry, params) else {
         return false;
       };
@@ -1982,6 +1985,7 @@ impl<'a> JSONValidator<'a> {
     entry: &TypeGroupnameEntry<'a>,
   ) -> std::result::Result<bool, Error> {
     if !self.map_rule_depth_allows(1)
+      || self.batch_key_is_parameter(&entry.name, None)
       || !group_choice_alternates_from_ident(self.state.cddl, &entry.name).is_empty()
     {
       return Ok(false);
@@ -2208,7 +2212,7 @@ impl<'a> JSONValidator<'a> {
       return false;
     };
     if member_key_is_cut(ge)
-      || bounded_zero_minimum_colon(entry)
+      || non_optional_colon_occurrence(entry)
       || self.proven_scalar_type(&ge.entry_type, None).is_none()
     {
       return false;
@@ -6428,6 +6432,90 @@ mod map_replay_budget_tests {
         }
       }
     }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_required_colon_ranges_preserve_value_depth() {
+    let mut failures = Vec::new();
+    for occurrence in ["1*1", "1*2", "2*2", "+"] {
+      for aliases in [65, 64] {
+        let rules = (0..aliases - 1)
+          .map(|i| format!("v{i} = v{}", i + 1))
+          .collect::<Vec<_>>()
+          .join("\n");
+        for entries in [
+          format!("? ({occurrence} absent: v0 // missing: uint)"),
+          format!("fixed: uint // {occurrence} absent: v0"),
+          format!("required: uint, (a: uint // {occurrence} absent: v0)"),
+        ] {
+          let schema = format!(
+            "root = {{ {entries} }} / any {rules} v{} = uint",
+            aliases - 1
+          );
+          let cddl = cddl_from_pest_str(&schema).unwrap();
+          let mut validator = limited_validator(
+            &cddl,
+            serde_json::json!({"fixed":1,"required":"text","unknown":true}),
+            2,
+          );
+          let result = validator.validate();
+          if aliases == 65 {
+            if !matches!(result, Err(Error::RecursionLimit { limit: 64 })) {
+              failures.push(format!("{}: {:?}", entries, result));
+            }
+          } else {
+            assert!(result.is_ok(), "{}: {:?}", entries, result);
+          }
+        }
+      }
+    }
+    assert!(failures.is_empty(), "{:#?}", failures);
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_named_shortcuts_preserve_parameter_shadowing() {
+    let mut failures = Vec::new();
+    for (schema, input, valid) in [
+      (
+        "root = { outer<actual> } outer<g> = (? g,)
+         g = (a: uint // b: uint) actual = (x: uint,)",
+        serde_json::json!({"x":1}),
+        true,
+      ),
+      (
+        "root = { outer<actual> } outer<g> = (? g,)
+         g = (a: uint // b: uint) actual = (x: uint,)",
+        serde_json::json!({"x":"text"}),
+        false,
+      ),
+      (
+        "root = { outer<actual> } outer<g> = (* g,)
+         g = (tstr => uint) actual = (tstr => tstr)",
+        serde_json::json!({"x":1}),
+        false,
+      ),
+      (
+        "root = { outer<actual> } outer<g> = (* g,)
+         g = (tstr => uint) actual = (tstr => tstr)",
+        serde_json::json!({"x":"text"}),
+        true,
+      ),
+    ] {
+      let cddl = cddl_from_pest_str(schema).unwrap();
+      let mut validator = limited_validator(&cddl, input, 2);
+      let result = validator.validate();
+      let actual = match result {
+        Ok(()) => true,
+        Err(Error::Validation(_)) => false,
+        error => panic!("{}: {:?}", schema, error),
+      };
+      if actual != valid {
+        failures.push(format!("{}: expected {}, got {}", schema, valid, actual));
+      }
+    }
+    assert!(failures.is_empty(), "{:#?}", failures);
   }
 
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
