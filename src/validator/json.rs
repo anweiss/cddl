@@ -1507,24 +1507,70 @@ impl<'a> JSONValidator<'a> {
       .all(|choice| self.optional_choice_definitely_fails(choice, object, params))
   }
 
-  fn optional_named_choices_definitely_fail(&self, entry: &TypeGroupnameEntry<'a>) -> bool {
+  fn skip_proven_optional_choices(
+    &self,
+    group: &Group<'a>,
+    params: Option<&GenericParams<'a>>,
+    can_iterate: bool,
+  ) -> std::result::Result<bool, Error> {
+    if !self.optional_choices_definitely_fail(group, params) {
+      return Ok(false);
+    }
+    let Value::Object(object) = &self.json else {
+      return Ok(false);
+    };
+    let originally_absent = group.group_choices.iter().all(|choice| {
+      choice.group_entries.first().is_some_and(|(entry, _)| {
+        let GroupEntry::ValueMemberKey { ge, .. } = entry else {
+          return false;
+        };
+        occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 > 0
+          && self
+            .plain_literal_key(entry, params)
+            .is_some_and(|key| !object.contains_key(key))
+      })
+    });
+    if !originally_absent && can_iterate {
+      if let Some(search) = &self.map_choice_search {
+        // The new proofs replace a previously recorded choice. Keep its
+        // pruning context, but no alternatives or additional replay work.
+        let selected = search.lock().expect("map choice search lock").select(1);
+        if selected != 0 {
+          return Err(Error::from_validator(
+            self,
+            "invalid map group-choice replay index for proven optional failure".into(),
+          ));
+        }
+      }
+    }
+    Ok(true)
+  }
+
+  fn skip_proven_named_choices(
+    &self,
+    entry: &TypeGroupnameEntry<'a>,
+  ) -> std::result::Result<bool, Error> {
     if !group_choice_alternates_from_ident(self.state.cddl, &entry.name).is_empty() {
-      return false;
+      return Ok(false);
     }
     let Some(Rule::Group { rule, .. }) = rule_from_ident(self.state.cddl, &entry.name) else {
-      return false;
+      return Ok(false);
     };
     let GroupEntry::InlineGroup {
       occur: None, group, ..
     } = &rule.entry
     else {
-      return false;
+      return Ok(false);
     };
-    self.optional_choices_definitely_fail(group, rule.generic_params.as_ref())
+    self.skip_proven_optional_choices(
+      group,
+      rule.generic_params.as_ref(),
+      occurrence_bounds(entry.occur.as_ref().map(|o| o.occur)).1 != Some(0),
+    )
   }
 
   fn visit_optional_named_group(&mut self, entry: &TypeGroupnameEntry<'a>) -> Result {
-    if self.optional_named_choices_definitely_fail(entry) {
+    if self.skip_proven_named_choices(entry)? {
       return Ok(());
     }
     if self.batchable_named_map_member(entry, false).is_some() {
@@ -4677,13 +4723,13 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     if !may_be_absent || !matches!(self.json, Value::Object(_)) {
       return walk_inline_group_entry(self, occur, g);
     }
-    if self.optional_choices_definitely_fail(g, None) {
+    let max = occurrence_bounds(occur.map(|o| o.occur)).1;
+    if self.skip_proven_optional_choices(g, None, max != Some(0))? {
       return Ok(());
     }
     if let (Some(member), Some(occurrence)) = (self.batchable_map_member(g, None, self), occur) {
       return self.visit_batched_map_member(member, occurrence);
     }
-    let max = occurrence_bounds(occur.map(|o| o.occur)).1;
     self.visit_zero_minimum_group(max, |validator| validator.visit_group(g))
   }
 
@@ -5417,6 +5463,24 @@ mod map_replay_budget_tests {
 
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
   #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_proven_optional_choices_preserve_required_diagnostics() {
+    for domain in ["alias", "uint"] {
+      let schema = format!(
+        "root = {{ ? (a: {domain} // b: {domain}), required: uint, c: uint }} alias = uint"
+      );
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator =
+        limited_validator(&cddl, serde_json::json!({"a":"text","b":"text","c":1}), 1);
+      let Error::Validation(errors) = validator.validate().unwrap_err() else {
+        panic!("ordinary required mismatch")
+      };
+      assert_eq!(errors.len(), 1);
+      assert!(errors[0].reason.contains("missing key: required"));
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
   fn map_replay_complete_remaining_pairs_can_batch_after_movable_claims() {
     for (schema, eligible, valid) in [
       ("root = { * (tstr => uint), * (tstr => tstr) }", true, true),
@@ -5739,6 +5803,57 @@ mod tests {
       let outer = outer.lock().unwrap();
       assert_eq!(outer.path, [1]);
       assert_eq!(outer.widths, [2]);
+    }
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn optional_impossibility_proof_preserves_later_required_pruning() {
+    for (domain, present, occur) in [
+      ("alias", true, "?"),
+      ("uint", true, "?"),
+      ("uint", false, "?"),
+      ("uint", true, "0*0"),
+    ] {
+      let schema = format!(
+        "root = {{ {occur} (a: {domain} // b: {domain}), required: uint, c: uint .feature 'enabled' }} alias = uint"
+      );
+      let cddl = cddl_from_str(&schema, true).unwrap();
+      let Rule::Type { rule, .. } = &cddl.rules[0] else {
+        panic!("type rule")
+      };
+      let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+        panic!("map")
+      };
+      let mut group = group.clone();
+      let GroupEntry::ValueMemberKey { ge, .. } = &mut group.group_choices[0].group_entries[2].0
+      else {
+        panic!("last entry")
+      };
+      ge.entry_type.type_choices[0]
+        .type1
+        .operator
+        .as_mut()
+        .unwrap()
+        .type2 = Type2::from(token::ByteValue::UTF8(vec![0xff].into()));
+      let input = if present {
+        serde_json::json!({"a":"text","b":"text","c":1})
+      } else {
+        serde_json::json!({"c":1})
+      };
+      let mut validator = JSONValidator::new(&cddl, input, Some(&["enabled"]));
+      let result = validator.visit_closed_map(&group, &["a".into(), "b".into(), "c".into()]);
+      if present && occur != "0*0" {
+        assert!(result.is_ok(), "{}: {:?}", domain, result);
+        assert!(validator
+          .errors
+          .iter()
+          .any(|e| e.reason.contains("missing key: required")));
+      } else {
+        assert!(matches!(result, Err(Error::UTF8Parsing(_))));
+      }
+      assert!(validator.member_claims.is_empty());
+      assert!(validator.map_choice_search.is_none());
     }
   }
 

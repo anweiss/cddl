@@ -64,6 +64,9 @@ keys and non-string values. Present optional prefixes retain ordinary traversal,
 including hard errors. These required failures roll back without deferred
 optional-member diagnostics. No visitor probes, failure cache or budget changes
 are involved; arbitrary value constraints are not inferred impossible.
+Newly proven failures retain a single-outcome search node when an iteration would
+have run, preserving later required-mismatch pruning without adding alternatives.
+The existing missing-first-key shortcut and zero-iteration groups remain unrecorded.
 Single-member repetitions over non-cut string/any prelude key domains enumerate
 unclaimed pairs once, retaining occurrence bounds and individual movable claims
 without copying a growing ownership ledger for every pair. Transparent alias chains
