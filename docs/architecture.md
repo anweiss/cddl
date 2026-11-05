@@ -50,6 +50,10 @@ failed iterations roll back, and zero-width iterations stop repetition.
 The enclosing occurrence is restored after the optional group, without leaking
 it into that group's required members. Failed required choice prefixes stop
 before recording unrelated later decisions; coverage failures still replay.
+Optional choices whose every arm starts with a required literal key missing from
+the input are skipped before registering replay decisions. This proof excludes
+controls, optional first entries and shadowed names; it does not guess whether
+arbitrary value constraints can match.
 Single-member repetitions over non-cut string/any prelude key domains enumerate
 unclaimed pairs once, retaining occurrence bounds and individual movable claims
 without copying a growing ownership ledger for every pair. Transparent alias chains
@@ -58,6 +62,11 @@ aliases do not bypass their normal validation. Earlier movable
 claims require the ordinary reassignment path instead. Reassignment shares
 compatibility rows for identical members and captured generic bindings, and
 rejects an identical-claim demand exceeding its available matching pairs.
+Only a single interchangeable claim class prefers free pairs before displacement;
+different classes retain their original assignment order for later members.
+Single-member choice-key repetitions also enumerate pairs once, probing each
+key domain and value under the selected generic bindings while retaining
+individual claims and occurrence bounds.
 Generic group replay carries recursion context: revisiting the same
 structural instantiation at the same data location without consuming another
 map key rejects that path, while changed arguments and productive calls remain

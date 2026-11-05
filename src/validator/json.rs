@@ -30,12 +30,15 @@ fn augment_choice_assignment(
   compatibility: &[Arc<Vec<bool>>],
   visited_pairs: &mut [bool],
   pair_owners: &mut [Option<usize>],
+  interchangeable: bool,
 ) -> bool {
-  for (pair_slot, compatible) in compatibility[claim_slot].iter().enumerate() {
-    if *compatible && !visited_pairs[pair_slot] && pair_owners[pair_slot].is_none() {
-      visited_pairs[pair_slot] = true;
-      pair_owners[pair_slot] = Some(claim_slot);
-      return true;
+  if interchangeable {
+    for (pair_slot, compatible) in compatibility[claim_slot].iter().enumerate() {
+      if *compatible && !visited_pairs[pair_slot] && pair_owners[pair_slot].is_none() {
+        visited_pairs[pair_slot] = true;
+        pair_owners[pair_slot] = Some(claim_slot);
+        return true;
+      }
     }
   }
   for pair_slot in 0..compatibility[claim_slot].len() {
@@ -44,7 +47,13 @@ fn augment_choice_assignment(
     }
     visited_pairs[pair_slot] = true;
     if pair_owners[pair_slot].is_none_or(|owner| {
-      augment_choice_assignment(owner, compatibility, visited_pairs, pair_owners)
+      augment_choice_assignment(
+        owner,
+        compatibility,
+        visited_pairs,
+        pair_owners,
+        interchangeable,
+      )
     }) {
       pair_owners[pair_slot] = Some(claim_slot);
       return true;
@@ -778,6 +787,7 @@ impl<'a> JSONValidator<'a> {
     candidates: Vec<(String, Value)>,
     current_location: String,
     single_member_claim: Option<&ValueMemberKeyEntry<'a>>,
+    key_alternatives: Option<&[Type1<'a>]>,
   ) -> visitor::Result<Error> {
     let max_matches = Self::repeating_member_upper_bound(entry).unwrap_or(usize::MAX);
     let mut match_count = 0;
@@ -785,6 +795,11 @@ impl<'a> JSONValidator<'a> {
     for (key, value) in candidates {
       if match_count >= max_matches {
         break;
+      }
+      if let Some(alternatives) = key_alternatives {
+        if !self.object_key_matches_alternatives(&key, alternatives)? {
+          continue;
+        }
       }
 
       let mut jv = self.new_with_recursion_state(value);
@@ -1136,6 +1151,9 @@ impl<'a> JSONValidator<'a> {
     else {
       return None;
     };
+    if choice_member_key(&self.state, ge).is_some() {
+      return Some(ge);
+    }
     let Type2::Typename {
       ident,
       generic_args: None,
@@ -1154,6 +1172,7 @@ impl<'a> JSONValidator<'a> {
   fn batchable_named_map_member(
     &self,
     entry: &TypeGroupnameEntry<'a>,
+    bindings_ready: bool,
   ) -> Option<ValueMemberKeyEntry<'a>> {
     if !matches!(self.json, Value::Object(_)) {
       return None;
@@ -1173,9 +1192,29 @@ impl<'a> JSONValidator<'a> {
     else {
       return None;
     };
-    self
-      .batchable_map_member(group, rule.generic_params.as_ref())
-      .cloned()
+    if let Some(args) = entry.generic_args.as_ref().filter(|_| !bindings_ready) {
+      // Resolve in the caller's scope, never again after entering the callee.
+      let mut scoped = self.new_with_recursion_state(Value::Null);
+      scoped.member_claims = self.member_claims.clone();
+      scoped.set_generic_group_bindings(
+        entry.name.ident,
+        resolved_generic_args(&self.state, args),
+        rule.generic_params.as_ref().map(|params| {
+          params
+            .params
+            .iter()
+            .map(|param| param.param.ident)
+            .collect()
+        }),
+      );
+      scoped
+        .batchable_map_member(group, rule.generic_params.as_ref())
+        .cloned()
+    } else {
+      self
+        .batchable_map_member(group, rule.generic_params.as_ref())
+        .cloned()
+    }
   }
 
   fn visit_batched_map_member(
@@ -1198,11 +1237,14 @@ impl<'a> JSONValidator<'a> {
     let checkpoint = self.map_checkpoint();
     let mut repeated = member.clone();
     repeated.occur = Some(occurrence.clone());
+    let alternatives =
+      choice_member_key(&self.state, member).map(|(_, alternatives, _)| alternatives);
     let result = self.validate_candidate_pairs(
       &repeated,
       candidates,
       self.state.data_location.clone(),
       Some(member),
+      alternatives.as_deref(),
     );
     if result.is_err() {
       self.restore_map_checkpoint(checkpoint);
@@ -1241,6 +1283,108 @@ impl<'a> JSONValidator<'a> {
     Ok(())
   }
 
+  fn required_literal_key<'b>(
+    &self,
+    entry: &'b GroupEntry<'a>,
+    params: Option<&GenericParams<'a>>,
+  ) -> Option<&'b str> {
+    let GroupEntry::ValueMemberKey { ge, .. } = entry else {
+      return None;
+    };
+    if occurrence_bounds(ge.occur.as_ref().map(|occur| occur.occur)).0 == 0 {
+      return None;
+    }
+    let key = match &ge.member_key {
+      Some(MemberKey::Bareword { ident, .. })
+        if ident.socket.is_none()
+          && !self.batch_key_is_parameter(ident, params)
+          && rule_from_ident(self.state.cddl, ident).is_none()
+          && type_choice_types_from_ident(self.state.cddl, ident).is_empty()
+          && token::lookup_ident(ident.ident)
+            .in_standard_prelude()
+            .is_none() =>
+      {
+        ident.ident
+      }
+      Some(MemberKey::Value {
+        value: token::Value::TEXT(value),
+        ..
+      }) => value.as_ref(),
+      Some(MemberKey::Type1 { t1, .. }) if t1.operator.is_none() => match &t1.type2 {
+        Type2::TextValue { value, .. } => value.as_ref(),
+        _ => return None,
+      },
+      _ => return None,
+    };
+    // The existing literal-key visitor gives "any" a special non-literal path.
+    (key != "any").then_some(key)
+  }
+
+  fn optional_choices_definitely_absent(
+    &self,
+    group: &Group<'a>,
+    params: Option<&GenericParams<'a>>,
+  ) -> bool {
+    let Value::Object(object) = &self.json else {
+      return false;
+    };
+    if self.map_choice_search.is_none()
+      || self.state.ctrl.is_some()
+      || self.state.is_group_to_choice_enum
+      || group.group_choices.len() < 2
+    {
+      return false;
+    }
+    // A planned choice stops on its first required mismatch. Prove that
+    // every arm fails there before recording any useless replay decisions.
+    // Do not skip earlier values, controls, optional entries or rule lookups.
+    group.group_choices.iter().all(|choice| {
+      choice
+        .group_entries
+        .first()
+        .and_then(|(entry, _)| self.required_literal_key(entry, params))
+        .is_some_and(|key| !object.contains_key(key))
+    })
+  }
+
+  fn optional_named_choices_definitely_absent(&self, entry: &TypeGroupnameEntry<'a>) -> bool {
+    if !group_choice_alternates_from_ident(self.state.cddl, &entry.name).is_empty() {
+      return false;
+    }
+    let Some(Rule::Group { rule, .. }) = rule_from_ident(self.state.cddl, &entry.name) else {
+      return false;
+    };
+    let GroupEntry::InlineGroup {
+      occur: None, group, ..
+    } = &rule.entry
+    else {
+      return false;
+    };
+    self.optional_choices_definitely_absent(group, rule.generic_params.as_ref())
+  }
+
+  fn visit_optional_named_group(&mut self, entry: &TypeGroupnameEntry<'a>) -> Result {
+    if self.optional_named_choices_definitely_absent(entry) {
+      return Ok(());
+    }
+    if self.batchable_named_map_member(entry, false).is_some() {
+      let prior_occurrence = self.state.occurrence;
+      let checkpoint = self.map_checkpoint();
+      let result = self.visit_type_groupname_entry(entry);
+      if result.is_err() {
+        self.restore_map_checkpoint(checkpoint);
+      }
+      self.state.occurrence = prior_occurrence;
+      return result;
+    }
+    let max = occurrence_bounds(entry.occur.as_ref().map(|o| o.occur)).1;
+    let mut required = entry.clone();
+    required.occur = None;
+    self.visit_zero_minimum_group(max, |validator| {
+      validator.visit_type_groupname_entry(&required)
+    })
+  }
+
   fn generic_group_child(&mut self, instance: String) -> Option<JSONValidator<'a>> {
     let consumed = self.claimed_map_key_count();
     let key = format!("{instance}\u{0}{}\u{0}{consumed}", self.state.data_location);
@@ -1268,32 +1412,20 @@ impl<'a> JSONValidator<'a> {
     let Some(mut jv) = self.generic_group_child(instance) else {
       return Ok(());
     };
-    if let Some(gr) = jv
-      .state
-      .generic_rules
-      .iter_mut()
-      .find(|gr| gr.name == entry.name.ident)
-    {
-      // Claims retain their own captured bindings when another instantiation
-      // replaces the current positional arguments.
-      gr.params = generic_params_from_rule(rule).unwrap_or_default();
-      gr.args = resolved_args;
-    } else if let Some(params) = generic_params_from_rule(rule) {
-      jv.state.generic_rules.push(GenericRule {
-        name: entry.name.ident,
-        params,
-        args: resolved_args,
-      });
-    }
+    jv.set_generic_group_bindings(
+      entry.name.ident,
+      resolved_args,
+      generic_params_from_rule(rule),
+    );
 
-    jv.state.eval_generic_rule = Some(entry.name.ident);
     jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
     jv.validated_keys = self.validated_keys.clone();
     jv.member_claims = self.member_claims.clone();
     jv.map_choice_search = self.map_choice_search.clone();
-    if let (Some(member), Some(occurrence)) =
-      (jv.batchable_named_map_member(entry), entry.occur.as_ref())
-    {
+    if let (Some(member), Some(occurrence)) = (
+      jv.batchable_named_map_member(entry, true),
+      entry.occur.as_ref(),
+    ) {
       jv.visit_batched_map_member(&member, occurrence)?;
     } else {
       jv.visit_rule(rule)?;
@@ -1313,6 +1445,31 @@ impl<'a> JSONValidator<'a> {
       claimed.extend(keys.into_iter().filter(|key| seen.insert(key.clone())));
     }
     Ok(())
+  }
+
+  fn set_generic_group_bindings(
+    &mut self,
+    name: &'a str,
+    args: Vec<Type1<'a>>,
+    params: Option<Vec<&'a str>>,
+  ) {
+    if let Some(gr) = self
+      .state
+      .generic_rules
+      .iter_mut()
+      .find(|gr| gr.name == name)
+    {
+      // Claims retain their own captured bindings when another instantiation
+      // replaces the current positional arguments.
+      gr.params = params.unwrap_or_default();
+      gr.args = args;
+    } else if let Some(params) = params {
+      self
+        .state
+        .generic_rules
+        .push(GenericRule { name, params, args });
+    }
+    self.state.eval_generic_rule = Some(name);
   }
 
   fn visit_group_sequence(&mut self, choice: &GroupChoice<'a>) -> Result {
@@ -1468,6 +1625,11 @@ impl<'a> JSONValidator<'a> {
     };
 
     let mut pair_owners = vec![None; candidates.len()];
+    // Different classes must retain the original displacement order: which
+    // pairs remain free can determine whether a later table member succeeds.
+    let interchangeable = compatibility
+      .first()
+      .is_none_or(|first| compatibility.iter().all(|row| Arc::ptr_eq(first, row)));
     for claim_slot in 0..claims.len() {
       let mut visited_pairs = vec![false; candidates.len()];
       if !augment_choice_assignment(
@@ -1475,6 +1637,7 @@ impl<'a> JSONValidator<'a> {
         &compatibility,
         &mut visited_pairs,
         &mut pair_owners,
+        interchangeable,
       ) {
         return Ok(false);
       }
@@ -4239,7 +4402,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
     if let Some(candidates) = map_entry_candidates {
       debug_assert!(object_value.is_none());
-      return self.validate_candidate_pairs(entry, candidates, current_location, None);
+      return self.validate_candidate_pairs(entry, candidates, current_location, None, None);
     }
 
     if let Some(v) = object_value {
@@ -4278,9 +4441,10 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       }
     }
 
-    if let (Some(member), Some(occurrence)) =
-      (self.batchable_named_map_member(entry), entry.occur.as_ref())
-    {
+    if let (Some(member), Some(occurrence)) = (
+      self.batchable_named_map_member(entry, false),
+      entry.occur.as_ref(),
+    ) {
       let result = self.visit_batched_map_member(&member, occurrence);
       self.state.type_group_name_entry = None;
       return result;
@@ -4328,22 +4492,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 == 0
         && matches!(self.json, Value::Object(_))
       {
-        if self.batchable_named_map_member(ge).is_some() {
-          let prior_occurrence = self.state.occurrence;
-          let checkpoint = self.map_checkpoint();
-          let result = self.visit_type_groupname_entry(ge);
-          if result.is_err() {
-            self.restore_map_checkpoint(checkpoint);
-          }
-          self.state.occurrence = prior_occurrence;
-          return result;
-        }
-        let max = occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).1;
-        let mut required = ge.clone();
-        required.occur = None;
-        return self.visit_zero_minimum_group(max, |validator| {
-          validator.visit_type_groupname_entry(&required)
-        });
+        return self.visit_optional_named_group(ge);
       }
       // A group reference's occurrence applies to the referenced group
       // alone: once the group has matched, restore the prior indicator so
@@ -4367,6 +4516,9 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     let may_be_absent = occurrence_bounds(occur.map(|o| o.occur)).0 == 0;
     if !may_be_absent || !matches!(self.json, Value::Object(_)) {
       return walk_inline_group_entry(self, occur, g);
+    }
+    if self.optional_choices_definitely_absent(g, None) {
+      return Ok(());
     }
     if let (Some(member), Some(occurrence)) = (self.batchable_map_member(g, None), occur) {
       return self.visit_batched_map_member(member, occurrence);
@@ -4964,6 +5116,57 @@ mod map_replay_budget_tests {
     let cddl = cddl_from_pest_str("root = [* { x: uint // x: tstr }]").unwrap();
     let json = Value::Array((0..128).map(|n| serde_json::json!({"x":n})).collect());
     let mut validator = limited_validator(&cddl, json, 0);
+    assert!(validator.validate().is_ok());
+    let cddl = cddl_from_pest_str("root = [* { ? (a: uint // b: uint), * tstr => tstr }]").unwrap();
+    let json = Value::Array((0..128).map(|_| serde_json::json!({"a":"text"})).collect());
+    let mut validator = limited_validator(&cddl, json, 0);
+    assert!(validator.validate().is_ok());
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_absent_optional_choices_do_not_multiply_paths() {
+    for form in 0..3 {
+      let mut entries = Vec::new();
+      let mut rules = Vec::new();
+      for index in 0..14 {
+        let body = format!("(a{index}: uint // b{index}: uint)");
+        match form {
+          0 => entries.push(format!("? {body}")),
+          1 => {
+            entries.push(format!("? g{index}"));
+            rules.push(format!("g{index} = {body}"));
+          }
+          _ => {
+            entries.push(format!("? g{index}<uint>"));
+            rules.push(format!("g{index}<T> = {body}"));
+          }
+        }
+      }
+      let schema = format!(
+        "root = {{ ? (k: uint // m: uint), {} }} {}",
+        entries.join(","),
+        rules.join("\n")
+      );
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator = limited_validator(&cddl, serde_json::json!({"m":1}), 1);
+      assert!(validator.validate().is_ok(), "{}", schema);
+      assert_eq!(
+        validator
+          .map_replay_budget
+          .remaining
+          .load(Ordering::Relaxed),
+        0
+      );
+      let mut exhausted = limited_validator(&cddl, serde_json::json!({"m":1}), 0);
+      assert!(matches!(
+        exhausted.validate(),
+        Err(Error::ResourceLimit { limit: 0 })
+      ));
+    }
+    let cddl =
+      cddl_from_pest_str("root = { ? (? a: uint, m: uint // ? b: uint, m: uint) }").unwrap();
+    let mut validator = limited_validator(&cddl, serde_json::json!({"m":1}), 0);
     assert!(validator.validate().is_ok());
   }
 }

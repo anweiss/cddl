@@ -184,6 +184,62 @@ fn repeated_transparent_alias_keys_preserve_bounds_and_claims() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn heterogeneous_claims_preserve_displacement_order_for_later_members() {
+  let schema = "root = { tstr => (1 / bool), tstr => uint, b: uint, * tstr => uint }";
+  assert!(validates(schema, r#"{"a":1,"b":2,"c":3,"d":true}"#));
+  assert!(!validates(schema, r#"{"a":1,"b":2,"c":3,"d":"wrong"}"#));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn repeated_choice_key_groups_preserve_domains_bounds_and_claims() {
+  let input = format!(
+    "{{{}}}",
+    (0..128)
+      .map(|n| format!("\"key{n}\":1"))
+      .collect::<Vec<_>>()
+      .join(",")
+  );
+  for schema in [
+    "root = { * fields } fields = (key => any) key = int / tstr",
+    "root = { * ((int / tstr) => uint) }",
+    "root = { * fields<uint> } fields<T> = (key => T) key = int / tstr",
+    "root = { * fields<(int / tstr)> } fields<K> = (K => uint)",
+  ] {
+    assert!(validates(schema, &input), "{}", schema);
+  }
+  assert!(validates(
+    "root = { 0*1 fields, a: uint } fields = (key => uint) key = int / tstr",
+    r#"{"a":1,"b":2}"#,
+  ));
+  assert!(validates(
+    r#"root = { * fields, * tstr => tstr } fields = (("a" / "b") => uint)"#,
+    r#"{"a":1,"b":2,"c":"text"}"#,
+  ));
+  for (schema, input) in [
+    (
+      "root = { 0*1 fields } fields = (key => uint) key = int / tstr",
+      r#"{"a":1,"b":2}"#,
+    ),
+    (
+      "root = { 0*0 fields } fields = (key => uint) key = int / tstr",
+      r#"{"a":1}"#,
+    ),
+    (
+      r#"root = { * fields } fields = (("a" / "b") => uint)"#,
+      r#"{"c":1}"#,
+    ),
+    (
+      "root = { * fields<uint> } fields<key> = (key => uint) key = int / tstr",
+      r#"{"a":1}"#,
+    ),
+  ] {
+    assert!(!validates(schema, input), "{}", schema);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn map_fallthrough_does_not_change_array_sequence_matching() {
   assert!(validates(r#"root = [ ? "a" => uint, bool ]"#, "[true]"));
   assert!(validates(r#"root = [ ? "a" => uint, bool ]"#, "[1,true]"));
