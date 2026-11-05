@@ -106,6 +106,11 @@ pub enum Error {
     /// Maximum additional map-candidate replays for this validation.
     limit: usize,
   },
+  /// Validation stopped before completion because active map rule calls were too deep.
+  RecursionLimit {
+    /// Maximum simultaneously active named-rule calls during map validation.
+    limit: usize,
+  },
 }
 
 impl fmt::Display for Error {
@@ -125,6 +130,10 @@ impl fmt::Display for Error {
       Error::ResourceLimit { limit } => write!(
         f,
         "JSON validation incomplete: the bounded map-choice search exhausted its budget of {limit} additional map-candidate replays"
+      ),
+      Error::RecursionLimit { limit } => write!(
+        f,
+        "JSON validation incomplete: map rule recursion exceeded its depth limit of {limit} active calls"
       ),
     }
   }
@@ -259,7 +268,8 @@ struct LiteralKeyProof<'b, 'a> {
   keys: HashSet<String>,
   pending: Vec<KeyProofStep<'b, 'a>>,
   active: HashSet<&'a str>,
-  complete: HashSet<&'a str>,
+  complete: HashMap<&'a str, usize>,
+  depths: Vec<usize>,
 }
 
 impl<'b, 'a> LiteralKeyProof<'b, 'a> {
@@ -272,6 +282,19 @@ impl<'b, 'a> LiteralKeyProof<'b, 'a> {
           .iter()
           .map(|(entry, _)| KeyProofStep::Entry(entry))
       }));
+  }
+
+  fn inherit_depth(&mut self, depth: usize) {
+    if let Some(parent) = self.depths.last_mut() {
+      *parent = (*parent).max(depth + 1);
+    }
+  }
+
+  fn finish_named(&mut self, name: &'a str) {
+    let depth = self.depths.pop().expect("named proof path");
+    self.active.remove(name);
+    self.complete.insert(name, depth);
+    self.inherit_depth(depth);
   }
 }
 
@@ -345,6 +368,7 @@ struct MapCheckpoint<'a> {
   object_value_key: Option<String>,
   map_entry_candidates: Option<Vec<(String, Value)>>,
   map_traversal_pruned: bool,
+  map_decisions_suppressed: bool,
 }
 
 /// Replay group alternatives lazily, including choices inside named groups.
@@ -354,13 +378,49 @@ struct MapChoiceSearch {
   path: Vec<usize>,
   widths: Vec<usize>,
   traversal_pruned: bool,
+  decisions_suppressed: bool,
 }
 
 const MAX_ADDITIONAL_MAP_REPLAYS: usize = 4096;
+const MAX_ACTIVE_MAP_RULE_CALLS: usize = 64;
+
+struct MapRuleDepth {
+  limit: usize,
+  active: AtomicUsize,
+}
+
+struct MapRuleGuard(Arc<MapRuleDepth>);
+
+impl Drop for MapRuleGuard {
+  fn drop(&mut self) {
+    self.0.active.fetch_sub(1, Ordering::Relaxed);
+  }
+}
+
+impl MapRuleDepth {
+  fn new(limit: usize) -> Self {
+    Self {
+      limit,
+      active: AtomicUsize::new(0),
+    }
+  }
+
+  fn enter(self: &Arc<Self>) -> std::result::Result<MapRuleGuard, Error> {
+    self
+      .active
+      .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |active| {
+        active.checked_add(1).filter(|next| *next <= self.limit)
+      })
+      .map_err(|_| Error::RecursionLimit { limit: self.limit })?;
+    Ok(MapRuleGuard(self.clone()))
+  }
+}
 
 struct MapReplayBudget {
   limit: usize,
   remaining: AtomicUsize,
+  #[cfg(test)]
+  generic_input_copies: AtomicUsize,
 }
 
 impl MapReplayBudget {
@@ -368,6 +428,8 @@ impl MapReplayBudget {
     Self {
       limit,
       remaining: AtomicUsize::new(limit),
+      #[cfg(test)]
+      generic_input_copies: AtomicUsize::new(0),
     }
   }
 
@@ -385,12 +447,17 @@ impl MapReplayBudget {
 impl MapChoiceSearch {
   fn select(&mut self, width: usize) -> usize {
     let depth = self.widths.len();
-    self.widths.push(width);
+    // Keep the first traversal's pruning context without alternatives that
+    // cannot repair an earlier required failure.
+    self
+      .widths
+      .push(if self.decisions_suppressed { 1 } else { width });
     self.path.get(depth).copied().unwrap_or(0)
   }
 
   fn advance(&mut self) -> bool {
     self.traversal_pruned = false;
+    self.decisions_suppressed = false;
     self.path.resize(self.widths.len(), 0);
     for depth in (0..self.widths.len()).rev() {
       if self.path[depth] + 1 < self.widths[depth] {
@@ -439,6 +506,7 @@ pub struct JSONValidator<'a> {
   map_choice_search: Option<Arc<Mutex<MapChoiceSearch>>>,
   // Shared by child validators, deliberately excluded from speculative checkpoints.
   map_replay_budget: Arc<MapReplayBudget>,
+  map_rule_depth: Arc<MapRuleDepth>,
 }
 
 impl<'a> JSONValidator<'a> {
@@ -459,6 +527,7 @@ impl<'a> JSONValidator<'a> {
       map_entry_candidates: None,
       map_choice_search: None,
       map_replay_budget: Arc::new(MapReplayBudget::new(MAX_ADDITIONAL_MAP_REPLAYS)),
+      map_rule_depth: Arc::new(MapRuleDepth::new(MAX_ACTIVE_MAP_RULE_CALLS)),
     }
   }
 
@@ -479,6 +548,7 @@ impl<'a> JSONValidator<'a> {
       map_entry_candidates: None,
       map_choice_search: None,
       map_replay_budget: Arc::new(MapReplayBudget::new(MAX_ADDITIONAL_MAP_REPLAYS)),
+      map_rule_depth: Arc::new(MapRuleDepth::new(MAX_ACTIVE_MAP_RULE_CALLS)),
     }
   }
 
@@ -491,6 +561,7 @@ impl<'a> JSONValidator<'a> {
     let mut jv = JSONValidator::new(self.state.cddl, json);
 
     jv.map_replay_budget = self.map_replay_budget.clone();
+    jv.map_rule_depth = self.map_rule_depth.clone();
     jv
   }
 
@@ -499,6 +570,7 @@ impl<'a> JSONValidator<'a> {
     let json = std::mem::take(&mut self.json);
     let mut fresh = self.new_child_validator(json);
     fresh.map_replay_budget = Arc::new(MapReplayBudget::new(limit));
+    fresh.map_rule_depth = Arc::new(MapRuleDepth::new(self.map_rule_depth.limit));
     *self = fresh;
   }
 
@@ -508,6 +580,25 @@ impl<'a> JSONValidator<'a> {
     jv.state.eval_generic_rule = self.state.eval_generic_rule;
     jv.state.visited_rules = self.state.visited_rules.clone();
     jv
+  }
+
+  fn enter_map_rule(&self) -> std::result::Result<Option<MapRuleGuard>, Error> {
+    self
+      .map_choice_search
+      .as_ref()
+      .map(|_| self.map_rule_depth.enter())
+      .transpose()
+  }
+
+  fn visit_named_rule_path<F>(&mut self, marker: String, visit: F) -> Result
+  where
+    F: FnOnce(&mut Self) -> Result,
+  {
+    let _depth = self.enter_map_rule()?;
+    self.state.visited_rules.insert(marker.clone());
+    let result = visit(self);
+    self.state.visited_rules.remove(&marker);
+    result
   }
 
   fn repeating_member_upper_bound(entry: &ValueMemberKeyEntry<'a>) -> Option<usize> {
@@ -571,6 +662,7 @@ impl<'a> JSONValidator<'a> {
       map_entry_candidates: None,
       map_choice_search: None,
       map_replay_budget: Arc::new(MapReplayBudget::new(MAX_ADDITIONAL_MAP_REPLAYS)),
+      map_rule_depth: Arc::new(MapRuleDepth::new(MAX_ACTIVE_MAP_RULE_CALLS)),
     }
   }
 
@@ -591,6 +683,7 @@ impl<'a> JSONValidator<'a> {
       map_entry_candidates: None,
       map_choice_search: None,
       map_replay_budget: Arc::new(MapReplayBudget::new(MAX_ADDITIONAL_MAP_REPLAYS)),
+      map_rule_depth: Arc::new(MapRuleDepth::new(MAX_ACTIVE_MAP_RULE_CALLS)),
     }
   }
 
@@ -908,6 +1001,12 @@ impl<'a> JSONValidator<'a> {
       object_value_key: self.object_value_key.clone(),
       map_entry_candidates: self.map_entry_candidates.clone(),
       map_traversal_pruned: self.map_traversal_pruned(),
+      map_decisions_suppressed: self.map_choice_search.as_ref().is_some_and(|search| {
+        search
+          .lock()
+          .expect("map choice search lock")
+          .decisions_suppressed
+      }),
     }
   }
 
@@ -922,10 +1021,9 @@ impl<'a> JSONValidator<'a> {
     self.object_value_key = checkpoint.object_value_key;
     self.map_entry_candidates = checkpoint.map_entry_candidates;
     if let Some(search) = &self.map_choice_search {
-      search
-        .lock()
-        .expect("map choice search lock")
-        .traversal_pruned = checkpoint.map_traversal_pruned;
+      let mut search = search.lock().expect("map choice search lock");
+      search.traversal_pruned = checkpoint.map_traversal_pruned;
+      search.decisions_suppressed = checkpoint.map_decisions_suppressed;
     }
   }
 
@@ -1044,10 +1142,7 @@ impl<'a> JSONValidator<'a> {
       self.add_error("recursive incremental group reference without consuming a map entry".into());
       return Ok(());
     }
-    self.state.visited_rules.insert(marker.clone());
-    let result = self.visit_group_entry(alternate);
-    self.state.visited_rules.remove(&marker);
-    result
+    self.visit_named_rule_path(marker, |validator| validator.visit_group_entry(alternate))
   }
 
   fn visit_selected_group_choice(
@@ -1390,15 +1485,13 @@ impl<'a> JSONValidator<'a> {
       keys: HashSet::new(),
       pending: Vec::new(),
       active: HashSet::new(),
-      complete: HashSet::new(),
+      complete: HashMap::new(),
+      depths: Vec::new(),
     };
     proof.push_group(group);
     while let Some(step) = proof.pending.pop() {
       match step {
-        KeyProofStep::Exit(name) => {
-          proof.active.remove(name);
-          proof.complete.insert(name);
-        }
+        KeyProofStep::Exit(name) => proof.finish_named(name),
         KeyProofStep::Entry(entry) => {
           if self.add_literal_key_proof(entry, &mut proof).is_none() {
             return false;
@@ -1451,12 +1544,24 @@ impl<'a> JSONValidator<'a> {
     if rule.generic_params.is_some() {
       return None;
     }
-    if proof.complete.contains(entry.name.ident) {
+    let depth = proof.complete.get(entry.name.ident).copied();
+    let required = self
+      .map_rule_depth
+      .active
+      .load(Ordering::Relaxed)
+      .saturating_add(proof.active.len())
+      .saturating_add(depth.unwrap_or(1));
+    if required > self.map_rule_depth.limit {
+      return None;
+    }
+    if let Some(depth) = depth {
+      proof.inherit_depth(depth);
       return Some(());
     }
     if !proof.active.insert(entry.name.ident) {
       return None;
     }
+    proof.depths.push(1);
     proof.pending.push(KeyProofStep::Exit(entry.name.ident));
     proof.pending.push(KeyProofStep::Entry(&rule.entry));
     Some(())
@@ -1701,6 +1806,58 @@ impl<'a> JSONValidator<'a> {
       .all(|choice| self.optional_choice_definitely_fails(choice, object, params))
   }
 
+  fn group_choices_are_empty(&self, group: &Group<'a>) -> bool {
+    let Value::Object(object) = &self.json else {
+      return false;
+    };
+    if self.map_choice_search.is_none()
+      || self.state.ctrl.is_some()
+      || self.state.is_group_to_choice_enum
+      || self.state.is_cut_present
+      || self.cut_value.is_some()
+    {
+      return false;
+    }
+    group.group_choices.iter().all(|choice| {
+      choice.group_entries.iter().all(|(entry, _)| {
+        let GroupEntry::ValueMemberKey { ge, .. } = entry else {
+          return false;
+        };
+        !member_key_is_cut(ge)
+          && matches!(
+            ge.occur.as_ref().map(|o| o.occur),
+            Some(Occur::Optional { .. })
+          )
+          && self
+            .plain_literal_key(entry, None)
+            .is_some_and(|key| !object.contains_key(key))
+      })
+    })
+  }
+
+  fn planned_concrete_group_choice(
+    &self,
+    group: &Group<'a>,
+  ) -> std::result::Result<Option<usize>, Error> {
+    if group.group_choices.len() < 2 || !self.group_choices_are_empty(group) {
+      return self.planned_group_choice(group.group_choices.len());
+    }
+    let selected = self
+      .map_choice_search
+      .as_ref()
+      .unwrap()
+      .lock()
+      .expect("map choice search lock")
+      .select(1);
+    if selected != 0 {
+      return Err(Error::from_validator(
+        self,
+        "invalid no-progress group-choice replay index".into(),
+      ));
+    }
+    Ok(Some(selected))
+  }
+
   fn skip_proven_optional_choices(
     &self,
     group: &Group<'a>,
@@ -1780,19 +1937,41 @@ impl<'a> JSONValidator<'a> {
     let max = occurrence_bounds(entry.occur.as_ref().map(|o| o.occur)).1;
     let mut required = entry.clone();
     required.occur = None;
+    let mut input = None;
     self.visit_zero_minimum_group(max, |validator| {
+      if let (Some(args), Some(rule)) = (
+        required.generic_args.as_ref(),
+        rule_from_ident(validator.state.cddl, &required.name),
+      ) {
+        validator.state.type_group_name_entry = Some(required.name.ident);
+        return validator.visit_generic_group_reference(&required, args, rule, &mut input);
+      }
       validator.visit_type_groupname_entry(&required)
     })
   }
 
-  fn generic_group_child(&mut self, instance: String) -> Option<JSONValidator<'a>> {
+  fn generic_group_child(
+    &mut self,
+    instance: String,
+    input: &mut Option<Value>,
+  ) -> Option<JSONValidator<'a>> {
     let consumed = self.claimed_map_key_count();
     let key = format!("{instance}\u{0}{}\u{0}{consumed}", self.state.data_location);
     if self.map_choice_search.is_some() && self.state.visited_rules.contains(&key) {
       self.add_error("recursive generic group reference without consuming a map entry".into());
       return None;
     }
-    let mut child = self.new_with_recursion_state(self.json.clone());
+    // Repetitions move the same immutable input between fresh child contexts.
+    // Bindings, recursion markers and transaction state are still reset per visit.
+    let json = input.take().unwrap_or_else(|| {
+      #[cfg(test)]
+      self
+        .map_replay_budget
+        .generic_input_copies
+        .fetch_add(1, Ordering::Relaxed);
+      self.json.clone()
+    });
+    let mut child = self.new_with_recursion_state(json);
     child.state.data_location = self.state.data_location.clone();
     if self.map_choice_search.is_some() {
       child.state.visited_rules.insert(key);
@@ -1805,11 +1984,13 @@ impl<'a> JSONValidator<'a> {
     entry: &TypeGroupnameEntry<'a>,
     args: &GenericArgs<'a>,
     rule: &Rule<'a>,
+    input: &mut Option<Value>,
   ) -> Result {
+    let _depth = self.enter_map_rule()?;
     let resolved_args = resolved_generic_args(&self.state, args);
     let instance =
       generic_instantiation_key(&qualified_ident_key(&entry.name), resolved_args.iter());
-    let Some(mut jv) = self.generic_group_child(instance) else {
+    let Some(mut jv) = self.generic_group_child(instance, input) else {
       return Ok(());
     };
     jv.set_generic_group_bindings(
@@ -1844,6 +2025,7 @@ impl<'a> JSONValidator<'a> {
       let mut seen: HashSet<_> = claimed.iter().cloned().collect();
       claimed.extend(keys.into_iter().filter(|key| seen.insert(key.clone())));
     }
+    *input = Some(jv.json);
     Ok(())
   }
 
@@ -1873,6 +2055,7 @@ impl<'a> JSONValidator<'a> {
   }
 
   fn visit_group_sequence(&mut self, choice: &GroupChoice<'a>) -> Result {
+    let mut effect_free = None;
     for (index, (entry, _)) in choice.group_entries.iter().enumerate() {
       let error_count = self.errors.len();
       self.visit_group_entry(entry)?;
@@ -1885,10 +2068,78 @@ impl<'a> JSONValidator<'a> {
             search.traversal_pruned |= index + 1 < choice.group_entries.len();
             break;
           }
+          if !search.decisions_suppressed {
+            search.decisions_suppressed =
+              *effect_free.get_or_insert_with(|| self.map_sequence_is_effect_free(choice));
+          }
         }
       }
     }
     Ok(())
+  }
+
+  fn map_sequence_is_effect_free(&self, choice: &GroupChoice<'a>) -> bool {
+    let Value::Object(object) = &self.json else {
+      return false;
+    };
+    if self.state.ctrl.is_some()
+      || self.state.is_group_to_choice_enum
+      || self.state.eval_generic_rule.is_some()
+      || !self.member_claims.is_empty()
+      || object
+        .values()
+        .any(|value| matches!(value, Value::Array(_) | Value::Object(_)))
+    {
+      return false;
+    }
+    let mut pending = choice
+      .group_entries
+      .iter()
+      .map(|(entry, _)| entry)
+      .collect::<Vec<_>>();
+    while let Some(entry) = pending.pop() {
+      match entry {
+        GroupEntry::ValueMemberKey { .. } if self.map_member_is_effect_free(entry) => {}
+        GroupEntry::InlineGroup { group, .. } => {
+          pending.extend(
+            group
+              .group_choices
+              .iter()
+              .flat_map(|choice| choice.group_entries.iter().map(|(entry, _)| entry)),
+          );
+        }
+        // Named calls can themselves reach the separate recursion-depth limit.
+        _ => return false,
+      }
+    }
+    true
+  }
+
+  fn map_member_is_effect_free(&self, entry: &GroupEntry<'a>) -> bool {
+    let GroupEntry::ValueMemberKey { ge, .. } = entry else {
+      return false;
+    };
+    if member_key_is_cut(ge) || self.proven_scalar_type(&ge.entry_type, None).is_none() {
+      return false;
+    }
+    if self.plain_literal_key(entry, None).is_some() {
+      return true;
+    }
+    let Some(MemberKey::Type1 { t1, .. }) = &ge.member_key else {
+      return false;
+    };
+    let Type2::Typename {
+      ident,
+      generic_args: None,
+      ..
+    } = &t1.type2
+    else {
+      return false;
+    };
+    t1.operator.is_none()
+      && matches!(ident.ident, "tstr" | "text" | "any")
+      && rule_from_ident(self.state.cddl, ident).is_none()
+      && self.is_unshadowed_batch_key(ident, None)
   }
 
   /// Validate the pair relayed from a key-domain member key. On success the
@@ -3065,7 +3316,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
     self.state.is_ctrl_map_equality = false;
 
-    if let Some(selected) = self.planned_group_choice(g.group_choices.len())? {
+    if let Some(selected) = self.planned_concrete_group_choice(g)? {
       return self.visit_selected_group_choice(g, selected);
     }
 
@@ -4494,21 +4745,15 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     // member key
     if !self.state.is_colon_shortcut_present {
       if let Some(r) = rule_from_ident(self.state.cddl, ident) {
-        // Mark this rule as visited
-        self.state.visited_rules.insert(visited_key.clone());
-        let result = self.visit_rule(r);
-        // Remove this rule from visited set when we're done
-        self.state.visited_rules.remove(&visited_key);
-        return result;
+        return self.visit_named_rule_path(visited_key, |validator| validator.visit_rule(r));
       }
 
       // A name may consist entirely of `/=` definitions (RFC 8610 Section
       // 2.2.2). Such a choice has no base rule for `rule_from_ident` to find.
       if !type_choice_types_from_ident(self.state.cddl, ident).is_empty() {
-        self.state.visited_rules.insert(visited_key.clone());
-        let result = self.visit_named_type_choice(ident);
-        self.state.visited_rules.remove(&visited_key);
-        return result;
+        return self.visit_named_rule_path(visited_key, |validator| {
+          validator.visit_named_type_choice(ident)
+        });
       }
     }
 
@@ -4528,12 +4773,8 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       if let Some(Rule::Type { rule, .. }) = rule_from_ident(self.state.cddl, ident) {
         for tc in rule.value.type_choices.iter() {
           if let Type2::Array { .. } = &tc.type1.type2 {
-            // Mark this rule as visited for array type processing
-            self.state.visited_rules.insert(visited_key.clone());
-            let result = self.visit_type_choice(tc);
-            // Remove this rule from visited set when we're done
-            self.state.visited_rules.remove(&visited_key);
-            return result;
+            return self
+              .visit_named_rule_path(visited_key, |validator| validator.visit_type_choice(tc));
           }
         }
       }
@@ -4837,7 +5078,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
     if let Some(ga) = &entry.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &entry.name) {
-        return self.visit_generic_group_reference(entry, ga, rule);
+        return self.visit_generic_group_reference(entry, ga, rule, &mut None);
       }
     }
 
@@ -5781,12 +6022,13 @@ mod map_replay_budget_tests {
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
   #[cfg_attr(not(target_arch = "wasm32"), test)]
   fn map_replay_alias_proof_declines_cycles_controls_and_incremental_bindings() {
-    for definitions in [
-      "alias = link link = alias",
-      "alias = uint .size 1",
-      "alias = uint alias /= tstr",
-      "alias = pick<uint> pick<T> = T",
-      "alias = any any = uint",
+    for (definitions, expected) in [
+      ("alias = link link = uint", true),
+      ("alias = link link = alias", false),
+      ("alias = uint .size 1", false),
+      ("alias = uint alias /= tstr", false),
+      ("alias = pick<uint> pick<T> = T", false),
+      ("alias = any any = uint", false),
     ] {
       let schema = format!("root = {{ ? (a: alias // b: alias) }} {definitions}");
       let cddl = cddl_from_pest_str(&schema).unwrap();
@@ -5799,11 +6041,12 @@ mod map_replay_budget_tests {
       let GroupEntry::InlineGroup { group, .. } = &group.group_choices[0].group_entries[0].0 else {
         panic!("choices")
       };
-      let validator = limited_validator(&cddl, serde_json::json!({"a":"text","b":"text"}), 0);
-      assert!(
-        !validator.optional_choices_definitely_fail(group, None),
-        "{}",
-        schema
+      let mut validator = limited_validator(&cddl, serde_json::json!({"a":"text","b":"text"}), 0);
+      validator.map_choice_search = Some(Arc::new(Mutex::new(MapChoiceSearch::default())));
+      assert_eq!(
+        validator.optional_choices_definitely_fail(group, None),
+        expected,
+        "{schema}"
       );
     }
   }
@@ -5837,6 +6080,161 @@ mod map_replay_budget_tests {
     assert!(Arc::ptr_eq(
       validator.map_choice_search.as_ref().unwrap(),
       &outer
+    ));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_empty_successful_suffix_choices_do_not_multiply_paths() {
+    let suffix = (0..13)
+      .map(|i| format!("(? \"a{i}\" => uint // ? \"b{i}\" => uint)"))
+      .collect::<Vec<_>>()
+      .join(",");
+    let schema = format!("root = {{ (? \"k\" => uint // m: uint), {suffix} }}");
+    let cddl = cddl_from_pest_str(&schema).unwrap();
+    let mut validator = limited_validator(&cddl, serde_json::json!({"m":1}), 1);
+    assert!(validator.validate().is_ok());
+    let mut exhausted = limited_validator(&cddl, serde_json::json!({"m":1}), 0);
+    assert!(matches!(
+      exhausted.validate(),
+      Err(Error::ResourceLimit { limit: 0 })
+    ));
+    let cddl = cddl_from_pest_str("root = { (? \"a\" => uint // ? \"b\" => uint) }").unwrap();
+    let mut present = limited_validator(&cddl, serde_json::json!({"b":1}), 1);
+    assert!(present.validate().is_ok());
+    let mut exhausted = limited_validator(&cddl, serde_json::json!({"b":1}), 0);
+    assert!(matches!(
+      exhausted.validate(),
+      Err(Error::ResourceLimit { limit: 0 })
+    ));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_required_prefix_failure_does_not_enumerate_suffixes() {
+    let suffix = (0..13)
+      .map(|i| format!("(a{i}: uint // b{i}: uint)"))
+      .collect::<Vec<_>>()
+      .join(",");
+    let schema = format!("root = {{ required: uint, {suffix}, * tstr => uint }}");
+    let cddl = cddl_from_pest_str(&schema).unwrap();
+    let mut input = serde_json::json!({});
+    for i in 0..13 {
+      input[format!("a{i}")] = Value::from(1);
+      input[format!("b{i}")] = Value::from(1);
+    }
+    let mut validator = limited_validator(&cddl, input, 0);
+    let Error::Validation(errors) = validator.validate().unwrap_err() else {
+      panic!("required prefix must retain its ordinary validation diagnostic")
+    };
+    assert!(errors
+      .iter()
+      .any(|e| e.reason.contains("missing key: required")));
+    let cddl = cddl_from_pest_str(
+      "root = { ? (required: uint, (a: uint // b: uint)), (missing: uint // m: uint) }",
+    )
+    .unwrap();
+    let mut validator = limited_validator(&cddl, serde_json::json!({"m":1}), 1);
+    assert!(
+      validator.validate().is_ok(),
+      "optional rollback must restore replay eligibility"
+    );
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_generic_repetition_copies_input_once() {
+    let cddl = cddl_from_pest_str("root = { * g<uint> } g<T> = (tstr => T, ? \"x\" => T)").unwrap();
+    for size in [16, 128] {
+      let input = Value::Object(
+        (0..size)
+          .map(|i| (format!("k{i:04}"), Value::from(i)))
+          .collect(),
+      );
+      let mut validator = limited_validator(&cddl, input, 0);
+      assert!(validator.validate().is_ok());
+      assert_eq!(
+        validator
+          .map_replay_budget
+          .generic_input_copies
+          .load(Ordering::Relaxed),
+        1
+      );
+    }
+    let cddl =
+      cddl_from_pest_str("root = { * g<uint>, * g<tstr> } g<T> = (tstr => T, ? \"x\" => T)")
+        .unwrap();
+    let mut validator = limited_validator(
+      &cddl,
+      serde_json::json!({"a":1,"b":2,"c":"three","x":"four"}),
+      0,
+    );
+    for _ in 0..2 {
+      assert!(validator.validate().is_ok());
+      assert_eq!(
+        validator
+          .map_replay_budget
+          .generic_input_copies
+          .load(Ordering::Relaxed),
+        2
+      );
+    }
+    validator.json = serde_json::json!({"a":1,"x":false});
+    assert!(matches!(validator.validate(), Err(Error::Validation(_))));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_depth_errors_are_distinct_shared_and_reset() {
+    let input = Value::Object(
+      (0..128)
+        .map(|i| (format!("k{i:04}"), Value::from(i)))
+        .collect(),
+    );
+    for schema in [
+      "root = { g } g = (tstr => uint, ? g)",
+      "root = { ? g } g = (tstr => uint, ? g)",
+      "root = { g } / any g = (tstr => uint, ? g)",
+      "root = { g<uint> } g<T> = (tstr => T, ? g<T>)",
+      "root = { g } g //= (tstr => uint, ? g)",
+    ] {
+      let cddl = cddl_from_pest_str(schema).unwrap();
+      let mut validator = limited_validator(&cddl, input.clone(), 0);
+      assert!(
+        matches!(
+          validator.validate(),
+          Err(Error::RecursionLimit {
+            limit: MAX_ACTIVE_MAP_RULE_CALLS
+          })
+        ),
+        "{}",
+        schema
+      );
+      assert_eq!(validator.map_rule_depth.active.load(Ordering::Relaxed), 0);
+      validator.json = serde_json::json!({"small":1});
+      assert!(validator.validate().is_ok(), "{}", schema);
+    }
+    for schema in ["root = { g } g = (g,)", "root = { g<uint> } g<T> = (g<T>,)"] {
+      let cddl = cddl_from_pest_str(schema).unwrap();
+      let mut validator = limited_validator(&cddl, serde_json::json!({}), 0);
+      assert!(matches!(validator.validate(), Err(Error::Validation(_))));
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_unknown_key_proof_preserves_named_depth_errors() {
+    let rules = (0..80)
+      .map(|i| format!("g{i} = (g{},)", i + 1))
+      .collect::<Vec<_>>()
+      .join("\n");
+    // Analyze the shared suffix first; a later caller has less remaining depth.
+    let schema = format!("root = {{ fixed: uint // g0 // g20 }} {rules} g80 = (fixed: uint)");
+    let cddl = cddl_from_pest_str(&schema).unwrap();
+    let mut validator = limited_validator(&cddl, serde_json::json!({"fixed":1,"unknown":true}), 1);
+    assert!(matches!(
+      validator.validate(),
+      Err(Error::RecursionLimit { .. })
     ));
   }
 
@@ -6048,6 +6446,38 @@ mod tests {
 
   use super::*;
   use indoc::indoc;
+
+  #[test]
+  fn productive_flat_map_recursion_returns_a_distinct_hard_error() {
+    // The larger stack makes the pre-fix bounded witness safe to execute.
+    std::thread::Builder::new()
+      .stack_size(8 * 1024 * 1024)
+      .spawn(|| {
+        let cddl = cddl_from_str("root = { g } g = (tstr => uint, ? g)", true).unwrap();
+        for count in [8, 128, 4096] {
+          let input = Value::Object(
+            (0..count)
+              .map(|i| (format!("k{i:04}"), Value::from(i)))
+              .collect(),
+          );
+          let mut validator = JSONValidator::new(
+            &cddl,
+            input,
+            #[cfg(feature = "additional-controls")]
+            None,
+          );
+          let result = validator.validate();
+          if count == 8 {
+            assert!(result.is_ok());
+          } else {
+            assert!(matches!(result, Err(Error::RecursionLimit { .. })));
+          }
+        }
+      })
+      .unwrap()
+      .join()
+      .unwrap();
+  }
 
   #[test]
   fn stale_map_replay_index_returns_an_error_without_panicking() -> std::result::Result<(), String>
@@ -6275,6 +6705,108 @@ mod tests {
       assert!(validator.member_claims.is_empty());
       assert!(validator.map_choice_search.is_none());
     }
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn required_prefix_failure_preserves_effectful_suffix_replays() {
+    let cddl = cddl_from_str(
+      "root = { required: uint, (a: uint // b: uint), c: uint .feature 'enabled' }",
+      true,
+    )
+    .unwrap();
+    let Rule::Type { rule, .. } = &cddl.rules[0] else {
+      panic!("root")
+    };
+    let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+      panic!("map")
+    };
+    let mut group = group.clone();
+    let GroupEntry::ValueMemberKey { ge, .. } = &mut group.group_choices[0].group_entries[2].0
+    else {
+      panic!("suffix")
+    };
+    ge.entry_type.type_choices[0]
+      .type1
+      .operator
+      .as_mut()
+      .unwrap()
+      .type2 = Type2::from(token::ByteValue::UTF8(vec![0xff].into()));
+    for input in [
+      serde_json::json!({"a":1,"c":1}),
+      serde_json::json!({"a":"bad","b":1,"c":1}),
+    ] {
+      let mut validator = JSONValidator::new(&cddl, input, Some(&["enabled"]));
+      assert!(matches!(
+        validator.visit_closed_map(&group, &["a".into(), "b".into(), "c".into()]),
+        Err(Error::UTF8Parsing(_)),
+      ));
+    }
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn reused_generic_input_preserves_later_iteration_hard_errors() {
+    let mut cddl = cddl_from_str(
+      "root = { * g<val> } g<T> = (tstr => T, ? \"x\" => T) val = uint / tstr .feature 'enabled'",
+      true,
+    )
+    .unwrap();
+    let Rule::Type { rule, .. } = &mut cddl.rules[2] else {
+      panic!("value alias")
+    };
+    rule.value.type_choices[1]
+      .type1
+      .operator
+      .as_mut()
+      .unwrap()
+      .type2 = Type2::from(token::ByteValue::UTF8(vec![0xff].into()));
+    let mut validator = JSONValidator::new(
+      &cddl,
+      serde_json::json!({"a":1,"z":"text"}),
+      Some(&["enabled"]),
+    );
+    for _ in 0..2 {
+      assert!(matches!(validator.validate(), Err(Error::UTF8Parsing(_))));
+      assert_eq!(validator.map_rule_depth.active.load(Ordering::Relaxed), 0);
+    }
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn empty_choice_proof_retains_present_optional_hard_errors() {
+    let cddl = cddl_from_str(
+      "root = { (? \"a\" => uint // ? \"b\" => uint .feature 'enabled') }",
+      true,
+    )
+    .unwrap();
+    let Rule::Type { rule, .. } = &cddl.rules[0] else {
+      panic!("root")
+    };
+    let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+      panic!("map")
+    };
+    let mut group = group.clone();
+    let GroupEntry::InlineGroup { group: inner, .. } =
+      &mut group.group_choices[0].group_entries[0].0
+    else {
+      panic!("choices")
+    };
+    let GroupEntry::ValueMemberKey { ge, .. } = &mut inner.group_choices[1].group_entries[0].0
+    else {
+      panic!("optional value")
+    };
+    ge.entry_type.type_choices[0]
+      .type1
+      .operator
+      .as_mut()
+      .unwrap()
+      .type2 = Type2::from(token::ByteValue::UTF8(vec![0xff].into()));
+    let mut validator = JSONValidator::new(&cddl, serde_json::json!({"b":1}), Some(&["enabled"]));
+    assert!(matches!(
+      validator.visit_closed_map(&group, &["b".into()]),
+      Err(Error::UTF8Parsing(_))
+    ));
   }
 
   #[test]

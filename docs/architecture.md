@@ -47,6 +47,10 @@ report each distinct diagnostic once rather than repeating it for every path.
 Zero-minimum named and inline groups use state-only transactions for complete
 iterations. Their occurrence never makes required members optional; partial
 failed iterations roll back, and zero-width iterations stop repetition.
+Generic repetitions recycle their immutable input between fresh child contexts,
+copying the object once for the entire occurrence rather than once per iteration. Generic
+bindings, recursion markers and transaction state are still rebuilt for each
+iteration; children do not retain a previous iteration's evaluation state.
 The enclosing occurrence is restored after the optional group, without leaking
 it into that group's required members. Failed required choice prefixes stop
 before recording unrelated later decisions; coverage failures still replay.
@@ -55,6 +59,14 @@ incomplete ownership ledger. This traversal marker is restored on optional
 rollback and isolated across maps, retries and reuse. Otherwise-successful
 attempts always check coverage, and complete failed traversals retain their
 coverage diagnostics.
+If a required mismatch precedes every replay decision, later choices become
+single-outcome nodes only for a proven hard-error-free scalar sequence.
+Its first traversal and pruning context remain intact; optional rollback restores
+replay eligibility. Controlled values, named calls, inherited movable claims and
+structured input retain ordinary replay, including later-alternative hard errors.
+Choices whose arms consist entirely of absent plain optional literal members
+also retain only their first outcome. No value is evaluated by this proof, and
+present keys or cuts retain ordinary choice handling.
 Optional choices are skipped before registering replay decisions only when every
 arm provably fails without evaluating an earlier value or reassigning a claimed key.
 The proof can cross absent plain `?` literal members, then recognize a missing
@@ -72,6 +84,9 @@ Closed maps also prove an input key impossible to claim when every alternative
 contains only literal keys and hard-error-free scalar value types. The proof
 unions keys across inline and non-generic named groups using an explicit worklist;
 completed groups are shared, while recursive groups decline the proof.
+Named-group depth requirements are retained with completed proofs and checked
+again against each caller's remaining depth, so shared groups cannot hide a
+later recursion-limit error.
 It runs no visitors and stops replay only **after** ordinary traversal succeeds
 and coverage fails, retaining that traversal's actual coverage diagnostics.
 Dynamic keys, controls, cuts, incremental/generic groups, inherited claims and
@@ -123,6 +138,16 @@ trying another type/group choice, accepting an optional entry, or returning
 first-path mismatch diagnostics. String-based WASM APIs retain this explanation
 in their error text. This bounds additional map-candidate replays only; it is
 not a blanket CPU, memory, recursion, or denial-of-service guarantee.
+
+Separately, JSON map validation permits at most 64 simultaneously active named-rule
+calls. Productive flat-map recursion is therefore bounded even when it consumes
+keys without replaying candidates. Exceeding this depth returns the distinct hard
+`json::Error::RecursionLimit { limit }`; it is not replay-budget exhaustion or an
+ordinary mismatch and cannot be swallowed by optional entries or type choices.
+An `Arc`-shared active-call counter covers generic children, and scoped guards
+release depth on success and all error paths. Top-level reuse starts fresh.
+Non-progress recursion retains its ordinary validation diagnostic. This limit
+bounds named-rule calls during map validation, not every possible AST traversal.
 
 An undefined group socket matches no entries, so `{ * $$s }` accepts an empty
 map. A failed inline group that may occur zero times, such as `? ($$s)`,
