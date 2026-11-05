@@ -400,6 +400,8 @@ struct MapChoiceSearch {
   widths: Vec<usize>,
   traversal_pruned: bool,
   decisions_suppressed: bool,
+  // Like widths, decision provenance survives optional rollback.
+  has_unsuppressed_decision: bool,
 }
 
 const MAX_ADDITIONAL_MAP_REPLAYS: usize = 4096;
@@ -468,6 +470,7 @@ impl MapReplayBudget {
 impl MapChoiceSearch {
   fn select(&mut self, width: usize) -> usize {
     let depth = self.widths.len();
+    self.has_unsuppressed_decision |= !self.decisions_suppressed;
     // Keep the first traversal's pruning context without alternatives that
     // cannot repair an earlier required failure.
     self
@@ -479,6 +482,7 @@ impl MapChoiceSearch {
   fn advance(&mut self) -> bool {
     self.traversal_pruned = false;
     self.decisions_suppressed = false;
+    self.has_unsuppressed_decision = false;
     self.path.resize(self.widths.len(), 0);
     for depth in (0..self.widths.len()).rev() {
       if self.path[depth] + 1 < self.widths[depth] {
@@ -614,6 +618,16 @@ impl<'a> JSONValidator<'a> {
       .as_ref()
       .map(|_| self.map_rule_depth.enter())
       .transpose()
+  }
+
+  fn map_rule_depth_allows(&self, additional: usize) -> bool {
+    self.map_choice_search.is_none()
+      || self
+        .map_rule_depth
+        .active
+        .load(Ordering::Relaxed)
+        .saturating_add(additional)
+        <= self.map_rule_depth.limit
   }
 
   fn visit_named_rule_path<F>(&mut self, marker: String, visit: F) -> Result
@@ -1291,34 +1305,35 @@ impl<'a> JSONValidator<'a> {
     })
   }
 
-  fn is_unshadowed_batch_key(
+  fn batch_key_depth(
     &self,
     mut ident: &Identifier<'a>,
     params: Option<&GenericParams<'a>>,
-  ) -> bool {
+  ) -> Option<usize> {
     let mut visited = HashSet::new();
     loop {
       if ident.socket.is_some()
         || self.batch_key_is_parameter(ident, params)
         || !visited.insert(ident.ident)
       {
-        return false;
+        return None;
       }
       let definitions = type_choice_types_from_ident(self.state.cddl, ident);
       let Some(rule) = rule_from_ident(self.state.cddl, ident) else {
-        return definitions.is_empty() && matches!(ident.ident, "tstr" | "text" | "any");
+        return (definitions.is_empty() && matches!(ident.ident, "tstr" | "text" | "any"))
+          .then_some(visited.len() - 1);
       };
       let Rule::Type { rule, .. } = rule else {
-        return false;
+        return None;
       };
       if rule.generic_params.is_some() || definitions.len() != 1 {
-        return false;
+        return None;
       }
       let [choice] = rule.value.type_choices.as_slice() else {
-        return false;
+        return None;
       };
       if choice.type1.operator.is_some() {
-        return false;
+        return None;
       }
       let Type2::Typename {
         ident: next,
@@ -1326,7 +1341,7 @@ impl<'a> JSONValidator<'a> {
         ..
       } = &choice.type1.type2
       else {
-        return false;
+        return None;
       };
       ident = next;
     }
@@ -1337,6 +1352,7 @@ impl<'a> JSONValidator<'a> {
     group: &'b Group<'a>,
     params: Option<&GenericParams<'a>>,
     pair_source: &Self,
+    pending_calls: usize,
   ) -> Option<&'b ValueMemberKeyEntry<'a>> {
     let has_movable_claims = pair_source.member_claims.iter().any(|claim| {
       matches!(
@@ -1370,8 +1386,9 @@ impl<'a> JSONValidator<'a> {
     else {
       return None;
     };
+    let key_depth = self.batch_key_depth(ident, params)?;
     if t1.operator.is_none()
-      && self.is_unshadowed_batch_key(ident, params)
+      && pair_source.map_rule_depth_allows(key_depth.saturating_add(pending_calls))
       && (!has_movable_claims
         || pair_source.batch_covers_unclaimed_values(self.batch_value_predicate(&ge.entry_type)))
     {
@@ -1539,14 +1556,25 @@ impl<'a> JSONValidator<'a> {
     entry: &'b GroupEntry<'a>,
     proof: &mut LiteralKeyProof<'b, 'a>,
   ) -> Option<()> {
+    if let GroupEntry::ValueMemberKey { ge, .. } = entry {
+      if member_key_is_cut(ge)
+        || (!proof.inspect_values
+          && matches!(&ge.member_key, Some(MemberKey::Value { .. }))
+          && group_entry_bounds(entry).0 == 0
+          && !matches!(
+            ge.occur.as_ref().map(|occur| occur.occur),
+            Some(Occur::Optional { .. })
+          ))
+      {
+        return None;
+      }
+    }
     if !proof.inspect_values && group_entry_bounds(entry) == (0, Some(0)) {
       return Some(());
     }
     match entry {
       GroupEntry::ValueMemberKey { ge, .. } => {
-        if member_key_is_cut(ge)
-          || (proof.inspect_values && self.proven_scalar_type(&ge.entry_type, None).is_none())
-        {
+        if proof.inspect_values && self.proven_scalar_type(&ge.entry_type, None).is_none() {
           return None;
         }
         proof
@@ -1650,13 +1678,27 @@ impl<'a> JSONValidator<'a> {
         }),
       );
       scoped
-        .batchable_map_member(group, rule.generic_params.as_ref(), self)
+        .batchable_map_member(group, rule.generic_params.as_ref(), self, 1)
         .cloned()
     } else {
       self
-        .batchable_map_member(group, rule.generic_params.as_ref(), self)
+        .batchable_map_member(
+          group,
+          rule.generic_params.as_ref(),
+          self,
+          usize::from(!bindings_ready),
+        )
         .cloned()
     }
+  }
+
+  fn visit_batched_named_map_member(
+    &mut self,
+    member: &ValueMemberKeyEntry<'a>,
+    occurrence: &Occurrence<'a>,
+  ) -> Result {
+    let _depth = self.enter_map_rule()?;
+    self.visit_batched_map_member(member, occurrence)
   }
 
   fn visit_batched_map_member(
@@ -1933,7 +1975,9 @@ impl<'a> JSONValidator<'a> {
     &self,
     entry: &TypeGroupnameEntry<'a>,
   ) -> std::result::Result<bool, Error> {
-    if !group_choice_alternates_from_ident(self.state.cddl, &entry.name).is_empty() {
+    if !self.map_rule_depth_allows(1)
+      || !group_choice_alternates_from_ident(self.state.cddl, &entry.name).is_empty()
+    {
       return Ok(false);
     }
     let Some(Rule::Group { rule, .. }) = rule_from_ident(self.state.cddl, &entry.name) else {
@@ -2005,13 +2049,13 @@ impl<'a> JSONValidator<'a> {
     args: &GenericArgs<'a>,
     rule: &Rule<'a>,
   ) -> Result {
-    let _depth = self.enter_map_rule()?;
     let resolved_args = resolved_generic_args(&self.state, args);
     let instance =
       generic_instantiation_key(&qualified_ident_key(&entry.name), resolved_args.iter());
     let Some(mut jv) = self.generic_group_child(instance) else {
       return Ok(());
     };
+    let _depth = self.enter_map_rule()?;
     jv.set_generic_group_bindings(
       entry.name.ident,
       resolved_args,
@@ -2100,7 +2144,9 @@ impl<'a> JSONValidator<'a> {
       if self.errors.len() > error_count {
         if let Some(search) = &self.map_choice_search {
           let mut search = search.lock().expect("map choice search lock");
-          if !search.widths.is_empty() {
+          if !search.widths.is_empty()
+            && (search.decisions_suppressed || search.has_unsuppressed_decision)
+          {
             search.traversal_pruned |= index + 1 < choice.group_entries.len();
             break;
           }
@@ -2175,7 +2221,9 @@ impl<'a> JSONValidator<'a> {
     t1.operator.is_none()
       && matches!(ident.ident, "tstr" | "text" | "any")
       && rule_from_ident(self.state.cddl, ident).is_none()
-      && self.is_unshadowed_batch_key(ident, None)
+      && self
+        .batch_key_depth(ident, None)
+        .is_some_and(|depth| self.map_rule_depth_allows(depth))
   }
 
   /// Validate the pair relayed from a key-domain member key. On success the
@@ -5122,7 +5170,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       self.batchable_named_map_member(entry, false),
       entry.occur.as_ref(),
     ) {
-      let result = self.visit_batched_map_member(&member, occurrence);
+      let result = self.visit_batched_named_map_member(&member, occurrence);
       self.state.type_group_name_entry = None;
       return result;
     }
@@ -5198,7 +5246,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     if self.skip_proven_optional_choices(g, None, max != Some(0))? {
       return Ok(());
     }
-    if let (Some(member), Some(occurrence)) = (self.batchable_map_member(g, None, self), occur) {
+    if let (Some(member), Some(occurrence)) = (self.batchable_map_member(g, None, self, 0), occur) {
       return self.visit_batched_map_member(member, occurrence);
     }
     self.visit_zero_minimum_group(max, |validator| validator.visit_group(g))
@@ -5545,7 +5593,7 @@ mod map_replay_budget_tests {
     };
     let validator = limited_validator(&cddl, serde_json::json!({}), 0);
     let member = validator
-      .batchable_map_member(group, None, &validator)
+      .batchable_map_member(group, None, &validator, 0)
       .unwrap()
       .clone();
     let mut claims: Vec<_> = (0..64)
@@ -6197,6 +6245,161 @@ mod map_replay_budget_tests {
 
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
   #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_batch_alias_depth_matches_ordinary_calls() {
+    for (entries, pending) in [
+      ("* (k0 => uint)", 0),
+      ("* fields", 1),
+      ("* generic-fields<uint>", 1),
+    ] {
+      for aliases in [65, 64, 63] {
+        let rules = (0..aliases - 1)
+          .map(|i| format!("k{i} = k{}", i + 1))
+          .collect::<Vec<_>>()
+          .join("\n");
+        let schema = format!(
+          "root = {{ {entries} }} {rules} k{} = tstr
+           fields = (k0 => uint) generic-fields<T> = (k0 => T)",
+          aliases - 1
+        );
+        let cddl = cddl_from_pest_str(&schema).unwrap();
+        let mut validator = limited_validator(&cddl, serde_json::json!({"a":1}), 0);
+        let result = validator.validate();
+        if aliases + pending > 64 {
+          assert!(matches!(result, Err(Error::RecursionLimit { limit: 64 })));
+        } else {
+          assert!(result.is_ok());
+        }
+      }
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_empty_proof_retains_quoted_colon_and_disabled_cut_choices() {
+    for member in [
+      "0*1 \"a\": uint",
+      "*1 \"a\": uint",
+      "0*2 \"a\": uint",
+      "0*0 \"a\": uint",
+      "0*0 \"a\" ^ => uint",
+    ] {
+      let schema = format!("root = {{ ({member} // ? b: uint) }}");
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator = limited_validator(&cddl, serde_json::json!({}), 1);
+      assert!(validator.validate().is_ok(), "{}", member);
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_named_optional_proof_preserves_reference_depth() {
+    let rules = (0..63)
+      .map(|i| format!("g{i} = (g{},)", i + 1))
+      .collect::<Vec<_>>()
+      .join("\n");
+    for reference in ["h", "generic-h<uint>"] {
+      for occurrence in ["?", "0*0"] {
+        let schema = format!(
+          "root = {{ g0 }} {rules} g63 = ({occurrence} {reference},)
+           h = (a: uint // b: uint) generic-h<T> = (a: T // b: T)"
+        );
+        let cddl = cddl_from_pest_str(&schema).unwrap();
+        let mut validator = limited_validator(&cddl, serde_json::json!({}), 0);
+        let result = validator.validate();
+        if occurrence == "?" {
+          assert!(matches!(result, Err(Error::RecursionLimit { limit: 64 })));
+        } else {
+          assert!(result.is_ok());
+        }
+      }
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_generic_cycles_remain_mismatches_at_depth_boundary() {
+    for (enclosing, argument) in [(63, "T"), (64, "T"), (63, "tstr")] {
+      let rules = (0..enclosing - 1)
+        .map(|i| format!("g{i} = (g{},)", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+      let schema = format!(
+        "root = {{ g0 }} {rules} g{} = (cycle<uint>,)
+         cycle<T> = (cycle<{argument}> // a: T)",
+        enclosing - 1
+      );
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator = limited_validator(&cddl, serde_json::json!({"a":1}), 1);
+      let result = validator.validate();
+      if enclosing == 63 && argument == "T" {
+        assert!(result.is_ok());
+      } else {
+        assert!(matches!(result, Err(Error::RecursionLimit { limit: 64 })));
+      }
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_non_generic_batches_count_named_depth() {
+    for enclosing in [64, 63] {
+      let rules = (0..enclosing - 1)
+        .map(|i| format!("g{i} = (g{},)", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+      let schema = format!(
+        "root = {{ g0 }} {rules} g{} = (? h,) h = (tstr => uint)",
+        enclosing - 1
+      );
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator = limited_validator(&cddl, serde_json::json!({}), 0);
+      let result = validator.validate();
+      if enclosing == 64 {
+        assert!(matches!(result, Err(Error::RecursionLimit { limit: 64 })));
+      } else {
+        assert!(result.is_ok());
+      }
+    }
+    for enclosing in [63, 62] {
+      let rules = (0..enclosing - 1)
+        .map(|i| format!("g{i} = (g{},)", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+      let schema = format!(
+        "root = {{ g0 }} {rules} g{} = (? h,)
+         h = (tstr => {{ tail }}) tail = (a: uint)",
+        enclosing - 1
+      );
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator = limited_validator(&cddl, serde_json::json!({"outer":{"a":1}}), 0);
+      let result = validator.validate();
+      if enclosing == 63 {
+        assert!(matches!(result, Err(Error::RecursionLimit { limit: 64 })));
+      } else {
+        assert!(result.is_ok());
+      }
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn map_replay_suppressed_nested_nodes_preserve_enclosing_effects() {
+    let cddl = cddl_from_pest_str(
+      "root = { (required: uint, (x: uint // y: uint)),
+                (a: uint // b: tstr .regexp \"[\") } / any",
+    )
+    .unwrap();
+    let mut validator = limited_validator(&cddl, serde_json::json!({"b":"x"}), 2);
+    assert!(validator
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .to_lowercase()
+      .contains("regex"));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
   fn map_replay_zero_minimum_empty_choices_do_not_multiply_paths() {
     for occurrence in ["0*1", "*1", "*", "0*2", "0*0"] {
       let suffix = (0..13)
@@ -6499,7 +6702,7 @@ mod map_replay_budget_tests {
       assert!(!validator.member_claims.is_empty());
       let member = match &entries[1].0 {
         GroupEntry::InlineGroup { group, .. } => validator
-          .batchable_map_member(group, None, &validator)
+          .batchable_map_member(group, None, &validator, 0)
           .cloned(),
         GroupEntry::TypeGroupname { ge, .. } => validator.batchable_named_map_member(ge, false),
         _ => panic!("expected repeated group"),

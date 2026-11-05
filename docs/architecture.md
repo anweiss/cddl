@@ -69,11 +69,17 @@ replay eligibility. Suppression is scoped to the proven sequence and cannot leak
 from a nested scalar group into effectful enclosing siblings. Controlled values,
 named calls, inherited movable claims and structured input retain ordinary replay,
 including later-alternative hard errors.
+Nodes recorded only under scalar suppression do not authorize pruning outside
+that sequence. Ordinary decisions, including coalesced equivalent alternatives,
+retain their original pruning context.
 Choices whose arms contain only zero-minimum entries with absent literal keys
 also retain only their first outcome. This includes named-group DAGs and zero-
 minimum occurrence ranges, not just `?` literal members. No value is evaluated by
 this proof. Named depth requirements remain checked; present keys, dynamic keys,
 generic named references, cycles and explicit cuts retain ordinary choice handling.
+Bounded quoted-colon members are excluded because their existing visitor can
+still report an absent key. Direct zero-maximum cut members are also excluded;
+an occurrence bound alone does not establish empty success for those visitors.
 Optional choices are skipped before registering replay decisions only when every
 arm provably fails without evaluating an earlier value or reassigning a claimed key.
 The proof can cross absent plain `?` literal members, then recognize a missing
@@ -153,6 +159,11 @@ keys without replaying candidates. Exceeding this depth returns the distinct har
 ordinary mismatch and cannot be swallowed by optional entries or type choices.
 An `Arc`-shared active-call counter covers generic children, and scoped guards
 release depth on success and all error paths. Top-level reuse starts fresh.
+Both generic and non-generic batched named calls acquire a slot. Batch eligibility
+counts transparent key-alias depth and any pending named call; optional named
+proofs cannot bypass the reference's own depth check. Generic zero-progress
+markers are checked before acquiring another slot, preserving ordinary cycle
+mismatch and alternative fallback at the depth boundary.
 Non-progress recursion retains its ordinary validation diagnostic. This limit
 bounds named-rule calls during map validation, not every possible AST traversal.
 
