@@ -72,6 +72,83 @@ fn map_replay_identical_claims_share_probes_but_not_generic_bindings() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn map_replay_capacity_failures_preserve_later_claim_errors() {
+  for (prefix, definitions, input) in [
+    (
+      "tstr => uint",
+      "",
+      serde_json::json!({"0":1,"1":true,"2":"text"}),
+    ),
+    (
+      "g, g",
+      "g = (tstr => uint)",
+      serde_json::json!({"0":1,"1":2,"2":true,"3":"text"}),
+    ),
+    (
+      "* (tstr => uint)",
+      "",
+      serde_json::json!({"0":1,"1":2,"2":true,"3":"text"}),
+    ),
+    (
+      "* g",
+      "g = (tstr => uint)",
+      serde_json::json!({"0":1,"1":2,"2":true,"3":"text"}),
+    ),
+  ] {
+    for fallback in ["", " / any"] {
+      let schema = format!(
+        r#"root = {{ {prefix}, tstr => bool / tstr .regexp "[", "0": uint, * tstr => any }}{fallback} {definitions}"#
+      );
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator = limited_validator(&cddl, input.clone(), 4096);
+      match validator.validate() {
+        Err(Error::Validation(errors)) => assert!(
+          errors.len() == 1
+            && errors[0].reason.contains("regex parse error")
+            && errors[0].reason.contains("unclosed character class"),
+          "{}: {:?}",
+          schema,
+          errors
+        ),
+        outcome => panic!("expected regex error for {}, got {:?}", schema, outcome),
+      }
+
+      let valid_regex = schema.replace(r#""[""#, r#""^z+$""#);
+      let cddl = cddl_from_pest_str(&valid_regex).unwrap();
+      let mut validator = limited_validator(&cddl, input.clone(), 4096);
+      if fallback.is_empty() {
+        assert!(matches!(
+          validator.validate(),
+          Err(Error::Validation(errors))
+            if !errors.is_empty() && errors.iter().all(|error| !error.reason.contains("regex"))
+        ));
+      } else {
+        assert!(validator.validate().is_ok());
+      }
+    }
+  }
+  for (schema, input) in [
+    (
+      r#"root = { 2*2 (tstr => uint), tstr => bool / tstr .regexp "[", "0": uint, * tstr => any } / any"#,
+      serde_json::json!({"0":1,"1":2,"2":true,"3":"text"}),
+    ),
+    (
+      r#"root = { + (tstr => uint), tstr => bool / tstr .regexp "[", "0": uint, * tstr => any } / any"#,
+      serde_json::json!({"0":1,"1":2,"2":true,"3":"text"}),
+    ),
+    (
+      r#"root = { tstr => uint, tstr => bool / tstr .regexp "[", tstr => tstr, "0": uint } / any"#,
+      serde_json::json!({"0":1,"1":true,"2":"text"}),
+    ),
+  ] {
+    let cddl = cddl_from_pest_str(schema).unwrap();
+    let mut validator = limited_validator(&cddl, input, 4096);
+    assert!(validator.validate().is_ok(), "{}", schema);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn map_replay_budget_boundary_and_repeated_validation() {
   let cddl = cddl_from_pest_str(r#"root = { ? "a" => uint // ? "a" => bool // a: tstr }"#).unwrap();
   let mut validator = limited_validator(&cddl, serde_json::json!({"a":"value"}), 1);

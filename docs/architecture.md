@@ -135,6 +135,12 @@ name an active generic parameter, preserving parameter lookup before global
 rule lookup.
 Reassignment shares compatibility rows for identical members and captured generic bindings, and
 rejects an identical-claim demand exceeding its available matching pairs.
+Zero capacity or excess demand does not skip later distinct compatibility rows:
+their probes can raise hard errors, so capacity rejection follows those probes.
+This also surfaces previously suppressed regex errors in the tested star-inline
+and star-named repetition cases. Tested `2*2`, `+`, and insufficient-slot cases
+retain their prior outcomes; these are fixture-specific observations, not a
+general occurrence guarantee. Controls are not prevalidated globally.
 Only a single interchangeable claim class prefers free pairs before displacement;
 mixed classes retain DFS displacement order while sharing a per-class scan cursor
 within each augmentation. Already-incompatible or visited slots cannot become

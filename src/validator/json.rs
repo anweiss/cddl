@@ -334,6 +334,8 @@ where
 {
   let mut classes: Vec<(usize, Arc<Vec<bool>>, usize, usize)> = Vec::new();
   let mut rows = Vec::with_capacity(claims.len());
+  let mut has_capacity = true;
+  // Capacity failure must not skip fallible probes of later claim classes.
   for (index, claim) in claims.iter().enumerate() {
     let existing = classes.iter_mut().find(|(representative, _, _, _)| {
       let prior = &claims[*representative];
@@ -341,9 +343,7 @@ where
     });
     if let Some((_, row, demand, capacity)) = existing {
       *demand += 1;
-      if *demand > *capacity {
-        return Ok(None);
-      }
+      has_capacity &= *demand <= *capacity;
       rows.push(row.clone());
     } else {
       let row = Arc::new(
@@ -352,14 +352,12 @@ where
           .collect::<std::result::Result<Vec<_>, _>>()?,
       );
       let capacity = row.iter().filter(|matches| **matches).count();
-      if capacity == 0 {
-        return Ok(None);
-      }
+      has_capacity &= capacity > 0;
       rows.push(row.clone());
       classes.push((index, row, 1, capacity));
     }
   }
-  Ok(Some(rows))
+  Ok(has_capacity.then_some(rows))
 }
 
 /// Does this member key carry an explicit cut (`^ =>`)?
