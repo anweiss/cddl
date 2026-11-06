@@ -101,7 +101,8 @@ hard-error-free sequence proof; otherwise the optional arm is traversed normally
 The tail proof also declines pending named-group generic parameters, whose
 bindings can shadow otherwise-safe scalar types.
 The proof can cross absent plain `?` literal members, then recognize a missing
-unquantified required literal key or an unclaimed string against plain, unshadowed `uint`,
+required literal key whose occurrence has a positive minimum (subject to the
+colon exclusions above), or an unclaimed string against plain, unshadowed `uint`,
 including transparent, single-definition type-alias chains. Alias cycles,
 incremental definitions, generic bindings and redefined prelude names decline
 this proof. The latter also excludes controls, explicit/inherited cuts, claimed
