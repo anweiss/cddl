@@ -76,10 +76,9 @@ fn map_replay_budget_boundary_and_repeated_validation() {
   let cddl = cddl_from_pest_str(r#"root = { ? "a" => uint // ? "a" => bool // a: tstr }"#).unwrap();
   let mut validator = limited_validator(&cddl, serde_json::json!({"a":"value"}), 1);
   for _ in 0..2 {
-    assert!(matches!(
-      validator.validate(),
-      Err(Error::ResourceLimit { limit: 1 })
-    ));
+    let error = validator.validate().unwrap_err();
+    assert!(matches!(error, Error::ResourceLimit { limit: 1 }));
+    assert!(error.to_string().starts_with("JSON validation incomplete:"));
     assert!(validator.map_choice_search.is_none());
     assert!(validator.validated_keys.is_none());
     assert!(validator.deferred_map_errors.is_empty());
@@ -1360,16 +1359,18 @@ fn map_replay_depth_errors_are_distinct_shared_and_reset() {
   ] {
     let cddl = cddl_from_pest_str(schema).unwrap();
     let mut validator = limited_validator(&cddl, input.clone(), 0);
+    let error = validator.validate().unwrap_err();
     assert!(
       matches!(
-        validator.validate(),
-        Err(Error::RecursionLimit {
+        error,
+        Error::RecursionLimit {
           limit: MAX_ACTIVE_MAP_RULE_CALLS
-        })
+        }
       ),
       "{}",
       schema
     );
+    assert!(error.to_string().starts_with("JSON validation incomplete:"));
     assert_eq!(validator.map_rule_depth.active.load(Ordering::Relaxed), 0);
     validator.json = serde_json::json!({"small":1}).into();
     assert!(validator.validate().is_ok(), "{}", schema);
