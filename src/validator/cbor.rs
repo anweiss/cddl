@@ -9,14 +9,15 @@ use crate::{
   visitor::{self, *},
 };
 
-use core::convert::TryInto;
 use std::{
   borrow::Cow,
+  collections::HashSet,
   convert::TryFrom,
   fmt::{self, Write},
+  sync::{Arc, Mutex},
 };
 
-use super::cbor_value::{decode_cbor, Value};
+use super::cbor_value::{decode_cbor, has_duplicate_text_keys, Value};
 use chrono::{TimeZone, Utc};
 use serde_json;
 
@@ -126,6 +127,17 @@ impl std::error::Error for ValidationError {
 }
 
 impl<T: std::fmt::Debug> Error<T> {
+  #[cfg(not(target_arch = "wasm32"))]
+  pub(crate) fn from_decode_error(error: super::cbor_value::DecodeError) -> Self {
+    match error {
+      super::cbor_value::DecodeError::DuplicateTextKey => {
+        Self::CBORParsing(ciborium::de::Error::Semantic(None, error.to_string()))
+      }
+      // Preserve the existing public classification of unrelated decode errors.
+      _ => Self::CDDLParsing(error.to_string()),
+    }
+  }
+
   fn from_validator(cv: &CBORValidator, reason: String) -> Self {
     Error::Validation(vec![ValidationError {
       cddl_location: cv.state.cddl_location.clone(),
@@ -152,6 +164,23 @@ struct SingleMapEntryClaim<'a> {
   generic_context: Option<GenericEvaluationContext<'a>>,
 }
 
+#[derive(Eq, Hash, PartialEq)]
+struct NumericTargetProbeKey {
+  cddl: usize,
+  target: String,
+  data_location: String,
+  generic_rule: Option<String>,
+  generic_rules: String,
+  features: String,
+}
+
+#[derive(Clone)]
+struct ControllerDomain<'a> {
+  target: Type2<'a>,
+  generic_rules: Vec<GenericRule<'a>>,
+  generic_rule: Option<&'a str>,
+}
+
 /// cbor validator type
 #[derive(Clone)]
 pub struct CBORValidator<'a> {
@@ -176,6 +205,10 @@ pub struct CBORValidator<'a> {
   // Isolated compatibility probes must not recursively start another map
   // assignment search when the tested pair does not match.
   probing_single_entry_assignment: bool,
+  // Shared only by validator copies of this immutable CBOR value.
+  numeric_target_checks: Arc<Mutex<HashSet<NumericTargetProbeKey>>>,
+  numeric_probe_recursions: Arc<Mutex<usize>>,
+  controller_domains: Vec<ControllerDomain<'a>>,
   // Candidate batch produced while visiting one repeating map member's key.
   // `visit_value_member_key_entry` immediately takes this relay field so the
   // physical indices cannot affect a later group entry.
@@ -215,6 +248,9 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
+      numeric_target_checks: Arc::default(),
+      numeric_probe_recursions: Arc::default(),
+      controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -235,6 +271,9 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
+      numeric_target_checks: Arc::default(),
+      numeric_probe_recursions: Arc::default(),
+      controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -255,6 +294,9 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
+      numeric_target_checks: Arc::default(),
+      numeric_probe_recursions: Arc::default(),
+      controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -275,6 +317,9 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
+      numeric_target_checks: Arc::default(),
+      numeric_probe_recursions: Arc::default(),
+      controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -284,6 +329,136 @@ impl<'a> CBORValidator<'a> {
   /// Extract the underlying CBOR Value.
   pub fn extract_cbor(self) -> Value {
     self.cbor
+  }
+
+  fn numeric_target_probe_key(&self, target: &Type2<'a>) -> NumericTargetProbeKey {
+    #[cfg(feature = "additional-controls")]
+    let features = format!("{:?}", self.state.enabled_features);
+    #[cfg(not(feature = "additional-controls"))]
+    let features = String::new();
+    // Identifier evaluation reads leading arguments, while argument forwarding
+    // reads the latest bindings. Intermediate instantiation history is unused.
+    let generic_rules = self
+      .state
+      .generic_rules
+      .iter()
+      .map(|rule| {
+        let count = rule.params.len();
+        (
+          rule.name,
+          &rule.params,
+          &rule.args[..count.min(rule.args.len())],
+          rule
+            .args
+            .len()
+            .checked_sub(count)
+            .map(|start| &rule.args[start..]),
+        )
+      })
+      .collect::<Vec<_>>();
+    NumericTargetProbeKey {
+      cddl: self.state.cddl as *const CDDL<'a> as usize,
+      target: format!("{target:?}"),
+      data_location: self.state.data_location.clone(),
+      generic_rule: self.state.eval_generic_rule.map(str::to_owned),
+      generic_rules: format!("{generic_rules:?}"),
+      features,
+    }
+  }
+
+  fn probe_numeric_target<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let key = self.numeric_target_probe_key(target);
+    if self
+      .numeric_target_checks
+      .lock()
+      .is_ok_and(|checks| checks.contains(&key))
+    {
+      return Ok(true);
+    }
+
+    let mut probe = self.new_with_recursion_state(self.cbor.clone());
+    probe.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
+    probe.state.data_location = self.state.data_location.clone();
+    let recursion_count = self
+      .numeric_probe_recursions
+      .lock()
+      .ok()
+      .map(|count| *count);
+    probe.visit_type2(target)?;
+    if !probe.errors.is_empty() {
+      self.errors.extend(probe.errors);
+      return Ok(false);
+    }
+    // A recursion guard assumes membership rather than proving it. Such a
+    // result must never become reusable evidence in a different alias path.
+    if recursion_count.is_some_and(|count| {
+      count != usize::MAX
+        && self
+          .numeric_probe_recursions
+          .lock()
+          .is_ok_and(|current| *current == count)
+    }) {
+      if let Ok(mut checks) = self.numeric_target_checks.lock() {
+        checks.insert(key);
+      }
+    }
+    Ok(true)
+  }
+
+  fn note_numeric_probe_recursion(&self) {
+    if let Ok(mut count) = self.numeric_probe_recursions.lock() {
+      *count = count.saturating_add(1);
+    }
+  }
+
+  fn visit_numeric_controller<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    self.controller_domains.push(ControllerDomain {
+      target: target.clone(),
+      generic_rules: self.state.generic_rules.clone(),
+      generic_rule: self.state.eval_generic_rule,
+    });
+    let result = self.visit_type2(controller);
+    self.controller_domains.pop();
+    result
+  }
+
+  fn controller_value_matches_domains<T: std::fmt::Debug + 'static>(
+    &mut self,
+    value: &token::Value<'a>,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    for domain in self.controller_domains.clone() {
+      // Controller values are a different operand from the instance and get
+      // fresh membership caches, even if the two happen to have equal values.
+      let mut probe = self.new_with_recursion_state(token_value_into_cbor_value(value.clone()));
+      probe.state.generic_rules = domain.generic_rules;
+      probe.state.eval_generic_rule = domain.generic_rule;
+      probe.state.data_location = self.state.data_location.clone();
+      probe.visit_type2(&domain.target)?;
+      if !probe.errors.is_empty() {
+        for error in &mut probe.errors {
+          error.reason = format!("numeric controller: {}", error.reason);
+        }
+        self.errors.extend(probe.errors);
+        return Ok(false);
+      }
+    }
+    Ok(true)
   }
 
   fn validate_equality_control<T: std::fmt::Debug + 'static>(
@@ -299,6 +474,11 @@ impl<'a> CBORValidator<'a> {
         if is_ident_string_data_type(self.state.cddl, ident)
           || is_ident_numeric_data_type(self.state.cddl, ident)
         {
+          if is_numeric_controller_context(self.state.ctrl.as_ref())
+            && is_ident_numeric_data_type(self.state.cddl, ident)
+          {
+            return self.visit_numeric_controller::<T>(target, controller);
+          }
           return self.visit_type2(controller);
         }
       }
@@ -1083,12 +1263,14 @@ impl<'a> CBORValidator<'a> {
     } else if ident_numeric_kind(self.state.cddl, ident).is_some() {
       let cddl = self.state.cddl;
       self.find_single_map_entry_matching(entries, |key| {
-        numeric_ident_matches_cbor_value(cddl, ident, key)
+        numeric_ident_matches_cbor_value(cddl, ident, key) || is_bignum_value(cddl, ident, key)
       })
     } else if is_ident_bool_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Bool(_)))
     } else if is_ident_null_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Null))
+    } else if matches!(lookup_ident(ident.ident), Token::UNDEFINED) {
+      self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Simple(23)))
     } else if is_ident_byte_string_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Bytes(_)))
     } else if is_ident_bignum_data_type(self.state.cddl, ident) {
@@ -1113,6 +1295,7 @@ impl<'a> CBORValidator<'a> {
     cv.state.generic_rules = self.state.generic_rules.clone();
     cv.state.eval_generic_rule = self.state.eval_generic_rule;
     cv.state.visited_rules = self.state.visited_rules.clone();
+    cv.numeric_probe_recursions = Arc::clone(&self.numeric_probe_recursions);
     cv
   }
 
@@ -1725,6 +1908,15 @@ where
   cbor::Error<T>: From<cbor::Error<std::io::Error>>,
 {
   fn validate(&mut self) -> std::result::Result<(), cbor::Error<T>> {
+    self.numeric_target_checks = Arc::default();
+    self.numeric_probe_recursions = Arc::default();
+    self.controller_domains.clear();
+    // RFC 8949 sections 5.3.1 and 5.6.1: text map keys compare byte-for-byte,
+    // independently of their wire encoding and of the enclosing CDDL type.
+    if has_duplicate_text_keys(&self.cbor) {
+      self.add_error("unexpected key: duplicate text key in CBOR map".into());
+      return Err(Error::Validation(self.errors.clone()));
+    }
     for r in self.state.cddl.rules.iter() {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {
@@ -2127,6 +2319,7 @@ where
     ctrl: ControlOperator,
     controller: &Type2<'a>,
   ) -> visitor::Result<Error<T>> {
+    let mut numeric_target_validated = false;
     if let Type2::Typename {
       ident: target_ident,
       ..
@@ -2191,31 +2384,26 @@ where
       {
         self.add_error(format!("expected type bstr, got {:?}", self.cbor));
         return Ok(());
-      } else if is_ident_uint_data_type(self.state.cddl, target_ident) {
-        // For uint, we need to check that it's an integer and it's non-negative,
-        // then fall through so the control operator is enforced
-        match &self.cbor {
-          Value::Integer(i) if i128::from(*i) >= 0 => {}
-          _ => {
-            self.add_error(format!("expected type uint, got {:?}", self.cbor));
+      } else if ident_numeric_kind(self.state.cddl, target_ident).is_some() {
+        if !matches!(
+          self.cbor,
+          Value::Integer(_) | Value::Float(_) | Value::Tag(..)
+        ) {
+          self.add_error(format!(
+            "expected numeric type {}, got {:?}",
+            target_ident, self.cbor
+          ));
+          return Ok(());
+        }
+        if numeric_control_needs_target_probe(&ctrl)
+          && !is_numeric_controller_context(self.state.ctrl.as_ref())
+        {
+          // A numeric choice may also contain nonnumeric or constrained arms.
+          // Domain prefilters alone cannot establish target membership.
+          if !self.probe_numeric_target::<T>(target)? {
             return Ok(());
           }
-        }
-      } else if let Some(kind) = ident_numeric_kind(self.state.cddl, target_ident) {
-        let matches_kind = match kind {
-          NumericKind::Int => matches!(self.cbor, Value::Integer(_)),
-          NumericKind::Float => matches!(self.cbor, Value::Float(_)),
-          // e.g. number = int / float, which admits both
-          NumericKind::Both => matches!(self.cbor, Value::Integer(_) | Value::Float(_)),
-        };
-        if !matches_kind {
-          let expected = match kind {
-            NumericKind::Int => "int".to_string(),
-            NumericKind::Float => "float".to_string(),
-            NumericKind::Both => target_ident.to_string(),
-          };
-          self.add_error(format!("expected type {}, got {:?}", expected, self.cbor));
-          return Ok(());
+          numeric_target_validated = true;
         }
       } else if is_ident_bool_data_type(self.state.cddl, target_ident)
         && !matches!(self.cbor, Value::Bool(_))
@@ -2307,7 +2495,9 @@ where
       },
       ControlOperator::AND => {
         self.state.ctrl = Some(ctrl);
-        self.visit_type2(target)?;
+        if !numeric_target_validated {
+          self.visit_type2(target)?;
+        }
         self.visit_type2(controller)?;
         self.state.ctrl = None;
         Ok(())
@@ -2315,7 +2505,9 @@ where
       ControlOperator::WITHIN => {
         self.state.ctrl = Some(ctrl);
         let error_count = self.errors.len();
-        self.visit_type2(target)?;
+        if !numeric_target_validated {
+          self.visit_type2(target)?;
+        }
         let no_errors = self.errors.len() == error_count;
         self.visit_type2(controller)?;
         if no_errors && self.errors.len() > error_count {
@@ -2336,7 +2528,9 @@ where
       ControlOperator::DEFAULT => {
         self.state.ctrl = Some(ctrl);
         let error_count = self.errors.len();
-        self.visit_type2(target)?;
+        if !numeric_target_validated {
+          self.visit_type2(target)?;
+        }
         if self.errors.len() != error_count {
           #[cfg(feature = "ast-span")]
           if let Some(Occur::Optional { .. }) = self.state.occurrence.take() {
@@ -3754,6 +3948,14 @@ where
             cv.state.generic_rules = self.state.generic_rules.clone();
             cv.state.eval_generic_rule = Some(ident.ident);
             cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+            cv.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
+            cv.numeric_probe_recursions = Arc::clone(&self.numeric_probe_recursions);
+            if is_numeric_controller_context(self.state.ctrl.as_ref())
+              && matches!(self.cbor, Value::Integer(_) | Value::Float(_))
+            {
+              cv.state.ctrl = self.state.ctrl;
+              cv.controller_domains = self.controller_domains.clone();
+            }
             cv.visit_rule(rule)?;
 
             self.errors.append(&mut cv.errors);
@@ -4187,6 +4389,7 @@ where
         if self.state.visited_rules.contains(&visited_key) {
           // We've already validated this rule in the current validation path
           // This is a recursive reference, so we allow it and assume it's valid
+          self.note_numeric_probe_recursion();
           return Ok(());
         }
 
@@ -4203,6 +4406,7 @@ where
       // 2.2.2). Such a choice has no base rule for `rule_from_ident` to find.
       if !type_choice_types_from_ident(self.state.cddl, ident).is_empty() {
         if self.state.visited_rules.contains(&visited_key) {
+          self.note_numeric_probe_recursion();
           return Ok(());
         }
 
@@ -4236,16 +4440,16 @@ where
       }
     }
 
-    // Handle standard prelude tagged types (decfrac, bigfloat) through the generic TaggedData path
+    // Preserve the semantic checks for dates/time and base64url. Other tagged
+    // prelude leaves use their declared tag and payload type.
     let token = lookup_ident(ident.ident);
-    if let Token::DECFRAC | Token::BIGFLOAT = token {
-      if let Some(tagged_data_type) = tag_from_token(&token) {
-        return self.visit_type2(&tagged_data_type);
-      }
+    if let Some(tagged_data_type) = structural_prelude_type(&token, &self.cbor) {
+      return self.visit_type2(&tagged_data_type);
     }
 
     match &self.cbor {
       Value::Null if is_ident_null_data_type(self.state.cddl, ident) => Ok(()),
+      Value::Simple(23) if matches!(token, Token::UNDEFINED) => Ok(()),
       Value::Bytes(_) if is_ident_byte_string_data_type(self.state.cddl, ident) => Ok(()),
       Value::Bool(b) => {
         if is_ident_bool_data_type(self.state.cddl, ident) {
@@ -4260,13 +4464,7 @@ where
         Ok(())
       }
       Value::Integer(i) => {
-        if is_ident_uint_data_type(self.state.cddl, ident) {
-          if i128::from(*i).is_negative() {
-            self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
-          }
-
-          Ok(())
-        } else if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_int) {
+        if numeric_ident_matches_cbor_value(self.state.cddl, ident, &self.cbor) {
           Ok(())
         } else if is_ident_time_data_type(self.state.cddl, ident) {
           if let chrono::LocalResult::None =
@@ -4327,10 +4525,8 @@ where
           self.validate_base64_url_tag();
           return Ok(());
         }
-        if is_ident_bignum_data_type(self.state.cddl, ident) {
-          if !(ident_accepts_bignum_tag(self.state.cddl, ident, *tag)
-            && matches!(value.as_ref(), Value::Bytes(_)))
-          {
+        if has_bignum_domain(self.state.cddl, ident) {
+          if !is_bignum_value(self.state.cddl, ident, &self.cbor) {
             self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
           }
           return Ok(());
@@ -4353,8 +4549,10 @@ where
           1 => {
             if is_ident_time_data_type(self.state.cddl, ident) {
               if let Value::Integer(value) = *value.as_ref() {
-                let dt = Utc.timestamp_opt(value.try_into().unwrap(), 0);
-                if let chrono::LocalResult::None = dt {
+                let valid = i64::try_from(value)
+                  .ok()
+                  .is_some_and(|seconds| Utc.timestamp_opt(seconds, 0).single().is_some());
+                if !valid {
                   self.add_error(format!(
                     "expected time data type, invalid UNIX timestamp {:?}",
                     self.cbor
@@ -4377,7 +4575,7 @@ where
               self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
             }
           }
-          _ => (),
+          _ => self.add_error(format!("expected type {}, got {:?}", ident, self.cbor)),
         }
 
         Ok(())
@@ -4460,7 +4658,10 @@ where
               Some(Self::collect_unconsumed_map_entries_matching(
                 m,
                 claimed_entries,
-                |key| numeric_ident_matches_cbor_value(cddl, ident, key),
+                |key| {
+                  numeric_ident_matches_cbor_value(cddl, ident, key)
+                    || is_bignum_value(cddl, ident, key)
+                },
               ))
             } else if is_ident_bool_data_type(self.state.cddl, ident) {
               Some(Self::collect_unconsumed_map_entries_matching(
@@ -4479,6 +4680,12 @@ where
                 m,
                 claimed_entries,
                 |key| matches!(key, Value::Null),
+              ))
+            } else if matches!(token, Token::UNDEFINED) {
+              Some(Self::collect_unconsumed_map_entries_matching(
+                m,
+                claimed_entries,
+                |key| matches!(key, Value::Simple(23)),
               ))
             } else if is_ident_bignum_data_type(self.state.cddl, ident) {
               let cddl = self.state.cddl;
@@ -4851,6 +5058,9 @@ where
   }
 
   fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error<T>> {
+    if !self.controller_value_matches_domains::<T>(value)? {
+      return Ok(());
+    }
     let error: Option<String> = match &self.cbor {
       Value::Integer(i) => match value {
         token::Value::INT(v) => match &self.state.ctrl {
@@ -5320,9 +5530,44 @@ fn numeric_ident_matches_cbor_value(cddl: &CDDL, ident: &Identifier, v: &Value) 
   }
 }
 
-/// Scalar validation is lenient for some prelude types outside a map key's
-/// domain: it accepts positive integers for `nint` and ignores unrelated
-/// tags. Check an alternative's own domain before probing it, following
+fn numeric_control_needs_target_probe(ctrl: &ControlOperator) -> bool {
+  // Computed controls match the result rather than the target operand.
+  // Disabled features must not require target membership.
+  match ctrl {
+    #[cfg(feature = "additional-controls")]
+    ControlOperator::FEATURE => false,
+    _ => !is_computed_control(ctrl),
+  }
+}
+
+fn is_numeric_controller_context(ctrl: Option<&ControlOperator>) -> bool {
+  // Equality already checks the instance against the controller's own value.
+  matches!(
+    ctrl,
+    Some(
+      ControlOperator::SIZE
+        | ControlOperator::BITS
+        | ControlOperator::NE
+        | ControlOperator::LT
+        | ControlOperator::LE
+        | ControlOperator::GT
+        | ControlOperator::GE
+    )
+  )
+}
+
+fn structural_prelude_type<'a>(token: &Token, value: &Value) -> Option<Type2<'a>> {
+  if matches!(token, Token::DECFRAC | Token::BIGFLOAT)
+    || (matches!(value, Value::Tag(..))
+      && !matches!(token, Token::TDATE | Token::TIME | Token::B64URL))
+  {
+    tag_from_token(token)
+  } else {
+    None
+  }
+}
+
+/// Check an alternative's own domain before probing it, following
 /// aliases — including generic instantiations and active generic bindings —
 /// to the underlying prelude types, literals and tagged types. Range and
 /// control operators are left to the probe, which enforces them.
@@ -5844,7 +6089,15 @@ fn value_nesting_depth(value: &Value) -> usize {
 /// Is `v` a tagged byte string accepted by the bignum type `ident`?
 fn is_bignum_value(cddl: &CDDL, ident: &Identifier, v: &Value) -> bool {
   matches!(v, Value::Tag(tag, inner)
-    if ident_accepts_bignum_tag(cddl, ident, *tag) && matches!(inner.as_ref(), Value::Bytes(_)))
+    if (ident_accepts_bignum_tag(cddl, ident, *tag)
+      || matches!((lookup_ident(ident.ident), *tag),
+        (Token::UNSIGNED, 2) | (Token::INTEGER, 2 | 3)))
+      && matches!(inner.as_ref(), Value::Bytes(_)))
+}
+
+fn has_bignum_domain(cddl: &CDDL, ident: &Identifier) -> bool {
+  is_ident_bignum_data_type(cddl, ident)
+    || matches!(lookup_ident(ident.ident), Token::UNSIGNED | Token::INTEGER)
 }
 
 /// Converts a CDDL value type to our custom CBOR Value
