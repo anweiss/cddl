@@ -56,10 +56,12 @@ An occurrence with maximum zero returns before entering its named rule or
 acquiring a depth slot, including otherwise-batchable generic references.
 The enclosing occurrence is restored after the optional group, without leaking
 it into that group's required members. Failed required choice prefixes stop
-before recording unrelated later decisions; coverage failures still replay.
-Failed attempts that actually skip siblings do not check coverage against their
-incomplete ownership ledger. This traversal marker is restored on optional
-rollback and isolated across maps, retries and reuse. Otherwise-successful
+before recording later decisions only when the sequence is proven hard-error-free;
+otherwise normal traversal preserves later regex and other evaluation errors.
+Coverage failures still replay.
+Failed prefixes do not check coverage against their incomplete ownership ledger,
+even when later siblings are visited to preserve hard errors. This marker is
+restored on optional rollback and isolated across maps, retries and reuse. Otherwise-successful
 attempts always check coverage, and complete failed traversals retain their
 coverage diagnostics.
 If a required mismatch precedes every replay decision, later choices become
@@ -72,6 +74,7 @@ including later-alternative hard errors.
 Nodes recorded only under scalar suppression do not authorize pruning outside
 that sequence. Ordinary decisions, including coalesced equivalent alternatives,
 retain their original pruning context.
+A recorded decision alone does not justify skipping fallible siblings.
 Choices whose arms contain only zero-minimum entries with absent literal keys
 also retain only their first outcome. This includes named-group DAGs and
 zero-minimum occurrence ranges, not just `?` literal members. No value is evaluated by
@@ -93,6 +96,8 @@ the hard-error-free sequence proof used for suppression. Direct zero-maximum cut
 excluded; a bound alone does not establish empty success for those visitors.
 Optional choices are skipped before registering replay decisions only when every
 arm provably fails without evaluating an earlier value or reassigning a claimed key.
+If entries remain after that mismatch, skipping them also requires the existing
+hard-error-free sequence proof; otherwise the optional arm is traversed normally.
 The proof can cross absent plain `?` literal members, then recognize a missing
 unquantified required literal key or an unclaimed string against plain, unshadowed `uint`,
 including transparent, single-definition type-alias chains. Alias cycles,

@@ -1600,15 +1600,18 @@ impl<'a> JSONValidator<'a> {
       let error_count = self.errors.len();
       self.visit_group_entry(entry)?;
       // Later siblings cannot repair an already-reported required mismatch.
-      // Do not record their choices in this failed replay prefix.
+      // Skip their choices only when doing so cannot hide a hard error.
       if self.errors.len() > error_count {
         if let Some(search) = &self.map_choice_search {
           let mut search = search.lock().expect("map choice search lock");
           if !search.widths.is_empty()
             && (search.decisions_suppressed || search.has_unsuppressed_decision)
           {
+            // Failed children may have rolled back ownership of visited keys.
             search.traversal_pruned |= index + 1 < choice.group_entries.len();
-            break;
+            if *effect_free.get_or_insert_with(|| self.map_sequence_is_effect_free(choice)) {
+              break;
+            }
           }
           if !search.decisions_suppressed {
             search.decisions_suppressed =
@@ -5148,7 +5151,7 @@ mod tests {
 
   #[cfg(feature = "additional-controls")]
   #[test]
-  fn optional_impossibility_proof_preserves_later_required_pruning() {
+  fn optional_impossibility_proof_preserves_later_hard_errors() {
     for (domain, present, occur) in [
       ("alias", true, "?"),
       ("uint", true, "?"),
@@ -5183,15 +5186,7 @@ mod tests {
       };
       let mut validator = JSONValidator::new(&cddl, input, Some(&["enabled"]));
       let result = validator.visit_closed_map(&group, &["a".into(), "b".into(), "c".into()]);
-      if present && occur != "0*0" {
-        assert!(result.is_ok(), "{}: {:?}", domain, result);
-        assert!(validator
-          .errors
-          .iter()
-          .any(|e| e.reason.contains("missing key: required")));
-      } else {
-        assert!(matches!(result, Err(Error::UTF8Parsing(_))));
-      }
+      assert!(matches!(result, Err(Error::UTF8Parsing(_))));
       assert!(validator.member_claims.is_empty());
       assert!(validator.map_choice_search.is_none());
     }

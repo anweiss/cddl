@@ -1,5 +1,23 @@
 use super::*;
 
+fn single_plain_typename<'a, 'b>(value_type: &'b Type<'a>) -> Option<&'b Identifier<'a>> {
+  let [choice] = value_type.type_choices.as_slice() else {
+    return None;
+  };
+  if choice.type1.operator.is_some() {
+    return None;
+  }
+  let Type2::Typename {
+    ident,
+    generic_args: None,
+    ..
+  } = &choice.type1.type2
+  else {
+    return None;
+  };
+  Some(ident)
+}
+
 impl<'a> JSONValidator<'a> {
   pub(super) fn map_rule_depth_allows(&self, additional: usize) -> bool {
     self.map_choice_search.is_none()
@@ -165,21 +183,7 @@ impl<'a> JSONValidator<'a> {
     }) {
       return None;
     }
-    let [choice] = value_type.type_choices.as_slice() else {
-      return None;
-    };
-    if choice.type1.operator.is_some() {
-      return None;
-    }
-    let Type2::Typename {
-      ident,
-      generic_args: None,
-      ..
-    } = &choice.type1.type2
-    else {
-      return None;
-    };
-    let mut ident = ident;
+    let mut ident = single_plain_typename(value_type)?;
     let mut visited = HashSet::new();
     loop {
       if ident.socket.is_some()
@@ -211,21 +215,7 @@ impl<'a> JSONValidator<'a> {
       {
         return None;
       }
-      let [choice] = rule.value.type_choices.as_slice() else {
-        return None;
-      };
-      if choice.type1.operator.is_some() {
-        return None;
-      }
-      let Type2::Typename {
-        ident: next,
-        generic_args: None,
-        ..
-      } = &choice.type1.type2
-      else {
-        return None;
-      };
-      ident = next;
+      ident = single_plain_typename(&rule.value)?;
     }
   }
 
@@ -489,7 +479,9 @@ impl<'a> JSONValidator<'a> {
     object: &serde_json::Map<String, Value>,
     params: Option<&GenericParams<'a>>,
   ) -> bool {
-    for (entry, _) in &choice.group_entries {
+    let can_skip_tail =
+      |index| index + 1 == choice.group_entries.len() || self.map_sequence_is_effect_free(choice);
+    for (index, (entry, _)) in choice.group_entries.iter().enumerate() {
       let GroupEntry::ValueMemberKey { ge, .. } = entry else {
         return false;
       };
@@ -501,10 +493,12 @@ impl<'a> JSONValidator<'a> {
       };
       let required = occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 > 0;
       if let Some(value) = object.get(key) {
-        return required && self.required_uint_definitely_mismatches(ge, key, value, params);
+        return required
+          && self.required_uint_definitely_mismatches(ge, key, value, params)
+          && can_skip_tail(index);
       }
       if required {
-        return true;
+        return can_skip_tail(index);
       }
       // Only absent plain optional members can be crossed without evaluating
       // a value, recording a claim, or deferring a value error.

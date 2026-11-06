@@ -149,6 +149,65 @@ fn map_replay_capacity_failures_preserve_later_claim_errors() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn map_replay_pruning_preserves_later_regex_errors() {
+  for (schema, input) in [
+    (
+      r#"root = { (a: uint // b: uint), required: uint, boom: tstr .regexp "[" } / any"#,
+      r#"{"a":1,"boom":"text"}"#,
+    ),
+    (
+      r#"root = { (? "a" => uint // ? "b" => uint), required: uint, boom: tstr .regexp "[" } / any"#,
+      r#"{"boom":"text"}"#,
+    ),
+    (
+      r#"root = { g, required: uint, boom: tstr .regexp "[" } / any g = (a: uint // b: uint)"#,
+      r#"{"a":1,"boom":"text"}"#,
+    ),
+    (
+      r#"root = { ? (missing: uint, boom: tstr .regexp "[" // absent: uint, boom: tstr .regexp "["), * tstr => any } / any"#,
+      r#"{"boom":"text"}"#,
+    ),
+    (
+      r#"root = { ? (a: uint, boom: tstr .regexp "[" // b: uint, boom: tstr .regexp "["), * tstr => any } / any"#,
+      r#"{"a":"x","b":"y","boom":"text"}"#,
+    ),
+  ] {
+    let cddl = cddl_from_pest_str(schema).unwrap();
+    let mut validator = limited_validator(&cddl, serde_json::from_str(input).unwrap(), 4096);
+    match validator.validate() {
+      Err(Error::Validation(errors)) => assert!(
+        errors.len() == 1
+          && errors[0].reason.contains("regex parse error")
+          && errors[0].reason.contains("unclosed character class"),
+        "{}: {:?}",
+        schema,
+        errors
+      ),
+      outcome => panic!("expected regex error for {}, got {:?}", schema, outcome),
+    }
+  }
+  for (schema, input) in [
+    (
+      r#"root = { a: uint // b: tstr .regexp "[" } / any"#,
+      r#"{"a":1}"#,
+    ),
+    (
+      r#"root = { (? "a" => tstr .regexp "[" // ? "b" => tstr .regexp "["), * tstr => any } / any"#,
+      r#"{"extra":"text"}"#,
+    ),
+    (
+      r#"root = { ? (missing: uint, boom: tstr .regexp "[" // absent: uint, boom: tstr .regexp "["), * tstr => any } / any"#,
+      r#"{"extra":1}"#,
+    ),
+  ] {
+    let cddl = cddl_from_pest_str(schema).unwrap();
+    let mut validator = limited_validator(&cddl, serde_json::from_str(input).unwrap(), 4096);
+    assert!(validator.validate().is_ok(), "{}", schema);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn map_replay_budget_boundary_and_repeated_validation() {
   let cddl = cddl_from_pest_str(r#"root = { ? "a" => uint // ? "a" => bool // a: tstr }"#).unwrap();
   let mut validator = limited_validator(&cddl, serde_json::json!({"a":"value"}), 1);
