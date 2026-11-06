@@ -518,9 +518,9 @@ impl<'a> JSONValidator<'a> {
     {
       return false;
     }
-    // A planned choice stops on its first required mismatch. Prove that
-    // every arm fails without any earlier value evaluation or claimed-key
-    // reassignment. A required failure is rolled back, not deferred.
+    // Prove every arm fails without earlier value evaluation or claimed-key
+    // reassignment, and that its remaining entries are safe to skip.
+    // Otherwise normal traversal must preserve later hard errors.
     group
       .group_choices
       .iter()
