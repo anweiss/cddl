@@ -183,8 +183,8 @@ fn validate_cbor_float() {
   )
   .unwrap();
 
-  // TODO: check that large floats don't validate against a smaller size.
-  // E.g. CBOR #7.27 (64-bit) shouldn't validate against "float16" or "float32".
+  // Representability bounds, including wider CBOR encodings whose values are
+  // still exactly representable, are covered in float_prelude_representability.rs.
 }
 
 #[test]
@@ -623,7 +623,9 @@ fn validate_cbor_array_record() {
 
   let cddl_input = r#"thing = [a: tstr, b: uint, c: float32, d: bool]"#;
 
-  let input = KitchenSink("xyz".to_string(), 17, 9.9, false);
+  // 9.5 is exactly representable as binary32 even though this f64 field is
+  // serialized with a float64 CBOR head.
+  let input = KitchenSink("xyz".to_string(), 17, 9.5, false);
   let mut cbor_bytes = Vec::new();
   ciborium::ser::into_writer(&input, &mut cbor_bytes).unwrap();
   validate_cbor_from_slice(
