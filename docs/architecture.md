@@ -98,7 +98,9 @@ unquantified required literal key or an unclaimed string against plain, unshadow
 including transparent, single-definition type-alias chains. Alias cycles,
 incremental definitions, generic bindings and redefined prelude names decline
 this proof. The latter also excludes controls, explicit/inherited cuts, claimed
-keys and non-string values. Present optional prefixes retain ordinary traversal,
+keys, existing non-cut claims and non-string values. A value mismatch can
+revalidate earlier movable claims and raise a hard error, including an invalid
+regex. Present optional prefixes retain ordinary traversal,
 including hard errors. These required failures roll back without deferred
 optional-member diagnostics. No visitor probes, failure cache or budget changes
 are involved; arbitrary value constraints are not inferred impossible.

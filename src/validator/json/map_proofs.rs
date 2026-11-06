@@ -463,10 +463,15 @@ impl<'a> JSONValidator<'a> {
     value: &Value,
     params: Option<&GenericParams<'a>>,
   ) -> bool {
+    // A value mismatch can revalidate earlier movable claims and raise an error.
     if entry.occur.is_some()
       || member_key_is_cut(entry)
       || self.state.is_cut_present
       || self.cut_value.is_some()
+      || self
+        .member_claims
+        .iter()
+        .any(|claim| !member_key_is_cut(&claim.entry))
       || !value.is_string()
       || self
         .validated_keys

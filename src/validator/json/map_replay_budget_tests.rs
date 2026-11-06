@@ -336,6 +336,62 @@ fn map_replay_absent_optional_choices_do_not_multiply_paths() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn map_replay_optional_mismatch_preserves_claim_revalidation_errors() {
+  for (optional, definitions) in [
+    ("? (a: uint // b: uint)", ""),
+    ("? g", "g = (a: uint // b: uint)"),
+    ("? g<uint>", "g<T> = (a: uint // b: uint)"),
+  ] {
+    for fallback in ["", " / any"] {
+      let schema = format!(
+        r#"root = {{ tstr => uint / tstr .regexp "[", {optional}, * tstr => any }}{fallback} {definitions}"#
+      );
+      let cddl = cddl_from_pest_str(&schema).unwrap();
+      let mut validator =
+        limited_validator(&cddl, serde_json::json!({"0":1,"a":"x","b":"y"}), 4096);
+      let result = validator.validate();
+      let Err(Error::Validation(errors)) = result else {
+        panic!(
+          "expected propagated regex error for {}, got {:?}",
+          schema, result
+        );
+      };
+      assert_eq!(errors.len(), 1, "{schema}: {errors:?}");
+      assert!(
+        errors[0].reason.contains("regex parse error")
+          && errors[0].reason.contains("unclosed character class"),
+        "{}: {:?}",
+        schema,
+        errors
+      );
+    }
+  }
+  for (schema, input) in [
+    (
+      "root = { ? (a: uint // b: uint), * tstr => any }",
+      serde_json::json!({"a":"x","b":"y"}),
+    ),
+    (
+      "root = { tstr => uint, ? (a: uint // b: uint), * tstr => any }",
+      serde_json::json!({"0":1,"a":"x","b":"y"}),
+    ),
+    (
+      r#"root = { tstr ^ => uint / tstr .regexp "[", ? (a: uint // b: uint), * tstr => any }"#,
+      serde_json::json!({"0":1,"a":"x","b":"y"}),
+    ),
+    (
+      r#"root = { tstr => uint / tstr .regexp "[", ? (a: uint // b: uint), * tstr => any }"#,
+      serde_json::json!({"0":1,"other":"text"}),
+    ),
+  ] {
+    let cddl = cddl_from_pest_str(schema).unwrap();
+    let mut validator = limited_validator(&cddl, input, 4096);
+    assert!(validator.validate().is_ok(), "{}", schema);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn map_replay_optional_impossibility_keeps_effectful_paths() {
   for (body, input, proof) in [
     ("a: uint // b: uint", r#"{"a":"text","b":"text"}"#, true),
