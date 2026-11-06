@@ -68,21 +68,7 @@ impl<'a> JSONValidator<'a> {
       if rule.generic_params.is_some() || definitions.len() != 1 {
         return None;
       }
-      let [choice] = rule.value.type_choices.as_slice() else {
-        return None;
-      };
-      if choice.type1.operator.is_some() {
-        return None;
-      }
-      let Type2::Typename {
-        ident: next,
-        generic_args: None,
-        ..
-      } = &choice.type1.type2
-      else {
-        return None;
-      };
-      ident = next;
+      ident = single_plain_typename(&rule.value)?;
     }
   }
 
