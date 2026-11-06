@@ -6,6 +6,9 @@ use cddl::{ast::Type2, cddl_from_str, token::ByteValue};
 use indoc::indoc;
 use std::borrow::Cow;
 
+#[path = "json_no_cut_fallthrough.rs"]
+mod json_no_cut_fallthrough;
+
 #[wasm_bindgen_test]
 fn pass() {
   let input = indoc!(
