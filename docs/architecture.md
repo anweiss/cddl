@@ -98,6 +98,8 @@ Optional choices are skipped before registering replay decisions only when every
 arm provably fails without evaluating an earlier value or reassigning a claimed key.
 If entries remain after that mismatch, skipping them also requires the existing
 hard-error-free sequence proof; otherwise the optional arm is traversed normally.
+The tail proof also declines pending named-group generic parameters, whose
+bindings can shadow otherwise-safe scalar types.
 The proof can cross absent plain `?` literal members, then recognize a missing
 unquantified required literal key or an unclaimed string against plain, unshadowed `uint`,
 including transparent, single-definition type-alias chains. Alias cycles,

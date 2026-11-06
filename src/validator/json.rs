@@ -979,7 +979,7 @@ impl<'a> JSONValidator<'a> {
     Ok(probe.errors.is_empty())
   }
 
-  /// key-domain type, committing only those whose values also match.
+  /// Validate candidate pairs, committing only those whose keys and values match.
   fn validate_candidate_pairs(
     &mut self,
     entry: &ValueMemberKeyEntry<'a>,

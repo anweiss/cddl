@@ -479,8 +479,11 @@ impl<'a> JSONValidator<'a> {
     object: &serde_json::Map<String, Value>,
     params: Option<&GenericParams<'a>>,
   ) -> bool {
-    let can_skip_tail =
-      |index| index + 1 == choice.group_entries.len() || self.map_sequence_is_effect_free(choice);
+    // Named-group parameters are not yet installed in the visitor's bindings.
+    let can_skip_tail = |index| {
+      index + 1 == choice.group_entries.len()
+        || (params.is_none() && self.map_sequence_is_effect_free(choice))
+    };
     for (index, (entry, _)) in choice.group_entries.iter().enumerate() {
       let GroupEntry::ValueMemberKey { ge, .. } = entry else {
         return false;
