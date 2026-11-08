@@ -35,7 +35,7 @@
     "monaco-editor": "^0.57.0",
     "style-loader": "^4.0.0",
     "webpack": "^5.112.2",
-    "webpack-cli": "^7.2.3"
+    "webpack-cli": "^7.3.1"
   },
   "overrides": {
     "serialize-javascript": "^7.0.5",
