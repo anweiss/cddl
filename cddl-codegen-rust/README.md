@@ -112,6 +112,11 @@ not enforce all CDDL constraints or validate that custom Rust type strings
 compile. Use the `cddl` validators for data validation and compile the generated
 code in its consumer.
 
+Equivalent generated choice variants are emitted once, keeping the first
+occurrence and its documentation. Constraints such as `.regexp` and `.size`
+do not create distinct Rust representations. Distinct payload types and string
+literals are retained; colliding Rust variant names receive numeric suffixes.
+
 String literals in mixed choices serialize as strings and take precedence over
 typed alternatives when decoding. Quoted text keys using `=>` become named
 fields; typed keys become flattened `entries` maps. Such structs decode through

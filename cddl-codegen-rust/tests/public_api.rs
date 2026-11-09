@@ -126,6 +126,42 @@ fn mixed_literals_have_string_serialization() {
 }
 
 #[test]
+fn equivalent_choice_variants_are_emitted_once() {
+  for source in [
+    r#"u = tstr .regexp "a" / tstr .regexp "b""#,
+    r#"u = (tstr .regexp "a" / tstr .regexp "b")"#,
+    "$u /= tstr .regexp \"a\"\n$u /= tstr .regexp \"b\"",
+  ] {
+    let output = generate_rust_code(source).unwrap();
+    assert_eq!(output.matches("Tstr(String),").count(), 1, "{output}");
+  }
+}
+
+#[test]
+fn deduplicating_choices_preserves_distinct_types_and_literals() {
+  let output = generate_rust_code(
+    r#"u = "a" / tstr .regexp "a" / uint .size 1 / tstr .regexp "b" / uint .size 2 / bstr"#,
+  )
+  .unwrap();
+  let definition = output.split("}\n").next().unwrap();
+  for variant in ["A,", "Tstr(String),", "Uint(u64),", "Bstr(Vec<u8>),"] {
+    assert_eq!(definition.matches(variant).count(), 1, "{output}");
+  }
+  assert!(output.contains(r#"Self::A => s.serialize_str("a")"#));
+}
+
+#[test]
+fn distinct_literals_with_colliding_names_are_not_deduplicated() {
+  let output = generate_rust_code(r#"u = "foo-bar" / "foo_bar" / "foo-bar" / "foo-bar2""#).unwrap();
+  for text in ["foo-bar", "foo_bar", "foo-bar2"] {
+    assert!(output.contains(&format!("{text:?} => Self::")), "{output}");
+  }
+  assert_eq!(output.matches("    FooBar,").count(), 1, "{output}");
+  assert_eq!(output.matches("    FooBar2,").count(), 1, "{output}");
+  assert_eq!(output.matches("    FooBar3,").count(), 1, "{output}");
+}
+
+#[test]
 fn quoted_arrow_keys_are_fields_in_both_parser_apis() {
   let source = r#"record = { "name" => tstr, ? "count" => uint }"#;
   let output = generate_rust_code(source).unwrap();

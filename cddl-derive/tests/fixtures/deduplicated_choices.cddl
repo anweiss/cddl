@@ -1,0 +1,3 @@
+u = tstr .regexp "a" / tstr .regexp "b"
+mixed = "a" / tstr .regexp "a" / uint .size 1 / tstr .regexp "b" / uint .size 2 / bstr
+labels = "foo-bar" / "foo_bar" / "foo-bar" / "foo-bar2"

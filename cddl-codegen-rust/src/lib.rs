@@ -16,7 +16,7 @@ use cddl::ast::{
   Group, GroupChoice, GroupEntry, MemberKey, Occur, Rule, Type, Type1, Type2, TypeChoice, TypeRule,
   ValueMemberKeyEntry, CDDL,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 /// Errors that can occur during code generation.
@@ -2945,6 +2945,34 @@ fn render_type_alias(
   Ok(())
 }
 
+fn unique_enum_variants(variants: &[RustEnumVariant]) -> Vec<RustEnumVariant> {
+  let mut seen = BTreeSet::new();
+  let mut unique: Vec<_> = variants
+    .iter()
+    .filter(|v| seen.insert((v.name.clone(), v.inner_type.clone(), v.rename.clone())))
+    .cloned()
+    .collect();
+  let mut reserved: BTreeSet<_> = unique.iter().map(|v| v.name.clone()).collect();
+  let mut used = BTreeSet::new();
+  for variant in &mut unique {
+    if used.insert(variant.name.clone()) {
+      continue;
+    }
+    // Keep distinct payloads and wire literals even when their Rust names
+    // collide, without taking a name belonging to a later variant.
+    let mut suffix = 2;
+    let mut name = format!("{}{}", variant.name, suffix);
+    while reserved.contains(&name) {
+      suffix += 1;
+      name = format!("{}{}", variant.name, suffix);
+    }
+    reserved.insert(name.clone());
+    used.insert(name.clone());
+    variant.name = name;
+  }
+  unique
+}
+
 fn render_enum(
   output: &mut String,
   name: &str,
@@ -2952,6 +2980,8 @@ fn render_enum(
   doc: &[String],
   opts: &CodegenOptions,
 ) -> Result<(), CodegenError> {
+  let unique = unique_enum_variants(variants);
+  let variants = unique.as_slice();
   // An enum whose variants are all string literals (`a = "x" / "y"`) is a
   // closed set of strings on the wire. serde's untagged representation cannot
   // express that -- it deserializes a unit variant from `null` only -- so such
@@ -3404,6 +3434,25 @@ fn is_rust_keyword(s: &str) -> bool {
 mod tests {
   use super::*;
   use cddl::parser::cddl_from_str;
+
+  #[test]
+  fn deduplication_ignores_docs_but_preserves_distinct_payloads() {
+    let first = RustEnumVariant {
+      name: "Value".into(),
+      inner_type: Some("String".into()),
+      doc: vec!["First alternative".into()],
+      rename: None,
+    };
+    let mut duplicate = first.clone();
+    duplicate.doc = vec!["Second alternative".into()];
+    let mut distinct = first.clone();
+    distinct.inner_type = Some("u64".into());
+    let unique = unique_enum_variants(&[first.clone(), distinct, duplicate]);
+    assert_eq!(unique.len(), 2);
+    assert_eq!(unique[0], first);
+    assert_eq!(unique[1].name, "Value2");
+    assert_eq!(unique[1].inner_type.as_deref(), Some("u64"));
+  }
 
   #[test]
   fn fundamental_aliases_are_opt_in_and_preserve_builtin_representations() {
