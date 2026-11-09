@@ -241,6 +241,7 @@ dependencies = [
  "pest_derive",
  "pest_generator",
  "pest_meta",
+ "pest_stack_guard",
  "pest_vm",
  "pretty_assertions",
  "proc-macro2",

@@ -239,6 +239,7 @@ dependencies = [
  "pest",
  "pest_derive",
  "pest_meta",
+ "pest_stack_guard",
  "pest_vm",
  "regex",
  "regex-syntax",
