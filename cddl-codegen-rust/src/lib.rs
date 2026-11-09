@@ -131,6 +131,7 @@ pub(crate) enum RustTypeDef {
 pub(crate) struct RustField {
   pub name: String,
   pub original_name: String,
+  pub integer_key: Option<i128>,
   pub rust_type: String,
   pub is_optional: bool,
   pub doc: Vec<String>,
@@ -1540,6 +1541,7 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
     Ok(vec![RustField {
       name: field_name.clone(),
       original_name: field_name,
+      integer_key: None,
       rust_type: name,
       is_optional: false,
       doc: Vec::new(),
@@ -1647,6 +1649,7 @@ fn group_entry_to_fields(
       Ok(Some(vec![RustField {
         name: field_name,
         original_name: ident.to_string(),
+        integer_key: None,
         rust_type,
         is_optional,
         doc,
@@ -1692,6 +1695,15 @@ fn value_member_key_to_field(
       let s = literal_text_key(t1).unwrap();
       (to_snake_case(s), s.to_string())
     }
+    Some(MemberKey::Type1 { t1, .. }) if literal_integer_key(t1).is_some() => {
+      let key = literal_integer_key(t1).unwrap();
+      let field_name = if key < 0 {
+        format!("n_neg{}", key.unsigned_abs())
+      } else {
+        format!("n{}", key)
+      };
+      (field_name, key.to_string())
+    }
     Some(MemberKey::Type1 { t1, .. }) => {
       let key_type = type1_to_rust_string(t1, opts)?;
       let value_type = type_to_rust_string(&vmke.entry_type, opts)?;
@@ -1699,6 +1711,7 @@ fn value_member_key_to_field(
       return Ok(Some(RustField {
         name: "entries".to_string(),
         original_name: "entries".to_string(),
+        integer_key: None,
         rust_type,
         is_optional: false,
         doc,
@@ -1714,6 +1727,7 @@ fn value_member_key_to_field(
       return Ok(Some(RustField {
         name: "value".to_string(),
         original_name: "value".to_string(),
+        integer_key: None,
         rust_type,
         is_optional: false,
         doc,
@@ -1750,6 +1764,10 @@ fn value_member_key_to_field(
   Ok(Some(RustField {
     name: field_name,
     original_name,
+    integer_key: match &vmke.member_key {
+      Some(MemberKey::Type1 { t1, .. }) => literal_integer_key(t1),
+      _ => None,
+    },
     rust_type: final_type,
     is_optional,
     doc,
@@ -1775,6 +1793,20 @@ fn literal_text_key<'a>(t1: &'a Type1<'_>) -> Option<&'a str> {
     Type2::TextValue { value, .. } => Some(value),
     Type2::ParenthesizedType { pt, .. } if pt.type_choices.len() == 1 => {
       literal_text_key(&pt.type_choices[0].type1)
+    }
+    _ => None,
+  }
+}
+
+fn literal_integer_key(t1: &Type1<'_>) -> Option<i128> {
+  if t1.operator.is_some() {
+    return None;
+  }
+  match &t1.type2 {
+    Type2::IntValue { value, .. } => Some(*value as i128),
+    Type2::UintValue { value, .. } => Some(*value as i128),
+    Type2::ParenthesizedType { pt, .. } if pt.type_choices.len() == 1 => {
+      literal_integer_key(&pt.type_choices[0].type1)
     }
     _ => None,
   }
@@ -2584,8 +2616,10 @@ fn render_struct(
 
   // serde's flatten buffers unknown entries in a format-neutral representation
   // that drops CBOR tags and cannot dispatch between differently keyed maps, so
-  // structs with typed-key entries decode through a generated map visitor.
-  let custom_de = fields.iter().any(|f| f.flatten) && !fields.iter().any(|f| f.flatten_group);
+  // typed-key entries and integer literal keys decode through a generated map
+  // visitor. Group-choice fields use serde's flattened enum handling instead.
+  let custom_de = !fields.iter().any(|f| f.flatten_group)
+    && fields.iter().any(|f| f.flatten || f.integer_key.is_some());
   let derives = if custom_de {
     "Clone, Debug, serde::Serialize"
   } else {
@@ -2625,6 +2659,9 @@ fn render_flatten_deserialize(
   )?;
   for (i, (field, spec)) in fields.iter().zip(specs).enumerate() {
     render_flatten_value_wrapper(output, i, field, spec.clone(), tag_mod)?;
+    if let Some(key) = field.integer_key {
+      render_literal_key_wrapper(output, i, key)?;
+    }
   }
   let keys: Vec<Option<(String, Option<String>)>> = fields
     .iter()
@@ -2651,6 +2688,36 @@ fn render_flatten_deserialize(
     output,
     "        d.deserialize_map(__CddlVisitor)\n    }}\n}}"
   )?;
+  Ok(())
+}
+
+fn render_literal_key_wrapper(
+  output: &mut String,
+  index: usize,
+  key: i128,
+) -> Result<(), CodegenError> {
+  let wire_type = if key < 0 { "i64" } else { "u64" };
+  writeln!(output, "        struct __CddlLiteralKey{};", index)?;
+  writeln!(
+    output,
+    "        impl<'de> serde::Deserialize<'de> for __CddlLiteralKey{} {{",
+    index
+  )?;
+  writeln!(
+    output,
+    "            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {{"
+  )?;
+  writeln!(
+    output,
+    "                let value = <{} as serde::Deserialize>::deserialize(d)? as i128;",
+    wire_type
+  )?;
+  writeln!(
+    output,
+    "                if value == {} {{ Ok(Self) }} else {{ Err(serde::de::Error::custom(\"unexpected integer map key\")) }}",
+    key
+  )?;
+  writeln!(output, "            }}\n        }}")?;
   Ok(())
 }
 
@@ -2716,10 +2783,7 @@ fn render_flatten_value_wrapper(
       .unwrap_or_else(|| field.rust_type.clone());
     (value_type, value_spec)
   } else {
-    (
-      wrap_field_type(field, field.rust_type.clone()),
-      spec.map(|s| wrap_field_type(field, s)),
-    )
+    (field.rust_type.clone(), spec)
   };
   if spec.is_some() {
     writeln!(output, "        #[serde_with::serde_as]")?;
@@ -2733,13 +2797,11 @@ fn render_flatten_value_wrapper(
     writeln!(output, "            #[serde_as(as = \"{}\")]", spec)?;
   }
   if let Some(t) = field.tag.filter(|_| !field.flatten) {
-    let suffix = if field.is_optional { "_opt" } else { "" };
     writeln!(
       output,
-      "            #[serde(with = \"{}::{}{}\")]",
+      "            #[serde(with = \"{}::{}\")]",
       tag_mod,
-      t.ident.replace('-', "_"),
-      suffix
+      t.ident.replace('-', "_")
     )?;
   }
   writeln!(output, "            {},\n        );", ty)?;
@@ -2752,13 +2814,17 @@ fn render_flatten_keys(
   fields: &[RustField],
   keys: &[Option<(String, Option<String>)>],
 ) -> Result<(), CodegenError> {
-  let named = fields.iter().any(|f| !f.flatten);
+  let named = fields.iter().any(|f| !f.flatten && f.integer_key.is_none());
   if named {
     writeln!(
       output,
       "        #[derive(serde::Deserialize)]\n        enum __CddlField {{"
     )?;
-    for (i, field) in fields.iter().enumerate().filter(|(_, f)| !f.flatten) {
+    for (i, field) in fields
+      .iter()
+      .enumerate()
+      .filter(|(_, f)| !f.flatten && f.integer_key.is_none())
+    {
       writeln!(
         output,
         "            #[serde(rename = {:?})] F{},",
@@ -2771,6 +2837,11 @@ fn render_flatten_keys(
     output,
     "        #[derive(serde::Deserialize)]\n        #[serde(untagged)]\n        enum __CddlKey {{"
   )?;
+  for (i, field) in fields.iter().enumerate() {
+    if field.integer_key.is_some() {
+      writeln!(output, "            Literal{}(__CddlLiteralKey{}),", i, i)?;
+    }
+  }
   if named {
     writeln!(output, "            Field(__CddlField),")?;
   }
@@ -2844,6 +2915,12 @@ fn render_flatten_match_arm(
       "k"
     };
     writeln!(output, "                        __CddlKey::Entries{i}(k) => {{ __f{i}.insert({key_expr}, map.next_value::<__CddlValue{i}>()?.0); }}")?;
+  } else if field.integer_key.is_some() {
+    writeln!(
+      output,
+      "                        __CddlKey::Literal{i}(_) => {{\n                            if __f{i}.is_some() {{ return Err(serde::de::Error::duplicate_field({:?})); }}\n                            __f{i} = Some(map.next_value::<__CddlValue{i}>()?.0);\n                        }}",
+      field.original_name
+    )?;
   } else {
     writeln!(output, "                        __CddlKey::Field(__CddlField::F{i}) => {{\n                            if __f{i}.is_some() {{ return Err(serde::de::Error::duplicate_field({:?})); }}\n                            __f{i} = Some(map.next_value::<__CddlValue{i}>()?.0);\n                        }}", field.original_name)?;
   }
@@ -2866,11 +2943,7 @@ fn render_flatten_field_init(
       )?;
     }
     (true, false) => writeln!(output, "                    {}: __f{},", field.name, i)?,
-    (false, true) => writeln!(
-      output,
-      "                    {}: __f{}.flatten(),",
-      field.name, i
-    )?,
+    (false, true) => writeln!(output, "                    {}: __f{},", field.name, i)?,
     (false, false) => writeln!(
       output,
       "                    {}: __f{}.ok_or_else(|| serde::de::Error::missing_field({:?}))?,",
@@ -3775,6 +3848,16 @@ mod tests {
     );
     assert!(result.contains("pub nickname: Option<String>,"));
     assert!(result.contains("skip_serializing_if"));
+  }
+
+  #[test]
+  fn test_integer_literal_map_keys_are_optional_fields() {
+    let result = gen("h = { ? 1 => int, ? 4 => bstr, }");
+    assert!(result.contains("pub n1: Option<i64>,"));
+    assert!(result.contains("pub n4: Option<Vec<u8>>,"));
+    assert!(result.contains("__CddlLiteralKey0"));
+    assert!(result.contains("__CddlLiteralKey1"));
+    assert!(!result.contains("HashMap"));
   }
 
   #[test]

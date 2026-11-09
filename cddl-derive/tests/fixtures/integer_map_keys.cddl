@@ -1,0 +1,4 @@
+integer-key-record = {
+  ? 1 => int,
+  ? 4 => bstr,
+}
