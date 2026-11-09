@@ -782,7 +782,7 @@ pub fn plus_operation<'a>(
 
 #[cfg(feature = "additional-controls")]
 pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
-  #[cfg(not(target_arch = "wasm32"))]
+  #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
   {
     const STACK_THRESHOLD: usize = 4 * 64 * 1024;
     const WORKER_STACK_SIZE: usize = 2 * 1024 * 1024;
@@ -1002,7 +1002,11 @@ mod tests {
     );
   }
 
-  #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
+  #[cfg(all(
+    feature = "additional-controls",
+    feature = "std",
+    not(target_arch = "wasm32")
+  ))]
   #[test]
   fn validate_abnf_succeeds_on_small_stack_thread() {
     let result = std::thread::Builder::new()

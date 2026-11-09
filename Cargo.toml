@@ -72,14 +72,14 @@ abnf_to_pest = { version = "0.6.0", optional = true }
 pest_meta = { version = "=2.9.5", optional = true }
 pest_vm = { version = "=2.9.5", optional = true }
 pest = { version = "=2.9.5", default-features = false }
-pest_derive = "=2.9.5"
+pest_derive = { version = "=2.9.5", default-features = false }
 pest_stack_guard = { version = "=1.0.1", optional = true }
 displaydoc = { version = "0.2.3", default-features = false }
 log = { version = "0.4.32", optional = true }
 simplelog = { version = "0.12.1", optional = true }
 
 [build-dependencies]
-pest_generator = { version = "=2.9.5", optional = true }
+pest_generator = { version = "=2.9.5", optional = true, default-features = false }
 proc-macro2 = { version = "1.0", optional = true }
 
 [dev-dependencies]
@@ -130,15 +130,17 @@ std = [
     "hexf-parse",
     "simplelog",
     "log",
+    "dep:pest_stack_guard",
     "abnf_to_pest",
     "pest_meta",
     "pest_vm",
     "regex",
     "pest/std",
+    "pest_derive/std",
     "itertools/use_std",
 ]
 lsp = ["std"]
-additional-controls = ["dep:pest_stack_guard"]
+additional-controls = []
 freezer = ["fancy-regex"]
 ast-span = []
 ast-comments = []
