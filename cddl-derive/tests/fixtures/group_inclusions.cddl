@@ -1,0 +1,11 @@
+common = ( ? "d": tstr )
+item = { "a": int, common, }
+wrapped = ( common, ? "e": uint )
+recursive-item = { "a": int, wrapped, }
+nested-item = { "a": int, "common": { ? "d": tstr } }
+exact-group = ( ? "when": tstr )
+range-group = ( ? "start": tstr, ? "end": tstr )
+choice-item = { "a": int, (exact-group // range-group), }
+inline-choice = { "a": int, (? "when": tstr // ? "start": tstr, ? "end": tstr), }
+named-choice = (exact-group // range-group)
+named-choice-item = { "a": int, named-choice }

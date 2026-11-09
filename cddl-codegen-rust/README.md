@@ -122,6 +122,14 @@ through CBOR only. An optional wildcard group (`? (* tstr => int)`) decodes to
 `None` when no entry matched and `Some(map)` otherwise. Rule and variant names
 normalize embedded acronyms, for example `hashedURI-map` becomes `HashedUriMap`.
 
+Map group inclusions are expanded into the enclosing struct's fields, retaining
+entry optionality. A keyed value still stays nested. Group choices (`//`) become
+flattened untagged enums with one struct payload per alternative, rather than a
+struct containing all alternatives. Payloads reject unknown keys so an
+all-optional alternative cannot silently swallow another alternative's entries.
+Single-rule generation also emits the helper types for its included choices.
+Recursive group inclusions return an error instead of expanding indefinitely.
+
 Explicit literal CBOR tags, such as `#6.37(bstr)`, are preserved on struct fields,
 including through aliases and containers. The Rust field retains its inner type;
 generated `serde_with` adapters apply the tag and inner byte-string encoding.

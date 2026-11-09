@@ -145,6 +145,45 @@ fn wildcard_entries_are_flattened() {
 }
 
 #[test]
+fn included_groups_are_fields_but_keyed_groups_stay_nested() {
+  let source = r#"
+    common = ( ? "d": tstr )
+    item = { "a": int, common, }
+    nested = { "a": int, "common": common }
+  "#;
+  for output in [
+    generate_rust_code(source).unwrap(),
+    generate_rust_code_from_ast(
+      &cddl_from_str(source, false).unwrap(),
+      source,
+      &CodegenOptions::default(),
+    )
+    .unwrap(),
+  ] {
+    let item = output
+      .split("pub struct Item {")
+      .nth(1)
+      .unwrap()
+      .split('}')
+      .next()
+      .unwrap();
+    assert!(item.contains("pub a: i64,"));
+    assert!(item.contains("pub d: Option<String>,"));
+    assert!(!item.contains("common"));
+    assert!(output.contains("pub common: Common,"));
+  }
+}
+
+#[test]
+fn recursive_group_inclusion_reports_an_error() {
+  let error = generate_rust_code("common = (? key: tstr, common)\nitem = { common }").unwrap_err();
+  assert!(
+    error.to_string().contains("recursive group inclusion"),
+    "{error}"
+  );
+}
+
+#[test]
 fn embedded_acronyms_are_normalized() {
   let output = generate_rust_code(
     r#"hashedURI-map = { url: tstr }

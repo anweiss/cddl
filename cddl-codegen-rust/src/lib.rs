@@ -112,6 +112,7 @@ pub(crate) enum RustTypeDef {
     name: String,
     fields: Vec<RustField>,
     doc: Vec<String>,
+    deny_unknown_fields: bool,
   },
   TypeAlias {
     name: String,
@@ -141,6 +142,8 @@ pub(crate) struct RustField {
   pub encoding: Option<Encoding>,
   /// A typed map key consumes entries from the enclosing map.
   pub flatten: bool,
+  /// An included group choice uses serde's flattened enum representation.
+  pub flatten_group: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -285,9 +288,18 @@ fn apply_alias_encodings(
       alias_encoding(name, &aliases, &mut Vec::new())?;
     }
   }
+  let helper_names: Vec<_> = root
+    .map(|root| included_group_helpers(defs, root))
+    .unwrap_or_default()
+    .iter()
+    .filter_map(|def| match def {
+      RustTypeDef::Struct { name, .. } => Some(name.clone()),
+      _ => None,
+    })
+    .collect();
   for def in defs {
     if let RustTypeDef::Struct { name, fields, .. } = def {
-      if root.is_some() && root != Some(name.as_str()) {
+      if root.is_some() && root != Some(name.as_str()) && !helper_names.contains(name) {
         continue;
       }
       let metadata_fields = metadata.iter().find_map(|def| match def {
@@ -727,6 +739,7 @@ pub fn generate_rust_code_for_rule_from_ast(
   let fundamental_aliases = append_fundamental_aliases(cddl, &mut type_defs, opts, false)?;
   let rust_rule_name = to_pascal_case(rule_name);
   apply_alias_encodings(cddl, &mut type_defs, opts, Some(&rust_rule_name))?;
+  let mut group_helpers = included_group_helpers(&type_defs, &rust_rule_name);
   let mut matching = type_defs
     .into_iter()
     .find(|d| match d {
@@ -745,7 +758,9 @@ pub fn generate_rust_code_for_rule_from_ast(
   let emit_name = output_name.unwrap_or(&rust_rule_name);
   let exact_name = emit_name.strip_prefix("r#").unwrap_or(emit_name);
   let alias_mod = format!("__cddl_prelude_{}", exact_name);
-  let used = referenced_fundamental_aliases(std::slice::from_ref(&matching));
+  let mut scoped_defs = group_helpers.clone();
+  scoped_defs.push(matching.clone());
+  let used = referenced_fundamental_aliases(&scoped_defs);
   let mut scoped = BTreeMap::new();
   let aliases: Vec<_> = fundamental_aliases
     .iter()
@@ -779,22 +794,29 @@ pub fn generate_rust_code_for_rule_from_ast(
       }
     }
     writeln!(output, "}}")?;
-    match &mut matching {
-      RustTypeDef::Struct { fields, .. } => {
-        for field in fields {
-          rewrite_type(&mut field.rust_type, &scoped, DEFAULT_ANY_TYPE);
+    for def in std::iter::once(&mut matching).chain(group_helpers.iter_mut()) {
+      match def {
+        RustTypeDef::Struct { fields, .. } => {
+          for field in fields {
+            rewrite_type(&mut field.rust_type, &scoped, DEFAULT_ANY_TYPE);
+          }
         }
-      }
-      RustTypeDef::TypeAlias { target, .. } => rewrite_type(target, &scoped, DEFAULT_ANY_TYPE),
-      RustTypeDef::Enum { variants, .. } => {
-        for inner in variants.iter_mut().filter_map(|v| v.inner_type.as_mut()) {
-          rewrite_type(inner, &scoped, DEFAULT_ANY_TYPE);
+        RustTypeDef::TypeAlias { target, .. } => rewrite_type(target, &scoped, DEFAULT_ANY_TYPE),
+        RustTypeDef::Enum { variants, .. } => {
+          for inner in variants.iter_mut().filter_map(|v| v.inner_type.as_mut()) {
+            rewrite_type(inner, &scoped, DEFAULT_ANY_TYPE);
+          }
         }
       }
     }
   }
   match &matching {
-    RustTypeDef::Struct { name, fields, doc } => {
+    RustTypeDef::Struct {
+      name,
+      fields,
+      doc,
+      deny_unknown_fields,
+    } => {
       let emit_name = output_name.unwrap_or(name);
       // Scope the helper module to this type, so several single-type macro
       // invocations can coexist in one file without colliding.
@@ -804,15 +826,53 @@ pub fn generate_rust_code_for_rule_from_ast(
         to_snake_case(emit_name)
       };
       let tag_mod = format!("{}_{}", TAG_HELPER_MOD, suffix);
-      let tags = collect_tags(std::slice::from_ref(&matching));
+      let mut scoped_defs = group_helpers.clone();
+      scoped_defs.push(matching.clone());
+      let tags = collect_tags(&scoped_defs);
       render_tag_helpers(
         &mut output,
         &tag_mod,
         &tags,
-        needs_tag_adapters(std::slice::from_ref(&matching)),
-        needs_explicit_tags(std::slice::from_ref(&matching)),
+        needs_tag_adapters(&scoped_defs),
+        needs_explicit_tags(&scoped_defs),
       )?;
-      render_struct(&mut output, emit_name, fields, doc, &tag_mod, opts)?;
+      render_struct(
+        &mut output,
+        emit_name,
+        fields,
+        doc,
+        &tag_mod,
+        opts,
+        *deny_unknown_fields,
+      )?;
+      for helper in &group_helpers {
+        match helper {
+          RustTypeDef::Struct {
+            name,
+            fields,
+            doc,
+            deny_unknown_fields,
+          } => {
+            render_struct(
+              &mut output,
+              name,
+              fields,
+              doc,
+              &tag_mod,
+              opts,
+              *deny_unknown_fields,
+            )?;
+          }
+          RustTypeDef::Enum {
+            name,
+            variants,
+            doc,
+          } => {
+            render_enum(&mut output, name, variants, doc, opts)?;
+          }
+          RustTypeDef::TypeAlias { .. } => {}
+        }
+      }
     }
     RustTypeDef::TypeAlias { name, target, doc } => {
       let emit_name = output_name.unwrap_or(name);
@@ -891,6 +951,7 @@ fn collect_type_defs(
   }
 
   let mut defs = Vec::new();
+  let mut groups = GroupLowerer::new(cddl, comments, opts);
   let mut merged: std::collections::HashSet<String> = std::collections::HashSet::new();
   for rule in &cddl.rules {
     match rule {
@@ -915,7 +976,7 @@ fn collect_type_defs(
           }
         } else {
           let doc = ast_or_map_rule_doc(rule, type_rule.name.span.2, comments);
-          if let Some(def) = type_rule_to_rust_def(type_rule, comments, doc, opts)? {
+          if let Some(def) = type_rule_to_rust_def(type_rule, comments, doc, opts, &mut groups)? {
             defs.push(def);
           }
         }
@@ -925,12 +986,17 @@ fn collect_type_defs(
       } => {
         let name = to_pascal_case(group_rule.name.ident);
         let doc = ast_or_map_rule_doc(rule, group_rule.name.span.2, comments);
-        if let Some(fields) = group_entry_to_fields(&group_rule.entry, comments, opts)? {
-          defs.push(RustTypeDef::Struct { name, fields, doc });
-        }
+        let fields = groups.entry_fields(&group_rule.entry, &name)?;
+        defs.push(RustTypeDef::Struct {
+          name,
+          fields,
+          doc,
+          deny_unknown_fields: false,
+        });
       }
     }
   }
+  defs.extend(groups.helpers);
   apply_recursive_boxing(&mut defs);
   Ok(defs)
 }
@@ -1083,11 +1149,12 @@ fn compute_scc_ids(edges: &[Vec<usize>]) -> Vec<usize> {
   scc_ids
 }
 
-fn type_rule_to_rust_def(
-  rule: &TypeRule<'_>,
+fn type_rule_to_rust_def<'b>(
+  rule: &TypeRule<'b>,
   comments: &CommentMap,
   doc: Vec<String>,
   opts: &CodegenOptions,
+  groups: &mut GroupLowerer<'_, 'b>,
 ) -> Result<Option<RustTypeDef>, CodegenError> {
   let name = to_pascal_case(rule.name.ident);
   let ty = &rule.value;
@@ -1100,8 +1167,13 @@ fn type_rule_to_rust_def(
     let type1 = &tc.type1;
     match &type1.type2 {
       Type2::Map { group, .. } => {
-        let fields = group_to_fields(group, comments, opts)?;
-        Ok(Some(RustTypeDef::Struct { name, fields, doc }))
+        let fields = groups.fields(group, &name)?;
+        Ok(Some(RustTypeDef::Struct {
+          name,
+          fields,
+          doc,
+          deny_unknown_fields: false,
+        }))
       }
       Type2::Array { group, .. } => {
         let rust_type = array_group_to_type(group, opts)?;
@@ -1276,6 +1348,210 @@ fn type_choice_to_variant(
   }
 }
 
+/// Resolve group inclusions in map position, without changing ordinary typed
+/// fields or array/tuple lowering.
+struct GroupLowerer<'a, 'b> {
+  cddl: &'a CDDL<'b>,
+  comments: &'a CommentMap,
+  opts: &'a CodegenOptions,
+  helpers: Vec<RustTypeDef>,
+  names: std::collections::HashSet<String>,
+  visiting: Vec<String>,
+}
+
+fn included_group_helpers(defs: &[RustTypeDef], root: &str) -> Vec<RustTypeDef> {
+  let mut names = std::collections::BTreeSet::new();
+  names.insert(root.to_string());
+  loop {
+    let before = names.len();
+    for def in defs {
+      match def {
+        RustTypeDef::Struct { name, fields, .. } if names.contains(name) => {
+          names.extend(
+            fields
+              .iter()
+              .filter(|f| f.flatten_group)
+              .map(|f| f.rust_type.clone()),
+          );
+        }
+        RustTypeDef::Enum { name, variants, .. } if name != root && names.contains(name) => {
+          names.extend(variants.iter().filter_map(|v| v.inner_type.clone()));
+        }
+        _ => {}
+      }
+    }
+    if names.len() == before {
+      break;
+    }
+  }
+  names.remove(root);
+  defs
+    .iter()
+    .filter(|def| match def {
+      RustTypeDef::Struct { name, .. } | RustTypeDef::Enum { name, .. } => names.contains(name),
+      _ => false,
+    })
+    .cloned()
+    .collect()
+}
+
+impl<'a, 'b> GroupLowerer<'a, 'b> {
+  fn new(cddl: &'a CDDL<'b>, comments: &'a CommentMap, opts: &'a CodegenOptions) -> Self {
+    let names = cddl
+      .rules
+      .iter()
+      .map(|rule| match rule {
+        Rule::Type { rule, .. } => to_pascal_case(rule.name.ident),
+        Rule::Group { rule, .. } => to_pascal_case(rule.name.ident),
+      })
+      .collect();
+    Self {
+      cddl,
+      comments,
+      opts,
+      helpers: Vec::new(),
+      names,
+      visiting: Vec::new(),
+    }
+  }
+
+  fn helper_name(&mut self, parent: &str) -> String {
+    for index in 1.. {
+      let name = format!("{}Group{}", parent, index);
+      if self.names.insert(name.clone()) {
+        return name;
+      }
+    }
+    unreachable!()
+  }
+
+  fn fields(&mut self, group: &Group<'b>, parent: &str) -> Result<Vec<RustField>, CodegenError> {
+    if group.group_choices.len() > 1 {
+      return self.choice_field(group, parent);
+    }
+    let mut fields = Vec::new();
+    for choice in &group.group_choices {
+      for (entry, _) in &choice.group_entries {
+        fields.extend(self.entry_fields(entry, parent)?);
+      }
+    }
+    deduplicate_field_names(&mut fields);
+    Ok(fields)
+  }
+
+  fn entry_fields(
+    &mut self,
+    entry: &GroupEntry<'b>,
+    parent: &str,
+  ) -> Result<Vec<RustField>, CodegenError> {
+    let (mut fields, optional) = match entry {
+      GroupEntry::TypeGroupname { ge, .. } => {
+        let included = self.cddl.rules.iter().find_map(|rule| match rule {
+          Rule::Group { rule, .. } if rule.name.ident == ge.name.ident => Some(&rule.entry),
+          _ => None,
+        });
+        if let Some(included) = included {
+          if self.visiting.iter().any(|name| name == ge.name.ident) {
+            return Err(CodegenError::ConfigurationError(format!(
+              "recursive group inclusion involving '{}'",
+              ge.name.ident
+            )));
+          }
+          self.visiting.push(ge.name.ident.into());
+          let fields = self.entry_fields(included, parent)?;
+          self.visiting.pop();
+          (
+            fields,
+            ge.occur
+              .as_ref()
+              .is_some_and(|o| matches!(o.occur, Occur::Optional { .. })),
+          )
+        } else {
+          (
+            group_entry_to_fields(entry, self.comments, self.opts)?.unwrap_or_default(),
+            false,
+          )
+        }
+      }
+      GroupEntry::InlineGroup { group, occur, .. } => (
+        self.fields(group, parent)?,
+        occur
+          .as_ref()
+          .is_some_and(|o| matches!(o.occur, Occur::Optional { .. })),
+      ),
+      _ => (
+        group_entry_to_fields(entry, self.comments, self.opts)?.unwrap_or_default(),
+        false,
+      ),
+    };
+    if optional {
+      for field in &mut fields {
+        field.is_optional = true;
+      }
+    }
+    Ok(fields)
+  }
+
+  fn choice_field(
+    &mut self,
+    group: &Group<'b>,
+    parent: &str,
+  ) -> Result<Vec<RustField>, CodegenError> {
+    let name = self.helper_name(parent);
+    let mut variants = Vec::new();
+    for (index, choice) in group.group_choices.iter().enumerate() {
+      let mut variant_name = match choice.group_entries.as_slice() {
+        [(GroupEntry::TypeGroupname { ge, .. }, _)] => to_pascal_case(ge.name.ident),
+        _ => format!("Choice{}", index + 1),
+      };
+      if variants
+        .iter()
+        .any(|variant: &RustEnumVariant| variant.name == variant_name)
+      {
+        variant_name = format!("{}Choice{}", variant_name, index + 1);
+      }
+      let payload = self.helper_name(&name);
+      let mut fields = Vec::new();
+      for (entry, _) in &choice.group_entries {
+        fields.extend(self.entry_fields(entry, &payload)?);
+      }
+      deduplicate_field_names(&mut fields);
+      // Optional fields must not let the first untagged branch swallow keys
+      // belonging to another branch.
+      self.helpers.push(RustTypeDef::Struct {
+        name: payload.clone(),
+        fields,
+        doc: Vec::new(),
+        deny_unknown_fields: true,
+      });
+      variants.push(RustEnumVariant {
+        name: variant_name,
+        inner_type: Some(payload),
+        doc: Vec::new(),
+        rename: None,
+      });
+    }
+    self.helpers.push(RustTypeDef::Enum {
+      name: name.clone(),
+      variants,
+      doc: Vec::new(),
+    });
+    let field_name = to_snake_case(&name);
+    Ok(vec![RustField {
+      name: field_name.clone(),
+      original_name: field_name,
+      rust_type: name,
+      is_optional: false,
+      doc: Vec::new(),
+      is_boxed: false,
+      tag: None,
+      encoding: None,
+      flatten: false,
+      flatten_group: true,
+    }])
+  }
+}
+
 fn group_to_fields(
   group: &Group<'_>,
   comments: &CommentMap,
@@ -1378,6 +1654,7 @@ fn group_entry_to_fields(
         tag: tagged_prelude(ident),
         encoding: None,
         flatten: false,
+        flatten_group: false,
       }]))
     }
     GroupEntry::InlineGroup { group, occur, .. } => {
@@ -1429,6 +1706,7 @@ fn value_member_key_to_field(
         tag: None,
         encoding: None,
         flatten: true,
+        flatten_group: false,
       }));
     }
     None => {
@@ -1443,6 +1721,7 @@ fn value_member_key_to_field(
         tag: type_tagged_prelude(&vmke.entry_type),
         encoding: None,
         flatten: false,
+        flatten_group: false,
       }));
     }
     _ => return Ok(None),
@@ -1484,6 +1763,7 @@ fn value_member_key_to_field(
     },
     encoding: None,
     flatten: false,
+    flatten_group: false,
   }))
 }
 
@@ -2144,8 +2424,21 @@ fn render_type_defs(defs: &[RustTypeDef], opts: &CodegenOptions) -> Result<Strin
       output.push('\n');
     }
     match def {
-      RustTypeDef::Struct { name, fields, doc } => {
-        render_struct(&mut output, name, fields, doc, TAG_HELPER_MOD, opts)?;
+      RustTypeDef::Struct {
+        name,
+        fields,
+        doc,
+        deny_unknown_fields,
+      } => {
+        render_struct(
+          &mut output,
+          name,
+          fields,
+          doc,
+          TAG_HELPER_MOD,
+          opts,
+          *deny_unknown_fields,
+        )?;
       }
       RustTypeDef::TypeAlias { name, target, doc } => {
         render_type_alias(&mut output, name, target, doc)?;
@@ -2268,6 +2561,7 @@ fn render_struct(
   doc: &[String],
   tag_mod: &str,
   opts: &CodegenOptions,
+  deny_unknown_fields: bool,
 ) -> Result<(), CodegenError> {
   render_doc(output, doc, "")?;
 
@@ -2291,13 +2585,16 @@ fn render_struct(
   // serde's flatten buffers unknown entries in a format-neutral representation
   // that drops CBOR tags and cannot dispatch between differently keyed maps, so
   // structs with typed-key entries decode through a generated map visitor.
-  let custom_de = fields.iter().any(|f| f.flatten);
+  let custom_de = fields.iter().any(|f| f.flatten) && !fields.iter().any(|f| f.flatten_group);
   let derives = if custom_de {
     "Clone, Debug, serde::Serialize"
   } else {
     "Clone, Debug, serde::Deserialize, serde::Serialize"
   };
   writeln!(output, "#[derive({})]", derives)?;
+  if deny_unknown_fields {
+    writeln!(output, "#[serde(deny_unknown_fields)]")?;
+  }
   if opts.non_exhaustive {
     writeln!(output, "#[non_exhaustive]")?;
   }
@@ -2602,7 +2899,7 @@ fn render_struct_field(
   tag_mod: &str,
 ) -> Result<(), CodegenError> {
   render_doc(output, &field.doc, "    ")?;
-  if field.flatten {
+  if field.flatten || field.flatten_group {
     writeln!(output, "    #[serde(flatten)]")?;
   }
   if let Some(spec) = spec {
