@@ -174,6 +174,33 @@ struct NumericTargetProbeKey {
   features: String,
 }
 
+#[derive(Eq, Hash, PartialEq)]
+enum ControllerOperandKey {
+  Integer(String),
+  Float(u64),
+  Bytes(Vec<u8>),
+  Text(String),
+  Other(String),
+}
+
+impl From<&Value> for ControllerOperandKey {
+  fn from(value: &Value) -> Self {
+    match value {
+      Value::Integer(value) => Self::Integer(format!("{value:?}")),
+      Value::Float(value) => Self::Float(value.to_bits()),
+      Value::Bytes(value) => Self::Bytes(value.clone()),
+      Value::Text(value) => Self::Text(value.clone()),
+      _ => Self::Other(format!("{value:?}")),
+    }
+  }
+}
+
+#[derive(Eq, Hash, PartialEq)]
+struct ControllerDomainProbeKey {
+  operand: ControllerOperandKey,
+  target: NumericTargetProbeKey,
+}
+
 #[derive(Clone)]
 struct ControllerDomain<'a> {
   target: Type2<'a>,
@@ -208,6 +235,7 @@ pub struct CBORValidator<'a> {
   // Shared only by validator copies of this immutable CBOR value.
   numeric_target_checks: Arc<Mutex<HashSet<NumericTargetProbeKey>>>,
   numeric_probe_recursions: Arc<Mutex<usize>>,
+  controller_domain_checks: Arc<Mutex<HashSet<ControllerDomainProbeKey>>>,
   controller_domains: Vec<ControllerDomain<'a>>,
   // Candidate batch produced while visiting one repeating map member's key.
   // `visit_value_member_key_entry` immediately takes this relay field so the
@@ -250,6 +278,7 @@ impl<'a> CBORValidator<'a> {
       probing_single_entry_assignment: false,
       numeric_target_checks: Arc::default(),
       numeric_probe_recursions: Arc::default(),
+      controller_domain_checks: Arc::default(),
       controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
@@ -273,6 +302,7 @@ impl<'a> CBORValidator<'a> {
       probing_single_entry_assignment: false,
       numeric_target_checks: Arc::default(),
       numeric_probe_recursions: Arc::default(),
+      controller_domain_checks: Arc::default(),
       controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
@@ -296,6 +326,7 @@ impl<'a> CBORValidator<'a> {
       probing_single_entry_assignment: false,
       numeric_target_checks: Arc::default(),
       numeric_probe_recursions: Arc::default(),
+      controller_domain_checks: Arc::default(),
       controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
@@ -319,6 +350,7 @@ impl<'a> CBORValidator<'a> {
       probing_single_entry_assignment: false,
       numeric_target_checks: Arc::default(),
       numeric_probe_recursions: Arc::default(),
+      controller_domain_checks: Arc::default(),
       controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
@@ -443,12 +475,27 @@ impl<'a> CBORValidator<'a> {
     cbor::Error<T>: From<cbor::Error<std::io::Error>>,
   {
     for domain in self.controller_domains.clone() {
-      // Controller values are a different operand from the instance and get
-      // fresh membership caches, even if the two happen to have equal values.
-      let mut probe = self.new_with_recursion_state(token_value_into_cbor_value(value.clone()));
+      let value = token_value_into_cbor_value(value.clone());
+      let mut probe = self.new_with_recursion_state(value.clone());
       probe.state.generic_rules = domain.generic_rules;
       probe.state.eval_generic_rule = domain.generic_rule;
       probe.state.data_location = self.state.data_location.clone();
+      let key = ControllerDomainProbeKey {
+        operand: ControllerOperandKey::from(&value),
+        target: probe.numeric_target_probe_key(&domain.target),
+      };
+      if probe
+        .controller_domain_checks
+        .lock()
+        .is_ok_and(|checks| checks.contains(&key))
+      {
+        continue;
+      }
+      let recursion_count = probe
+        .numeric_probe_recursions
+        .lock()
+        .ok()
+        .map(|count| *count);
       probe.visit_type2(&domain.target)?;
       if !probe.errors.is_empty() {
         for error in &mut probe.errors {
@@ -456,6 +503,17 @@ impl<'a> CBORValidator<'a> {
         }
         self.errors.extend(probe.errors);
         return Ok(false);
+      }
+      if recursion_count.is_some_and(|count| {
+        count != usize::MAX
+          && probe
+            .numeric_probe_recursions
+            .lock()
+            .is_ok_and(|current| *current == count)
+      }) {
+        if let Ok(mut checks) = probe.controller_domain_checks.lock() {
+          checks.insert(key);
+        }
       }
     }
     Ok(true)
@@ -1283,7 +1341,7 @@ impl<'a> CBORValidator<'a> {
     Some(entry)
   }
 
-  /// Create a new CBORValidator with inherited recursion state
+  /// Create a validator copy that shares recursion and proof-cache state.
   fn new_with_recursion_state(&self, cbor: Value) -> CBORValidator<'a> {
     #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
     let mut cv = CBORValidator::new(self.state.cddl, cbor, self.state.enabled_features.clone());
@@ -1296,6 +1354,7 @@ impl<'a> CBORValidator<'a> {
     cv.state.eval_generic_rule = self.state.eval_generic_rule;
     cv.state.visited_rules = self.state.visited_rules.clone();
     cv.numeric_probe_recursions = Arc::clone(&self.numeric_probe_recursions);
+    cv.controller_domain_checks = Arc::clone(&self.controller_domain_checks);
     cv
   }
 
@@ -1910,6 +1969,7 @@ where
   fn validate(&mut self) -> std::result::Result<(), cbor::Error<T>> {
     self.numeric_target_checks = Arc::default();
     self.numeric_probe_recursions = Arc::default();
+    self.controller_domain_checks = Arc::default();
     self.controller_domains.clear();
     // RFC 8949 sections 5.3.1 and 5.6.1: text map keys compare byte-for-byte,
     // independently of their wire encoding and of the enclosing CDDL type.
@@ -6172,6 +6232,60 @@ mod tests {
   use super::*;
   use ciborium::cbor;
   use indoc::indoc;
+
+  #[test]
+  fn recursion_guard_assumptions_are_not_cached_as_membership() {
+    let cddl = crate::cddl_from_str("x = t\nt = uint .eq 1", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(0.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    let target = Type2::Typename {
+      ident: Identifier::from("t"),
+      generic_args: None,
+      #[cfg(feature = "ast-span")]
+      span: (0, 0, 0),
+    };
+
+    validator.state.visited_rules.insert("t\0".into());
+    assert!(validator
+      .probe_numeric_target::<std::io::Error>(&target)
+      .unwrap());
+    validator.state.visited_rules.clear();
+    assert!(!validator
+      .probe_numeric_target::<std::io::Error>(&target)
+      .unwrap());
+  }
+
+  #[test]
+  fn controller_domain_cache_includes_operand_value() {
+    let cddl = crate::cddl_from_str("x = t\nt = uint .eq 1", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(0.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.controller_domains.push(ControllerDomain {
+      target: Type2::Typename {
+        ident: Identifier::from("t"),
+        generic_args: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 0),
+      },
+      generic_rules: Vec::new(),
+      generic_rule: None,
+    });
+
+    assert!(validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(1))
+      .unwrap());
+    assert!(!validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(2))
+      .unwrap());
+  }
 
   #[cfg(not(feature = "additional-controls"))]
   #[test]

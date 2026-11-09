@@ -333,24 +333,18 @@ fn repeated_generic_numeric_alias_probes_remain_bounded() {
   assert!(!accepts(&schema, &[0x02]));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn recursive_assumptions_are_not_cached_as_membership() {
-  use cddl::validator::{cbor::CBORValidator, cbor_value::Value, Validator};
-  let cddl = cddl::cddl_from_str("x = t .eq 0\nt = uint .eq 1", false).unwrap();
-  let value = Value::Integer(0.into());
-  #[cfg(feature = "additional-controls")]
-  let mut validator = CBORValidator::new(&cddl, value, None);
-  #[cfg(not(feature = "additional-controls"))]
-  let mut validator = CBORValidator::new(&cddl, value);
-  validator.state.visited_rules.insert("t\0".into());
-  assert!(
-    Validator::<cddl::validator::cbor::Error<std::io::Error>>::validate(&mut validator).is_ok()
-  );
-  validator.state.visited_rules.clear();
-  assert!(
-    Validator::<cddl::validator::cbor::Error<std::io::Error>>::validate(&mut validator).is_err()
-  );
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn comparison_controller_chain_proofs_are_reused() {
+  let mut schema = String::from("x = n24\nn0 = uint .eq 1\n");
+  for level in 1..=24 {
+    schema.push_str(&format!(
+      "n{level} = n{0} .ge b{level}\nb{level} = n{0} .eq 1\n",
+      level - 1
+    ));
+  }
+  assert!(accepts(&schema, &[0x01]));
+  assert!(!accepts(&schema, &[0x02]));
 }
 
 #[cfg(not(target_arch = "wasm32"))]
