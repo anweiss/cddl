@@ -123,7 +123,11 @@ fields; typed keys become flattened `entries` maps. Such structs decode through
 a generated map visitor that reads each value in place, so tagged values are
 kept and entries are routed to the first named field or key type that matches.
 JSON object keys are strings, so integer-keyed wildcard entries round-trip
-through CBOR only. An optional wildcard group (`? (* tstr => int)`) decodes to
+through CBOR only. Choice enums with only built-in integer, boolean, string,
+byte-string or null payloads (including literal-only enums) derive `PartialEq`,
+`Eq` and `Hash`, so they can be used as wildcard map keys. These derives are
+not added for floats, arbitrary values or user-defined payload types.
+An optional wildcard group (`? (* tstr => int)`) decodes to
 `None` when no entry matched and `Some(map)` otherwise. Rule and variant names
 normalize embedded acronyms, for example `hashedURI-map` becomes `HashedUriMap`.
 

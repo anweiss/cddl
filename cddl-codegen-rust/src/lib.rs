@@ -3071,7 +3071,8 @@ fn render_enum(
   render_doc(output, doc, "")?;
   writeln!(
     output,
-    "#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]"
+    "#[derive(Clone, Debug, serde::Deserialize, serde::Serialize{})]",
+    enum_key_derives(variants)
   )?;
   writeln!(output, "#[serde(untagged)]")?;
   if opts.non_exhaustive {
@@ -3101,6 +3102,21 @@ fn is_string_literal_variant(variant: &RustEnumVariant) -> bool {
   variant.inner_type.is_none() && variant.rename.is_some()
 }
 
+fn enum_key_derives(variants: &[RustEnumVariant]) -> &'static str {
+  // Only derive for payloads known to implement all three traits. Floats,
+  // generated structs and user-supplied types need not implement Eq or Hash.
+  if variants.iter().all(|variant| {
+    variant
+      .inner_type
+      .as_deref()
+      .is_none_or(|inner| matches!(inner, "i64" | "u64" | "bool" | "String" | "Vec<u8>" | "()"))
+  }) {
+    ", PartialEq, Eq, Hash"
+  } else {
+    ""
+  }
+}
+
 /// Keep literal unit variants on the public enum, but decode them through a
 /// string enum before trying the typed alternatives of the untagged choice.
 fn render_mixed_enum(
@@ -3120,7 +3136,11 @@ fn render_mixed_enum(
     });
   }
   render_doc(output, doc, "")?;
-  writeln!(output, "#[derive(Clone, Debug)]")?;
+  writeln!(
+    output,
+    "#[derive(Clone, Debug{})]",
+    enum_key_derives(&variants)
+  )?;
   if opts.non_exhaustive {
     writeln!(output, "#[non_exhaustive]")?;
   }
@@ -3293,7 +3313,7 @@ fn render_string_enum(
   opts: &CodegenOptions,
 ) -> Result<(), CodegenError> {
   render_doc(output, doc, "")?;
-  writeln!(output, "#[derive(Clone, Debug, PartialEq, Eq)]")?;
+  writeln!(output, "#[derive(Clone, Debug, PartialEq, Eq, Hash)]")?;
   if opts.non_exhaustive {
     writeln!(output, "#[non_exhaustive]")?;
   }
@@ -3866,6 +3886,44 @@ mod tests {
     assert!(result.contains("pub enum Value"));
     assert!(result.contains("Int(i64)"));
     assert!(result.contains("Tstr(String)"));
+  }
+
+  #[test]
+  fn test_enum_map_keys_derive_equality_and_hash() {
+    let result = gen("label = int / tstr\nm = { * label => any, }");
+    assert!(result.contains("serde::Serialize, PartialEq, Eq, Hash)]"));
+    assert!(result.contains("std::collections::HashMap<Label, serde_json::Value>"));
+    assert!(result.contains("#[serde(untagged)]"));
+
+    let literals = gen(r#"label = "a" / "b""#);
+    assert!(literals.contains("#[derive(Clone, Debug, PartialEq, Eq, Hash)]"));
+    let mixed = gen(r#"label = "a" / int"#);
+    assert!(mixed.contains("#[derive(Clone, Debug, PartialEq, Eq, Hash)]"));
+  }
+
+  #[test]
+  fn test_enum_key_derives_do_not_require_non_hashable_payloads() {
+    for source in [
+      "value = float / tstr",
+      "value = any / int",
+      "value = record / int\nrecord = { name: tstr }",
+      r#"value = "a" / float"#,
+    ] {
+      let result = gen(source);
+      assert!(!result.contains("PartialEq, Eq, Hash"));
+    }
+
+    let options = CodegenOptions {
+      substitutions: [("integer-label".into(), "custom::Integer".into())].into(),
+      ..Default::default()
+    };
+    let result = generate_rust_code_with_options(
+      "integer-label = int\nvalue = integer-label / tstr",
+      &options,
+    )
+    .unwrap();
+    assert!(result.contains("custom::Integer"));
+    assert!(!result.contains("PartialEq, Eq, Hash"));
   }
 
   /// An enum of string literals is a closed set of strings on the wire.
