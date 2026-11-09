@@ -273,6 +273,12 @@ fn comparison_controllers_respect_their_own_domains() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn mixed_numeric_targets_preserve_nonnumeric_members() {
+  assert!(accepts("x = v .and any\nv = uint / any", &[0xf6]));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn repeated_numeric_alias_probes_remain_bounded() {
   for (controller, depth) in [("n", 32), ("alias", 16)] {
     let mut schema = format!("x = n{depth}\nn0 = uint .eq 1\nalias0 = n0\n");
@@ -335,12 +341,74 @@ fn repeated_generic_numeric_alias_probes_remain_bounded() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn alias_wrapped_generic_target_proofs_reuse_relevant_bindings() {
+  let mut schema = String::from("x = n24<1>\nn0<T> = uint .eq T\na0<T> = n0<T>\n");
+  for level in 1..=24 {
+    schema.push_str(&format!(
+      "n{level}<T> = n{prev}<T> .eq a{prev}<T>\na{level}<T> = n{level}<T>\n",
+      prev = level - 1
+    ));
+  }
+  assert!(accepts(&schema, &[0x01]));
+  assert!(!accepts(&schema, &[0x02]));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn failed_numeric_target_alias_proofs_remain_bounded() {
+  let mut schema = String::from("x = n32\nn0 = uint .eq 1\n");
+  for level in 1..=32 {
+    schema.push_str(&format!(
+      "n{level} = n{prev} .eq 1 / n{prev} .eq 2\n",
+      prev = level - 1
+    ));
+  }
+  assert!(!accepts(&schema, &[0x00]));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn generic_controller_children_keep_size_and_bits_context() {
+  assert!(accepts(
+    "x = tstr .size bound<1>\nbound<T> = T",
+    &[0x61, b'a']
+  ));
+  assert!(accepts(
+    "x = bstr .bits bound<0>\nbound<T> = T",
+    &[0x41, 0x01]
+  ));
+  assert!(accepts(
+    "x = tstr .size bound<1>\nbound<T> = uint .eq T",
+    &[0x61, b'a']
+  ));
+  assert!(accepts(
+    "x = bstr .bits bound<0>\nbound<T> = uint .eq T",
+    &[0x41, 0x01]
+  ));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn comparison_controller_chain_proofs_are_reused() {
   let mut schema = String::from("x = n24\nn0 = uint .eq 1\n");
   for level in 1..=24 {
     schema.push_str(&format!(
       "n{level} = n{0} .ge b{level}\nb{level} = n{0} .eq 1\n",
       level - 1
+    ));
+  }
+  assert!(accepts(&schema, &[0x01]));
+  assert!(!accepts(&schema, &[0x02]));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn generic_literal_controller_proofs_are_shared() {
+  let mut schema = String::from("x = n24\nliteral<T> = T\nn0 = uint .eq 1\n");
+  for level in 1..=24 {
+    schema.push_str(&format!(
+      "n{level} = n{prev} .ge b{level}\nb{level} = n{prev} .eq literal<1>\n",
+      prev = level - 1
     ));
   }
   assert!(accepts(&schema, &[0x01]));

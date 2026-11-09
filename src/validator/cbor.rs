@@ -11,7 +11,7 @@ use crate::{
 
 use std::{
   borrow::Cow,
-  collections::HashSet,
+  collections::{HashMap, HashSet},
   convert::TryFrom,
   fmt::{self, Write},
   sync::{Arc, Mutex},
@@ -78,7 +78,7 @@ impl<T: std::fmt::Debug + 'static> std::error::Error for Error<T> {
 }
 
 /// cbor validation error
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValidationError {
   /// Error message
   pub reason: String,
@@ -165,13 +165,23 @@ struct SingleMapEntryClaim<'a> {
 }
 
 #[derive(Eq, Hash, PartialEq)]
-struct NumericTargetProbeKey {
+struct NumericTargetIdentity {
   cddl: usize,
   target: String,
-  data_location: String,
-  generic_rule: Option<String>,
-  generic_rules: String,
+  generic_bindings: String,
   features: String,
+}
+
+#[derive(Eq, Hash, PartialEq)]
+struct NumericTargetProbeKey {
+  identity: NumericTargetIdentity,
+  data_location: String,
+}
+
+#[derive(Clone)]
+enum NumericTargetProbeResult {
+  Match,
+  NoMatch(Vec<ValidationError>),
 }
 
 #[derive(Eq, Hash, PartialEq)]
@@ -198,7 +208,7 @@ impl From<&Value> for ControllerOperandKey {
 #[derive(Eq, Hash, PartialEq)]
 struct ControllerDomainProbeKey {
   operand: ControllerOperandKey,
-  target: NumericTargetProbeKey,
+  target: NumericTargetIdentity,
 }
 
 #[derive(Clone)]
@@ -233,7 +243,7 @@ pub struct CBORValidator<'a> {
   // assignment search when the tested pair does not match.
   probing_single_entry_assignment: bool,
   // Shared only by validator copies of this immutable CBOR value.
-  numeric_target_checks: Arc<Mutex<HashSet<NumericTargetProbeKey>>>,
+  numeric_target_checks: Arc<Mutex<HashMap<NumericTargetProbeKey, NumericTargetProbeResult>>>,
   numeric_probe_recursions: Arc<Mutex<usize>>,
   controller_domain_checks: Arc<Mutex<HashSet<ControllerDomainProbeKey>>>,
   controller_domains: Vec<ControllerDomain<'a>>,
@@ -368,33 +378,37 @@ impl<'a> CBORValidator<'a> {
     let features = format!("{:?}", self.state.enabled_features);
     #[cfg(not(feature = "additional-controls"))]
     let features = String::new();
-    // Identifier evaluation reads leading arguments, while argument forwarding
-    // reads the latest bindings. Intermediate instantiation history is unused.
-    let generic_rules = self
-      .state
-      .generic_rules
-      .iter()
-      .map(|rule| {
-        let count = rule.params.len();
-        (
-          rule.name,
-          &rule.params,
-          &rule.args[..count.min(rule.args.len())],
-          rule
-            .args
-            .len()
-            .checked_sub(count)
-            .map(|start| &rule.args[start..]),
-        )
-      })
-      .collect::<Vec<_>>();
+    let generic_bindings = match target {
+      Type2::Typename {
+        ident,
+        generic_args,
+        ..
+      } => generic_args
+        .as_ref()
+        .map(|args| format!("{:?}", resolved_generic_args(&self.state, args)))
+        .or_else(|| {
+          super::generic_argument_for_param(&self.state, ident.ident)
+            .map(|arg| format!("{:?}", resolve_generic_argument(&self.state, &arg)))
+        })
+        .unwrap_or_default(),
+      _ => String::new(),
+    };
     NumericTargetProbeKey {
-      cddl: self.state.cddl as *const CDDL<'a> as usize,
-      target: format!("{target:?}"),
+      identity: NumericTargetIdentity {
+        cddl: self.state.cddl as *const CDDL<'a> as usize,
+        target: format!("{target:?}"),
+        generic_bindings,
+        features,
+      },
       data_location: self.state.data_location.clone(),
-      generic_rule: self.state.eval_generic_rule.map(str::to_owned),
-      generic_rules: format!("{generic_rules:?}"),
-      features,
+    }
+  }
+
+  fn extend_unique_errors(&mut self, errors: Vec<ValidationError>) {
+    for error in errors {
+      if !self.errors.contains(&error) {
+        self.errors.push(error);
+      }
     }
   }
 
@@ -406,12 +420,18 @@ impl<'a> CBORValidator<'a> {
     cbor::Error<T>: From<cbor::Error<std::io::Error>>,
   {
     let key = self.numeric_target_probe_key(target);
-    if self
+    let cached = self
       .numeric_target_checks
       .lock()
-      .is_ok_and(|checks| checks.contains(&key))
-    {
-      return Ok(true);
+      .ok()
+      .and_then(|checks| checks.get(&key).cloned());
+    match cached {
+      Some(NumericTargetProbeResult::Match) => return Ok(true),
+      Some(NumericTargetProbeResult::NoMatch(errors)) => {
+        self.extend_unique_errors(errors);
+        return Ok(false);
+      }
+      None => {}
     }
 
     let mut probe = self.new_with_recursion_state(self.cbor.clone());
@@ -423,21 +443,26 @@ impl<'a> CBORValidator<'a> {
       .ok()
       .map(|count| *count);
     probe.visit_type2(target)?;
-    if !probe.errors.is_empty() {
-      self.errors.extend(probe.errors);
-      return Ok(false);
-    }
-    // A recursion guard assumes membership rather than proving it. Such a
-    // result must never become reusable evidence in a different alias path.
-    if recursion_count.is_some_and(|count| {
+    let cacheable_match = recursion_count.is_some_and(|count| {
       count != usize::MAX
         && self
           .numeric_probe_recursions
           .lock()
           .is_ok_and(|current| *current == count)
-    }) {
+    });
+    if !probe.errors.is_empty() {
+      // Recursion guards only assume membership, so a failed proof remains conservative.
       if let Ok(mut checks) = self.numeric_target_checks.lock() {
-        checks.insert(key);
+        checks.insert(key, NumericTargetProbeResult::NoMatch(probe.errors.clone()));
+      }
+      self.extend_unique_errors(probe.errors);
+      return Ok(false);
+    }
+    // A recursion guard assumes membership rather than proving it. Such a
+    // result must never become reusable evidence in a different alias path.
+    if cacheable_match {
+      if let Ok(mut checks) = self.numeric_target_checks.lock() {
+        checks.insert(key, NumericTargetProbeResult::Match);
       }
     }
     Ok(true)
@@ -482,7 +507,7 @@ impl<'a> CBORValidator<'a> {
       probe.state.data_location = self.state.data_location.clone();
       let key = ControllerDomainProbeKey {
         operand: ControllerOperandKey::from(&value),
-        target: probe.numeric_target_probe_key(&domain.target),
+        target: probe.numeric_target_probe_key(&domain.target).identity,
       };
       if probe
         .controller_domain_checks
@@ -2445,19 +2470,20 @@ where
         self.add_error(format!("expected type bstr, got {:?}", self.cbor));
         return Ok(());
       } else if ident_numeric_kind(self.state.cddl, target_ident).is_some() {
-        if !matches!(
+        let numeric_context = is_numeric_controller_context(self.state.ctrl.as_ref());
+        let numeric_instance = matches!(
           self.cbor,
           Value::Integer(_) | Value::Float(_) | Value::Tag(..)
-        ) {
+        );
+        let needs_target_probe = numeric_control_needs_target_probe(&ctrl) && !numeric_context;
+        if !numeric_instance && !numeric_context && !needs_target_probe {
           self.add_error(format!(
             "expected numeric type {}, got {:?}",
             target_ident, self.cbor
           ));
           return Ok(());
         }
-        if numeric_control_needs_target_probe(&ctrl)
-          && !is_numeric_controller_context(self.state.ctrl.as_ref())
-        {
+        if needs_target_probe {
           // A numeric choice may also contain nonnumeric or constrained arms.
           // Domain prefilters alone cannot establish target membership.
           if !self.probe_numeric_target::<T>(target)? {
@@ -4010,9 +4036,8 @@ where
             cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
             cv.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
             cv.numeric_probe_recursions = Arc::clone(&self.numeric_probe_recursions);
-            if is_numeric_controller_context(self.state.ctrl.as_ref())
-              && matches!(self.cbor, Value::Integer(_) | Value::Float(_))
-            {
+            cv.controller_domain_checks = Arc::clone(&self.controller_domain_checks);
+            if is_numeric_controller_context(self.state.ctrl.as_ref()) {
               cv.state.ctrl = self.state.ctrl;
               cv.controller_domains = self.controller_domains.clone();
             }
@@ -6260,6 +6285,33 @@ mod tests {
   }
 
   #[test]
+  fn failed_numeric_target_proofs_are_cached_without_duplicate_errors() {
+    let cddl = crate::cddl_from_str("x = t\nt = uint .eq 1", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(0.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    let target = Type2::Typename {
+      ident: Identifier::from("t"),
+      generic_args: None,
+      #[cfg(feature = "ast-span")]
+      span: (0, 0, 0),
+    };
+
+    assert!(!validator
+      .probe_numeric_target::<std::io::Error>(&target)
+      .unwrap());
+    let error_count = validator.errors.len();
+    assert!(error_count > 0);
+    assert!(!validator
+      .probe_numeric_target::<std::io::Error>(&target)
+      .unwrap());
+    assert_eq!(validator.errors.len(), error_count);
+  }
+
+  #[test]
   fn controller_domain_recursion_guard_assumptions_are_not_cached() {
     let cddl = crate::cddl_from_str("x = t\nt = uint .eq 1", true).unwrap();
     let mut validator = CBORValidator::new(
@@ -6315,6 +6367,37 @@ mod tests {
     assert!(!validator
       .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(2))
       .unwrap());
+  }
+
+  #[test]
+  fn controller_domain_proofs_are_reused_across_data_locations() {
+    let cddl = crate::cddl_from_str("x = t\nt = int .eq -40", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer((-40).into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.controller_domains.push(ControllerDomain {
+      target: Type2::Typename {
+        ident: Identifier::from("t"),
+        generic_args: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 0),
+      },
+      generic_rules: Vec::new(),
+      generic_rule: None,
+    });
+
+    validator.state.data_location = "root[0]".into();
+    assert!(validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::INT(-40))
+      .unwrap());
+    validator.state.data_location = "root[1]".into();
+    assert!(validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::INT(-40))
+      .unwrap());
+    assert_eq!(validator.controller_domain_checks.lock().unwrap().len(), 1);
   }
 
   #[cfg(not(feature = "additional-controls"))]
