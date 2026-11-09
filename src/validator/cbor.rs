@@ -2103,49 +2103,46 @@ where
       self.state.is_multi_type_choice = true;
     }
 
-    let initial_error_count = self.errors.len();
-    let mut choice_validation_succeeded = false;
+    if matches!(self.cbor, Value::Array(_))
+      && !self.state.is_multi_type_choice_type_rule_validating_array
+    {
+      let prior_errors = std::mem::take(&mut self.errors);
+      let mut choice_errors = Vec::new();
+      let mut choice_validation_succeeded = false;
 
-    for type_choice in t.type_choices.iter() {
-      if matches!(self.cbor, Value::Array(_))
-        && !self.state.is_multi_type_choice_type_rule_validating_array
-      {
-        let error_count = self.errors.len();
-
+      for type_choice in t.type_choices.iter() {
+        self.errors.clear();
         self.visit_type_choice(type_choice)?;
 
         #[cfg(feature = "additional-controls")]
-        if self.errors.len() == error_count
+        let choice_succeeded = self.errors.is_empty()
           && !self.state.has_feature_errors
-          && self.state.disabled_features.is_none()
-        {
-          // Disregard invalid type choice validation errors if one of the
-          // choices validates successfully
-          let type_choice_error_count = self.errors.len() - initial_error_count;
-          if type_choice_error_count > 0 {
-            for _ in 0..type_choice_error_count {
-              self.errors.pop();
-            }
-          }
-          choice_validation_succeeded = true;
-        }
+          && self.state.disabled_features.is_none();
 
         #[cfg(not(feature = "additional-controls"))]
-        if self.errors.len() == error_count {
-          // Disregard invalid type choice validation errors if one of the
-          // choices validates successfully
-          let type_choice_error_count = self.errors.len() - initial_error_count;
-          if type_choice_error_count > 0 {
-            for _ in 0..type_choice_error_count {
-              self.errors.pop();
+        let choice_succeeded = self.errors.is_empty();
+
+        if choice_succeeded {
+          choice_validation_succeeded = true;
+        } else {
+          for error in self.errors.drain(..) {
+            if !choice_errors.contains(&error) {
+              choice_errors.push(error);
             }
           }
-          choice_validation_succeeded = true;
         }
-
-        continue;
       }
 
+      self.errors = prior_errors;
+      if !choice_validation_succeeded {
+        self.extend_unique_errors(choice_errors);
+      }
+      return Ok(());
+    }
+
+    let initial_error_count = self.errors.len();
+
+    for type_choice in t.type_choices.iter() {
       // Create a copy of the validator to test this choice in isolation
       let mut choice_validator = self.clone();
       choice_validator.errors.clear();
@@ -2185,13 +2182,6 @@ where
       }
     }
 
-    // If we got here and choice_validation_succeeded is true (for array case),
-    // then validation succeeded; drop errors accumulated by other, failing
-    // alternatives so they don't leak into the overall result
-    if choice_validation_succeeded {
-      self.errors.truncate(initial_error_count);
-      return Ok(());
-    }
     Ok(())
   }
 
