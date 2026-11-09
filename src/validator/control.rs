@@ -782,6 +782,30 @@ pub fn plus_operation<'a>(
 
 #[cfg(feature = "additional-controls")]
 pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
+  #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
+  {
+    const STACK_THRESHOLD: usize = 4 * 64 * 1024;
+    const WORKER_STACK_SIZE: usize = 2 * 1024 * 1024;
+
+    // Pest requires 64 KiB remaining; keep extra headroom for parser call frames.
+    if pest_stack_guard::remaining_stack().is_some_and(|remaining| remaining < STACK_THRESHOLD) {
+      let abnf = abnf.to_owned();
+      let target = target.to_owned();
+
+      return std::thread::Builder::new()
+        .stack_size(WORKER_STACK_SIZE)
+        .spawn(move || validate_abnf_in_current_thread(&abnf, &target))
+        .map_err(|error| error.to_string())?
+        .join()
+        .map_err(|_| "ABNF validation worker panicked".to_owned())?;
+    }
+  }
+
+  validate_abnf_in_current_thread(abnf, target)
+}
+
+#[cfg(feature = "additional-controls")]
+fn validate_abnf_in_current_thread(abnf: &str, target: &str) -> Result<(), String> {
   let abnf = abnf.trim();
   if let Some(idx) = abnf.find('\n') {
     let (rule, abnf) = abnf.split_at(idx);
@@ -801,7 +825,13 @@ pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
     let pairs = pest_meta::parser::parse(pest_meta::parser::Rule::grammar_rules, &pest)
       .map_err(|e| e.to_string())?;
 
-    let ast = pest_meta::parser::consume_rules(pairs).unwrap();
+    let ast = pest_meta::parser::consume_rules(pairs).map_err(|errors| {
+      errors
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+    })?;
 
     let vm = pest_vm::Vm::new(pest_meta::optimizer::optimize(ast));
 
@@ -957,6 +987,36 @@ mod tests {
     validate_abnf(abnf_str, "2009")?;
 
     Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn left_recursive_abnf_returns_validation_error() {
+    let abnf = "root\nroot = \"a\"\nrecursive = [recursive] \"b\"\n";
+    let error = validate_abnf(abnf, "a").unwrap_err();
+
+    assert!(
+      error.contains("left-recursive"),
+      "unexpected validation error: {}",
+      error
+    );
+  }
+
+  #[cfg(all(
+    feature = "additional-controls",
+    feature = "std",
+    not(target_arch = "wasm32")
+  ))]
+  #[test]
+  fn validate_abnf_succeeds_on_small_stack_thread() {
+    let result = std::thread::Builder::new()
+      .stack_size(64 * 1024)
+      .spawn(|| validate_abnf("root\nroot = \"a\"\n", "a"))
+      .expect("failed to spawn small-stack thread")
+      .join()
+      .expect("small-stack thread panicked");
+
+    assert!(result.is_ok(), "{}", result.unwrap_err());
   }
 
   #[cfg(feature = "additional-controls")]
