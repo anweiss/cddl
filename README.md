@@ -24,7 +24,8 @@ Also bundled into this repository is a basic language server implementation and 
 
 ## Contributing and local development
 
-With Rust stable, Node 24 LTS and Python 3.11+ installed, run `npm run setup`.
+With Rust stable, Node 24 LTS, Python 3.11+ and a host C/C++ toolchain
+installed, run `npm run setup`.
 See [agent guidance](AGENTS.md), [development commands](docs/development.md),
 [architecture](docs/architecture.md), [interactive QA](docs/qa.md) and
 [security and privacy](SECURITY.md). No application credentials or services are required.
