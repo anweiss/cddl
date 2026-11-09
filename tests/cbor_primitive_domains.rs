@@ -281,6 +281,7 @@ fn mixed_numeric_targets_preserve_nonnumeric_members() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn duplicate_failed_probes_do_not_accept_array_choices() {
   assert!(!accepts("x = (uint .eq 1 / uint .eq 2)", &[0x80]));
+  assert!(accepts("x = (uint .eq 1 / any)", &[0x80]));
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
