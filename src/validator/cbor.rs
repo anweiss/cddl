@@ -6260,6 +6260,36 @@ mod tests {
   }
 
   #[test]
+  fn controller_domain_recursion_guard_assumptions_are_not_cached() {
+    let cddl = crate::cddl_from_str("x = t\nt = uint .eq 1", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(0.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.controller_domains.push(ControllerDomain {
+      target: Type2::Typename {
+        ident: Identifier::from("t"),
+        generic_args: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 0),
+      },
+      generic_rules: Vec::new(),
+      generic_rule: None,
+    });
+
+    validator.state.visited_rules.insert("t\0".into());
+    assert!(validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(2))
+      .unwrap());
+    validator.state.visited_rules.clear();
+    assert!(!validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(2))
+      .unwrap());
+  }
+
+  #[test]
   fn controller_domain_cache_includes_operand_value() {
     let cddl = crate::cddl_from_str("x = t\nt = uint .eq 1", true).unwrap();
     let mut validator = CBORValidator::new(
