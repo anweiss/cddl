@@ -801,7 +801,13 @@ pub fn validate_abnf(abnf: &str, target: &str) -> Result<(), String> {
     let pairs = pest_meta::parser::parse(pest_meta::parser::Rule::grammar_rules, &pest)
       .map_err(|e| e.to_string())?;
 
-    let ast = pest_meta::parser::consume_rules(pairs).unwrap();
+    let ast = pest_meta::parser::consume_rules(pairs).map_err(|errors| {
+      errors
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+    })?;
 
     let vm = pest_vm::Vm::new(pest_meta::optimizer::optimize(ast));
 
@@ -957,6 +963,19 @@ mod tests {
     validate_abnf(abnf_str, "2009")?;
 
     Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn left_recursive_abnf_returns_validation_error() {
+    let abnf = "root\nroot = \"a\"\nrecursive = [recursive] \"b\"\n";
+    let error = validate_abnf(abnf, "a").unwrap_err();
+
+    assert!(
+      error.contains("left-recursive"),
+      "unexpected validation error: {}",
+      error
+    );
   }
 
   #[cfg(feature = "additional-controls")]
