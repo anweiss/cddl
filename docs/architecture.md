@@ -32,12 +32,30 @@ that would admit nearby values outside the declared domain.
 JSON number parsing round-trips binary64 values exactly, preserving decimal
 spellings of binary32 values and the full unsigned 64-bit integer domain.
 Ordering controllers resolve to a singleton independently of the instance,
-and that singleton is checked against its own constraints before the outer
-comparison is applied. Equality and inequality retain controller-domain
-membership semantics. Generic instantiations substitute nested
+discarding candidates that fail their originating alternative's constraints
+before combining choices. Completed proofs, including empty and unknown
+domains, are memoized by structural instantiation within one resolution;
+results depending on active-cycle cuts are never memoized. Proven alias
+domains are not replayed through the ordinary evaluator.
+Resolution is bounded to 48 nested steps and 4096 work steps, with 16 KiB
+structural keys and a conservative 4 MiB substitution-size bound checked
+before expansion. Candidate checks through the ordinary evaluator share a
+separate 4096-visit budget within that proof, including nested child validators.
+Exhaustion and recursive constraint proofs return errors,
+not validity assumptions that `.ne` could invert. These budgets and caches
+are local to each resolution, never shared across public validation calls.
+Mixed integer/float ordering compares integral parts exactly before fractional
+remainders, preserving 64-bit boundaries without rounding integers to floats.
+Equality and inequality retain controller-domain membership semantics.
+The AST's integer literals remain pointer-sized; wasm32 checks exercise
+64-bit data against floating controllers, while 64-bit integer controller
+literals require a 64-bit target.
+Generic instantiations substitute nested
 arguments in the caller's environment; redundant parentheses are normalized,
-and zero-progress parameter bindings are guarded. Unconstrained arguments
-remain bare targets for controls such as `.size` and `.bits`.
+and zero-progress parameter and numeric-target bindings are guarded by active
+rule, structural arguments and data location. Socket-prefixed names are not
+parameter references. Unconstrained arguments remain bare targets for controls
+such as `.size` and `.bits`.
 
 Map key type choices match each key independently: `{ * (int / tstr) => any }`
 accepts mixed integer and text keys in CBOR. Named choices and constraints on

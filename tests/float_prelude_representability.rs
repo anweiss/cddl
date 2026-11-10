@@ -110,6 +110,268 @@ fn comparison_cases() -> impl Iterator<Item = (String, f64, bool)> {
   })
 }
 
+fn assert_numeric_case(schema: &str, data: &str, expected: bool) {
+  #[cfg(feature = "json")]
+  assert_eq!(
+    validate_json(schema, data),
+    expected,
+    "JSON: {schema}, {data}"
+  );
+  #[cfg(feature = "cbor")]
+  {
+    let value: serde_json::Value = serde_json::from_str(data).unwrap();
+    let mut encoded = Vec::new();
+    ciborium::ser::into_writer(&value, &mut encoded).unwrap();
+    assert_eq!(
+      validate_cbor(schema, &encoded),
+      expected,
+      "CBOR: {schema}, {data}"
+    );
+  }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn isolated_numeric_repro(name: &str) -> bool {
+  if std::env::var("CDDL_NUMERIC_REPRO_CHILD").as_deref() == Ok(name) {
+    return false;
+  }
+  let status = std::process::Command::new(std::env::current_exe().unwrap())
+    .args(["--exact", name])
+    .env("CDDL_NUMERIC_REPRO_CHILD", name)
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null())
+    .status()
+    .unwrap();
+  assert!(
+    status.success(),
+    "isolated numeric regression failed: {}",
+    status
+  );
+  true
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn numeric_target_guards_distinguish_active_instantiations() {
+  for (argument, expected) in [("float64", true), ("float16", false)] {
+    let schema = format!("x = a<float16>\na<t> = b<t> .gt 0.0\nb<t> = t / a<{argument}>");
+    assert_numeric_case(&schema, "1.1", expected);
+    assert_numeric_case(&schema, "1.5", true);
+  }
+  assert_numeric_case(
+    "x = a<float16>\na<t> = t<float64> .gt 0.0\nt<u> = u",
+    "1.1",
+    true,
+  );
+  assert_numeric_case(
+    "x = a<float64>\na<t> = t .gt t<float64>\nt<u> = u .eq 0.0",
+    "1.5",
+    true,
+  );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn generic_control_substitution_uses_current_binding() {
+  #[cfg(not(target_arch = "wasm32"))]
+  if isolated_numeric_repro("generic_control_substitution_uses_current_binding") {
+    return;
+  }
+  for controller in ["0.0", "zero"] {
+    let schema =
+      format!("x = limited<float64>\nlimited<float64> = float64 .gt {controller}\nzero = 0.0");
+    assert_numeric_case(&schema, "1.5", true);
+    assert_numeric_case(&schema, "0.0", false);
+    let schema =
+      format!("x = a<float64>\na<t> = t .gt {controller} / [a<(t .lt 1.0)>]\nzero = 0.0");
+    assert_numeric_case(&schema, "[1.5]", false);
+    assert_numeric_case(&schema, "[0.5]", true);
+    assert_numeric_case(&schema, "[[1.5]]", false);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn parameter_guards_distinguish_nested_identity_bindings() {
+  for argument in ["float16", "(float16 .gt 0.0)"] {
+    let schema = format!("x = identity<identity<{argument}>>\nidentity<t> = t");
+    assert_numeric_case(&schema, "1.5", true);
+    assert_numeric_case(&schema, "1.1", false);
+  }
+  assert_numeric_case("x = a\na = a", "1.5", false);
+  assert_numeric_case("x = identity<a>\nidentity<t> = t\na = a", "1.5", false);
+  assert_numeric_case(
+    "x = outer<float16>\nouter<t> = $t .gt 0.0\n$t = float64",
+    "1.1",
+    true,
+  );
+  assert_numeric_case(
+    "x = outer<float16>\nouter<t> = id<$t>\nid<u> = u\n$t = float64",
+    "1.1",
+    true,
+  );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn mixed_numeric_ordering_preserves_integer_boundaries() {
+  for (operator, negative, zero, positive) in [
+    ("lt", true, false, false),
+    ("le", true, true, false),
+    ("gt", false, false, true),
+    ("ge", false, true, true),
+  ] {
+    for (data, expected) in [("-1", negative), ("0", zero), ("1", positive)] {
+      assert_numeric_case(&format!("x = int .{operator} 0.0"), data, expected);
+    }
+    for (data, expected) in [("-1.5", negative), ("0.0", zero), ("1.5", positive)] {
+      assert_numeric_case(&format!("x = float64 .{operator} 0"), data, expected);
+    }
+  }
+  for (schema, data, expected) in [
+    (
+      "x = int .lt 18446744073709551616.0",
+      "18446744073709551615",
+      true,
+    ),
+    (
+      "x = int .ge 18446744073709551616.0",
+      "18446744073709551615",
+      false,
+    ),
+    (
+      "x = int .gt 18446744073709549568.0",
+      "18446744073709551615",
+      true,
+    ),
+    (
+      "x = int .lt 9223372036854775808.0",
+      "9223372036854775807",
+      true,
+    ),
+    (
+      "x = int .ge -9223372036854775808.0",
+      "-9223372036854775808",
+      true,
+    ),
+    (
+      "x = int .gt -9223372036854775808.0",
+      "-9223372036854775808",
+      false,
+    ),
+    (
+      "x = int .gt -9223372036854777856.0",
+      "-9223372036854775808",
+      true,
+    ),
+    ("x = float64 .gt 4294967295", "4294967296.0", true),
+    ("x = float64 .le 4294967295", "4294967296.0", false),
+    ("x = int .lt 0.5", "0", true),
+    ("x = int .gt -0.5", "0", true),
+    ("x = number .eq 0", "0.0", false),
+    ("x = number .ne 0", "0.0", true),
+  ] {
+    assert_numeric_case(schema, data, expected);
+  }
+  // The AST's usize integer literals are limited to 32 bits on wasm32;
+  // 64-bit instances versus floating controllers above run on both targets.
+  #[cfg(target_pointer_width = "64")]
+  for (schema, data, expected) in [
+    (
+      "x = float64 .gt 18446744073709551615",
+      "18446744073709551616.0",
+      true,
+    ),
+    (
+      "x = float64 .le 18446744073709551615",
+      "18446744073709551616.0",
+      false,
+    ),
+    (
+      "x = float64 .eq 18446744073709551615",
+      "18446744073709551616.0",
+      false,
+    ),
+    (
+      "x = float64 .ne 18446744073709551615",
+      "18446744073709551616.0",
+      true,
+    ),
+  ] {
+    assert_numeric_case(schema, data, expected);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn singleton_resolution_discards_empty_originating_alternatives() {
+  for (empty, definitions) in [
+    ("float16 .eq 1.1", ""),
+    ("(float64 .lt 1.0) .eq 1.1", ""),
+    ("limited<float16>", "\nlimited<t> = t .eq 1.1"),
+  ] {
+    let schema = format!("x = float64 .gt zero\nzero = 0.0 / ({empty}){definitions}");
+    assert_numeric_case(&schema, "1.5", true);
+    assert_numeric_case(&schema, "0.0", false);
+  }
+  assert_numeric_case("x = float64 .gt zero\nzero = 0.0 / 1.1", "1.5", false);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn changing_controller_arguments_have_a_finite_resolution_budget() {
+  #[cfg(not(target_arch = "wasm32"))]
+  if isolated_numeric_repro("changing_controller_arguments_have_a_finite_resolution_budget") {
+    return;
+  }
+  for next in ["[t]", "[t, t]"] {
+    let schema = format!("x = float64 .gt zero<float64>\nzero<t> = 0.0 / zero<{next}>");
+    assert_numeric_case(&schema, "1.5", false);
+    assert_numeric_case(
+      &format!("x = float64 .ne (float64 .gt zero<float64>)\nzero<t> = 0.0 / zero<{next}>"),
+      "1.5",
+      false,
+    );
+  }
+  assert_numeric_case("x = float64 .gt zero\nzero = 0.0 .gt zero", "1.5", false);
+  for control in ["gt zero", "ne (float64 .gt zero)"] {
+    let mut schema =
+      format!("x = float64 .{control}\nzero = (bad30 / float64) .eq 0.0\nbad0 = float16 .eq 1.1\n");
+    for depth in 1..=30 {
+      schema.push_str(&format!(
+        "bad{depth} = bad{} / bad{}\n",
+        depth - 1,
+        depth - 1
+      ));
+    }
+    assert_numeric_case(&schema, "1.5", false);
+  }
+  assert_numeric_case(
+    "x = float64 .gt zero<float64>\nzero<t> = t .eq 0.0",
+    "1.5",
+    true,
+  );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn completed_singleton_proofs_share_diamond_subgraphs() {
+  for base in ["0.0", "(float16 .eq 1.1)", "tstr"] {
+    let mut schema = format!("x = float64 .gt c30\nc0 = {base}\n");
+    for depth in 1..=30 {
+      schema.push_str(&format!("c{depth} = c{} / c{}\n", depth - 1, depth - 1));
+    }
+    assert_numeric_case(&schema, "1.5", base == "0.0");
+  }
+  for controller in ["c30 / 0.0", "(c30 / 0.0) .ge 0.0"] {
+    let mut schema = format!("x = float64 .gt zero\nzero = {controller}\nc0 = float16 .eq 1.1\n");
+    for depth in 1..=30 {
+      schema.push_str(&format!("c{depth} = c{} / c{}\n", depth - 1, depth - 1));
+    }
+    assert_numeric_case(&schema, "1.5", true);
+  }
+}
+
 #[cfg(feature = "cbor")]
 mod cbor {
   use super::validate_cbor;
@@ -125,6 +387,34 @@ mod cbor {
     let mut encoded = vec![0xfb];
     encoded.extend_from_slice(&value.to_be_bytes());
     encoded
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn mixed_ordering_handles_cbor_special_values_and_extended_negatives() {
+    for (value, expected) in [
+      (f64::INFINITY, [false, false, true, true]),
+      (f64::NEG_INFINITY, [true, true, false, false]),
+      (f64::NAN, [false; 4]),
+    ] {
+      for (operator, expected) in IntoIterator::into_iter(["lt", "le", "gt", "ge"]).zip(expected) {
+        assert_eq!(
+          validate_cbor(&format!("x = float64 .{operator} 0"), &encoded_float(value)),
+          expected,
+        );
+      }
+    }
+    let mut negative = vec![0x3b];
+    negative.extend_from_slice(&u64::MAX.to_be_bytes());
+    for (operator, expected) in [("lt", false), ("le", true), ("gt", false), ("ge", true)] {
+      assert_eq!(
+        validate_cbor(
+          &format!("x = int .{operator} -18446744073709551616.0"),
+          &negative
+        ),
+        expected,
+      );
+    }
   }
 
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]

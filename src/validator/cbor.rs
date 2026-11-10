@@ -1113,6 +1113,7 @@ impl<'a> CBORValidator<'a> {
     cv.state.generic_rules = self.state.generic_rules.clone();
     cv.state.eval_generic_rule = self.state.eval_generic_rule;
     cv.state.visited_rules = self.state.visited_rules.clone();
+    cv.state.numeric_probe_work = self.state.numeric_probe_work.clone();
     cv
   }
 
@@ -1130,10 +1131,10 @@ impl<'a> CBORValidator<'a> {
     // contribute to the target's complete value domain.
     let mut probe = self.new_with_recursion_state(self.cbor.clone());
     probe.state.data_location = self.state.data_location.clone();
-    let marker = format!(
-      "#numeric-target\u{0}{target:?}\u{0}{}",
-      self.state.data_location
-    );
+    let marker =
+      numeric_recursion_marker(&self.state, "#numeric-target", target).ok_or_else(|| {
+        Error::from_validator(self, "numeric target resolution limit exceeded".to_string())
+      })?;
     if !probe.state.visited_rules.insert(marker) {
       self.add_error("recursive numeric target binding".to_string());
       return Ok(());
@@ -1157,19 +1158,10 @@ impl<'a> CBORValidator<'a> {
       return Ok(());
     }
 
-    let Some(value) = numeric_controller_value(&self.state, controller) else {
+    let Some(value) = self.resolve_numeric_controller(controller)? else {
       self.add_error("numeric comparison controller must denote a singleton".to_string());
       return Ok(());
     };
-    let mut controller_probe =
-      self.new_with_recursion_state(token_value_into_cbor_value(value.clone()));
-    controller_probe.state.data_location = self.state.data_location.clone();
-    controller_probe.visit_type2(controller)?;
-    if !controller_probe.errors.is_empty() {
-      self.add_error("numeric comparison controller has no matching value".to_string());
-      return Ok(());
-    }
-
     let matches = match &self.cbor {
       Value::Integer(actual) => NumericValue::Integer(i128::from(*actual)).compare(ctrl, &value),
       Value::Float(actual) => NumericValue::Float(*actual).compare(ctrl, &value),
@@ -1182,6 +1174,49 @@ impl<'a> CBORValidator<'a> {
       ));
     }
     Ok(())
+  }
+
+  fn resolve_numeric_controller<T: std::fmt::Debug + 'static>(
+    &mut self,
+    controller: &Type2<'a>,
+  ) -> std::result::Result<Option<token::Value<'a>>, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let work = self.state.numeric_probe_work.clone().unwrap_or_else(|| {
+      std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
+        MAX_NUMERIC_RESOLUTION_WORK,
+      ))
+    });
+    let result = numeric_controller_value(&self.state, controller, |alternative, candidate| {
+      let mut probe = self.new_with_recursion_state(token_value_into_cbor_value(candidate.clone()));
+      probe.state.numeric_probe_work = Some(work.clone());
+      probe.state.data_location = self.state.data_location.clone();
+      let marker = numeric_recursion_marker(
+        &self.state,
+        "#numeric-controller",
+        &(alternative, candidate),
+      )
+      .ok_or_else(|| {
+        Error::from_validator(self, "numeric controller proof limit exceeded".to_string())
+      })?;
+      if !probe.state.visited_rules.insert(marker) {
+        return Err(Error::from_validator(
+          self,
+          "recursive numeric controller proof".to_string(),
+        ));
+      }
+      probe.visit_type1(alternative)?;
+      Ok(probe.errors.is_empty())
+    });
+    match result {
+      Ok(value) => Ok(value),
+      Err(NumericControllerError::Validation(error)) => Err(error),
+      Err(NumericControllerError::ResourceLimit) => Err(Error::from_validator(
+        self,
+        "numeric controller resolution limit exceeded".to_string(),
+      )),
+    }
   }
 
   fn validate_array_items<T: std::fmt::Debug + 'static>(
@@ -2197,56 +2232,19 @@ where
   ) -> visitor::Result<Error<T>> {
     if let Type2::Typename {
       ident: target_ident,
+      generic_args: None,
       ..
     } = target
     {
-      if let Type2::Typename {
-        ident: controller_ident,
-        ..
-      } = controller
-      {
-        if let Some(name) = self.state.eval_generic_rule {
-          if let Some(gr) = self
-            .state
-            .generic_rules
-            .iter()
-            .find(|&gr| gr.name == name)
-            .cloned()
-          {
-            for (idx, gp) in gr.params.iter().enumerate() {
-              if let Some(arg) = gr.args.get(idx) {
-                if *gp == target_ident.ident {
-                  let t2 = bound_type2(arg);
-
-                  if *gp == controller_ident.ident {
-                    return self.visit_control_operator(&t2, ctrl, &t2);
-                  }
-
-                  return self.visit_control_operator(&t2, ctrl, controller);
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if let Some(name) = self.state.eval_generic_rule {
-        if let Some(gr) = self
-          .state
-          .generic_rules
-          .iter()
-          .find(|&gr| gr.name == name)
-          .cloned()
+      if let Some(arg) = generic_argument_for_ident(&self.state, target_ident) {
+        let target = bound_type2(&arg);
+        let controller = if matches!(controller, Type2::Typename { ident, generic_args: None, .. } if ident == target_ident)
         {
-          for (idx, gp) in gr.params.iter().enumerate() {
-            if let Some(arg) = gr.args.get(idx) {
-              if *gp == target_ident.ident {
-                let t2 = bound_type2(arg);
-                return self.visit_control_operator(&t2, ctrl, controller);
-              }
-            }
-          }
-        }
+          &target
+        } else {
+          controller
+        };
+        return self.visit_control_operator(&target, ctrl, controller);
       }
     }
 
@@ -3480,6 +3478,12 @@ where
   }
 
   fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error<T>> {
+    charge_numeric_probe(&self.state).map_err(|()| {
+      Error::from_validator(
+        self,
+        "numeric controller candidate work limit exceeded".to_string(),
+      )
+    })?;
     if matches!(self.state.ctrl, Some(ControlOperator::CBOR)) {
       if let Value::Bytes(b) = &self.cbor {
         let value = decode_cbor(b);
@@ -4237,11 +4241,13 @@ where
   }
 
   fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error<T>> {
-    if let Some(arg) = generic_argument_for_param(&self.state, ident.ident) {
-      let marker = format!(
-        "#param\u{0}{:?}\u{0}{}\u{0}{}",
-        self.state.eval_generic_rule, ident, self.state.data_location
-      );
+    if let Some(arg) = generic_argument_for_ident(&self.state, ident) {
+      let marker = numeric_recursion_marker(&self.state, "#param", ident).ok_or_else(|| {
+        Error::from_validator(
+          self,
+          "generic binding resolution limit exceeded".to_string(),
+        )
+      })?;
       if !self.state.visited_rules.insert(marker.clone()) {
         self.add_error(format!("Recursive generic binding detected: {}", ident));
         return Ok(());
