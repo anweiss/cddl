@@ -625,6 +625,29 @@ impl<'a> JSONValidator<'a> {
     jv
   }
 
+  fn validate_numeric_control(
+    &mut self,
+    target: &Type2<'a>,
+    ctrl: ControlOperator,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<Error> {
+    let mut probe = self.new_with_recursion_state(self.json.clone());
+    probe.state.data_location = self.state.data_location.clone();
+    probe.visit_type2(target)?;
+    if !probe.errors.is_empty() {
+      self.add_error(format!("expected type {}, got {}", target, self.json));
+      return Ok(());
+    }
+
+    let previous = self.state.ctrl.take();
+    if ctrl != ControlOperator::EQ {
+      self.state.ctrl = Some(ctrl);
+    }
+    let result = self.visit_type2(controller);
+    self.state.ctrl = previous;
+    result
+  }
+
   fn enter_map_rule(&self) -> std::result::Result<Option<MapRuleGuard>, Error> {
     self
       .map_choice_search
@@ -3065,7 +3088,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
                     return self.visit_control_operator(&t2, ctrl, &t2);
                   }
 
-                  return self.visit_control_operator(&arg.type2, ctrl, controller);
+                  return self.visit_control_operator(&t2, ctrl, controller);
                 }
               }
             }
@@ -3091,6 +3114,20 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
           }
         }
       }
+    }
+
+    if matches!(self.json.as_ref(), Value::Number(_))
+      && matches!(
+        ctrl,
+        ControlOperator::EQ
+          | ControlOperator::NE
+          | ControlOperator::LT
+          | ControlOperator::GT
+          | ControlOperator::GE
+          | ControlOperator::LE
+      )
+    {
+      return self.validate_numeric_control(target, ctrl, controller);
     }
 
     match ctrl {
@@ -3985,27 +4022,35 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
             let resolved_args = resolved_generic_args(&self.state, ga);
-            if let Some(gr) = self
+            let recursion_key = format!(
+              "{}\u{0}{}",
+              generic_instantiation_key(&qualified_ident_key(ident), resolved_args.iter()),
+              self.state.data_location
+            );
+            let mut jv = self.new_with_recursion_state(self.json.clone());
+            jv.state.data_location = self.state.data_location.clone();
+            if let Some(gr) = jv
               .state
               .generic_rules
               .iter_mut()
               .find(|r| r.name == ident.ident)
             {
-              gr.args.extend(resolved_args);
+              gr.args = resolved_args;
             } else if let Some(params) = generic_params_from_rule(rule) {
-              self.state.generic_rules.push(GenericRule {
+              jv.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
                 args: resolved_args,
               });
             }
 
-            let mut jv = self.new_child_validator(self.json.clone());
-
-            jv.state.generic_rules = self.state.generic_rules.clone();
             jv.state.eval_generic_rule = Some(ident.ident);
             jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-            jv.visit_rule(rule)?;
+            if jv.state.visited_rules.insert(recursion_key) {
+              jv.visit_rule(rule)?;
+            } else {
+              jv.add_error(format!("Recursive rule reference detected: {}", ident));
+            }
 
             self.errors.append(&mut jv.errors);
 
@@ -4306,11 +4351,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             }
           }
         } else if let Some(kind) = ident_numeric_kind(self.state.cddl, ident) {
-          let matches_kind = match kind {
-            NumericKind::Int => n.is_i64(),
-            NumericKind::Float => n.is_f64(),
-            NumericKind::Both => n.is_i64() || n.is_f64(),
-          };
+          let matches_kind = numeric_ident_matches_json_number(ident, kind, n);
           if matches_kind {
             return Ok(());
           }
@@ -4789,11 +4830,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       token::Value::FLOAT(v) => match self.json.as_ref() {
         Value::Number(n) => match n.as_f64() {
           Some(f) => match &self.state.ctrl {
-            Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
-              if (f - *v).abs() > f64::EPSILON =>
-            {
-              None
-            }
+            Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) if f != *v => None,
             Some(ControlOperator::LT) if f < *v => None,
             Some(ControlOperator::LE) if f <= *v => None,
             Some(ControlOperator::GT) if f > *v => None,
@@ -4808,7 +4845,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             }
             #[cfg(feature = "additional-controls")]
             None | Some(ControlOperator::FEATURE) => {
-              if (f - *v).abs() < f64::EPSILON {
+              if f == *v {
                 None
               } else {
                 Some(format!("expected value {}, got {}", v, n))
@@ -4816,7 +4853,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             }
             #[cfg(not(feature = "additional-controls"))]
             None => {
-              if (f - *v).abs() < f64::EPSILON {
+              if f == *v {
                 None
               } else {
                 Some(format!("expected value {}, got {}", v, n))
@@ -4950,6 +4987,24 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     self.state.occurrence = Some(o.occur);
 
     Ok(())
+  }
+}
+
+fn numeric_ident_matches_json_number(
+  ident: &Identifier,
+  kind: NumericKind,
+  number: &serde_json::Number,
+) -> bool {
+  let matches_float = || {
+    number.is_f64()
+      && number
+        .as_f64()
+        .is_some_and(|value| primitive_float_ident_matches_value(ident, value).unwrap_or(true))
+  };
+  match kind {
+    NumericKind::Int => number.is_i64(),
+    NumericKind::Float => matches_float(),
+    NumericKind::Both => number.is_i64() || matches_float(),
   }
 }
 

@@ -1116,6 +1116,35 @@ impl<'a> CBORValidator<'a> {
     cv
   }
 
+  fn validate_numeric_control<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+    ctrl: ControlOperator,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    // Use the ordinary evaluator rather than classifying an alias by its
+    // first primitive: choices, literals, inner controls and generics all
+    // contribute to the target's complete value domain.
+    let mut probe = self.new_with_recursion_state(self.cbor.clone());
+    probe.state.data_location = self.state.data_location.clone();
+    probe.visit_type2(target)?;
+    if !probe.errors.is_empty() {
+      self.add_error(format!("expected type {}, got {:?}", target, self.cbor));
+      return Ok(());
+    }
+
+    let previous = self.state.ctrl.take();
+    if ctrl != ControlOperator::EQ {
+      self.state.ctrl = Some(ctrl);
+    }
+    let result = self.visit_type2(controller);
+    self.state.ctrl = previous;
+    result
+  }
+
   fn validate_array_items<T: std::fmt::Debug + 'static>(
     &mut self,
     token: &ArrayItemToken,
@@ -2154,7 +2183,7 @@ where
                     return self.visit_control_operator(&t2, ctrl, &t2);
                   }
 
-                  return self.visit_control_operator(&arg.type2, ctrl, controller);
+                  return self.visit_control_operator(&t2, ctrl, controller);
                 }
               }
             }
@@ -2180,6 +2209,27 @@ where
           }
         }
       }
+    }
+
+    if matches!(self.cbor, Value::Integer(_) | Value::Float(_))
+      && matches!(
+        ctrl,
+        ControlOperator::EQ
+          | ControlOperator::NE
+          | ControlOperator::LT
+          | ControlOperator::GT
+          | ControlOperator::GE
+          | ControlOperator::LE
+      )
+    {
+      return self.validate_numeric_control(target, ctrl, controller);
+    }
+
+    if let Type2::Typename {
+      ident: target_ident,
+      ..
+    } = target
+    {
       // Validate that the CBOR value matches the target type before applying control operators
       if is_ident_string_data_type(self.state.cddl, target_ident)
         && !matches!(self.cbor, Value::Text(_))
@@ -3721,40 +3771,35 @@ where
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
             let resolved_args = resolved_generic_args(&self.state, ga);
-            if let Some(gr) = self
+            let recursion_key = format!(
+              "{}\u{0}{}",
+              generic_instantiation_key(&qualified_ident_key(ident), resolved_args.iter()),
+              self.state.data_location
+            );
+            let mut cv = self.new_with_recursion_state(self.cbor.clone());
+            cv.state.data_location = self.state.data_location.clone();
+            if let Some(gr) = cv
               .state
               .generic_rules
               .iter_mut()
               .find(|gr| gr.name == ident.ident)
             {
-              gr.args.extend(resolved_args);
+              gr.args = resolved_args;
             } else if let Some(params) = generic_params_from_rule(rule) {
-              self.state.generic_rules.push(GenericRule {
+              cv.state.generic_rules.push(GenericRule {
                 name: ident.ident,
                 params,
                 args: resolved_args,
               });
             }
 
-            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-            let mut cv = CBORValidator::new(
-              self.state.cddl,
-              self.cbor.clone(),
-              self.state.enabled_features.clone(),
-            );
-            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-            let mut cv = CBORValidator::new(
-              self.state.cddl,
-              self.cbor.clone(),
-              self.state.enabled_features,
-            );
-            #[cfg(not(feature = "additional-controls"))]
-            let mut cv = CBORValidator::new(self.state.cddl, self.cbor.clone());
-
-            cv.state.generic_rules = self.state.generic_rules.clone();
             cv.state.eval_generic_rule = Some(ident.ident);
             cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-            cv.visit_rule(rule)?;
+            if cv.state.visited_rules.insert(recursion_key) {
+              cv.visit_rule(rule)?;
+            } else {
+              cv.add_error(format!("Recursive rule reference detected: {}", ident));
+            }
 
             self.errors.append(&mut cv.errors);
 
@@ -4185,8 +4230,7 @@ where
       if let Some(r) = rule_from_ident(self.state.cddl, ident) {
         // Check for recursion to prevent stack overflow
         if self.state.visited_rules.contains(&visited_key) {
-          // We've already validated this rule in the current validation path
-          // This is a recursive reference, so we allow it and assume it's valid
+          self.add_error(format!("Recursive rule reference detected: {}", ident));
           return Ok(());
         }
 
@@ -4203,6 +4247,7 @@ where
       // 2.2.2). Such a choice has no base rule for `rule_from_ident` to find.
       if !type_choice_types_from_ident(self.state.cddl, ident).is_empty() {
         if self.state.visited_rules.contains(&visited_key) {
+          self.add_error(format!("Recursive rule reference detected: {}", ident));
           return Ok(());
         }
 
@@ -4286,7 +4331,7 @@ where
         }
       }
       Value::Float(f) => {
-        if ident_numeric_kind(self.state.cddl, ident).is_some_and(NumericKind::admits_float) {
+        if numeric_ident_matches_cbor_value(self.state.cddl, ident, &self.cbor) {
           Ok(())
         } else if is_ident_time_data_type(self.state.cddl, ident) {
           if let chrono::LocalResult::None = Utc.timestamp_millis_opt((*f * 1000f64) as i64) {
@@ -4955,11 +5000,7 @@ where
       },
       Value::Float(f) => match value {
         token::Value::FLOAT(v) => match &self.state.ctrl {
-          Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
-            if (*f - *v).abs() > f64::EPSILON =>
-          {
-            None
-          }
+          Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) if f != v => None,
           Some(ControlOperator::LT) if *f < *v => None,
           Some(ControlOperator::LE) if *f <= *v => None,
           Some(ControlOperator::GT) if *f > *v => None,
@@ -4974,7 +5015,7 @@ where
           }
           #[cfg(feature = "additional-controls")]
           None | Some(ControlOperator::FEATURE) => {
-            if (*f - *v).abs() < f64::EPSILON {
+            if f == v {
               None
             } else {
               Some(format!("expected value {}, got {:?}", v, f))
@@ -4982,7 +5023,7 @@ where
           }
           #[cfg(not(feature = "additional-controls"))]
           None => {
-            if (*f - *v).abs() < f64::EPSILON {
+            if f == v {
               None
             } else {
               Some(format!("expected value {}, got {:?}", v, f))
@@ -5315,7 +5356,9 @@ fn numeric_ident_matches_cbor_value(cddl: &CDDL, ident: &Identifier, v: &Value) 
         true
       }
     }
-    Value::Float(_) => kind.admits_float(),
+    Value::Float(value) => {
+      kind.admits_float() && primitive_float_ident_matches_value(ident, *value).unwrap_or(true)
+    }
     _ => false,
   }
 }

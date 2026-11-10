@@ -1703,6 +1703,17 @@ pub fn ident_numeric_kind(cddl: &CDDL, ident: &Identifier) -> Option<NumericKind
   }
 }
 
+/// Float prelude names constrain IEEE 754 representability, not CBOR encoding
+/// width. NaNs and infinities belong to every precision's value domain.
+pub(crate) fn primitive_float_ident_matches_value(ident: &Identifier, value: f64) -> Option<bool> {
+  match lookup_ident(ident.ident) {
+    Token::FLOAT16 => Some(value.is_nan() || half::f16::from_f64(value).to_f64() == value),
+    Token::FLOAT32 | Token::FLOAT1632 => Some(value.is_nan() || f64::from(value as f32) == value),
+    Token::FLOAT | Token::FLOAT64 | Token::FLOAT3264 => Some(true),
+    _ => None,
+  }
+}
+
 /// Is the given identifier associated with an integer data type
 #[deprecated(
   note = "not mutually exclusive with is_ident_float_data_type (`number` matches both); use ident_numeric_kind and handle NumericKind::Both"

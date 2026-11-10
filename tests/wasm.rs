@@ -9,6 +9,9 @@ use std::borrow::Cow;
 #[path = "json_no_cut_fallthrough.rs"]
 mod json_no_cut_fallthrough;
 
+#[path = "float_prelude_representability.rs"]
+mod float_prelude_representability;
+
 #[wasm_bindgen_test]
 fn pass() {
   let input = indoc!(

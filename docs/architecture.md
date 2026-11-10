@@ -19,6 +19,17 @@ describe the JavaScript boundary. The language server implements the standard
 Language Server Protocol, with capabilities returned by `initialize`; its
 stdio integration tests check diagnostics, completions and symbols.
 
+Float prelude types constrain IEEE 754 value representability, not the width
+of a CBOR encoding. `float16` requires an exact binary16 round trip;
+`float32` and `float16-32` require an exact binary32 round trip. All float
+precisions admit infinities and NaNs; JSON has neither special value.
+Numeric comparison controls validate their entire target domain before
+applying the controller, retaining aliases, literals, choices, inner
+constraints and generic arguments. A zero-progress recursive alternative
+fails rather than widening that domain or recursing indefinitely.
+Float literal alternatives compare exactly, without an epsilon tolerance
+that would admit nearby values outside the declared domain.
+
 Map key type choices match each key independently: `{ * (int / tstr) => any }`
 accepts mixed integer and text keys in CBOR. Named choices and constraints on
 their alternatives are also checked. Such a member claims a key/value pair only
