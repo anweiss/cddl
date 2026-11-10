@@ -642,6 +642,52 @@ impl<'a> CBORValidator<'a> {
     Ok(())
   }
 
+  #[cfg(feature = "additional-controls")]
+  fn visit_feature_control<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let Some(features) = &self.state.enabled_features else {
+      return Ok(());
+    };
+    let feature = match text_value_from_type2(self.state.cddl, controller) {
+      Some(Type2::TextValue { value, .. }) => value.to_string(),
+      Some(Type2::UTF8ByteString { value, .. }) => std::str::from_utf8(value)
+        .map_err(Error::UTF8Parsing)?
+        .to_owned(),
+      _ => return Ok(()),
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let enabled = features.contains(&feature.as_str());
+    #[cfg(target_arch = "wasm32")]
+    let enabled = features.contains(&JsValue::from_str(&feature));
+    if !enabled {
+      self
+        .state
+        .disabled_features
+        .get_or_insert_with(Vec::new)
+        .push(feature);
+      return Ok(());
+    }
+
+    // A feature gate changes availability, not an inherited numeric operation.
+    let previous_ctrl = self.state.ctrl;
+    if !is_numeric_controller_context(previous_ctrl.as_ref()) {
+      self.state.ctrl = Some(ControlOperator::FEATURE);
+    }
+    let error_count = self.errors.len();
+    let result = self.visit_type2(target);
+    self.state.ctrl = previous_ctrl;
+    if self.errors.len() > error_count {
+      self.state.has_feature_errors = true;
+    }
+    result
+  }
+
   fn validate_equality_control<T: std::fmt::Debug + 'static>(
     &mut self,
     target: &Type2<'a>,
@@ -655,12 +701,16 @@ impl<'a> CBORValidator<'a> {
         if is_ident_string_data_type(self.state.cddl, ident)
           || is_ident_numeric_data_type(self.state.cddl, ident)
         {
-          if is_numeric_controller_context(self.state.ctrl.as_ref())
-            && is_ident_numeric_data_type(self.state.cddl, ident)
-          {
-            return self.visit_numeric_controller::<T>(target, controller);
+          if is_numeric_controller_context(self.state.ctrl.as_ref()) {
+            if is_ident_numeric_data_type(self.state.cddl, ident) {
+              return self.visit_numeric_controller::<T>(target, controller);
+            }
+            return self.visit_type2(controller);
           }
-          return self.visit_type2(controller);
+          let previous_ctrl = self.state.ctrl.take();
+          let result = self.visit_type2(controller);
+          self.state.ctrl = previous_ctrl;
+          return result;
         }
       }
       Type2::Array { .. } => {
@@ -2527,6 +2577,11 @@ where
           }
         }
       }
+      #[cfg(feature = "additional-controls")]
+      if ctrl == ControlOperator::FEATURE {
+        return self.visit_feature_control::<T>(target, controller);
+      }
+
       // Validate that the CBOR value matches the target type before applying control operators
       if ident_numeric_kind(self.state.cddl, target_ident).is_none()
         && is_ident_string_data_type(self.state.cddl, target_ident)
@@ -3111,95 +3166,7 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      #[cfg(not(target_arch = "wasm32"))]
-      ControlOperator::FEATURE => {
-        self.state.ctrl = Some(ctrl);
-
-        if let Some(ef) = self.state.enabled_features {
-          let tv = text_value_from_type2(self.state.cddl, controller);
-          if let Some(Type2::TextValue { value, .. }) = tv {
-            if ef.contains(&&**value) {
-              let err_count = self.errors.len();
-              self.visit_type2(target)?;
-              if self.errors.len() > err_count {
-                self.state.has_feature_errors = true;
-              }
-              self.state.ctrl = None;
-            } else {
-              self
-                .state
-                .disabled_features
-                .get_or_insert(vec![value.to_string()])
-                .push(value.to_string());
-            }
-          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
-            let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
-            if ef.contains(&value) {
-              let err_count = self.errors.len();
-              self.visit_type2(target)?;
-              if self.errors.len() > err_count {
-                self.state.has_feature_errors = true;
-              }
-              self.state.ctrl = None;
-            } else {
-              self
-                .state
-                .disabled_features
-                .get_or_insert(vec![value.to_string()])
-                .push(value.to_string());
-            }
-          }
-        }
-
-        self.state.ctrl = None;
-
-        Ok(())
-      }
-      #[cfg(feature = "additional-controls")]
-      #[cfg(target_arch = "wasm32")]
-      ControlOperator::FEATURE => {
-        self.state.ctrl = Some(ctrl);
-
-        if let Some(ef) = &self.state.enabled_features {
-          let tv = text_value_from_type2(self.state.cddl, controller);
-          if let Some(Type2::TextValue { value, .. }) = tv {
-            if ef.contains(&JsValue::from(value.as_ref())) {
-              let err_count = self.errors.len();
-              self.visit_type2(target)?;
-              if self.errors.len() > err_count {
-                self.state.has_feature_errors = true;
-              }
-              self.state.ctrl = None;
-            } else {
-              self
-                .state
-                .disabled_features
-                .get_or_insert(vec![value.to_string()])
-                .push(value.to_string());
-            }
-          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
-            let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
-            if ef.contains(&JsValue::from(value)) {
-              let err_count = self.errors.len();
-              self.visit_type2(target)?;
-              if self.errors.len() > err_count {
-                self.state.has_feature_errors = true;
-              }
-              self.state.ctrl = None;
-            } else {
-              self
-                .state
-                .disabled_features
-                .get_or_insert(vec![value.to_string()])
-                .push(value.to_string());
-            }
-          }
-        }
-
-        self.state.ctrl = None;
-
-        Ok(())
-      }
+      ControlOperator::FEATURE => self.visit_feature_control::<T>(target, controller),
       #[cfg(feature = "additional-controls")]
       ControlOperator::B64U => {
         match target {
@@ -4029,6 +3996,7 @@ where
             cv.state.generic_rules = self.state.generic_rules.clone();
             cv.state.eval_generic_rule = Some(ident.ident);
             cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+            cv.state.data_location = self.state.data_location.clone();
             cv.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
             cv.numeric_probe_recursions = Arc::clone(&self.numeric_probe_recursions);
             cv.controller_domain_checks = Arc::clone(&self.controller_domain_checks);
@@ -6270,6 +6238,45 @@ mod tests {
   }
 
   #[test]
+  fn recursive_target_probes_isolate_guarded_failures_and_sibling_successes() {
+    let cddl = crate::cddl_from_str("x = t\nt = (t .and (uint .eq 1)) / uint .eq 2", true).unwrap();
+    let target = Type2::Typename {
+      ident: Identifier::from("t"),
+      generic_args: None,
+      #[cfg(feature = "ast-span")]
+      span: (0, 0, 0),
+    };
+    for (value, valid) in [(0, false), (1, true), (2, true)] {
+      let mut validator = CBORValidator::new(
+        &cddl,
+        Value::Integer(value.into()),
+        #[cfg(feature = "additional-controls")]
+        None,
+      );
+      validator.state.visited_rules.insert("t\0".into());
+      assert!(validator
+        .probe_numeric_target::<std::io::Error>(&target)
+        .unwrap());
+      assert!(validator.numeric_target_checks.lock().unwrap().is_empty());
+      validator.state.visited_rules.clear();
+      assert_eq!(
+        validator
+          .probe_numeric_target::<std::io::Error>(&target)
+          .unwrap(),
+        valid
+      );
+      let errors = validator.errors.clone();
+      assert_eq!(
+        validator
+          .probe_numeric_target::<std::io::Error>(&target)
+          .unwrap(),
+        valid
+      );
+      assert_eq!(validator.errors, errors);
+    }
+  }
+
+  #[test]
   fn failed_numeric_target_proofs_are_cached_without_duplicate_errors() {
     let cddl = crate::cddl_from_str("x = t\nt = uint .eq 1", true).unwrap();
     let mut validator = CBORValidator::new(
@@ -6354,6 +6361,40 @@ mod tests {
       .unwrap());
   }
 
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn controller_domain_cache_isolates_enabled_feature_sets() {
+    let cddl = crate::cddl_from_str("x = t\nt = (uint .eq 1) .feature \"enabled\"", true).unwrap();
+    let mut validator = CBORValidator::new(&cddl, Value::Integer(2.into()), None);
+    validator.controller_domains.push(ControllerDomain {
+      target: Type2::Typename {
+        ident: Identifier::from("t"),
+        generic_args: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 0),
+      },
+      generic_rules: Vec::new(),
+      generic_rule: None,
+    });
+    for (features, valid) in [
+      (None, true),
+      (Some(&["enabled"][..]), false),
+      (Some(&[][..]), true),
+      (Some(&["enabled"][..]), false),
+    ] {
+      validator.state.enabled_features = features;
+      validator.errors.clear();
+      assert_eq!(
+        validator
+          .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(2))
+          .unwrap(),
+        valid
+      );
+      assert_eq!(validator.errors.is_empty(), valid);
+    }
+    assert_eq!(validator.controller_domain_checks.lock().unwrap().len(), 3);
+  }
+
   #[test]
   fn controller_domain_proofs_are_reused_across_data_locations() {
     let cddl = crate::cddl_from_str("x = t\nt = int .eq -40", true).unwrap();
@@ -6383,6 +6424,29 @@ mod tests {
       .controller_value_matches_domains::<std::io::Error>(&token::Value::INT(-40))
       .unwrap());
     assert_eq!(validator.controller_domain_checks.lock().unwrap().len(), 1);
+  }
+
+  #[test]
+  fn generic_controller_failures_replay_at_each_parent_data_location() {
+    let cddl =
+      crate::cddl_from_str("root = int .gt bound<1>\nbound<T> = nint .eq T", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(2.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    for location in ["root[0]", "root[1]"] {
+      validator.state.data_location = location.into();
+      validator.errors.clear();
+      Visitor::<Error<std::io::Error>>::visit_rule(&mut validator, &cddl.rules[0]).unwrap();
+      assert!(!validator.errors.is_empty());
+      assert!(validator
+        .errors
+        .iter()
+        .all(|error| error.cbor_location == location));
+      assert_eq!(validator.controller_domain_checks.lock().unwrap().len(), 1);
+    }
   }
 
   #[test]

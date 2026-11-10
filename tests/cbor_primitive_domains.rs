@@ -273,6 +273,159 @@ fn comparison_controllers_respect_their_own_domains() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn generic_controller_alternatives_preserve_operator_and_domain_context() {
+  let rules = "\nbound<T> = literal<T>\nliteral<T> = uint .eq T";
+  for (operator, accepted, rejected) in [
+    ("eq", 0x01, 0x02),
+    ("ne", 0x02, 0x01),
+    ("lt", 0x00, 0x02),
+    ("le", 0x01, 0x02),
+    ("gt", 0x02, 0x01),
+    ("ge", 0x01, 0x00),
+  ] {
+    let schema = format!("x = uint .{operator} bound<1>{rules}");
+    assert!(accepts(&schema, &[accepted]), "{}", schema);
+    assert!(!accepts(&schema, &[rejected]), "{}", schema);
+    assert!(!accepts(&schema, &[0x20]), "{}", schema);
+  }
+  for target in ["int", "uint"] {
+    let schema = format!("x = {target} .gt bound<-1>{rules}");
+    assert!(!accepts(&schema, &[0x02]), "{}", schema);
+  }
+  for (schema, accepted, rejected) in [
+    (
+      "x = tstr .size bound<1> / tstr .size bound<2>",
+      &[0x62, b'a', b'b'][..],
+      &[0x63, b'a', b'b', b'c'][..],
+    ),
+    (
+      "x = bstr .bits bound<0> / bstr .bits bound<1>",
+      &[0x41, 0x02][..],
+      &[0x41, 0x04][..],
+    ),
+  ] {
+    let schema = format!("{schema}{rules}");
+    assert!(accepts(&schema, accepted), "{}", schema);
+    assert!(!accepts(&schema, rejected), "{}", schema);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn target_validating_controls_isolate_nested_equality_operations() {
+  for control in ["and", "within"] {
+    let schema = format!("x = uint .{control} constrained\nconstrained = uint .eq 1");
+    assert!(accepts(&schema, &[0x01]), "{}", schema);
+    assert!(!accepts(&schema, &[0x02]), "{}", schema);
+    assert!(!accepts(&schema, &[0x20]), "{}", schema);
+  }
+  for schema in [
+    "x = tstr .ne bound\nbound = tstr .eq \"a\"",
+    "x = tstr .ne bound<\"a\">\nbound<T> = tstr .eq T",
+  ] {
+    assert!(accepts(schema, &[0x61, b'b']), "{}", schema);
+    assert!(!accepts(schema, &[0x61, b'a']), "{}", schema);
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+fn accepts_with_features(schema: &str, bytes: &[u8], features: &[&str]) -> bool {
+  #[cfg(not(target_arch = "wasm32"))]
+  let enabled = Some(features);
+  #[cfg(target_arch = "wasm32")]
+  let enabled = Some(
+    features
+      .iter()
+      .map(|feature| wasm_bindgen::JsValue::from_str(feature))
+      .collect::<Vec<_>>()
+      .into_boxed_slice(),
+  );
+  cddl::validator::validate_cbor_from_slice(schema, bytes, enabled).is_ok()
+}
+
+#[cfg(feature = "additional-controls")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn feature_gates_preserve_complete_primitive_and_prelude_domains() {
+  for (target, valid, invalid) in [
+    ("uint", &[0x01][..], &[0x20][..]),
+    ("tstr", &[0x61, b'x'][..], &[0x01][..]),
+    ("bstr", &[0x41, 0x01][..], &[0x61, b'x'][..]),
+    ("bool", &[0xf5][..], &[0x01][..]),
+    ("null", &[0xf6][..], &[0x01][..]),
+    ("undefined", &[0xf7][..], &[0xf6][..]),
+    ("time", &[0xc1, 0x01][..], &[0x01][..]),
+    ("uri", &[0xd8, 32, 0x61, b'x'][..], &[0x61, b'x'][..]),
+    ("mixed", &[0x61, b'x'][..], &[0xf5][..]),
+  ] {
+    let schema = format!("x = {target} .feature \"enabled\"\nmixed = uint / tstr");
+    assert!(
+      accepts_with_features(&schema, valid, &["enabled"]),
+      "{}",
+      target
+    );
+    assert!(
+      !accepts_with_features(&schema, invalid, &["enabled"]),
+      "{}",
+      target
+    );
+    assert!(accepts_with_features(&schema, invalid, &[]), "{}", target);
+    assert!(
+      accepts_with_features(&schema, invalid, &["other"]),
+      "{}",
+      target
+    );
+    assert!(accepts(&schema, invalid), "{}", target);
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn feature_gated_generic_controllers_keep_inherited_numeric_operations() {
+  let rules = "\nbound<T> = (uint .eq T) .feature \"enabled\"";
+  for (operator, accepted, rejected) in [("ne", 0x02, 0x01), ("gt", 0x02, 0x01), ("lt", 0x00, 0x01)]
+  {
+    let schema = format!("x = uint .{operator} bound<1>{rules}");
+    assert!(
+      !accepts_with_features(&schema, &[rejected], &["enabled"]),
+      "{}",
+      schema
+    );
+    assert!(
+      accepts_with_features(&schema, &[accepted], &["enabled"]),
+      "{}",
+      schema
+    );
+  }
+  for (schema, accepted, rejected) in [
+    (
+      "x = tstr .size bound<1>",
+      &[0x61, b'a'][..],
+      &[0x62, b'a', b'b'][..],
+    ),
+    (
+      "x = bstr .bits bound<0>",
+      &[0x41, 0x01][..],
+      &[0x41, 0x02][..],
+    ),
+  ] {
+    let schema = format!("{schema}{rules}");
+    assert!(
+      accepts_with_features(&schema, accepted, &["enabled"]),
+      "{}",
+      schema
+    );
+    assert!(
+      !accepts_with_features(&schema, rejected, &["enabled"]),
+      "{}",
+      schema
+    );
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn mixed_numeric_targets_preserve_nonnumeric_members() {
   assert!(accepts("x = v .and any\nv = uint / any", &[0xf6]));
   for arm in ["tstr", "bstr"] {

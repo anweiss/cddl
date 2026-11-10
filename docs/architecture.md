@@ -220,7 +220,8 @@ Other tagged CBOR prelude types also require their declared tags, including
 `time` (1) and `uri` (32); date/time and base64url payload checks still apply.
 
 Numeric target and controller-domain probes cache failed as well as successful
-proofs. Controller proofs are keyed by operand and resolved generic bindings;
+proofs. Controller proofs are keyed by operand, resolved generic bindings and
+enabled feature set. Successful proofs that rely on a recursion guard are not cached;
 cached failures replay at the current data location. Alternatives decide whether
 they matched using isolated diagnostics before deduplicating failed probes.
 This includes named `/=` contributions and computed-control alternatives;
@@ -228,6 +229,16 @@ successful arms retain their validation state. Diagnostic deduplication uses a
 local hash set of complete errors, preserving insertion order and distinct
 locations without retaining bookkeeping across error resets. Named groups with
 no `//=` contributions skip alternative checkpoints entirely.
+
+CBOR feature gates run before primitive-domain prefilters. Disabled features,
+including an unspecified feature set, skip their target as before; enabled
+features validate the complete target, including mixed numeric/string choices
+and required prelude tags. A gate inside a numeric controller preserves the
+inherited comparison, size or bits operation. Nested equality under target-
+validating controls such as `.and` and `.within` instead evaluates its own
+operand without inheriting that enclosing control.
+Same-value generic children retain the parent's data location for proof keys
+and controller-error replay.
 
 The client never imports server internals. Browser modules never import LSP
 sources. ESLint enforces these source boundaries; the generated WASM packages
