@@ -220,6 +220,23 @@ fn recursive_group_inclusion_reports_an_error() {
 }
 
 #[test]
+fn group_substitutions_skip_expansion_and_preserve_optional_references() {
+  let mut options = CodegenOptions::default();
+  options
+    .substitutions
+    .insert("common".into(), "crate::Custom".into());
+  let source = "common = (d: tstr, common)\nitem = { ? common }";
+  let output = generate_rust_code_with_options(source, &options).unwrap();
+  assert!(output.contains("pub common: Option<crate::Custom>,"));
+  assert!(!output.contains("pub struct Common"));
+  for field in ["? 1 => int", "* tstr => int"] {
+    let source = format!("common = (d: tstr)\nitem = {{ common, {field} }}");
+    let error = generate_rust_code_with_options(&source, &options).unwrap_err();
+    assert!(error.to_string().contains("not supported"), "{error}");
+  }
+}
+
+#[test]
 fn group_choices_do_not_silently_bypass_typed_key_dispatch() {
   for field in ["? 1 => int", "* tstr => int"] {
     for source in [

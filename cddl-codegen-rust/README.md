@@ -142,9 +142,13 @@ all-optional alternative cannot silently swallow another alternative's entries.
 Each choice claims only its own keys before testing alternatives, allowing sibling,
 nested and optional choices to coexist. Single-rule generation emits the helper
 graph in an output-specific module so repeated invocations do not collide.
+Map-choice helper enums do not receive the string catch-all from `other_variant`.
+Substituting an included group retains a flattened replacement instead of expanding
+the original fields; optional inclusions retain their `Option` wrapper.
 Recursive group inclusions return an error instead of expanding indefinitely.
-Combining group choices with typed map entries or integer literal keys currently
-returns a configuration error rather than emitting incompatible deserializers.
+Combining flattened choices or substituted groups with typed map entries or integer
+literal keys currently returns a configuration error rather than emitting incompatible
+deserializers. Substituted groups within choice alternatives are also unsupported.
 
 Explicit literal CBOR tags, such as `#6.37(bstr)`, are preserved on struct fields,
 including through aliases and containers. The Rust field retains its inner type;

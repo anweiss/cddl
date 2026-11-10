@@ -123,6 +123,7 @@ pub(crate) enum RustTypeDef {
     name: String,
     variants: Vec<RustEnumVariant>,
     doc: Vec<String>,
+    group_choice: bool,
   },
 }
 
@@ -145,6 +146,8 @@ pub(crate) struct RustField {
   pub flatten: bool,
   /// An included group choice uses serde's flattened enum representation.
   pub flatten_group: bool,
+  /// A substituted group retains an opaque flattened object.
+  pub flatten_object: bool,
   /// Named keys claimed by this choice, including nested choices.
   pub group_keys: Vec<String>,
 }
@@ -573,9 +576,8 @@ fn split_comment(line: &str) -> (&str, Option<&str>) {
 
 /// Apply caller-supplied options to the collected type definitions.
 ///
-/// This runs after the CDDL has been lowered to `RustTypeDef`s so that the
-/// conversion itself stays option-free: everything here is a rewrite of the
-/// already-generated Rust type strings.
+/// Lowering retains substituted group references; this rewrites their types
+/// along with the other already-generated Rust type strings.
 fn apply_options(defs: &mut Vec<RustTypeDef>, opts: &CodegenOptions) {
   if opts.is_default() {
     return;
@@ -886,8 +888,17 @@ pub fn generate_rust_code_for_rule_from_ast(
             name,
             variants,
             doc,
+            group_choice,
           } => {
-            render_enum(&mut output, name, variants, doc, opts, &key_aliases)?;
+            render_enum(
+              &mut output,
+              name,
+              variants,
+              doc,
+              opts,
+              &key_aliases,
+              *group_choice,
+            )?;
           }
           RustTypeDef::TypeAlias { .. } => {}
         }
@@ -904,9 +915,18 @@ pub fn generate_rust_code_for_rule_from_ast(
       name,
       variants,
       doc,
+      group_choice,
     } => {
       let emit_name = output_name.unwrap_or(name);
-      render_enum(&mut output, emit_name, variants, doc, opts, &key_aliases)?;
+      render_enum(
+        &mut output,
+        emit_name,
+        variants,
+        doc,
+        opts,
+        &key_aliases,
+        *group_choice,
+      )?;
     }
   }
   Ok(output)
@@ -1035,7 +1055,11 @@ fn collect_type_defs(
   let mut defs = Vec::new();
   let mut groups = GroupLowerer::new(cddl, comments, opts);
   let mut merged: std::collections::HashSet<String> = std::collections::HashSet::new();
-  for rule in &cddl.rules {
+  for rule in cddl
+    .rules
+    .iter()
+    .filter(|rule| !rule_is_substituted(rule, opts))
+  {
     match rule {
       Rule::Type {
         rule: type_rule, ..
@@ -1083,6 +1107,14 @@ fn collect_type_defs(
   Ok(defs)
 }
 
+fn rule_is_substituted(rule: &Rule<'_>, opts: &CodegenOptions) -> bool {
+  let name = match rule {
+    Rule::Type { rule, .. } => rule.name.ident,
+    Rule::Group { rule, .. } => rule.name.ident,
+  };
+  opts.substitutions.contains_key(name)
+}
+
 /// Merge the type choices of several socket/plug type rule alternates into a
 /// single enum definition.
 fn merge_type_rules_to_enum(
@@ -1102,6 +1134,7 @@ fn merge_type_rules_to_enum(
     name: name.to_string(),
     variants,
     doc,
+    group_choice: false,
   })
 }
 
@@ -1298,6 +1331,7 @@ fn type_rule_to_rust_def<'b>(
           name,
           variants,
           doc,
+          group_choice: false,
         }))
       }
       _ => Ok(None),
@@ -1323,6 +1357,7 @@ fn type_choices_to_enum(
     name: name.to_string(),
     variants,
     doc,
+    group_choice: false,
   })
 }
 
@@ -1532,6 +1567,14 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
           _ => None,
         });
         if let Some(included) = included {
+          if self.opts.substitutions.contains_key(ge.name.ident) {
+            let mut fields =
+              group_entry_to_fields(entry, self.comments, self.opts)?.unwrap_or_default();
+            for field in &mut fields {
+              field.flatten_object = true;
+            }
+            return Ok(fields);
+          }
           if self.visiting.iter().any(|name| name == ge.name.ident) {
             return Err(CodegenError::ConfigurationError(format!(
               "recursive group inclusion involving '{}'",
@@ -1600,10 +1643,10 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
       deduplicate_field_names(&mut fields);
       if fields
         .iter()
-        .any(|field| field.flatten || field.integer_key.is_some())
+        .any(|field| field.flatten || field.flatten_object || field.integer_key.is_some())
       {
         return Err(CodegenError::ConfigurationError(
-          "group choices combined with typed map entries or integer literal keys are not supported"
+          "group choices combined with typed map entries, substituted groups or integer literal keys are not supported"
             .into(),
         ));
       }
@@ -1633,6 +1676,7 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
       name: name.clone(),
       variants,
       doc: Vec::new(),
+      group_choice: true,
     });
     let field_name = to_snake_case(&name);
     Ok(vec![RustField {
@@ -1647,6 +1691,7 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
       encoding: None,
       flatten: false,
       flatten_group: true,
+      flatten_object: false,
       group_keys: group_keys.into_iter().collect(),
     }])
   }
@@ -1756,6 +1801,7 @@ fn group_entry_to_fields(
         encoding: None,
         flatten: false,
         flatten_group: false,
+        flatten_object: false,
         group_keys: Vec::new(),
       }]))
     }
@@ -1819,6 +1865,7 @@ fn value_member_key_to_field(
         encoding: None,
         flatten: true,
         flatten_group: false,
+        flatten_object: false,
         group_keys: Vec::new(),
       }));
     }
@@ -1836,6 +1883,7 @@ fn value_member_key_to_field(
         encoding: None,
         flatten: false,
         flatten_group: false,
+        flatten_object: false,
         group_keys: Vec::new(),
       }));
     }
@@ -1883,6 +1931,7 @@ fn value_member_key_to_field(
     encoding: None,
     flatten: false,
     flatten_group: false,
+    flatten_object: false,
     group_keys: Vec::new(),
   }))
 }
@@ -2582,8 +2631,17 @@ fn render_type_defs(defs: &[RustTypeDef], opts: &CodegenOptions) -> Result<Strin
         name,
         variants,
         doc,
+        group_choice,
       } => {
-        render_enum(&mut output, name, variants, doc, opts, &key_aliases)?;
+        render_enum(
+          &mut output,
+          name,
+          variants,
+          doc,
+          opts,
+          &key_aliases,
+          *group_choice,
+        )?;
       }
     }
   }
@@ -2698,13 +2756,15 @@ fn render_struct(
   opts: &CodegenOptions,
   deny_unknown_fields: bool,
 ) -> Result<(), CodegenError> {
-  if fields.iter().any(|field| field.flatten_group)
+  if fields
+    .iter()
+    .any(|field| field.flatten_group || field.flatten_object)
     && fields
       .iter()
       .any(|field| field.flatten || field.integer_key.is_some())
   {
     return Err(CodegenError::ConfigurationError(
-      "group choices combined with typed map entries or integer literal keys are not supported"
+      "flattened groups and group choices combined with typed map entries or integer literal keys are not supported"
         .into(),
     ));
   }
@@ -2853,8 +2913,11 @@ fn render_integer_field_serializer(
     wrap_field_type(field, field.rust_type.clone())
   )?;
   writeln!(output, "    use serde::ser::SerializeMap;")?;
-  writeln!(output, "    struct Value<'a>(&'a {value_type});")?;
-  writeln!(output, "    impl serde::Serialize for Value<'_> {{\n        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {{")?;
+  writeln!(
+    output,
+    "    struct __CddlIntegerValue<'a>(&'a {value_type});"
+  )?;
+  writeln!(output, "    impl serde::Serialize for __CddlIntegerValue<'_> {{\n        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {{")?;
   let serialize = if let Some(spec) = spec {
     format!("serde_with::As::<{spec}>::serialize")
   } else if let Some(tag) = field.tag {
@@ -2877,7 +2940,7 @@ fn render_integer_field_serializer(
   let key_type = if key < 0 { "i64" } else { "u64" };
   writeln!(
     output,
-    "    map.serialize_entry(&({key}{key_type}), &Value(value))?;"
+    "    map.serialize_entry(&({key}{key_type}), &__CddlIntegerValue(value))?;"
   )?;
   if field.is_optional {
     writeln!(output, "    }}")?;
@@ -3224,7 +3287,7 @@ fn render_struct_field(
   if let Some(serializer) = integer_serializer {
     return render_integer_struct_field(output, field, serializer);
   }
-  if field.flatten || field.flatten_group {
+  if field.flatten || field.flatten_group || field.flatten_object {
     writeln!(output, "    #[serde(flatten)]")?;
   }
   if let Some(spec) = spec {
@@ -3330,7 +3393,11 @@ fn render_enum(
   doc: &[String],
   opts: &CodegenOptions,
   aliases: &BTreeMap<String, String>,
+  group_choice: bool,
 ) -> Result<(), CodegenError> {
+  let mut opts = opts.clone();
+  opts.other_variant &= !group_choice;
+  let opts = &opts;
   let unique = unique_enum_variants(variants);
   let variants = unique.as_slice();
   // An enum whose variants are all string literals (`a = "x" / "y"`) is a

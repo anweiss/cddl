@@ -11,3 +11,6 @@ mixed-integer-keys = {
 }
 integer-map-choice = { ? 1 => int } / tstr
 recursive-key-node = { ? child: recursive-key-node, * tstr => int }
+value = int
+literal-value = { 1 => value }
+container-values = { 2 => [* value] }

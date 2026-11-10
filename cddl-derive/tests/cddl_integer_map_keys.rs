@@ -82,3 +82,15 @@ fn recursive_named_fields_keep_their_boxing() {
 fn integer_key_inline_choices_have_rust_identifiers() {
   let _ = IntegerMapChoice::N1;
 }
+
+#[test]
+fn numeric_serializers_do_not_shadow_value_aliases() {
+  let mut bytes = Vec::new();
+  ciborium::into_writer(&LiteralValue { n1: 7 }, &mut bytes).unwrap();
+  let decoded: LiteralValue = ciborium::from_reader(bytes.as_slice()).unwrap();
+  assert_eq!(decoded.n1, 7);
+  bytes.clear();
+  ciborium::into_writer(&ContainerValues { n2: vec![1, 2] }, &mut bytes).unwrap();
+  let decoded: ContainerValues = ciborium::from_reader(bytes.as_slice()).unwrap();
+  assert_eq!(decoded.n2, vec![1, 2]);
+}

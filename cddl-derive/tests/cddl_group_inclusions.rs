@@ -114,3 +114,68 @@ mod single_rule {
     assert_eq!(serde_json::to_value(second).unwrap(), value);
   }
 }
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct CustomGroup {
+  replacement: u64,
+}
+
+mod substitutions {
+  cddl_derive::cddl_typegen!(
+    "tests/fixtures/group_inclusions.cddl",
+    substitute("common" = "crate::CustomGroup")
+  );
+
+  #[cddl_derive::cddl(
+      path = "tests/fixtures/group_inclusions.cddl",
+      rule = "item",
+      substitute("common" = "crate::CustomGroup")
+    )]
+  struct CustomItem;
+
+  #[test]
+  fn included_group_substitutions_keep_the_replacement_flattened() {
+    let value = serde_json::json!({"a": 1, "replacement": 7});
+    let item: Item = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(item.common.replacement, 7);
+    assert_eq!(serde_json::to_value(item).unwrap(), value);
+    let item: CustomItem = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(item.common.replacement, 7);
+    assert_eq!(serde_json::to_value(item).unwrap(), value);
+    for value in [
+      serde_json::json!({"a": 1}),
+      serde_json::json!({"a": 1, "replacement": 7}),
+    ] {
+      let item: OptionalSubstitutedItem = serde_json::from_value(value.clone()).unwrap();
+      assert_eq!(item.common.is_some(), value.get("replacement").is_some());
+      assert_eq!(serde_json::to_value(item).unwrap(), value);
+    }
+  }
+}
+
+mod other_variants {
+  cddl_derive::cddl_typegen!("tests/fixtures/group_inclusions.cddl", other_variant = true);
+
+  #[cddl_derive::cddl(
+    path = "tests/fixtures/group_inclusions.cddl",
+    rule = "choice-item",
+    other_variant = true
+  )]
+  struct ChoiceItemWithOther;
+
+  #[test]
+  fn group_choices_never_have_an_unflattenable_string_catch_all() {
+    let value = serde_json::json!({"a": 1, "when": "now"});
+    let item: ChoiceItem = serde_json::from_value(value.clone()).unwrap();
+    match &item.choice_item_group1 {
+      ChoiceItemGroup1::ExactGroup(_) | ChoiceItemGroup1::RangeGroup(_) => {}
+    }
+    assert_eq!(serde_json::to_value(item).unwrap(), value);
+    let item: ChoiceItemWithOther = serde_json::from_value(value.clone()).unwrap();
+    use __cddl_groups_ChoiceItemWithOther::ChoiceItemGroup1 as Variants;
+    match &item.choice_item_group1 {
+      Variants::ExactGroup(_) | Variants::RangeGroup(_) => {}
+    }
+    assert_eq!(serde_json::to_value(item).unwrap(), value);
+  }
+}
