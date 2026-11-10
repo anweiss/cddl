@@ -88,6 +88,28 @@ fn sibling_and_nested_choices_only_consume_their_own_keys() {
   assert!(serde_json::from_value::<OptionalChoices>(json!({"a": 1, "b": 2, "c": 3})).is_err());
 }
 
+#[test]
+fn optional_groups_preserve_all_or_none_membership() {
+  for value in [json!({}), json!({"x": 1, "y": 2})] {
+    let item: OptionalPair = serde_json::from_value(value.clone()).unwrap();
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&item, &mut bytes).unwrap();
+    let decoded: OptionalPair = ciborium::from_reader(bytes.as_slice()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+    assert_eq!(serde_json::to_value(item).unwrap(), value);
+  }
+  for value in [json!({"x": 1}), json!({"y": 2})] {
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&value, &mut bytes).unwrap();
+    assert!(ciborium::from_reader::<OptionalPair, _>(bytes.as_slice()).is_err());
+    assert!(serde_json::from_value::<OptionalPair>(value).is_err());
+  }
+  let value = json!({"value": 1, "child": {}});
+  let item: RecursivePair = serde_json::from_value(value.clone()).unwrap();
+  assert_eq!(serde_json::to_value(item).unwrap(), value);
+  assert!(serde_json::from_value::<RecursivePair>(json!({"value": 1})).is_err());
+}
+
 mod single_rule {
   use cddl_derive::cddl;
 
@@ -104,6 +126,23 @@ mod single_rule {
     fundamental_aliases = true
   )]
   struct Second;
+
+  #[cddl(
+    path = "tests/fixtures/group_inclusions.cddl",
+    rule = "recursive-pair",
+    fundamental_aliases = true
+  )]
+  struct OptionalRecursivePair;
+
+  #[test]
+  fn single_rule_preserves_recursive_optional_group_membership() {
+    let value = serde_json::json!({"value": 1, "child": {}});
+    let item: OptionalRecursivePair = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(item).unwrap(), value);
+    assert!(
+      serde_json::from_value::<OptionalRecursivePair>(serde_json::json!({"value": 1})).is_err()
+    );
+  }
 
   #[test]
   fn single_rule_emits_its_choice_helpers() {

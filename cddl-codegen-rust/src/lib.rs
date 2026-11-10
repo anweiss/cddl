@@ -144,7 +144,7 @@ pub(crate) struct RustField {
   pub encoding: Option<Encoding>,
   /// A typed map key consumes entries from the enclosing map.
   pub flatten: bool,
-  /// An included group choice uses serde's flattened enum representation.
+  /// An included group uses a routed, flattened representation.
   pub flatten_group: bool,
   /// A substituted group retains an opaque flattened object.
   pub flatten_object: bool,
@@ -1560,7 +1560,7 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
     entry: &GroupEntry<'b>,
     parent: &str,
   ) -> Result<Vec<RustField>, CodegenError> {
-    let (mut fields, optional) = match entry {
+    let (fields, optional) = match entry {
       GroupEntry::TypeGroupname { ge, .. } => {
         let included = self.cddl.rules.iter().find_map(|rule| match rule {
           Rule::Group { rule, .. } if rule.name.ident == ge.name.ident => Some(&rule.entry),
@@ -1609,9 +1609,38 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
       ),
     };
     if optional {
-      for field in &mut fields {
-        field.is_optional = true;
+      return self.optional_fields(fields, parent);
+    }
+    Ok(fields)
+  }
+
+  fn optional_fields(
+    &mut self,
+    mut fields: Vec<RustField>,
+    parent: &str,
+  ) -> Result<Vec<RustField>, CodegenError> {
+    if fields.len() > 1 && fields.iter().any(|field| !field.is_optional) {
+      if fields
+        .iter()
+        .any(|field| field.flatten || field.flatten_object || field.integer_key.is_some())
+      {
+        return Err(CodegenError::ConfigurationError(
+          "optional multi-field groups combined with typed map entries, substituted groups or integer literal keys are not supported"
+            .into(),
+        ));
       }
+      let name = self.helper_name(parent);
+      let group_keys = group_field_keys(&fields);
+      self.helpers.push(RustTypeDef::Struct {
+        name: name.clone(),
+        fields,
+        doc: Vec::new(),
+        deny_unknown_fields: true,
+      });
+      return Ok(vec![routed_group_field(name, group_keys, true)]);
+    }
+    for field in &mut fields {
+      field.is_optional = true;
     }
     Ok(fields)
   }
@@ -1650,13 +1679,7 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
             .into(),
         ));
       }
-      for field in &fields {
-        if field.flatten_group {
-          group_keys.extend(field.group_keys.iter().cloned());
-        } else {
-          group_keys.insert(field.original_name.clone());
-        }
-      }
+      group_keys.extend(group_field_keys(&fields));
       // Optional fields must not let the first untagged branch swallow keys
       // belonging to another branch.
       self.helpers.push(RustTypeDef::Struct {
@@ -1678,22 +1701,39 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
       doc: Vec::new(),
       group_choice: true,
     });
-    let field_name = to_snake_case(&name);
-    Ok(vec![RustField {
-      name: field_name.clone(),
-      original_name: field_name,
-      integer_key: None,
-      rust_type: name,
-      is_optional: false,
-      doc: Vec::new(),
-      is_boxed: false,
-      tag: None,
-      encoding: None,
-      flatten: false,
-      flatten_group: true,
-      flatten_object: false,
-      group_keys: group_keys.into_iter().collect(),
-    }])
+    Ok(vec![routed_group_field(name, group_keys, false)])
+  }
+}
+
+fn group_field_keys(fields: &[RustField]) -> BTreeSet<String> {
+  fields
+    .iter()
+    .flat_map(|field| {
+      if field.flatten_group {
+        field.group_keys.clone()
+      } else {
+        vec![field.original_name.clone()]
+      }
+    })
+    .collect()
+}
+
+fn routed_group_field(name: String, group_keys: BTreeSet<String>, is_optional: bool) -> RustField {
+  let field_name = to_snake_case(&name);
+  RustField {
+    name: field_name.clone(),
+    original_name: field_name,
+    integer_key: None,
+    rust_type: name,
+    is_optional,
+    doc: Vec::new(),
+    is_boxed: false,
+    tag: None,
+    encoding: None,
+    flatten: false,
+    flatten_group: true,
+    flatten_object: false,
+    group_keys: group_keys.into_iter().collect(),
   }
 }
 
@@ -1719,27 +1759,32 @@ fn group_to_fields(
 /// the same field twice and fail to compile with "field `entries` specified
 /// more than once". Repeats get a `_1`, `_2`, ... suffix.
 ///
-/// When a field's `original_name` matches the name being replaced, the field is
-/// synthetic (there is no corresponding CDDL key) and the `original_name` is
-/// renamed alongside it, so that no misleading `#[serde(rename = "entries")]`
-/// is emitted for the second and subsequent fields.
+/// Reserve initial Rust names before choosing suffixes. Only rename synthetic
+/// wire names on flattened typed entries; named CDDL keys stay unchanged.
 ///
 /// See https://github.com/anweiss/cddl/issues/640
 fn deduplicate_field_names(fields: &mut [RustField]) {
-  let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-
+  let reserved: BTreeSet<String> = fields.iter().map(|field| field.name.clone()).collect();
+  let mut used = BTreeSet::new();
+  let mut suffixes = BTreeMap::new();
   for field in fields.iter_mut() {
     let base = field.name.clone();
-    let count = seen.entry(base.clone()).or_insert(0);
-    *count += 1;
-
-    if *count > 1 {
-      let unique = format!("{}_{}", base, *count - 1);
-      if field.original_name == base {
-        field.original_name = unique.clone();
-      }
-      field.name = unique;
+    if used.insert(base.clone()) {
+      continue;
     }
+    let suffix = suffixes.entry(base.clone()).or_insert(0);
+    let unique = loop {
+      *suffix += 1;
+      let candidate = format!("{base}_{suffix}");
+      if !reserved.contains(&candidate) && !used.contains(&candidate) {
+        break candidate;
+      }
+    };
+    used.insert(unique.clone());
+    if field.flatten && field.original_name == base {
+      field.original_name = unique.clone();
+    }
+    field.name = unique;
   }
 }
 
@@ -2877,11 +2922,16 @@ fn render_group_field_deserializer(
   writeln!(output, "        serde::forward_to_deserialize_any! {{ bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map struct enum identifier ignored_any }}")?;
   writeln!(output, "    }}")?;
   if field.is_optional {
+    let inner_type = if field.is_boxed {
+      format!("Box<{}>", field.rust_type)
+    } else {
+      field.rust_type.clone()
+    };
     writeln!(
       output,
       "    #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)] struct Empty {{}}"
     )?;
-    writeln!(output, "    #[derive(serde::Deserialize)] #[serde(untagged)] enum Optional {{ Absent(Empty), Present({}) }}", field.rust_type)?;
+    writeln!(output, "    #[derive(serde::Deserialize)] #[serde(untagged)] enum Optional {{ Absent(Empty), Present({inner_type}) }}")?;
     writeln!(output, "    match <Optional as serde::Deserialize>::deserialize(Routed(d))? {{ Optional::Absent(_) => Ok(None), Optional::Present(value) => Ok(Some(value)) }}")?;
   } else {
     writeln!(

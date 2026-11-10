@@ -94,3 +94,36 @@ fn numeric_serializers_do_not_shadow_value_aliases() {
   let decoded: ContainerValues = ciborium::from_reader(bytes.as_slice()).unwrap();
   assert_eq!(decoded.n2, vec![1, 2]);
 }
+
+#[test]
+fn numeric_field_collisions_do_not_change_named_wire_keys() {
+  let wire = ciborium::Value::Map(vec![
+    (
+      ciborium::Value::Integer(1.into()),
+      ciborium::Value::Integer(7.into()),
+    ),
+    (
+      ciborium::Value::Text("n1".into()),
+      ciborium::Value::Text("text".into()),
+    ),
+    (
+      ciborium::Value::Text("n1_1".into()),
+      ciborium::Value::Bool(true),
+    ),
+  ]);
+  let mut bytes = Vec::new();
+  ciborium::into_writer(&wire, &mut bytes).unwrap();
+  let record: CollidingLiteralNames = ciborium::from_reader(bytes.as_slice()).unwrap();
+  bytes.clear();
+  ciborium::into_writer(&record, &mut bytes).unwrap();
+  let decoded: ciborium::Value = ciborium::from_reader(bytes.as_slice()).unwrap();
+  assert_eq!(decoded, wire);
+  let wire = ciborium::Value::Map(vec![("n1".into(), "text".into()), (1.into(), 7.into())]);
+  bytes.clear();
+  ciborium::into_writer(&wire, &mut bytes).unwrap();
+  let record: ReversedLiteralNames = ciborium::from_reader(bytes.as_slice()).unwrap();
+  bytes.clear();
+  ciborium::into_writer(&record, &mut bytes).unwrap();
+  let decoded: ciborium::Value = ciborium::from_reader(bytes.as_slice()).unwrap();
+  assert_eq!(decoded, wire);
+}

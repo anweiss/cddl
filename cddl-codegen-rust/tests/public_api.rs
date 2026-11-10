@@ -253,6 +253,18 @@ fn group_choices_do_not_silently_bypass_typed_key_dispatch() {
 }
 
 #[test]
+fn optional_multi_field_groups_do_not_bypass_typed_key_dispatch() {
+  for field in ["1 => int", "* tstr => int"] {
+    let source = format!("item = {{ ? (a: int, {field}) }}");
+    let error = generate_rust_code(&source).unwrap_err();
+    assert!(error.to_string().contains("optional multi-field groups"));
+    let error =
+      generate_rust_code_for_rule(&source, "item", None, &CodegenOptions::default()).unwrap_err();
+    assert!(error.to_string().contains("optional multi-field groups"));
+  }
+}
+
+#[test]
 fn embedded_acronyms_are_normalized() {
   let output = generate_rust_code(
     r#"hashedURI-map = { url: tstr }

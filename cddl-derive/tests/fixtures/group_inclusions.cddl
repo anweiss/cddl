@@ -13,3 +13,6 @@ sibling-choices = { (a: int // b: int), (c: int // d: int) }
 nested-choices = { (a: int, (c: int // d: int) // b: int) }
 optional-choices = { ? (a: int // b: int), (c: int // d: int) }
 optional-substituted-item = { a: int, ? common }
+required-pair = (x: int, y: int)
+optional-pair = { ? required-pair }
+recursive-pair = { ? (value: int, child: recursive-pair) }
