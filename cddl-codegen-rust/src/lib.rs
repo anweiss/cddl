@@ -332,8 +332,7 @@ fn apply_field_encodings(
   aliases: &AliasMap,
 ) -> Result<(), CodegenError> {
   for field in fields {
-    let key = field_substitution_key(name, field);
-    if field.tag.is_some() || opts.substitutions.contains_key(&key) {
+    if field.tag.is_some() || field_substitution(name, field, opts).is_some() {
       continue;
     }
     let encoding_type = metadata_fields
@@ -576,6 +575,15 @@ fn split_comment(line: &str) -> (&str, Option<&str>) {
   (line, None)
 }
 
+fn rule_substitutions(opts: &CodegenOptions) -> BTreeMap<String, String> {
+  opts
+    .substitutions
+    .iter()
+    .filter(|(key, _)| !key.contains('.'))
+    .map(|(key, value)| (to_pascal_case(key), value.clone()))
+    .collect()
+}
+
 /// Apply caller-supplied options to the collected type definitions.
 ///
 /// Lowering retains substituted group references; this rewrites their types
@@ -587,12 +595,7 @@ fn apply_options(defs: &mut Vec<RustTypeDef>, opts: &CodegenOptions) {
 
   // Rule-level substitutions replace every reference to a rule, so the rule's
   // own definition is dropped.
-  let rule_subs: BTreeMap<String, String> = opts
-    .substitutions
-    .iter()
-    .filter(|(k, _)| !k.contains('.'))
-    .map(|(k, v)| (to_pascal_case(k), v.clone()))
-    .collect();
+  let rule_subs = rule_substitutions(opts);
 
   if !rule_subs.is_empty() {
     defs.retain(|d| {
@@ -611,8 +614,7 @@ fn apply_options(defs: &mut Vec<RustTypeDef>, opts: &CodegenOptions) {
     match def {
       RustTypeDef::Struct { name, fields, .. } => {
         for field in fields.iter_mut() {
-          let key = field_substitution_key(name, field);
-          if let Some(sub) = opts.substitutions.get(&key) {
+          if let Some(sub) = field_substitution(name, field, opts) {
             // An explicit substitution replaces the type outright, so any CBOR
             // tag inferred from the original prelude type no longer applies.
             field.rust_type.clone_from(sub);
@@ -685,12 +687,24 @@ fn to_cddl_lookup_name(rust_name: &str) -> String {
   pascal_to_cddl_name(rust_name)
 }
 
-fn field_substitution_key(name: &str, field: &RustField) -> String {
+fn field_substitution<'a>(
+  name: &str,
+  field: &RustField,
+  opts: &'a CodegenOptions,
+) -> Option<&'a String> {
   let rule = field
     .source_rule
-    .clone()
-    .unwrap_or_else(|| to_cddl_lookup_name(name));
-  format!("{}.{}", rule, field.original_name)
+    .as_deref()
+    .map(to_pascal_case)
+    .unwrap_or_else(|| name.to_owned());
+  let key = format!("{}.{}", to_cddl_lookup_name(&rule), field.original_name);
+  opts.substitutions.get(&key).or_else(|| {
+    field.source_rule.as_ref().and_then(|rule| {
+      opts
+        .substitutions
+        .get(&format!("{}.{}", rule, field.original_name))
+    })
+  })
 }
 
 /// Generate Rust source code for all rules in a CDDL document using default
@@ -1063,12 +1077,13 @@ fn collect_type_defs(
   }
 
   let mut defs = Vec::new();
-  let mut groups = GroupLowerer::new(cddl, comments, opts);
+  let rule_subs = rule_substitutions(opts);
+  let mut groups = GroupLowerer::new(cddl, comments, opts, &rule_subs);
   let mut merged: std::collections::HashSet<String> = std::collections::HashSet::new();
   for rule in cddl
     .rules
     .iter()
-    .filter(|rule| !rule_is_substituted(rule, opts))
+    .filter(|rule| !rule_is_substituted(rule, &rule_subs))
   {
     match rule {
       Rule::Type {
@@ -1117,12 +1132,12 @@ fn collect_type_defs(
   Ok(defs)
 }
 
-fn rule_is_substituted(rule: &Rule<'_>, opts: &CodegenOptions) -> bool {
+fn rule_is_substituted(rule: &Rule<'_>, substitutions: &BTreeMap<String, String>) -> bool {
   let name = match rule {
     Rule::Type { rule, .. } => rule.name.ident,
     Rule::Group { rule, .. } => rule.name.ident,
   };
-  opts.substitutions.contains_key(name)
+  substitutions.contains_key(&to_pascal_case(name))
 }
 
 /// Merge the type choices of several socket/plug type rule alternates into a
@@ -1480,6 +1495,7 @@ struct GroupLowerer<'a, 'b> {
   cddl: &'a CDDL<'b>,
   comments: &'a CommentMap,
   opts: &'a CodegenOptions,
+  substitutions: &'a BTreeMap<String, String>,
   helpers: Vec<RustTypeDef>,
   names: std::collections::HashSet<String>,
   visiting: Vec<String>,
@@ -1527,7 +1543,12 @@ fn included_group_helpers(defs: &[RustTypeDef], root: &str) -> Vec<RustTypeDef> 
 }
 
 impl<'a, 'b> GroupLowerer<'a, 'b> {
-  fn new(cddl: &'a CDDL<'b>, comments: &'a CommentMap, opts: &'a CodegenOptions) -> Self {
+  fn new(
+    cddl: &'a CDDL<'b>,
+    comments: &'a CommentMap,
+    opts: &'a CodegenOptions,
+    substitutions: &'a BTreeMap<String, String>,
+  ) -> Self {
     let names = cddl
       .rules
       .iter()
@@ -1540,6 +1561,7 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
       cddl,
       comments,
       opts,
+      substitutions,
       helpers: Vec::new(),
       names,
       visiting: Vec::new(),
@@ -1588,7 +1610,10 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
           _ => None,
         });
         if let Some(included) = included {
-          if self.opts.substitutions.contains_key(ge.name.ident) {
+          if self
+            .substitutions
+            .contains_key(&to_pascal_case(ge.name.ident))
+          {
             let mut fields =
               group_entry_to_fields(entry, self.comments, self.opts)?.unwrap_or_default();
             for field in &mut fields {

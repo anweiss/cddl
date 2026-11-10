@@ -235,7 +235,9 @@ mod field_substitutions {
   )]
   struct Renamed;
 
-  fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(value: serde_json::Value) {
+  pub(super) fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(
+    value: serde_json::Value,
+  ) {
     let item: T = serde_json::from_value(value.clone()).unwrap();
     assert_eq!(serde_json::to_value(&item).unwrap(), value);
     let mut bytes = Vec::new();
@@ -254,5 +256,48 @@ mod field_substitutions {
     round_trip::<OverrideChoice>(serde_json::json!({"y": 1}));
     round_trip::<OverrideNested>(serde_json::json!({"a": 1, "x": 7}));
     round_trip::<OverrideNested>(serde_json::json!({"z": true}));
+  }
+}
+
+mod normalized_substitutions {
+  use super::field_substitutions::round_trip;
+
+  cddl_derive::cddl_typegen!(
+    "tests/fixtures/normalized_substitutions.cddl",
+    substitute("cose-key.1" = "u64"),
+    substitute("generic-headers" = "crate::CustomGroup")
+  );
+
+  #[cddl_derive::cddl(
+    path = "tests/fixtures/normalized_substitutions.cddl",
+    rule = "COSE_Key",
+    fundamental_aliases = true,
+    substitute("COSE_Key.1" = "u64"),
+    substitute("generic-headers" = "crate::CustomGroup")
+  )]
+  struct RenamedKey;
+
+  #[cddl_derive::cddl(
+    path = "tests/fixtures/normalized_substitutions.cddl",
+    rule = "item",
+    substitute("generic-headers" = "crate::CustomGroup")
+  )]
+  struct RenamedGroup;
+
+  fn cbor_round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(item: &T) -> T {
+    let mut bytes = Vec::new();
+    ciborium::into_writer(item, &mut bytes).unwrap();
+    ciborium::from_reader(bytes.as_slice()).unwrap()
+  }
+
+  #[test]
+  fn normalized_substitutions_preserve_replacement_types_and_wire_encodings() {
+    let item: CoseKey = cbor_round_trip(&CoseKey { n1: 7 });
+    assert_eq!(item.n1, 7);
+    let item: RenamedKey = cbor_round_trip(&RenamedKey { n1: 7 });
+    assert_eq!(item.n1, 7);
+    let value = serde_json::json!({"replacement": 7});
+    round_trip::<Item>(value.clone());
+    round_trip::<RenamedGroup>(value);
   }
 }

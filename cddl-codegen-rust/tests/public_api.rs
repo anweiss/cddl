@@ -137,6 +137,36 @@ fn grouped_fields_preserve_rule_qualified_substitutions() {
 }
 
 #[test]
+fn normalized_field_override_keys_preserve_types_and_encodings() {
+  let source = "COSE_Key = { 1 => bstr }";
+  for key in ["cose-key.1", "COSE_Key.1"] {
+    let mut options = CodegenOptions::default();
+    options.substitutions.insert(key.into(), "u64".into());
+    let output = generate_rust_code_with_options(source, &options).unwrap();
+    assert!(output.contains("pub n1: u64,"), "{output}");
+    let output =
+      generate_rust_code_for_rule(source, "COSE_Key", Some("Renamed"), &options).unwrap();
+    assert!(output.contains("pub n1: u64,"), "{output}");
+  }
+}
+
+#[test]
+fn normalized_group_substitutions_skip_unsupported_original_bodies() {
+  let source = "Generic_Headers = (uint => tstr // tstr => int)\nitem = { Generic_Headers }";
+  for key in ["generic-headers", "Generic_Headers"] {
+    let mut options = CodegenOptions::default();
+    options
+      .substitutions
+      .insert(key.into(), "crate::Headers".into());
+    let output = generate_rust_code_with_options(source, &options).unwrap();
+    assert!(!output.contains("pub struct GenericHeaders"), "{output}");
+    assert!(output.contains(": crate::Headers,"), "{output}");
+    let output = generate_rust_code_for_rule(source, "item", Some("Renamed"), &options).unwrap();
+    assert!(output.contains(": crate::Headers,"), "{output}");
+  }
+}
+
+#[test]
 fn mixed_literals_have_string_serialization() {
   let output = generate_rust_code(r#"action = "created" / tstr"#).unwrap();
   assert!(output.contains(r#"Self::Created => s.serialize_str("created")"#));
