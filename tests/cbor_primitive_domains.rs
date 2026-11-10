@@ -306,7 +306,7 @@ fn duplicate_failed_probes_do_not_accept_group_alternatives() {
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn failed_comparison_controller_chain_proofs_remain_bounded() {
-  // The unoptimized WASM runner has a smaller, fixed stack than the native CLI.
+  // Use a lower-depth regression for the unoptimized WASM runner's fixed stack.
   let depth = if cfg!(target_arch = "wasm32") { 8 } else { 24 };
   let mut schema = format!("x = n{depth}\nn0 = uint .eq 0\n");
   for level in 1..=depth {
@@ -315,8 +315,8 @@ fn failed_comparison_controller_chain_proofs_remain_bounded() {
       prev = level - 1
     ));
   }
-  // This deep recursive proof needs the same stack budget as the native CLI,
-  // rather than the smaller stack Rust allocates to each test worker.
+  // An explicit 8MiB native test stack isolates repeated-proof behavior from
+  // recursive stack depth; production stack sizing is unchanged.
   #[cfg(not(target_arch = "wasm32"))]
   std::thread::Builder::new()
     .stack_size(8 * 1024 * 1024)
