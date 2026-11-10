@@ -2,3 +2,10 @@ integer-key-record = {
   ? 1 => int,
   ? 4 => bstr,
 }
+
+mixed-integer-keys = {
+  -1 => tdate,
+  ? 2 => bstr,
+  ? 3 => int / null,
+  * tstr => tstr,
+}

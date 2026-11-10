@@ -29,3 +29,43 @@ fn integer_literal_keys_round_trip_as_cbor_integers() {
   assert_eq!(round_trip.n1, decoded.n1);
   assert_eq!(round_trip.n4, decoded.n4);
 }
+
+#[test]
+fn absent_integer_fields_remain_absent_and_duplicates_are_rejected() {
+  let decoded: IntegerKeyRecord = ciborium::from_reader([0xa0].as_slice()).unwrap();
+  assert_eq!(decoded.n1, None);
+  assert_eq!(decoded.n4, None);
+  let mut encoded = Vec::new();
+  ciborium::into_writer(&decoded, &mut encoded).unwrap();
+  let round_trip: IntegerKeyRecord = ciborium::from_reader(encoded.as_slice()).unwrap();
+  assert_eq!(round_trip.n1, None);
+  assert_eq!(round_trip.n4, None);
+  assert!(
+    ciborium::from_reader::<IntegerKeyRecord, _>([0xa2, 0x01, 0x07, 0x01, 0x08].as_slice())
+      .is_err()
+  );
+}
+
+#[test]
+fn signed_literal_keys_keep_tags_nullable_values_and_wildcards() {
+  let wire = ciborium::Value::Map(vec![
+    (
+      (-1).into(),
+      ciborium::Value::Tag(0, Box::new("2026-11-10T00:00:00Z".into())),
+    ),
+    (2.into(), ciborium::Value::Bytes(vec![0xaa])),
+    (3.into(), ciborium::Value::Null),
+    ("extra".into(), "value".into()),
+  ]);
+  let mut bytes = Vec::new();
+  ciborium::into_writer(&wire, &mut bytes).unwrap();
+  let decoded: MixedIntegerKeys = ciborium::from_reader(bytes.as_slice()).unwrap();
+  assert_eq!(decoded.n_neg1, "2026-11-10T00:00:00Z");
+  assert_eq!(decoded.n2, Some(vec![0xaa]));
+  assert_eq!(decoded.n3, Some(None));
+  assert_eq!(decoded.entries.get("extra").unwrap(), "value");
+  let mut encoded = Vec::new();
+  ciborium::into_writer(&decoded, &mut encoded).unwrap();
+  let round_trip: ciborium::Value = ciborium::from_reader(encoded.as_slice()).unwrap();
+  assert_eq!(round_trip, wire);
+}

@@ -220,6 +220,18 @@ fn recursive_group_inclusion_reports_an_error() {
 }
 
 #[test]
+fn group_choices_do_not_silently_bypass_typed_key_dispatch() {
+  for field in ["? 1 => int", "* tstr => int"] {
+    let source = format!("item = {{ {field}, (a: tstr // b: tstr) }}");
+    let error = generate_rust_code(&source).unwrap_err();
+    assert!(
+      error.to_string().contains("group choices combined"),
+      "{error}"
+    );
+  }
+}
+
+#[test]
 fn embedded_acronyms_are_normalized() {
   let output = generate_rust_code(
     r#"hashedURI-map = { url: tstr }

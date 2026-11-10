@@ -2599,6 +2599,16 @@ fn render_struct(
   opts: &CodegenOptions,
   deny_unknown_fields: bool,
 ) -> Result<(), CodegenError> {
+  if fields.iter().any(|field| field.flatten_group)
+    && fields
+      .iter()
+      .any(|field| field.flatten || field.integer_key.is_some())
+  {
+    return Err(CodegenError::ConfigurationError(
+      "group choices combined with typed map entries or integer literal keys are not supported"
+        .into(),
+    ));
+  }
   render_doc(output, doc, "")?;
 
   // Byte-string fields need serde_with to encode as CBOR major type 2 rather
@@ -2622,8 +2632,7 @@ fn render_struct(
   // that drops CBOR tags and cannot dispatch between differently keyed maps, so
   // typed-key entries and integer literal keys decode through a generated map
   // visitor. Group-choice fields use serde's flattened enum handling instead.
-  let custom_de = !fields.iter().any(|f| f.flatten_group)
-    && fields.iter().any(|f| f.flatten || f.integer_key.is_some());
+  let custom_de = fields.iter().any(|f| f.flatten || f.integer_key.is_some());
   let derives = if custom_de {
     "Clone, Debug, serde::Serialize"
   } else {

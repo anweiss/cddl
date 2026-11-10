@@ -140,6 +140,8 @@ struct containing all alternatives. Payloads reject unknown keys so an
 all-optional alternative cannot silently swallow another alternative's entries.
 Single-rule generation also emits the helper types for its included choices.
 Recursive group inclusions return an error instead of expanding indefinitely.
+Combining group choices with typed map entries or integer literal keys currently
+returns a configuration error rather than emitting incompatible deserializers.
 
 Explicit literal CBOR tags, such as `#6.37(bstr)`, are preserved on struct fields,
 including through aliases and containers. The Rust field retains its inner type;
