@@ -41,6 +41,11 @@ Numeric target and controller-domain probes cache failed as well as successful
 proofs. Controller proofs are keyed by operand and resolved generic bindings;
 cached failures replay at the current data location. Alternatives decide whether
 they matched using isolated diagnostics before deduplicating failed probes.
+This includes named `/=` contributions and computed-control alternatives;
+successful arms retain their validation state. Diagnostic deduplication uses a
+local hash set of complete errors, preserving insertion order and distinct
+locations without retaining bookkeeping across error resets. Named groups with
+no `//=` contributions skip alternative checkpoints entirely.
 
 The client never imports server internals. Browser modules never import LSP
 sources. ESLint enforces these source boundaries; the generated WASM packages

@@ -115,6 +115,26 @@ fn cbor_incremental_choice_is_root_independent_and_transactional() {
 }
 
 #[test]
+fn cbor_incremental_numeric_choices_preserve_generic_bindings() {
+  let schema = "root = [t<1>, t<2>]\nt<T> = uint .eq T\nt<T> /= uint .eq 3";
+  cddl_from_str(schema, false).unwrap();
+  for (value, valid) in [
+    (&[0x82, 0x01, 0x02][..], true),
+    (&[0x82, 0x03, 0x03][..], true),
+    (&[0x82, 0x02, 0x01][..], false),
+    (&[0x82, 0x20, 0x20][..], false),
+  ] {
+    let result = validate_cbor_from_slice(
+      schema,
+      value,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(result.is_ok(), valid, "{value:?}: {result:?}");
+  }
+}
+
+#[test]
 fn alternate_only_choice_remains_valid_at_root_and_through_alias() {
   for schema in [ALTERNATE_ONLY_ROOT, ALTERNATE_ONLY_ALIAS] {
     validate_json_from_str(

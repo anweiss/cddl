@@ -78,7 +78,7 @@ impl<T: std::fmt::Debug + 'static> std::error::Error for Error<T> {
 }
 
 /// cbor validation error
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ValidationError {
   /// Error message
   pub reason: String,
@@ -419,11 +419,12 @@ impl<'a> CBORValidator<'a> {
   }
 
   fn extend_unique_errors(&mut self, errors: Vec<ValidationError>) {
-    for error in errors {
-      if !self.errors.contains(&error) {
-        self.errors.push(error);
-      }
-    }
+    let mut seen: HashSet<_> = self.errors.iter().cloned().collect();
+    self.errors.extend(
+      errors
+        .into_iter()
+        .filter(|error| seen.insert(error.clone())),
+    );
   }
 
   fn probe_numeric_target<T: std::fmt::Debug + 'static>(
@@ -590,25 +591,55 @@ impl<'a> CBORValidator<'a> {
   where
     cbor::Error<T>: From<cbor::Error<std::io::Error>>,
   {
+    if entries.is_empty() {
+      return Ok(false);
+    }
+    self.visit_isolated_alternatives::<T, _, _>(entries, |candidate, entry| {
+      candidate.visit_group_entry(entry)
+    })
+  }
+
+  fn visit_isolated_alternatives<T: std::fmt::Debug + 'static, A, F>(
+    &mut self,
+    entries: &[A],
+    mut visit: F,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+    F: FnMut(&mut Self, &A) -> visitor::Result<Error<T>>,
+  {
+    if entries.is_empty() {
+      return Ok(false);
+    }
     let checkpoint = self.clone();
     let mut errors = Vec::new();
     for entry in entries {
       let mut candidate = checkpoint.clone();
       candidate.errors.clear();
-      candidate.visit_group_entry(entry)?;
+      visit(&mut candidate, entry)?;
       if candidate.errors.is_empty() {
         candidate.errors = checkpoint.errors;
         *self = candidate;
         return Ok(true);
       }
-      for error in candidate.errors {
-        if !errors.contains(&error) {
-          errors.push(error);
-        }
-      }
+      errors.extend(candidate.errors);
     }
     self.extend_unique_errors(errors);
     Ok(false)
+  }
+
+  #[cfg(feature = "additional-controls")]
+  fn visit_computed_alternatives<T: std::fmt::Debug + 'static>(
+    &mut self,
+    values: &[Type2<'a>],
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    self.visit_isolated_alternatives::<T, _, _>(values, |candidate, value| {
+      candidate.visit_type2(value)
+    })?;
+    Ok(())
   }
 
   fn validate_equality_control<T: std::fmt::Debug + 'static>(
@@ -1472,9 +1503,8 @@ impl<'a> CBORValidator<'a> {
     Ok(())
   }
 
-  /// Validate every definition contributing to a named type choice from one
-  /// error checkpoint. Failed arms are tentative; their errors are retained
-  /// only when every arm fails.
+  /// Validate named type contributions from isolated checkpoints, committing
+  /// the successful arm's state or deduplicating diagnostics if every arm fails.
   fn visit_named_type_choice<T: std::fmt::Debug + 'static>(
     &mut self,
     ident: &Identifier<'a>,
@@ -1491,16 +1521,13 @@ impl<'a> CBORValidator<'a> {
         self.state.is_multi_type_choice_type_rule_validating_array = true;
       }
 
-      let error_count = self.errors.len();
-      for choice in choices {
-        let current_error_count = self.errors.len();
-        self.visit_type(choice)?;
-        if self.errors.len() == current_error_count {
-          self.errors.truncate(error_count);
-          return Ok(());
-        }
-      }
-
+      let alternatives: Vec<_> = choices
+        .iter()
+        .flat_map(|choice| choice.type_choices.iter())
+        .collect();
+      self.visit_isolated_alternatives::<T, _, _>(&alternatives, |candidate, choice| {
+        candidate.visit_type_choice(choice)
+      })?;
       return Ok(());
     }
 
@@ -2180,11 +2207,7 @@ where
         if choice_succeeded {
           choice_validation_succeeded = true;
         } else {
-          for error in self.errors.drain(..) {
-            if !choice_errors.contains(&error) {
-              choice_errors.push(error);
-            }
-          }
+          choice_errors.append(&mut self.errors);
         }
       }
 
@@ -2954,22 +2977,7 @@ where
         self.state.ctrl = Some(ctrl);
 
         match cat_operation(self.state.cddl, target, controller, false) {
-          Ok(values) => {
-            let error_count = self.errors.len();
-            for v in values.iter() {
-              let cur_errors = self.errors.len();
-
-              self.visit_type2(v)?;
-
-              if self.errors.len() == cur_errors {
-                for _ in 0..self.errors.len() - error_count {
-                  self.errors.pop();
-                }
-
-                break;
-              }
-            }
-          }
+          Ok(values) => self.visit_computed_alternatives::<T>(&values)?,
           Err(e) => self.add_error(e),
         }
 
@@ -2982,22 +2990,7 @@ where
         self.state.ctrl = Some(ctrl);
 
         match cat_operation(self.state.cddl, target, controller, true) {
-          Ok(values) => {
-            let error_count = self.errors.len();
-
-            for v in values.iter() {
-              let cur_errors = self.errors.len();
-              self.visit_type2(v)?;
-
-              if self.errors.len() == cur_errors {
-                for _ in 0..self.errors.len() - error_count {
-                  self.errors.pop();
-                }
-
-                break;
-              }
-            }
-          }
+          Ok(values) => self.visit_computed_alternatives::<T>(&values)?,
           Err(e) => self.add_error(e),
         }
 
@@ -3010,23 +3003,7 @@ where
         self.state.ctrl = Some(ctrl);
 
         match plus_operation(self.state.cddl, target, controller) {
-          Ok(values) => {
-            let error_count = self.errors.len();
-            for v in values.iter() {
-              let cur_errors = self.errors.len();
-
-              self.visit_type2(v)?;
-
-              self.visit_type2(v)?;
-              if self.errors.len() == cur_errors {
-                for _ in 0..self.errors.len() - error_count {
-                  self.errors.pop();
-                }
-
-                break;
-              }
-            }
-          }
+          Ok(values) => self.visit_computed_alternatives::<T>(&values)?,
 
           Err(e) => self.add_error(e),
         }
@@ -3060,22 +3037,7 @@ where
 
                 if let Some(result) = complex_ctrl_result {
                   match result {
-                    Ok(values) => {
-                      let error_count = self.errors.len();
-                      for v in values.iter() {
-                        let cur_errors = self.errors.len();
-
-                        self.visit_type2(v)?;
-
-                        if self.errors.len() == cur_errors {
-                          for _ in 0..self.errors.len() - error_count {
-                            self.errors.pop();
-                          }
-
-                          break;
-                        }
-                      }
-                    }
+                    Ok(values) => self.visit_computed_alternatives::<T>(&values)?,
                     Err(e) => self.add_error(e),
                   }
                 } else {
@@ -3125,22 +3087,7 @@ where
 
                 if let Some(result) = complex_ctrl_result {
                   match result {
-                    Ok(values) => {
-                      let error_count = self.errors.len();
-                      for v in values.iter() {
-                        let cur_errors = self.errors.len();
-
-                        self.visit_type2(v)?;
-
-                        if self.errors.len() == cur_errors {
-                          for _ in 0..self.errors.len() - error_count {
-                            self.errors.pop();
-                          }
-
-                          break;
-                        }
-                      }
-                    }
+                    Ok(values) => self.visit_computed_alternatives::<T>(&values)?,
                     Err(e) => self.add_error(e),
                   }
                 } else {
@@ -6507,6 +6454,120 @@ mod tests {
       );
       Visitor::<Error<std::io::Error>>::visit_type_groupname_entry(&mut validator, ge).unwrap();
       assert_eq!(validator.errors.is_empty(), succeeds);
+    }
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn computed_alternatives_do_not_hide_failed_controller_proofs() {
+    let cddl = crate::cddl_from_str(
+      "root = 0 .plus values\nvalues = 1 / 1\nbound = uint .eq 2",
+      true,
+    )
+    .unwrap();
+    let mut validator = CBORValidator::new(&cddl, Value::Integer(1.into()), None);
+    validator.controller_domains.push(ControllerDomain {
+      target: Type2::Typename {
+        ident: Identifier::from("bound"),
+        generic_args: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 0),
+      },
+      generic_rules: Vec::new(),
+      generic_rule: None,
+    });
+    Visitor::<Error<std::io::Error>>::visit_rule(&mut validator, &cddl.rules[0]).unwrap();
+    assert!(!validator.errors.is_empty());
+  }
+
+  #[test]
+  fn named_choices_commit_successful_map_claims() {
+    let cddl =
+      crate::cddl_from_str("root = t\nt = { a: uint, b: uint }\nt /= { a: uint }", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Map(vec![(Value::Text("a".into()), Value::Integer(1.into()))]),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.add_error("existing diagnostic".into());
+    let prior_errors = validator.errors.clone();
+    Visitor::<Error<std::io::Error>>::visit_identifier(&mut validator, &Identifier::from("t"))
+      .unwrap();
+    assert_eq!(validator.errors, prior_errors);
+    assert_eq!(validator.claimed_map_entries, vec![0]);
+    assert!(validator.state.visited_rules.is_empty());
+  }
+
+  #[test]
+  fn diagnostic_deduplication_preserves_order_identity_and_resets() {
+    let cddl = crate::cddl_from_str("root = any", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Null,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.add_error("same reason".into());
+    let template = validator.errors[0].clone();
+    let mut expected = vec![template.clone()];
+    for index in 0..4096 {
+      let mut error = template.clone();
+      error.cbor_location = format!("root[{index}]");
+      expected.push(error);
+    }
+    let mut cddl_location = template.clone();
+    cddl_location.cddl_location = "other rule".into();
+    expected.push(cddl_location);
+    for mask in 1..8 {
+      let mut error = template.clone();
+      error.is_multi_type_choice = mask & 1 != 0;
+      error.is_multi_group_choice = mask & 2 != 0;
+      error.is_group_to_choice_enum = mask & 4 != 0;
+      expected.push(error);
+    }
+    let mut group_name = template;
+    group_name.type_group_name_entry = Some("group".into());
+    expected.push(group_name);
+
+    validator.extend_unique_errors(
+      expected
+        .iter()
+        .cloned()
+        .chain(expected.iter().cloned())
+        .collect(),
+    );
+    assert_eq!(validator.errors, expected);
+    let saved = std::mem::take(&mut validator.errors);
+    validator.extend_unique_errors(saved.iter().rev().cloned().collect());
+    assert_eq!(
+      validator.errors,
+      saved.into_iter().rev().collect::<Vec<_>>()
+    );
+    validator.errors.truncate(1);
+    validator.extend_unique_errors(expected.clone());
+    assert_eq!(validator.errors.len(), expected.len());
+    assert_eq!(validator.errors[0], expected.last().unwrap().clone());
+  }
+
+  #[test]
+  fn large_closed_maps_retain_all_unexpected_key_diagnostics() {
+    let cddl = crate::cddl_from_str("root = { a: uint }", true).unwrap();
+    let mut entries = vec![(Value::Text("a".into()), Value::Integer(1.into()))];
+    entries.extend((0..4096u64).map(|key| (Value::Integer(key.into()), Value::Null)));
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Map(entries),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert!(Validator::<Error<std::io::Error>>::validate(&mut validator).is_err());
+    assert_eq!(validator.errors.len(), 4096);
+    for (index, error) in validator.errors.iter().enumerate() {
+      assert_eq!(
+        error.reason,
+        format!("unexpected key {:?}", Value::Integer((index as u64).into()))
+      );
     }
   }
 

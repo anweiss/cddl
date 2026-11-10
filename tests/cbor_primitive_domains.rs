@@ -305,6 +305,20 @@ fn duplicate_failed_probes_do_not_accept_group_alternatives() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn incremental_numeric_choices_isolate_failed_probes() {
+  for schema in [
+    "root = t\nt = uint .eq 1\nt /= uint .eq 2",
+    "t = uint .eq 1\nt /= uint .eq 2",
+    "root = t\nt /= uint .eq 1\nt /= uint .eq 2",
+  ] {
+    for (value, valid) in [(0x01, true), (0x02, true), (0x00, false), (0x20, false)] {
+      assert_eq!(accepts(schema, &[value]), valid, "{schema}: {value}");
+    }
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn failed_comparison_controller_chain_proofs_remain_bounded() {
   // Use a lower-depth regression for the unoptimized WASM runner's fixed stack.
   let depth = if cfg!(target_arch = "wasm32") { 8 } else { 24 };
