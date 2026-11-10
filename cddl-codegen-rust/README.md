@@ -127,8 +127,9 @@ their CBOR serialization preserves integer keys and the value's encoding.
 JSON object keys are strings, so integer-keyed wildcard entries round-trip
 through CBOR only. Choice enums with only built-in integer, boolean, string,
 byte-string or null payloads (including literal-only enums) derive `PartialEq`,
-`Eq` and `Hash`, so they can be used as wildcard map keys. These derives are
-not added for floats, arbitrary values or user-defined payload types.
+`Eq` and `Hash`, so they can be used as wildcard map keys. Generated aliases,
+including scoped fundamental aliases, are resolved before selecting these derives.
+They are not added for floats, arbitrary values, structs or opaque custom types.
 An optional wildcard group (`? (* tstr => int)`) decodes to
 `None` when no entry matched and `Some(map)` otherwise. Rule and variant names
 normalize embedded acronyms, for example `hashedURI-map` becomes `HashedUriMap`.
@@ -138,7 +139,9 @@ entry optionality. A keyed value still stays nested. Group choices (`//`) become
 flattened untagged enums with one struct payload per alternative, rather than a
 struct containing all alternatives. Payloads reject unknown keys so an
 all-optional alternative cannot silently swallow another alternative's entries.
-Single-rule generation also emits the helper types for its included choices.
+Each choice claims only its own keys before testing alternatives, allowing sibling,
+nested and optional choices to coexist. Single-rule generation emits the helper
+graph in an output-specific module so repeated invocations do not collide.
 Recursive group inclusions return an error instead of expanding indefinitely.
 Combining group choices with typed map entries or integer literal keys currently
 returns a configuration error rather than emitting incompatible deserializers.

@@ -9,3 +9,6 @@ choice-item = { "a": int, (exact-group // range-group), }
 inline-choice = { "a": int, (? "when": tstr // ? "start": tstr, ? "end": tstr), }
 named-choice = (exact-group // range-group)
 named-choice-item = { "a": int, named-choice }
+sibling-choices = { (a: int // b: int), (c: int // d: int) }
+nested-choices = { (a: int, (c: int // d: int) // b: int) }
+optional-choices = { ? (a: int // b: int), (c: int // d: int) }

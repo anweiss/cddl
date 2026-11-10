@@ -69,3 +69,16 @@ fn signed_literal_keys_keep_tags_nullable_values_and_wildcards() {
   let round_trip: ciborium::Value = ciborium::from_reader(encoded.as_slice()).unwrap();
   assert_eq!(round_trip, wire);
 }
+
+#[test]
+fn recursive_named_fields_keep_their_boxing() {
+  let value = serde_json::json!({"child": {"child": {}, "nested": 2}, "outer": 1});
+  let node: RecursiveKeyNode = serde_json::from_value(value.clone()).unwrap();
+  assert_eq!(node.child.as_ref().unwrap().entries["nested"], 2);
+  assert_eq!(serde_json::to_value(node).unwrap(), value);
+}
+
+#[test]
+fn integer_key_inline_choices_have_rust_identifiers() {
+  let _ = IntegerMapChoice::N1;
+}

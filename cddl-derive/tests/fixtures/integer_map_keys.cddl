@@ -9,3 +9,5 @@ mixed-integer-keys = {
   ? 3 => int / null,
   * tstr => tstr,
 }
+integer-map-choice = { ? 1 => int } / tstr
+recursive-key-node = { ? child: recursive-key-node, * tstr => int }
