@@ -233,12 +233,17 @@ no `//=` contributions skip alternative checkpoints entirely.
 CBOR feature gates run before primitive-domain prefilters. Disabled features,
 including an unspecified feature set, skip their target as before; enabled
 features validate the complete target, including mixed numeric/string choices
-and required prelude tags. A gate inside a numeric controller preserves the
-inherited comparison, size or bits operation. Nested equality under target-
-validating controls such as `.and` and `.within` instead evaluates its own
-operand without inheriting that enclosing control.
-Same-value generic children retain the parent's data location for proof keys
-and controller-error replay.
+and required prelude tags. Gates and constrained equality aliases preserve
+operand-interpreting contexts, including comparisons, size, bits and regular
+expressions. Nested equality under target-validating controls such as `.and`
+and `.within` instead evaluates its own operand without inheriting that
+enclosing control. Computed `.cat`, `.det` and `.plus` controls bypass operand
+domain prefilters and validate their computed alternatives.
+Same-value generic typename and group-to-choice children share proof caches,
+recursion context and the parent's data location for proof keys and
+controller-error replay. Each child binds only the
+current instantiation's arguments; retaining a successful named alternative's
+state must not reuse arguments from a previous call.
 
 The client never imports server internals. Browser modules never import LSP
 sources. ESLint enforces these source boundaries; the generated WASM packages

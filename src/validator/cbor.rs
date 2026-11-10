@@ -449,6 +449,8 @@ impl<'a> CBORValidator<'a> {
       None => {}
     }
 
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    tests::NUMERIC_TARGET_PROBE_MISSES.with(|count| count.set(count.get() + 1));
     let mut probe = self.new_with_recursion_state(self.cbor.clone());
     probe.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
     probe.state.data_location = self.state.data_location.clone();
@@ -674,9 +676,9 @@ impl<'a> CBORValidator<'a> {
       return Ok(());
     }
 
-    // A feature gate changes availability, not an inherited numeric operation.
+    // A feature gate changes availability, not an inherited operand operation.
     let previous_ctrl = self.state.ctrl;
-    if !is_numeric_controller_context(previous_ctrl.as_ref()) {
+    if previous_ctrl.is_none() || is_target_validating_context(previous_ctrl.as_ref()) {
       self.state.ctrl = Some(ControlOperator::FEATURE);
     }
     let error_count = self.errors.len();
@@ -707,7 +709,10 @@ impl<'a> CBORValidator<'a> {
             }
             return self.visit_type2(controller);
           }
-          let previous_ctrl = self.state.ctrl.take();
+          let previous_ctrl = self.state.ctrl;
+          if is_target_validating_context(previous_ctrl.as_ref()) {
+            self.state.ctrl = None;
+          }
           let result = self.visit_type2(controller);
           self.state.ctrl = previous_ctrl;
           return result;
@@ -1528,6 +1533,30 @@ impl<'a> CBORValidator<'a> {
     cv.state.visited_rules = self.state.visited_rules.clone();
     cv.numeric_probe_recursions = Arc::clone(&self.numeric_probe_recursions);
     cv.controller_domain_checks = Arc::clone(&self.controller_domain_checks);
+    cv
+  }
+
+  fn new_generic_child(&self, name: &'a str) -> CBORValidator<'a> {
+    let mut cv = self.new_with_recursion_state(self.cbor.clone());
+    cv.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
+    cv.state.data_location = self.state.data_location.clone();
+    cv.state.eval_generic_rule = Some(name);
+    cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
+    cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
+    cv.state.ctrl = self
+      .state
+      .ctrl
+      .filter(|ctrl| !is_target_validating_context(Some(ctrl)));
+    cv.controller_domains = self.controller_domains.clone();
+    if let Some(rule) = cv
+      .state
+      .generic_rules
+      .iter_mut()
+      .find(|rule| rule.name == name)
+    {
+      let start = rule.args.len().saturating_sub(rule.params.len());
+      rule.args = rule.args[start..].to_vec();
+    }
     cv
   }
 
@@ -2582,51 +2611,53 @@ where
         return self.visit_feature_control::<T>(target, controller);
       }
 
-      // Validate that the CBOR value matches the target type before applying control operators
-      if ident_numeric_kind(self.state.cddl, target_ident).is_none()
-        && is_ident_string_data_type(self.state.cddl, target_ident)
-        && !matches!(self.cbor, Value::Text(_))
-      {
-        self.add_error(format!("expected type tstr, got {:?}", self.cbor));
-        return Ok(());
-      } else if ident_numeric_kind(self.state.cddl, target_ident).is_none()
-        && is_ident_byte_string_data_type(self.state.cddl, target_ident)
-        && !matches!(self.cbor, Value::Bytes(_))
-      {
-        self.add_error(format!("expected type bstr, got {:?}", self.cbor));
-        return Ok(());
-      } else if ident_numeric_kind(self.state.cddl, target_ident).is_some() {
-        let numeric_context = is_numeric_controller_context(self.state.ctrl.as_ref());
-        let numeric_instance = matches!(
-          self.cbor,
-          Value::Integer(_) | Value::Float(_) | Value::Tag(..)
-        );
-        let needs_target_probe = numeric_control_needs_target_probe(&ctrl) && !numeric_context;
-        if !numeric_instance && !numeric_context && !needs_target_probe {
-          self.add_error(format!(
-            "expected numeric type {}, got {:?}",
-            target_ident, self.cbor
-          ));
+      // Computed controls validate their result, not membership in an operand domain.
+      if !is_computed_control(&ctrl) {
+        if ident_numeric_kind(self.state.cddl, target_ident).is_none()
+          && is_ident_string_data_type(self.state.cddl, target_ident)
+          && !matches!(self.cbor, Value::Text(_))
+        {
+          self.add_error(format!("expected type tstr, got {:?}", self.cbor));
           return Ok(());
-        }
-        if needs_target_probe {
-          // A numeric choice may also contain nonnumeric or constrained arms.
-          // Domain prefilters alone cannot establish target membership.
-          if !self.probe_numeric_target::<T>(target)? {
+        } else if ident_numeric_kind(self.state.cddl, target_ident).is_none()
+          && is_ident_byte_string_data_type(self.state.cddl, target_ident)
+          && !matches!(self.cbor, Value::Bytes(_))
+        {
+          self.add_error(format!("expected type bstr, got {:?}", self.cbor));
+          return Ok(());
+        } else if ident_numeric_kind(self.state.cddl, target_ident).is_some() {
+          let numeric_context = is_numeric_controller_context(self.state.ctrl.as_ref());
+          let numeric_instance = matches!(
+            self.cbor,
+            Value::Integer(_) | Value::Float(_) | Value::Tag(..)
+          );
+          let needs_target_probe = numeric_control_needs_target_probe(&ctrl) && !numeric_context;
+          if !numeric_instance && !numeric_context && !needs_target_probe {
+            self.add_error(format!(
+              "expected numeric type {}, got {:?}",
+              target_ident, self.cbor
+            ));
             return Ok(());
           }
-          numeric_target_validated = true;
+          if needs_target_probe {
+            // A numeric choice may also contain nonnumeric or constrained arms.
+            // Domain prefilters alone cannot establish target membership.
+            if !self.probe_numeric_target::<T>(target)? {
+              return Ok(());
+            }
+            numeric_target_validated = true;
+          }
+        } else if is_ident_bool_data_type(self.state.cddl, target_ident)
+          && !matches!(self.cbor, Value::Bool(_))
+        {
+          self.add_error(format!("expected type bool, got {:?}", self.cbor));
+          return Ok(());
+        } else if is_ident_null_data_type(self.state.cddl, target_ident)
+          && !matches!(self.cbor, Value::Null)
+        {
+          self.add_error(format!("expected type null, got {:?}", self.cbor));
+          return Ok(());
         }
-      } else if is_ident_bool_data_type(self.state.cddl, target_ident)
-        && !matches!(self.cbor, Value::Bool(_))
-      {
-        self.add_error(format!("expected type bool, got {:?}", self.cbor));
-        return Ok(());
-      } else if is_ident_null_data_type(self.state.cddl, target_ident)
-        && !matches!(self.cbor, Value::Null)
-      {
-        self.add_error(format!("expected type null, got {:?}", self.cbor));
-        return Ok(());
       }
     }
 
@@ -3908,25 +3939,8 @@ where
               });
             }
 
-            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-            let mut cv = CBORValidator::new(
-              self.state.cddl,
-              self.cbor.clone(),
-              self.state.enabled_features.clone(),
-            );
-            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-            let mut cv = CBORValidator::new(
-              self.state.cddl,
-              self.cbor.clone(),
-              self.state.enabled_features,
-            );
-            #[cfg(not(feature = "additional-controls"))]
-            let mut cv = CBORValidator::new(self.state.cddl, self.cbor.clone());
-
-            cv.state.generic_rules = self.state.generic_rules.clone();
-            cv.state.eval_generic_rule = Some(ident.ident);
+            let mut cv = self.new_generic_child(ident.ident);
             cv.state.is_group_to_choice_enum = true;
-            cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
             cv.visit_rule(rule)?;
 
             self.errors.append(&mut cv.errors);
@@ -3978,32 +3992,7 @@ where
               });
             }
 
-            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-            let mut cv = CBORValidator::new(
-              self.state.cddl,
-              self.cbor.clone(),
-              self.state.enabled_features.clone(),
-            );
-            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-            let mut cv = CBORValidator::new(
-              self.state.cddl,
-              self.cbor.clone(),
-              self.state.enabled_features,
-            );
-            #[cfg(not(feature = "additional-controls"))]
-            let mut cv = CBORValidator::new(self.state.cddl, self.cbor.clone());
-
-            cv.state.generic_rules = self.state.generic_rules.clone();
-            cv.state.eval_generic_rule = Some(ident.ident);
-            cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-            cv.state.data_location = self.state.data_location.clone();
-            cv.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
-            cv.numeric_probe_recursions = Arc::clone(&self.numeric_probe_recursions);
-            cv.controller_domain_checks = Arc::clone(&self.controller_domain_checks);
-            if is_numeric_controller_context(self.state.ctrl.as_ref()) {
-              cv.state.ctrl = self.state.ctrl;
-              cv.controller_domains = self.controller_domains.clone();
-            }
+            let mut cv = self.new_generic_child(ident.ident);
             cv.visit_rule(rule)?;
 
             self.errors.append(&mut cv.errors);
@@ -5595,6 +5584,13 @@ fn is_numeric_controller_context(ctrl: Option<&ControlOperator>) -> bool {
   )
 }
 
+fn is_target_validating_context(ctrl: Option<&ControlOperator>) -> bool {
+  matches!(
+    ctrl,
+    Some(ControlOperator::AND | ControlOperator::WITHIN | ControlOperator::DEFAULT)
+  )
+}
+
 fn structural_prelude_type<'a>(token: &Token, value: &Value) -> Option<Type2<'a>> {
   if !matches!(value, Value::Tag(..))
     || !matches!(token, Token::TDATE | Token::TIME | Token::B64URL)
@@ -6210,6 +6206,91 @@ mod tests {
   use super::*;
   use ciborium::cbor;
   use indoc::indoc;
+
+  std::thread_local! {
+    pub(super) static NUMERIC_TARGET_PROBE_MISSES: std::cell::Cell<usize> =
+      const { std::cell::Cell::new(0) };
+  }
+
+  #[test]
+  fn generic_group_controller_probes_have_linear_work() {
+    let depth = 8;
+    let mut schema = format!("root = n{depth}\nn0 = uint .eq 1\ng0<T> = (v: n0)\n");
+    for level in 1..=depth {
+      schema.push_str(&format!(
+        "n{level} = n{prev} .eq &g{prev}<1>\ng{level}<T> = (v: n{level})\n",
+        prev = level - 1
+      ));
+    }
+    let cddl = crate::cddl_from_str(&schema, true).unwrap();
+    for (value, valid) in [(1, true), (2, false)] {
+      let mut validator = CBORValidator::new(
+        &cddl,
+        Value::Integer(value.into()),
+        #[cfg(feature = "additional-controls")]
+        None,
+      );
+      NUMERIC_TARGET_PROBE_MISSES.with(|count| count.set(0));
+      assert_eq!(
+        Validator::<Error<std::io::Error>>::validate(&mut validator).is_ok(),
+        valid
+      );
+      let misses = NUMERIC_TARGET_PROBE_MISSES.with(std::cell::Cell::get);
+      println!("depth {depth}, value {value}: {misses} uncached target proofs");
+      assert!(
+        misses <= 16 * depth + 16,
+        "{} uncached target proofs",
+        misses
+      );
+    }
+  }
+
+  #[test]
+  fn generic_group_children_do_not_cache_recursion_assumptions() {
+    let cddl = crate::cddl_from_str("root = &g<1>\nn0 = uint .eq 1\ng<T> = (v: n0)", true).unwrap();
+    let Rule::Type { rule, .. } = &cddl.rules[0] else {
+      unreachable!();
+    };
+    let target = &rule.value.type_choices[0].type1.type2;
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(2.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.state.visited_rules.insert("n0\0".into());
+    assert!(validator
+      .probe_numeric_target::<std::io::Error>(target)
+      .unwrap());
+    assert!(validator.numeric_target_checks.lock().unwrap().is_empty());
+    validator.state.visited_rules.clear();
+    assert!(!validator
+      .probe_numeric_target::<std::io::Error>(target)
+      .unwrap());
+  }
+
+  #[test]
+  fn generic_group_controller_failures_share_proofs_and_relocate_diagnostics() {
+    let cddl =
+      crate::cddl_from_str("root = int .gt &bound<1>\nbound<T> = (v: nint .eq T)", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(2.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    for location in ["root[0]", "root[1]"] {
+      validator.state.data_location = location.into();
+      validator.errors.clear();
+      Visitor::<Error<std::io::Error>>::visit_rule(&mut validator, &cddl.rules[0]).unwrap();
+      assert!(!validator.errors.is_empty());
+      assert!(validator
+        .errors
+        .iter()
+        .all(|error| error.cbor_location == location));
+      assert_eq!(validator.controller_domain_checks.lock().unwrap().len(), 1);
+    }
+  }
 
   #[test]
   fn recursion_guard_assumptions_are_not_cached_as_membership() {

@@ -11,6 +11,99 @@ fn accepts(schema: &str, bytes: &[u8]) -> bool {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn constrained_pattern_aliases_preserve_operand_controls() {
+  #[cfg(not(feature = "freezer"))]
+  let controls = ["regexp", "pcre"];
+  #[cfg(feature = "freezer")]
+  let controls = ["regexp", "pcre", "iregexp"];
+  for control in controls {
+    for (controller, rules) in [
+      ("pattern", "pattern = tstr .eq \"^[0-9]+$\""),
+      ("pattern<\"^[0-9]+$\">", "pattern<T> = tstr .eq T"),
+    ] {
+      let schema = format!("x = tstr .{control} {controller}\n{rules}");
+      assert!(accepts(&schema, b"\x63123"), "{}", schema);
+      assert!(!accepts(&schema, b"\x68^[0-9]+$"), "{}", schema);
+      assert!(!accepts(&schema, b"\x63abc"), "{}", schema);
+    }
+    #[cfg(feature = "additional-controls")]
+    {
+      let schema = format!(
+        "x = tstr .{control} pattern\npattern = (tstr .eq \"^[0-9]+$\") .feature \"patterns\""
+      );
+      assert!(
+        accepts_with_features(&schema, b"\x63123", &["patterns"]),
+        "{}",
+        schema
+      );
+      assert!(
+        !accepts_with_features(&schema, b"\x68^[0-9]+$", &["patterns"]),
+        "{}",
+        schema
+      );
+    }
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn computed_controls_skip_operand_domain_prefilters() {
+  for control in ["cat", "det"] {
+    let schema = format!("x = v .{control} \"b\"\nv = \"a\" / uint");
+    assert!(accepts(&schema, b"\x62ab"), "{}", schema);
+    assert!(!accepts(&schema, b"\x61a"), "{}", schema);
+    assert!(!accepts(&schema, &[0x01]), "{}", schema);
+  }
+  assert!(accepts("x = v .plus 1\nv = 1 / tstr", &[0x02]));
+  assert!(!accepts("x = v .plus 1\nv = 1 / tstr", &[0x01]));
+  assert!(!accepts("x = v .plus 1\nv = 1 / tstr", b"\x61a"));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn successful_named_choices_do_not_reuse_prior_generic_arguments() {
+  for next in ["g<\"b\">", "forward<\"b\">"] {
+    let schema = format!(
+      "root = t .and {next}\nt = g<\"a\">\nt /= tstr\ng<T> = tstr .eq T\nforward<U> = g<U>"
+    );
+    assert!(!accepts(&schema, b"\x61a"), "{}", schema);
+    assert!(accepts(&schema, b"\x61b"), "{}", schema);
+    assert!(!accepts(&schema, b"\x61c"), "{}", schema);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn generic_group_controller_chain_reuses_same_value_proofs() {
+  let depth = if cfg!(target_arch = "wasm32") { 4 } else { 8 };
+  let mut schema = format!("root = n{depth}\nn0 = uint .eq 1\ng0<T> = (v: n0)\n");
+  for level in 1..=depth {
+    schema.push_str(&format!(
+      "n{level} = n{prev} .eq &g{prev}<1>\ng{level}<T> = (v: n{level})\n",
+      prev = level - 1
+    ));
+  }
+  assert!(accepts(&schema, &[0x01]));
+  assert!(!accepts(&schema, &[0x02]));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn generic_group_controllers_preserve_operand_context() {
+  for (schema, valid, invalid) in [
+    ("x = tstr .size &g<1>", &b"\x61a"[..], &b"\x62ab"[..]),
+    ("x = bstr .bits &g<0>", &[0x41, 0x01][..], &[0x41, 0x02][..]),
+    ("x = uint .gt &g<1>", &[0x02][..], &[0x01][..]),
+  ] {
+    let schema = format!("{schema}\ng<T> = (v: T)");
+    assert!(accepts(&schema, valid), "{}", schema);
+    assert!(!accepts(&schema, invalid), "{}", schema);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn integer_signs_and_controls() {
   for ty in ["uint", "unsigned", "nint", "int", "integer", "number"] {
     for (bytes, negative) in [(&[0x20][..], true), (&[0x00][..], false)] {
