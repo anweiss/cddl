@@ -1,0 +1,22 @@
+integer-key-record = {
+  ? 1 => int,
+  ? 4 => bstr,
+}
+
+mixed-integer-keys = {
+  -1 => tdate,
+  ? 2 => bstr,
+  ? 3 => int / null,
+  * tstr => tstr,
+}
+integer-map-choice = { ? 1 => int } / tstr
+recursive-key-node = { ? child: recursive-key-node, * tstr => int }
+value = int
+literal-value = { 1 => value }
+container-values = { 2 => [* value] }
+colliding-literal-names = { 1 => int, n1: tstr, n1_1: bool }
+reversed-literal-names = { n1: tstr, 1 => int }
+s = int
+d = tstr
+letter-alias-keys = { 1 => s, 2 => d }
+a = { 1 => int }

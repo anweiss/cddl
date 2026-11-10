@@ -112,15 +112,58 @@ not enforce all CDDL constraints or validate that custom Rust type strings
 compile. Use the `cddl` validators for data validation and compile the generated
 code in its consumer.
 
+Equivalent generated choice variants are emitted once, keeping the first
+occurrence and its documentation. Constraints such as `.regexp` and `.size`
+do not create distinct Rust representations. Distinct payload types and string
+literals are retained; colliding Rust variant names receive numeric suffixes.
+
 String literals in mixed choices serialize as strings and take precedence over
 typed alternatives when decoding. Quoted text keys using `=>` become named
 fields; typed keys become flattened `entries` maps. Such structs decode through
 a generated map visitor that reads each value in place, so tagged values are
 kept and entries are routed to the first named field or key type that matches.
+Integer literal keys become fixed fields (`? 1 => int` becomes `n1: Option<i64>`);
+their CBOR serialization preserves integer keys and the value's encoding.
+Rust field-name collisions receive suffixes without renaming named wire keys;
+suffixes do not collide with other declared field names.
+Generated numeric-map helpers use private generic parameter names so schema
+types such as `S`, `D` and `A` retain their meaning.
 JSON object keys are strings, so integer-keyed wildcard entries round-trip
-through CBOR only. An optional wildcard group (`? (* tstr => int)`) decodes to
+through CBOR only. Choice enums with only built-in integer, boolean, string,
+byte-string or null payloads (including literal-only enums) derive `PartialEq`,
+`Eq` and `Hash`, so they can be used as wildcard map keys. Generated aliases,
+including scoped fundamental aliases, are resolved before selecting these derives.
+They are not added for floats, arbitrary values, structs or opaque custom types.
+An optional wildcard group (`? (* tstr => int)`) decodes to
 `None` when no entry matched and `Some(map)` otherwise. Rule and variant names
 normalize embedded acronyms, for example `hashedURI-map` becomes `HashedUriMap`.
+
+Map group inclusions are expanded into the enclosing struct's fields, retaining
+entry optionality. Optional multi-field groups with required members use a
+flattened optional helper, preserving all-or-none membership rather than making
+each member independently optional. A keyed value still stays nested. Group
+choices (`//`) become flattened untagged enums with one struct payload per alternative, rather than a
+struct containing all alternatives. Payloads reject unknown keys so an
+all-optional alternative cannot silently swallow another alternative's entries.
+Each choice claims only its own keys before testing alternatives, allowing sibling,
+nested and optional choices with disjoint routing keys to coexist. Overlapping
+sibling routing keys require backtracking and return a configuration error,
+rather than emitting a decoder that rejects valid data. Single-rule generation emits the helper
+graph in an output-specific module so repeated invocations do not collide.
+Field substitutions retain their containing-rule keys inside included, optional
+and choice groups, including renamed single-rule output. Both normalized
+`cose-key.1` and original `COSE_Key.1` prefixes are accepted for `COSE_Key`;
+the normalized spelling takes precedence if both are supplied.
+Rule substitutions use the same normalization during lookup and group expansion,
+accepting both `Generic_Headers` and `generic-headers` for that rule.
+Map-choice helper enums do not receive the string catch-all from `other_variant`.
+Substituting an included group retains a flattened replacement instead of expanding
+the original fields; optional inclusions retain their `Option` wrapper.
+Recursive group inclusions return an error instead of expanding indefinitely.
+Combining flattened choices, optional multi-field helpers or substituted groups with
+typed map entries or integer literal keys currently returns a configuration error
+rather than emitting incompatible deserializers. Substituted groups within choice
+alternatives are also unsupported.
 
 Explicit literal CBOR tags, such as `#6.37(bstr)`, are preserved on struct fields,
 including through aliases and containers. The Rust field retains its inner type;

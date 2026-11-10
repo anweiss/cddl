@@ -120,9 +120,92 @@ fn public_options_preserve_substitutions_and_aliases() {
 }
 
 #[test]
+fn grouped_fields_preserve_rule_qualified_substitutions() {
+  let mut options = CodegenOptions::default();
+  options.substitutions.insert("item.x".into(), "u64".into());
+  for source in [
+    "item = { ? (x: bstr, y: int) }",
+    "item = { (x: bstr // y: int) }",
+    "item = { (a: int, (x: bstr // y: int) // z: bool) }",
+    "pair = (x: bstr, y: int)\nitem = { ? pair }",
+  ] {
+    let output = generate_rust_code_with_options(source, &options).unwrap();
+    assert!(output.contains("pub x: u64,"), "{output}");
+    let output = generate_rust_code_for_rule(source, "item", Some("Renamed"), &options).unwrap();
+    assert!(output.contains("pub x: u64,"), "{output}");
+  }
+}
+
+#[test]
+fn normalized_field_override_keys_preserve_types_and_encodings() {
+  let source = "COSE_Key = { 1 => bstr }";
+  for key in ["cose-key.1", "COSE_Key.1"] {
+    let mut options = CodegenOptions::default();
+    options.substitutions.insert(key.into(), "u64".into());
+    let output = generate_rust_code_with_options(source, &options).unwrap();
+    assert!(output.contains("pub n1: u64,"), "{output}");
+    let output =
+      generate_rust_code_for_rule(source, "COSE_Key", Some("Renamed"), &options).unwrap();
+    assert!(output.contains("pub n1: u64,"), "{output}");
+  }
+}
+
+#[test]
+fn normalized_group_substitutions_skip_unsupported_original_bodies() {
+  let source = "Generic_Headers = (uint => tstr // tstr => int)\nitem = { Generic_Headers }";
+  for key in ["generic-headers", "Generic_Headers"] {
+    let mut options = CodegenOptions::default();
+    options
+      .substitutions
+      .insert(key.into(), "crate::Headers".into());
+    let output = generate_rust_code_with_options(source, &options).unwrap();
+    assert!(!output.contains("pub struct GenericHeaders"), "{output}");
+    assert!(output.contains(": crate::Headers,"), "{output}");
+    let output = generate_rust_code_for_rule(source, "item", Some("Renamed"), &options).unwrap();
+    assert!(output.contains(": crate::Headers,"), "{output}");
+  }
+}
+
+#[test]
 fn mixed_literals_have_string_serialization() {
   let output = generate_rust_code(r#"action = "created" / tstr"#).unwrap();
   assert!(output.contains(r#"Self::Created => s.serialize_str("created")"#));
+}
+
+#[test]
+fn equivalent_choice_variants_are_emitted_once() {
+  for source in [
+    r#"u = tstr .regexp "a" / tstr .regexp "b""#,
+    r#"u = (tstr .regexp "a" / tstr .regexp "b")"#,
+    "$u /= tstr .regexp \"a\"\n$u /= tstr .regexp \"b\"",
+  ] {
+    let output = generate_rust_code(source).unwrap();
+    assert_eq!(output.matches("Tstr(String),").count(), 1, "{output}");
+  }
+}
+
+#[test]
+fn deduplicating_choices_preserves_distinct_types_and_literals() {
+  let output = generate_rust_code(
+    r#"u = "a" / tstr .regexp "a" / uint .size 1 / tstr .regexp "b" / uint .size 2 / bstr"#,
+  )
+  .unwrap();
+  let definition = output.split("}\n").next().unwrap();
+  for variant in ["A,", "Tstr(String),", "Uint(u64),", "Bstr(Vec<u8>),"] {
+    assert_eq!(definition.matches(variant).count(), 1, "{output}");
+  }
+  assert!(output.contains(r#"Self::A => s.serialize_str("a")"#));
+}
+
+#[test]
+fn distinct_literals_with_colliding_names_are_not_deduplicated() {
+  let output = generate_rust_code(r#"u = "foo-bar" / "foo_bar" / "foo-bar" / "foo-bar2""#).unwrap();
+  for text in ["foo-bar", "foo_bar", "foo-bar2"] {
+    assert!(output.contains(&format!("{text:?} => Self::")), "{output}");
+  }
+  assert_eq!(output.matches("    FooBar,").count(), 1, "{output}");
+  assert_eq!(output.matches("    FooBar2,").count(), 1, "{output}");
+  assert_eq!(output.matches("    FooBar3,").count(), 1, "{output}");
 }
 
 #[test]
@@ -142,6 +225,117 @@ fn quoted_arrow_keys_are_fields_in_both_parser_apis() {
 fn wildcard_entries_are_flattened() {
   let output = generate_rust_code("record = { name: tstr, * tstr => any }").unwrap();
   assert!(output.contains("#[serde(flatten)]"));
+}
+
+#[test]
+fn included_groups_are_fields_but_keyed_groups_stay_nested() {
+  let source = r#"
+    common = ( ? "d": tstr )
+    item = { "a": int, common, }
+    nested = { "a": int, "common": common }
+  "#;
+  for output in [
+    generate_rust_code(source).unwrap(),
+    generate_rust_code_from_ast(
+      &cddl_from_str(source, false).unwrap(),
+      source,
+      &CodegenOptions::default(),
+    )
+    .unwrap(),
+  ] {
+    let item = output
+      .split("pub struct Item {")
+      .nth(1)
+      .unwrap()
+      .split('}')
+      .next()
+      .unwrap();
+    assert!(item.contains("pub a: i64,"));
+    assert!(item.contains("pub d: Option<String>,"));
+    assert!(!item.contains("common"));
+    assert!(output.contains("pub common: Common,"));
+  }
+}
+
+#[test]
+fn recursive_group_inclusion_reports_an_error() {
+  let error = generate_rust_code("common = (? key: tstr, common)\nitem = { common }").unwrap_err();
+  assert!(
+    error.to_string().contains("recursive group inclusion"),
+    "{error}"
+  );
+}
+
+#[test]
+fn group_substitutions_skip_expansion_and_preserve_optional_references() {
+  let mut options = CodegenOptions::default();
+  options
+    .substitutions
+    .insert("common".into(), "crate::Custom".into());
+  let source = "common = (d: tstr, common)\nitem = { ? common }";
+  let output = generate_rust_code_with_options(source, &options).unwrap();
+  assert!(output.contains("pub common: Option<crate::Custom>,"));
+  assert!(!output.contains("pub struct Common"));
+  for field in ["? 1 => int", "* tstr => int"] {
+    let source = format!("common = (d: tstr)\nitem = {{ common, {field} }}");
+    let error = generate_rust_code_with_options(&source, &options).unwrap_err();
+    assert!(error.to_string().contains("not supported"), "{error}");
+  }
+}
+
+#[test]
+fn group_choices_do_not_silently_bypass_typed_key_dispatch() {
+  for field in ["? 1 => int", "* tstr => int"] {
+    for source in [
+      format!("item = {{ {field}, (a: tstr // b: tstr) }}"),
+      format!("item = {{ ({field} // b: tstr) }}"),
+    ] {
+      let error = generate_rust_code(&source).unwrap_err();
+      assert!(
+        error.to_string().contains("group choices combined"),
+        "{error}"
+      );
+    }
+  }
+}
+
+#[test]
+fn optional_multi_field_groups_do_not_bypass_typed_key_dispatch() {
+  for field in ["1 => int", "* tstr => int"] {
+    let source = format!("item = {{ ? (a: int, {field}) }}");
+    let error = generate_rust_code(&source).unwrap_err();
+    assert!(error.to_string().contains("optional multi-field groups"));
+    let error =
+      generate_rust_code_for_rule(&source, "item", None, &CodegenOptions::default()).unwrap_err();
+    assert!(error.to_string().contains("optional multi-field groups"));
+  }
+}
+
+#[test]
+fn overlapping_group_routes_report_an_explicit_configuration_error() {
+  let source = r#"overlap = { ("a" => int // "b" => int), ("a" => tstr // "c" => int) }"#;
+  assert!(cddl_codegen_rust::cddl::validator::validate_json_from_str(
+    source,
+    r#"{"a":"text","b":1}"#,
+    None,
+  )
+  .is_ok());
+  let error = generate_rust_code(source).unwrap_err();
+  assert!(error
+    .to_string()
+    .contains("overlapping flattened group keys"));
+  let error =
+    generate_rust_code_for_rule(source, "overlap", None, &CodegenOptions::default()).unwrap_err();
+  assert!(error
+    .to_string()
+    .contains("overlapping flattened group keys"));
+  let error =
+    generate_rust_code(r#"overlap = { ? ("a" => int, "b" => int), ("a" => tstr // "c" => int) }"#)
+      .unwrap_err();
+  assert!(error
+    .to_string()
+    .contains("overlapping flattened group keys"));
+  assert!(generate_rust_code(r#"only = { ("a" => int // "a" => tstr) }"#).is_ok());
 }
 
 #[test]
