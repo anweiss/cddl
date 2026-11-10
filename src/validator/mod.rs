@@ -395,7 +395,7 @@ pub fn validate_cbor_from_slice(
 ) -> cbor::Result<std::io::Error> {
   let cddl = cddl_from_str(cddl, true).map_err(cbor::Error::CDDLParsing)?;
 
-  let cbor = decode_cbor(cbor_slice).map_err(|e| cbor::Error::CDDLParsing(e.to_string()))?;
+  let cbor = decode_cbor(cbor_slice).map_err(cbor::Error::from_decode_error)?;
 
   let mut cv = CBORValidator::new(&cddl, cbor, enabled_features);
   cv.validate()
@@ -407,7 +407,7 @@ pub fn validate_cbor_from_slice(
 /// Validate CBOR slice from a given CDDL document string
 pub fn validate_cbor_from_slice(cddl: &str, cbor_slice: &[u8]) -> cbor::Result<std::io::Error> {
   let cddl = cddl_from_str(cddl, true).map_err(cbor::Error::CDDLParsing)?;
-  let cbor = decode_cbor(cbor_slice).map_err(|e| cbor::Error::CDDLParsing(e.to_string()))?;
+  let cbor = decode_cbor(cbor_slice).map_err(cbor::Error::from_decode_error)?;
 
   let mut cv = CBORValidator::new(&cddl, cbor);
   cv.validate()
@@ -1598,34 +1598,88 @@ pub fn is_ident_bigfloat_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   })
 }
 
-/// Is the given identifier associated with a numeric data type
-pub fn is_ident_numeric_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let Token::UINT
-  | Token::NINT
-  | Token::INTEGER
-  | Token::INT
-  | Token::NUMBER
-  | Token::FLOAT
-  | Token::FLOAT16
-  | Token::FLOAT32
-  | Token::FLOAT64
-  | Token::FLOAT1632
-  | Token::FLOAT3264
-  | Token::UNSIGNED = lookup_ident(ident.ident)
-  {
-    return true;
+#[derive(Clone, Copy)]
+enum PreludeTypeClass {
+  Any,
+  ByteString,
+  Float,
+  Integer,
+  Numeric,
+  String,
+}
+
+fn token_matches_type_class(token: &Token, class: PreludeTypeClass) -> bool {
+  match class {
+    PreludeTypeClass::Any => matches!(token, Token::ANY),
+    PreludeTypeClass::ByteString => matches!(token, Token::BSTR | Token::BYTES),
+    PreludeTypeClass::Float => matches!(
+      token,
+      Token::FLOAT
+        | Token::FLOAT16
+        | Token::FLOAT1632
+        | Token::FLOAT32
+        | Token::FLOAT3264
+        | Token::FLOAT64
+        | Token::NUMBER
+    ),
+    PreludeTypeClass::Integer => matches!(
+      token,
+      Token::INT | Token::INTEGER | Token::NINT | Token::UINT | Token::NUMBER | Token::UNSIGNED
+    ),
+    PreludeTypeClass::Numeric => matches!(
+      token,
+      Token::UINT
+        | Token::NINT
+        | Token::INTEGER
+        | Token::INT
+        | Token::NUMBER
+        | Token::FLOAT
+        | Token::FLOAT16
+        | Token::FLOAT32
+        | Token::FLOAT64
+        | Token::FLOAT1632
+        | Token::FLOAT3264
+        | Token::UNSIGNED
+    ),
+    PreludeTypeClass::String => matches!(token, Token::TEXT | Token::TSTR),
+  }
+}
+
+fn ident_matches_type_class(cddl: &CDDL, ident: &Identifier, class: PreludeTypeClass) -> bool {
+  fn visit(
+    cddl: &CDDL,
+    ident: &Identifier,
+    class: PreludeTypeClass,
+    visited: &mut HashSet<String>,
+  ) -> bool {
+    if token_matches_type_class(&lookup_ident(ident.ident), class) {
+      return true;
+    }
+    if !visited.insert(ident.to_string()) {
+      return false;
+    }
+
+    cddl.rules.iter().any(|rule| match rule {
+      Rule::Type { rule, .. } if rule.name == *ident => {
+        rule
+          .value
+          .type_choices
+          .iter()
+          .any(|choice| match &choice.type1.type2 {
+            Type2::Typename { ident, .. } => visit(cddl, ident, class, visited),
+            _ => false,
+          })
+      }
+      _ => false,
+    })
   }
 
-  cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_numeric_data_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
-    _ => false,
-  })
+  visit(cddl, ident, class, &mut HashSet::new())
+}
+
+/// Is the given identifier associated with a numeric data type
+pub fn is_ident_numeric_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
+  ident_matches_type_class(cddl, ident, PreludeTypeClass::Numeric)
 }
 
 /// Is the given identifier associated with a uint data type
@@ -1708,22 +1762,7 @@ pub fn ident_numeric_kind(cddl: &CDDL, ident: &Identifier) -> Option<NumericKind
   note = "not mutually exclusive with is_ident_float_data_type (`number` matches both); use ident_numeric_kind and handle NumericKind::Both"
 )]
 pub fn is_ident_integer_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let Token::INT | Token::INTEGER | Token::NINT | Token::UINT | Token::NUMBER | Token::UNSIGNED =
-    lookup_ident(ident.ident)
-  {
-    return true;
-  }
-
-  cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_integer_data_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
-    _ => false,
-  })
+  ident_matches_type_class(cddl, ident, PreludeTypeClass::Integer)
 }
 
 /// Does the given identifier denote a bignum data type that accepts CBOR tag
@@ -1759,81 +1798,22 @@ pub fn is_ident_bignum_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
   note = "not mutually exclusive with is_ident_integer_data_type (`number` matches both); use ident_numeric_kind and handle NumericKind::Both"
 )]
 pub fn is_ident_float_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let Token::FLOAT
-  | Token::FLOAT16
-  | Token::FLOAT1632
-  | Token::FLOAT32
-  | Token::FLOAT3264
-  | Token::FLOAT64
-  | Token::NUMBER = lookup_ident(ident.ident)
-  {
-    return true;
-  }
-
-  cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_float_data_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
-    _ => false,
-  })
+  ident_matches_type_class(cddl, ident, PreludeTypeClass::Float)
 }
 
 /// Is the given identifier associated with a string data type
 pub fn is_ident_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let Token::TEXT | Token::TSTR = lookup_ident(ident.ident) {
-    return true;
-  }
-
-  cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_string_data_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
-    _ => false,
-  })
+  ident_matches_type_class(cddl, ident, PreludeTypeClass::String)
 }
 
 /// Is the given identifier associated with the any type
 pub fn is_ident_any_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let Token::ANY = lookup_ident(ident.ident) {
-    return true;
-  }
-
-  cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_any_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
-    _ => false,
-  })
+  ident_matches_type_class(cddl, ident, PreludeTypeClass::Any)
 }
 
 /// Is the given identifier associated with a byte string data type
 pub fn is_ident_byte_string_data_type(cddl: &CDDL, ident: &Identifier) -> bool {
-  if let Token::BSTR | Token::BYTES = lookup_ident(ident.ident) {
-    return true;
-  }
-
-  cddl.rules.iter().any(|r| match r {
-    Rule::Type { rule, .. } if rule.name == *ident => rule.value.type_choices.iter().any(|tc| {
-      if let Type2::Typename { ident, .. } = &tc.type1.type2 {
-        is_ident_byte_string_data_type(cddl, ident)
-      } else {
-        false
-      }
-    }),
-    _ => false,
-  })
+  ident_matches_type_class(cddl, ident, PreludeTypeClass::ByteString)
 }
 
 /// Retrieve number of group entries from a group. This is currently only used

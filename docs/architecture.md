@@ -216,6 +216,34 @@ releases its errors and any entries it claimed.
 The `b64url` prelude accepts unpadded URL-safe base64 text in JSON. In CBOR it
 requires tag 33 around a text payload and validates that payload with the same
 decoder; untagged text, other tags and non-text payloads are rejected.
+Other tagged CBOR prelude types also require their declared tags, including
+`time` (1) and `uri` (32); date/time and base64url payload checks still apply.
+
+Numeric target and controller-domain probes cache failed as well as successful
+proofs. Controller proofs are keyed by operand, resolved generic bindings and
+enabled feature set. Successful proofs that rely on a recursion guard are not cached;
+cached failures replay at the current data location. Alternatives decide whether
+they matched using isolated diagnostics before deduplicating failed probes.
+This includes named `/=` contributions and computed-control alternatives;
+successful arms retain their validation state. Diagnostic deduplication uses a
+local hash set of complete errors, preserving insertion order and distinct
+locations without retaining bookkeeping across error resets. Named groups with
+no `//=` contributions skip alternative checkpoints entirely.
+
+CBOR feature gates run before primitive-domain prefilters. Disabled features,
+including an unspecified feature set, skip their target as before; enabled
+features validate the complete target, including mixed numeric/string choices
+and required prelude tags. Gates and constrained equality aliases preserve
+operand-interpreting contexts, including comparisons, size, bits and regular
+expressions. Nested equality under target-validating controls such as `.and`
+and `.within` instead evaluates its own operand without inheriting that
+enclosing control. Computed `.cat`, `.det` and `.plus` controls bypass operand
+domain prefilters and validate their computed alternatives.
+Same-value generic typename and group-to-choice children share proof caches,
+recursion context and the parent's data location for proof keys and
+controller-error replay. Each child binds only the
+current instantiation's arguments; retaining a successful named alternative's
+state must not reuse arguments from a previous call.
 
 The client never imports server internals. Browser modules never import LSP
 sources. ESLint enforces these source boundaries; the generated WASM packages
