@@ -311,19 +311,30 @@ fn apply_alias_encodings(
         } if metadata_name == name => Some(fields),
         _ => None,
       });
-      for field in fields {
-        let key = format!("{}.{}", to_cddl_lookup_name(name), field.original_name);
-        if field.tag.is_some() || opts.substitutions.contains_key(&key) {
-          continue;
-        }
-        let encoding_type = metadata_fields
-          .and_then(|fields| fields.iter().find(|f| f.name == field.name))
-          .map_or(field.rust_type.as_str(), |f| f.rust_type.as_str());
-        match alias_encoding(encoding_type, &aliases, &mut Vec::new())? {
-          Some(Encoding::Tag(tag)) => field.tag = Some(tag),
-          encoding => field.encoding = encoding,
-        }
-      }
+      apply_field_encodings(name, fields, metadata_fields, opts, &aliases)?;
+    }
+  }
+  Ok(())
+}
+
+fn apply_field_encodings(
+  name: &str,
+  fields: &mut [RustField],
+  metadata_fields: Option<&Vec<RustField>>,
+  opts: &CodegenOptions,
+  aliases: &AliasMap,
+) -> Result<(), CodegenError> {
+  for field in fields {
+    let key = format!("{}.{}", to_cddl_lookup_name(name), field.original_name);
+    if field.tag.is_some() || opts.substitutions.contains_key(&key) {
+      continue;
+    }
+    let encoding_type = metadata_fields
+      .and_then(|fields| fields.iter().find(|f| f.name == field.name))
+      .map_or(field.rust_type.as_str(), |f| f.rust_type.as_str());
+    match alias_encoding(encoding_type, aliases, &mut Vec::new())? {
+      Some(Encoding::Tag(tag)) => field.tag = Some(tag),
+      encoding => field.encoding = encoding,
     }
   }
   Ok(())
@@ -1195,14 +1206,15 @@ fn type_rule_to_rust_def<'b>(
         let target = type_to_rust_string(pt, opts)?;
         Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
       }
-      Type2::Unwrap { ident, .. } => {
+      Type2::Unwrap { ident, .. } | Type2::ChoiceFromGroup { ident, .. } => {
         let target = to_pascal_case(ident.ident);
         Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
       }
       Type2::IntValue { .. }
       | Type2::UintValue { .. }
       | Type2::FloatValue { .. }
-      | Type2::TextValue { .. } => {
+      | Type2::TextValue { .. }
+      | Type2::TaggedData { .. } => {
         // Literal value rules (e.g. `color = "red"`) and numeric range rules
         // (e.g. `scale = 1..10`, whose lower bound is parsed as a value) are
         // emitted as type aliases to the underlying Rust type so that other
@@ -1217,14 +1229,6 @@ fn type_rule_to_rust_def<'b>(
           variants,
           doc,
         }))
-      }
-      Type2::ChoiceFromGroup { ident, .. } => {
-        let target = to_pascal_case(ident.ident);
-        Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
-      }
-      Type2::TaggedData { .. } => {
-        let target = type1_to_rust_string(type1, opts)?;
-        Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
       }
       _ => Ok(None),
     }
@@ -2633,13 +2637,85 @@ fn render_struct(
     writeln!(output, "#[non_exhaustive]")?;
   }
   writeln!(output, "pub struct {} {{", name)?;
-  for (field, spec) in fields.iter().zip(&field_specs) {
-    render_struct_field(output, field, spec.clone(), tag_mod)?;
-  }
-  writeln!(output, "}}")?;
+  render_struct_fields(output, name, fields, &field_specs, tag_mod)?;
   if custom_de {
     render_flatten_deserialize(output, name, fields, &field_specs, tag_mod)?;
   }
+  Ok(())
+}
+
+fn render_struct_fields(
+  output: &mut String,
+  name: &str,
+  fields: &[RustField],
+  specs: &[Option<String>],
+  tag_mod: &str,
+) -> Result<(), CodegenError> {
+  for (field, spec) in fields.iter().zip(specs) {
+    let serializer = field
+      .integer_key
+      .map(|_| format!("__cddl_integer_{}_{}", to_snake_case(name), field.name));
+    render_struct_field(output, field, spec.clone(), tag_mod, serializer.as_deref())?;
+  }
+  writeln!(output, "}}")?;
+  for (field, spec) in fields.iter().zip(specs) {
+    if let Some(key) = field.integer_key {
+      render_integer_field_serializer(output, name, field, key, spec.as_deref(), tag_mod)?;
+    }
+  }
+  Ok(())
+}
+
+fn render_integer_field_serializer(
+  output: &mut String,
+  name: &str,
+  field: &RustField,
+  key: i128,
+  spec: Option<&str>,
+  tag_mod: &str,
+) -> Result<(), CodegenError> {
+  let helper = format!("__cddl_integer_{}_{}", to_snake_case(name), field.name);
+  let value_type = if field.is_boxed {
+    format!("Box<{}>", field.rust_type)
+  } else {
+    field.rust_type.clone()
+  };
+  writeln!(
+    output,
+    "fn {helper}<S: serde::Serializer>(value: &{}, serializer: S) -> Result<S::Ok, S::Error> {{",
+    wrap_field_type(field, field.rust_type.clone())
+  )?;
+  writeln!(output, "    use serde::ser::SerializeMap;")?;
+  writeln!(output, "    struct Value<'a>(&'a {value_type});")?;
+  writeln!(output, "    impl serde::Serialize for Value<'_> {{\n        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {{")?;
+  let serialize = if let Some(spec) = spec {
+    format!("serde_with::As::<{spec}>::serialize")
+  } else if let Some(tag) = field.tag {
+    format!("{}::{}::serialize", tag_mod, tag.ident.replace('-', "_"))
+  } else {
+    "serde::Serialize::serialize".into()
+  };
+  writeln!(
+    output,
+    "            {serialize}(self.0, serializer)\n        }}\n    }}"
+  )?;
+  if field.is_optional {
+    writeln!(output, "    let mut map = serializer.serialize_map(Some(usize::from(value.is_some())))?;\n    if let Some(value) = value {{")?;
+  } else {
+    writeln!(
+      output,
+      "    let mut map = serializer.serialize_map(Some(1))?;"
+    )?;
+  }
+  let key_type = if key < 0 { "i64" } else { "u64" };
+  writeln!(
+    output,
+    "    map.serialize_entry(&({key}{key_type}), &Value(value))?;"
+  )?;
+  if field.is_optional {
+    writeln!(output, "    }}")?;
+  }
+  writeln!(output, "    map.end()\n}}")?;
   Ok(())
 }
 
@@ -2970,8 +3046,12 @@ fn render_struct_field(
   field: &RustField,
   spec: Option<String>,
   tag_mod: &str,
+  integer_serializer: Option<&str>,
 ) -> Result<(), CodegenError> {
   render_doc(output, &field.doc, "    ")?;
+  if let Some(serializer) = integer_serializer {
+    return render_integer_struct_field(output, field, serializer);
+  }
   if field.flatten || field.flatten_group {
     writeln!(output, "    #[serde(flatten)]")?;
   }
@@ -3004,6 +3084,31 @@ fn render_struct_field(
   }
   let field_type = wrap_field_type(field, field.rust_type.clone());
   writeln!(output, "    pub {}: {},", field.name, field_type)?;
+  Ok(())
+}
+
+fn render_integer_struct_field(
+  output: &mut String,
+  field: &RustField,
+  serializer: &str,
+) -> Result<(), CodegenError> {
+  writeln!(
+    output,
+    "    #[serde(flatten, serialize_with = {:?})]",
+    serializer
+  )?;
+  if field.is_optional {
+    writeln!(
+      output,
+      "    #[serde(skip_serializing_if = \"Option::is_none\")]"
+    )?;
+  }
+  writeln!(
+    output,
+    "    pub {}: {},",
+    field.name,
+    wrap_field_type(field, field.rust_type.clone())
+  )?;
   Ok(())
 }
 
