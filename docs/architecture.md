@@ -44,6 +44,10 @@ Ordinary generic instantiation also bounds zero-progress, same-location depth
 to 48, including non-numeric changing-argument cycles. Collision-checked
 structural identities are interned instead of storing byte-limited formatted
 keys, so long literal payloads and data locations are not rejected by key size.
+Only type structures are interned: raw locations live in active markers and
+are removed as evaluation unwinds, without retaining every completed element.
+Identity tables, negative-dependency boundaries, and work allowances belong to
+private format-validator contexts, not the public `ValidationState` API.
 Numeric target checks share a 4096-visit ordinary-evaluator allowance with
 their equality/inequality membership checks; controller candidate checks have
 their own 4096-visit allowance. Nested child validators inherit the active
@@ -52,6 +56,13 @@ Exhaustion and recursive constraint proofs return errors,
 not validity assumptions that `.ne` could invert. These budgets and caches
 are local to each resolution or evaluation, never shared across public
 validation calls.
+Ordering controllers with non-singleton domains are hard errors as well.
+Their domains are proved before target membership, so a target mismatch cannot
+hide an invalid controller inside `.ne`.
+Recursion crossing an active negative-membership dependency is distinguished
+from an ordinary positive cycle cut; only the latter can denote an empty
+recursive alternative. Candidate-value proofs start fresh negative dependencies
+alongside their fresh ordinary guards.
 Mixed integer/float ordering compares integral parts exactly before fractional
 remainders, preserving 64-bit boundaries without rounding integers to floats.
 Equality and inequality retain controller-domain membership semantics.
@@ -72,6 +83,11 @@ applying the enclosing operation. Singleton and empty ranges are classified
 from their resolved endpoints, equivalent signed/unsigned integer spellings
 merge without merging integer and float domains, and `.plus` controllers use
 the values produced by the existing addition implementation.
+Adjacent exclusive integer bounds denote their lower integer; floating ranges
+keep their separate, nondiscrete domain. Bounded inline/named group enumerations
+resolve their alternatives with the same scope, constraint, cache, and work
+rules as numeric type controllers. Expansion preflight counts bound bare group
+entries before cloning their replacements.
 
 Map key type choices match each key independently: `{ * (int / tstr) => any }`
 accepts mixed integer and text keys in CBOR. Named choices and constraints on

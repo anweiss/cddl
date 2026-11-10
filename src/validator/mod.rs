@@ -144,10 +144,6 @@ pub struct ValidationState<'a> {
   pub is_multi_type_choice_type_rule_validating_array: bool,
   /// Track visited rules to prevent infinite recursion during validation
   pub visited_rules: HashSet<String>,
-  /// Work remaining in one numeric target or controller evaluation, inherited
-  /// by child validators. Public validation does not retain a spent allowance.
-  pub numeric_probe_work: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
-  numeric_identities: std::sync::Arc<std::sync::Mutex<NumericIdentities>>,
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   /// Enabled features for validation
@@ -189,8 +185,6 @@ impl<'a> ValidationState<'a> {
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
       visited_rules: HashSet::new(),
-      numeric_probe_work: None,
-      numeric_identities: Default::default(),
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
@@ -221,8 +215,6 @@ impl<'a> ValidationState<'a> {
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
       visited_rules: HashSet::new(),
-      numeric_probe_work: None,
-      numeric_identities: Default::default(),
     }
   }
 
@@ -250,8 +242,6 @@ impl<'a> ValidationState<'a> {
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
       visited_rules: HashSet::new(),
-      numeric_probe_work: None,
-      numeric_identities: Default::default(),
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
@@ -282,8 +272,6 @@ impl<'a> ValidationState<'a> {
       is_root: false,
       is_multi_type_choice_type_rule_validating_array: false,
       visited_rules: HashSet::new(),
-      numeric_probe_work: None,
-      numeric_identities: Default::default(),
     }
   }
 }
@@ -1543,41 +1531,49 @@ fn complete_numeric_candidate(operator: &RangeCtlOp) -> bool {
 }
 
 #[cfg(feature = "cbor")]
-fn reset_numeric_identities(state: &mut ValidationState) {
-  if state.numeric_probe_work.is_none() && state.visited_rules.is_empty() {
-    state.numeric_identities = Default::default();
+fn reset_numeric_context(context: &mut NumericContext, state: &ValidationState) {
+  if context.work.is_none() && state.visited_rules.is_empty() {
+    *context = Default::default();
   }
 }
 
 fn numeric_recursion_marker(
   state: &ValidationState,
+  context: &NumericContext,
   category: &str,
   subject: &impl std::fmt::Debug,
 ) -> Option<String> {
-  let location = format!(
-    "\u{0}{}",
-    compact_numeric_key(state, format_args!("{}", state.data_location))
-  );
-  let depth = state
-    .visited_rules
-    .iter()
-    .filter(|key| key.starts_with(category) && key.ends_with(&location))
-    .count();
-  if depth >= MAX_NUMERIC_RESOLUTION_DEPTH {
+  let location = format!("\u{0}{}", state.data_location);
+  if !numeric_recursion_depth_available(state, category) {
     return None;
   }
   let identity = compact_numeric_key(
-    state,
+    context,
     format_args!("{:?}\u{0}{subject:?}", active_generic_context(state)),
   );
   Some(format!("{category}\u{0}{identity}{location}"))
 }
 
+fn numeric_recursion_depth_available(state: &ValidationState, category: &str) -> bool {
+  let depth = state
+    .visited_rules
+    .iter()
+    .filter(|key| {
+      key
+        .strip_prefix(category)
+        .and_then(|tail| tail.strip_prefix('\0'))
+        .and_then(|tail| tail.split_once('\0'))
+        .is_some_and(|(_, location)| location == state.data_location)
+    })
+    .count();
+  depth < MAX_NUMERIC_RESOLUTION_DEPTH
+}
+
 const MAX_NUMERIC_RESOLUTION_DEPTH: usize = 48;
 const MAX_NUMERIC_RESOLUTION_WORK: usize = 4096;
 
-fn charge_numeric_probe(state: &ValidationState) -> std::result::Result<(), ()> {
-  if let Some(work) = &state.numeric_probe_work {
+fn charge_numeric_probe(context: &NumericContext) -> std::result::Result<(), ()> {
+  if let Some(work) = &context.work {
     use std::sync::atomic::Ordering;
     work
       .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
@@ -1634,12 +1630,12 @@ fn numeric_literal_order(a: &token::Value, b: &token::Value) -> Option<std::cmp:
 }
 
 fn numeric_instantiation_key(
-  state: &ValidationState,
+  identities: &NumericContext,
   context: &str,
   ident: &Identifier,
   args: &[Type1],
 ) -> String {
-  compact_numeric_key(state, format_args!("{context}\u{0}{ident}<{args:?}>"))
+  compact_numeric_key(identities, format_args!("{context}\u{0}{ident}<{args:?}>"))
 }
 
 enum NumericControllerError<E> {
@@ -1759,6 +1755,7 @@ fn numeric_controller_value<'a, E>(
 
 struct NumericControllerResolver<'s, 'a, F> {
   state: &'s ValidationState<'a>,
+  numeric_context: NumericContext,
   context: String,
   validate: F,
   active: HashSet<String>,
@@ -1774,9 +1771,14 @@ where
   F: FnMut(&Type1<'a>, &token::Value<'a>) -> std::result::Result<bool, E>,
 {
   fn new(state: &'s ValidationState<'a>, validate: F) -> Option<Self> {
-    let context = compact_numeric_key(state, format_args!("{:?}", active_generic_context(state)));
+    let numeric_context = NumericContext::default();
+    let context = compact_numeric_key(
+      &numeric_context,
+      format_args!("{:?}", active_generic_context(state)),
+    );
     Some(NumericControllerResolver {
       state,
+      numeric_context,
       context,
       validate,
       active: HashSet::new(),
@@ -1789,6 +1791,13 @@ where
   }
 
   fn type2_value(&mut self, value: &Type2<'a>) -> std::result::Result<NumericDomain<'a>, E> {
+    self.bounded_resolution(|resolver| resolver.resolve_type2(value))
+  }
+
+  fn bounded_resolution(
+    &mut self,
+    resolve: impl FnOnce(&mut Self) -> std::result::Result<NumericDomain<'a>, E>,
+  ) -> std::result::Result<NumericDomain<'a>, E> {
     // Check before resolving arguments, formatting keys or cloning/substituting
     // bodies: changing-argument cycles otherwise evade exact-key detection.
     if self.depth >= MAX_NUMERIC_RESOLUTION_DEPTH || self.remaining == 0 {
@@ -1797,7 +1806,7 @@ where
     }
     self.remaining -= 1;
     self.depth += 1;
-    let result = self.resolve_type2(value);
+    let result = resolve(self);
     self.depth -= 1;
     result
   }
@@ -1816,6 +1825,12 @@ where
         generic_args,
         ..
       } => self.ident_value(ident, generic_args.as_ref()),
+      Type2::ChoiceFromInlineGroup { group, .. } => self.group_value(group, &HashMap::new()),
+      Type2::ChoiceFromGroup {
+        ident,
+        generic_args,
+        ..
+      } => self.ident_value_mode(ident, generic_args.as_ref(), true),
       _ => Ok(NumericDomain::Unknown),
     }
   }
@@ -1905,6 +1920,14 @@ where
       Some(Ordering::Greater) => NumericDomain::Empty,
       Some(Ordering::Equal) if !inclusive => NumericDomain::Empty,
       Some(Ordering::Equal) => NumericDomain::Singleton(lower),
+      Some(Ordering::Less)
+        if !inclusive
+          && numeric_literal_integer(&lower).is_some_and(|lower| {
+            numeric_literal_integer(&upper).and_then(|upper| upper.checked_sub(lower)) == Some(1)
+          }) =>
+      {
+        NumericDomain::Singleton(lower)
+      }
       _ => NumericDomain::Unknown,
     })
   }
@@ -1983,8 +2006,18 @@ where
     ident: &Identifier<'a>,
     args: Option<&GenericArgs<'a>>,
   ) -> std::result::Result<NumericDomain<'a>, E> {
+    self.ident_value_mode(ident, args, false)
+  }
+
+  fn ident_value_mode(
+    &mut self,
+    ident: &Identifier<'a>,
+    args: Option<&GenericArgs<'a>>,
+    group: bool,
+  ) -> std::result::Result<NumericDomain<'a>, E> {
+    let context = format!("{}{}", if group { "&" } else { "" }, self.context);
     let Some((resolved, key)) = self.resolve_args(args).map(|resolved| {
-      let key = numeric_instantiation_key(self.state, &self.context, ident, &resolved);
+      let key = numeric_instantiation_key(&self.numeric_context, &context, ident, &resolved);
       (resolved, key)
     }) else {
       self.exhausted = true;
@@ -1998,7 +2031,11 @@ where
       return Ok(NumericDomain::Empty);
     }
     let cuts = self.cycle_cuts;
-    let result = self.rule_value(ident, resolved);
+    let result = if group {
+      self.group_rule_value(ident, resolved)
+    } else {
+      self.rule_value(ident, resolved)
+    };
     self.active.remove(&key);
     // A cut is a least-fixed-point assumption about the active chain, not a
     // completed proof. Never reuse that result from an unguarded context.
@@ -2008,6 +2045,86 @@ where
       }
     }
     result
+  }
+
+  fn group_rule_value(
+    &mut self,
+    ident: &Identifier<'a>,
+    args: Vec<Type1<'a>>,
+  ) -> std::result::Result<NumericDomain<'a>, E> {
+    let params = rule_from_ident(self.state.cddl, ident)
+      .and_then(generic_params_from_rule)
+      .unwrap_or_default();
+    let bindings = params.into_iter().zip(args).collect();
+    let mut found = false;
+    let mut result = NumericDomain::Empty;
+    for rule in &self.state.cddl.rules {
+      if let Rule::Group { rule, .. } = rule {
+        if rule.name == *ident {
+          found = true;
+          result = merge_numeric_domains(result, self.group_entry_value(&rule.entry, &bindings)?);
+        }
+      }
+    }
+    Ok(if found {
+      result
+    } else {
+      NumericDomain::Unknown
+    })
+  }
+
+  fn group_value(
+    &mut self,
+    group: &Group<'a>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> std::result::Result<NumericDomain<'a>, E> {
+    let mut result = NumericDomain::Empty;
+    for choice in &group.group_choices {
+      for (entry, _) in &choice.group_entries {
+        result = merge_numeric_domains(result, self.group_entry_value(entry, bindings)?);
+        if result == NumericDomain::Unknown || self.exhausted {
+          return Ok(result);
+        }
+      }
+    }
+    Ok(result)
+  }
+
+  fn group_entry_value(
+    &mut self,
+    entry: &GroupEntry<'a>,
+    bindings: &HashMap<&'a str, Type1<'a>>,
+  ) -> std::result::Result<NumericDomain<'a>, E> {
+    self.bounded_resolution(|resolver| {
+      if !group_entry_substitution_fits(entry, bindings) {
+        resolver.exhausted = true;
+        return Ok(NumericDomain::Unknown);
+      }
+      let mut group = Group::from(entry.clone());
+      substitute_group_params(&mut group, bindings);
+      resolver.resolve_group_entry(&group.group_choices[0].group_entries[0].0)
+    })
+  }
+
+  fn resolve_group_entry(
+    &mut self,
+    entry: &GroupEntry<'a>,
+  ) -> std::result::Result<NumericDomain<'a>, E> {
+    match entry {
+      GroupEntry::ValueMemberKey { ge, .. } => self.choices_value(
+        ge.entry_type
+          .type_choices
+          .iter()
+          .map(|choice| &choice.type1),
+        &HashMap::new(),
+      ),
+      GroupEntry::InlineGroup { group, .. } => self.group_value(group, &HashMap::new()),
+      GroupEntry::TypeGroupname { ge, .. } => self.ident_value_mode(
+        &ge.name,
+        ge.generic_args.as_ref(),
+        group_rule_from_ident(self.state.cddl, &ge.name).is_some(),
+      ),
+    }
   }
 
   fn rule_value(
@@ -2040,7 +2157,7 @@ pub(crate) fn resolved_generic_args<'a>(
 ) -> std::result::Result<Vec<Type1<'a>>, ()> {
   let bindings = current_generic_bindings(state);
   if !generic_arguments_fit(args, &bindings)
-    || numeric_recursion_marker(state, "#generic", args).is_none()
+    || !numeric_recursion_depth_available(state, "#generic")
   {
     return Err(());
   }
@@ -2824,7 +2941,7 @@ mod tests {
       unreachable!()
     };
     resolver.active.insert(numeric_instantiation_key(
-      &state,
+      &resolver.numeric_context,
       &resolver.context,
       ident,
       &[],

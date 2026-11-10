@@ -82,6 +82,182 @@ const CONTROL_DOMAINS: &[(&str, bool)] = &[
   ("x = float64 .ne (float16 / 1.1)", false),
 ];
 
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn integer_membership_controls_preserve_negative_domains() {
+  for controller in ["nint", "negative"] {
+    let eq = format!("x = int .eq {controller}\nnegative = nint");
+    let ne = format!("x = int .ne {controller}\nnegative = nint");
+    for (value, member) in [("1", false), ("0", false), ("-1", true)] {
+      assert_numeric_case(&eq, value, member);
+      assert_numeric_case(&ne, value, !member);
+    }
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn recursive_generic_group_choices_inherit_numeric_limits() {
+  #[cfg(not(target_arch = "wasm32"))]
+  if isolated_numeric_repro("recursive_generic_group_choices_inherit_numeric_limits") {
+    return;
+  }
+  let schema = "x = a<float16> .gt 0.0\na<t> = &g<t>\ng<t> = (value: a<t>)";
+  assert_numeric_case(schema, "1.5", false);
+  let growing = "x = float64 .gt &g<float64>\ng<t> = (next: &g<[t]>)";
+  assert_numeric_case(growing, "1.5", false);
+  #[cfg(not(target_arch = "wasm32"))]
+  assert_numeric_limit(growing, "1.5");
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn negative_recursive_constraints_are_errors_not_nonmembership() {
+  for schema in [
+    "x = a\na = float64 .ne a",
+    "x = a\na = float64 .ne b\nb = a",
+    "x = a\na = float64 .ne (a / int)",
+  ] {
+    assert_numeric_case(schema, "1.5", false);
+  }
+  assert_numeric_case("x = float64 .ne a\na = int / a", "1.5", true);
+  assert_numeric_case("x = float64 .ne a\na = a / float64", "1.5", false);
+  assert_numeric_case("x = a\na = a / float64", "1.5", true);
+  #[cfg(not(target_arch = "wasm32"))]
+  for error in numeric_error_messages("x = a\na = float64 .ne a", "1.5") {
+    assert!(error.contains("own negation"));
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn invalid_ordering_controllers_cannot_be_negated() {
+  for schema in [
+    "x = float64 .ne (float64 .gt (0.0 / 1.0))",
+    "x = float64 .ne invalid\ninvalid = float64 .gt threshold\nthreshold = 0.0 / 1.0",
+    "x = float64 .ne (int / (float64 .gt (0.0 / 1.0)))",
+  ] {
+    assert_numeric_case(schema, "1.5", false);
+  }
+  assert_numeric_case("x = float64 .ne (float64 .gt 0.0)", "1.5", false);
+  assert_numeric_case("x = float64 .ne (float64 .gt 0.0)", "-1.5", true);
+  assert_numeric_case("x = int .ne (float64 .gt (0.0 / 1.0))", "1", false);
+  assert_numeric_case("x = float64 .ne (float16 .gt (0.0 / 1.0))", "1.1", false);
+  assert_numeric_case("x = float64 .ne (float16 .gt 0.0)", "1.1", true);
+  #[cfg(not(target_arch = "wasm32"))]
+  for error in numeric_error_messages("x = float64 .ne (float64 .gt (0.0 / 1.0))", "1.5") {
+    assert!(error.contains("must denote a singleton"));
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn numeric_group_enumerations_resolve_singletons_in_scope() {
+  for controller in [
+    "&(zero: 0.0)",
+    "&g\ng = (zero: float64 .eq 0.0)",
+    "&g<float64>\ng<t> = (zero: t .eq 0.0)",
+    "&g<float64>\ng<t> = (nested: &h<t>)\nh<u> = (zero: u .eq 0.0)",
+    "&g\ng = (zero: 0.0 // next: &g)",
+    "&g\ng = (zero: 0.0)\ng //= (same: 0.0)",
+    "&g<float64>\ng<t> = (zero: t .eq 0.0 // empty: float16 .eq 1.1)",
+  ] {
+    let schema = format!("x = float64 .gt {controller}");
+    assert_numeric_case(&schema, "1.5", true);
+    assert_numeric_case(&schema, "-1.5", false);
+  }
+  assert_numeric_case(
+    "x = float64 .gt &g<float16>\ng<t> = (zero: t .eq 1.1)",
+    "1.5",
+    false,
+  );
+  assert_numeric_case("x = float64 .gt &(a: 0.0, b: 1.0)", "1.5", false);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn adjacent_exclusive_integer_ranges_are_singletons() {
+  for zero in ["0...1", "-1...0", "-2...-1", "4294967294...4294967295"] {
+    let schema = format!("x = float64 .lt upper\nupper = {zero}");
+    assert_numeric_case(&schema, "-3.5", true);
+  }
+  assert_numeric_case("x = float64 .gt (0...1)", "1.5", true);
+  assert_numeric_case("x = float64 .gt (-1...0)", "-1.5", false);
+  assert_numeric_case("x = float64 .gt (0.0...1.0)", "1.5", false);
+  #[cfg(target_pointer_width = "64")]
+  assert_numeric_case(
+    "x = float64 .lt (18446744073709551614...18446744073709551615)",
+    "1.5",
+    true,
+  );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn wide_bare_group_replacements_are_preflighted() {
+  #[cfg(not(target_arch = "wasm32"))]
+  if isolated_numeric_repro("wide_bare_group_replacements_are_preflighted") {
+    return;
+  }
+  let mut cddl =
+    cddl::pest_bridge::cddl_from_pest_str("x = repeat<[uint]>\nrepeat<t> = [t]").unwrap();
+  let cddl::ast::Rule::Type { rule, .. } = &mut cddl.rules[0] else {
+    unreachable!()
+  };
+  let cddl::ast::Type2::Typename {
+    generic_args: Some(args),
+    ..
+  } = &mut rule.value.type_choices[0].type1.type2
+  else {
+    unreachable!()
+  };
+  widen_array(&mut args.args[0].arg.type2);
+  let cddl::ast::Rule::Type { rule, .. } = &mut cddl.rules[1] else {
+    unreachable!()
+  };
+  widen_array(&mut rule.value.type_choices[0].type1.type2);
+  #[cfg(feature = "json")]
+  {
+    let mut validator = cddl::validator::json::JSONValidator::new(
+      &cddl,
+      serde_json::Value::Array(Vec::new()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert!(cddl::validator::Validator::validate(&mut validator)
+      .unwrap_err()
+      .to_string()
+      .contains("limit exceeded"));
+  }
+  #[cfg(feature = "cbor")]
+  {
+    let mut validator = cddl::validator::cbor::CBORValidator::new(
+      &cddl,
+      cddl::validator::cbor_value::Value::Array(Vec::new()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    let result: Result<(), cddl::validator::cbor::Error<std::io::Error>> =
+      cddl::validator::Validator::validate(&mut validator);
+    assert!(result.unwrap_err().to_string().contains("limit exceeded"));
+  }
+}
+
+fn widen_array(value: &mut cddl::ast::Type2<'_>) {
+  let cddl::ast::Type2::Array { group, .. } = value else {
+    unreachable!()
+  };
+  let choice = &mut group.group_choices[0];
+  choice.group_entries = vec![choice.group_entries[0].clone(); 2000];
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn completed_array_locations_release_transient_probe_state() {
+  let data = format!("[{}]", vec!["1.5"; 5000].join(","));
+  assert_numeric_case("x = [* float64 .gt 0.0]", &data, true);
+  assert_numeric_case("x = float64 .gt 0.0", "1.5", true);
+}
 const WRAPPED_GENERIC_SCHEMAS: &[&str] = &[
   "x = a<float16>\na<t> = t / [a<(t)>]",
   "x = a<float16>\na<t> = t / [a<((t))>]",
@@ -132,6 +308,14 @@ fn assert_numeric_case(schema: &str, data: &str, expected: bool) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn assert_numeric_limit(schema: &str, data: &str) {
+  for error in numeric_error_messages(schema, data) {
+    assert!(error.contains("limit exceeded"));
+  }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn numeric_error_messages(schema: &str, data: &str) -> Vec<String> {
+  let mut errors = Vec::new();
   #[cfg(feature = "json")]
   {
     let result = cddl::validator::validate_json_from_str(
@@ -140,7 +324,7 @@ fn assert_numeric_limit(schema: &str, data: &str) {
       #[cfg(feature = "additional-controls")]
       None,
     );
-    assert!(result.unwrap_err().to_string().contains("limit exceeded"));
+    errors.push(result.unwrap_err().to_string());
   }
   #[cfg(feature = "cbor")]
   {
@@ -153,8 +337,9 @@ fn assert_numeric_limit(schema: &str, data: &str) {
       #[cfg(feature = "additional-controls")]
       None,
     );
-    assert!(result.unwrap_err().to_string().contains("limit exceeded"));
+    errors.push(result.unwrap_err().to_string());
   }
+  errors
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -876,6 +1061,20 @@ mod cbor {
 mod json {
   use super::validate_json;
 
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn float_range_membership_excludes_integer_json_numbers() {
+    assert!(validate_json("x = int .ne (1.0..1.0)", "1"));
+    assert!(!validate_json("x = int .eq (1.0..1.0)", "1"));
+    assert!(validate_json("x = float64 .eq (1.0..1.0)", "1.0"));
+    assert!(!validate_json("x = float64 .eq (1.0..1.0)", "1.5"));
+    assert!(!validate_json("x = 1.0..1.0", "1"));
+    assert!(validate_json("x = 1.0..1.0", "1.0"));
+    assert!(validate_json(
+      "x = int .ne (9007199254740992.0..9007199254740992.0)",
+      "9007199254740993"
+    ));
+  }
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
   #[cfg_attr(not(target_arch = "wasm32"), test)]
   fn float_literals_exclude_integer_json_numbers_without_rounding() {

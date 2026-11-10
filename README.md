@@ -559,6 +559,10 @@ the active visit allowance rather than replenishing it. Generic bounds also
 apply outside numeric proofs, including non-numeric zero-progress argument
 growth. Recursion markers use collision-checked, interned structural identities;
 there is no formatted-key byte limit on string literals or data locations.
+Locations are retained only in active recursion markers, not in the structural
+identity table, so completed array elements do not accumulate location metadata.
+All numeric bookkeeping is private to the format validators; the public
+`ValidationState` remains usable with struct-update construction.
 
 Exhaustion returns an explicit error, such as
 `numeric controller resolution limit exceeded` or
@@ -569,6 +573,11 @@ limits allow. Exhaustion is not guessed acceptance or a computed empty domain,
 and `.ne` cannot invert it into successful validation. See
 [the architecture notes](docs/architecture.md) for proof caching and recursion
 details.
+Non-singleton ordering controllers and recursive numeric constraints that depend on
+their own negation are also explicit errors, not ordinary nonmembership.
+Positive recursive alternatives still use ordinary cycle cuts. Numeric
+group-to-choice controllers share the proof limits and preserve their generic
+bindings and alternative constraints.
 
 #### Supported JSON validation features
 

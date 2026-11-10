@@ -1,5 +1,6 @@
 use super::*;
 use std::fmt::{self, Write};
+use std::sync::{Arc, Mutex};
 
 /// Interned, collision-checked structural fragments, rather than a digest or
 /// a byte-limited rendering. Literal payload size does not limit valid inputs.
@@ -39,9 +40,45 @@ impl Write for IdentityWriter<'_> {
   }
 }
 
-pub(super) fn compact_numeric_key(state: &ValidationState, value: fmt::Arguments) -> String {
-  let mut identities = state
-    .numeric_identities
+#[derive(Clone, Default)]
+pub(super) struct NumericContext {
+  identities: Arc<Mutex<NumericIdentities>>,
+  negative_boundaries: HashSet<String>,
+  pub(super) work: Option<Arc<std::sync::atomic::AtomicUsize>>,
+}
+
+pub(super) enum NumericRecursion {
+  Cut,
+  InvalidConstraint,
+}
+
+impl NumericContext {
+  pub(super) fn enter_negative(&mut self, state: &ValidationState<'_>) {
+    self
+      .negative_boundaries
+      .extend(state.visited_rules.iter().cloned());
+  }
+
+  pub(super) fn candidate(&self) -> Self {
+    Self {
+      identities: self.identities.clone(),
+      negative_boundaries: HashSet::new(),
+      work: self.work.clone(),
+    }
+  }
+
+  pub(super) fn recursion(&self, marker: &str) -> NumericRecursion {
+    if self.negative_boundaries.contains(marker) {
+      NumericRecursion::InvalidConstraint
+    } else {
+      NumericRecursion::Cut
+    }
+  }
+}
+
+pub(super) fn compact_numeric_key(context: &NumericContext, value: fmt::Arguments) -> String {
+  let mut identities = context
+    .identities
     .lock()
     .unwrap_or_else(|error| error.into_inner());
   let mut writer = IdentityWriter {
@@ -142,7 +179,19 @@ impl<'a, 'b> Visitor<'a, 'b, fmt::Error> for SubstitutionWork<'_, 'a> {
   }
 
   fn visit_group_entry(&mut self, entry: &'b GroupEntry<'a>) -> fmt::Result {
-    self.descend(|work| crate::visitor::walk_group_entry(work, entry))
+    self.descend(|work| {
+      if let GroupEntry::TypeGroupname { ge, .. } = entry {
+        if ge.generic_args.is_none() {
+          if let Some(argument) = work
+            .bindings
+            .and_then(|bindings| param_binding(bindings, &ge.name))
+          {
+            return work.bound_argument(argument);
+          }
+        }
+      }
+      crate::visitor::walk_group_entry(work, entry)
+    })
   }
 }
 
@@ -176,4 +225,91 @@ pub(super) fn group_entry_substitution_fits<'a>(
   SubstitutionWork::new(bindings)
     .visit_group_entry(value)
     .is_ok()
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn marker_depth_compares_complete_raw_locations() {
+    let cddl = crate::cddl_from_str("root = any", true).unwrap();
+    let mut state = ValidationState::new(
+      &cddl,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    state.data_location = "/leaf".to_string();
+    for index in 0..MAX_NUMERIC_RESOLUTION_DEPTH {
+      state
+        .visited_rules
+        .insert(format!("#generic\0{index}\0/ancestor\0/leaf"));
+    }
+    let context = NumericContext::default();
+    assert!(numeric_recursion_marker(&state, &context, "#generic", &0).is_some());
+    state.visited_rules.clear();
+    for index in 0..MAX_NUMERIC_RESOLUTION_DEPTH {
+      state
+        .visited_rules
+        .insert(format!("#generic\0{index}\0/leaf"));
+    }
+    assert!(numeric_recursion_marker(&state, &context, "#generic", &0).is_none());
+  }
+
+  #[cfg(feature = "json")]
+  fn json_identity_count(elements: usize) -> usize {
+    let cddl = crate::cddl_from_str("root = [* float64 .gt 0.0]", true).unwrap();
+    let value = serde_json::Value::Array(vec![serde_json::Value::from(1.5); elements]);
+    let mut validator = json::JSONValidator::new(
+      &cddl,
+      value,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.validate().unwrap();
+    let count = validator
+      .numeric_context
+      .identities
+      .lock()
+      .unwrap()
+      .nodes
+      .len();
+    assert!(validator.state.visited_rules.is_empty());
+    count
+  }
+
+  #[cfg(feature = "json")]
+  #[test]
+  fn completed_json_locations_do_not_accumulate_guard_metadata() {
+    assert_eq!(json_identity_count(1), json_identity_count(1000));
+  }
+
+  #[cfg(feature = "cbor")]
+  fn cbor_identity_count(elements: usize) -> usize {
+    let cddl = crate::cddl_from_str("root = [* float64 .gt 0.0]", true).unwrap();
+    let value = cbor_value::Value::Array(vec![cbor_value::Value::Float(1.5); elements]);
+    let mut validator = cbor::CBORValidator::new(
+      &cddl,
+      value,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    let result: Result<(), cbor::Error<std::io::Error>> = validator.validate();
+    result.unwrap();
+    let count = validator
+      .numeric_context
+      .identities
+      .lock()
+      .unwrap()
+      .nodes
+      .len();
+    assert!(validator.state.visited_rules.is_empty());
+    count
+  }
+
+  #[cfg(feature = "cbor")]
+  #[test]
+  fn completed_cbor_locations_do_not_accumulate_guard_metadata() {
+    assert_eq!(cbor_identity_count(1), cbor_identity_count(1000));
+  }
 }

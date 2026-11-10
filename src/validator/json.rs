@@ -518,6 +518,7 @@ pub struct JSONValidator<'a> {
   /// Access shared fields directly via `Deref` (e.g., `self.state.cddl`,
   /// `self.state.is_root`, `self.state.data_location`).
   pub state: super::ValidationState<'a>,
+  pub(super) numeric_context: NumericContext,
   json: Arc<Value>,
   errors: Vec<ValidationError>,
   // JSON object value hoisted from previous state of AST evaluation
@@ -548,12 +549,26 @@ pub struct JSONValidator<'a> {
 }
 
 impl<'a> JSONValidator<'a> {
+  fn record_numeric_cycle(&mut self, marker: &str, message: String) -> visitor::Result<Error> {
+    match self.numeric_context.recursion(marker) {
+      NumericRecursion::Cut => {
+        self.add_error(message);
+        Ok(())
+      }
+      NumericRecursion::InvalidConstraint => Err(Error::from_validator(
+        self,
+        "recursive numeric constraint depends on its own negation".to_string(),
+      )),
+    }
+  }
+
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   /// New JSONValidation from CDDL AST and JSON value
   pub fn new(cddl: &'a CDDL<'a>, json: Value, enabled_features: Option<&'a [&'a str]>) -> Self {
     JSONValidator {
       state: super::ValidationState::new(cddl, enabled_features),
+      numeric_context: Default::default(),
       json: Arc::new(json),
       errors: Vec::default(),
       object_value: None,
@@ -575,6 +590,7 @@ impl<'a> JSONValidator<'a> {
   pub fn new(cddl: &'a CDDL<'a>, json: Value) -> Self {
     JSONValidator {
       state: super::ValidationState::new(cddl),
+      numeric_context: Default::default(),
       json: Arc::new(json),
       errors: Vec::default(),
       object_value: None,
@@ -605,8 +621,7 @@ impl<'a> JSONValidator<'a> {
     jv.json = json.into();
     jv.map_replay_budget = self.map_replay_budget.clone();
     jv.map_rule_depth = self.map_rule_depth.clone();
-    jv.state.numeric_probe_work = self.state.numeric_probe_work.clone();
-    jv.state.numeric_identities = self.state.numeric_identities.clone();
+    jv.numeric_context = self.numeric_context.clone();
     jv
   }
 
@@ -616,7 +631,7 @@ impl<'a> JSONValidator<'a> {
     let mut fresh = self.new_child_validator(json);
     fresh.map_replay_budget = Arc::new(MapReplayBudget::new(limit));
     fresh.map_rule_depth = Arc::new(MapRuleDepth::new(self.map_rule_depth.limit));
-    fresh.state.numeric_identities = Default::default();
+    fresh.numeric_context = Default::default();
     *self = fresh;
   }
 
@@ -634,20 +649,39 @@ impl<'a> JSONValidator<'a> {
     ctrl: ControlOperator,
     controller: &Type2<'a>,
   ) -> visitor::Result<Error> {
+    let ordering_value = if matches!(ctrl, ControlOperator::EQ | ControlOperator::NE) {
+      None
+    } else {
+      Some(
+        self
+          .resolve_numeric_controller(controller)?
+          .ok_or_else(|| {
+            Error::from_validator(
+              self,
+              "numeric comparison controller must denote a singleton".to_string(),
+            )
+          })?,
+      )
+    };
     let mut probe = self.new_with_recursion_state(self.json.clone());
-    let work = self.state.numeric_probe_work.clone().unwrap_or_else(|| {
+    let work = self.numeric_context.work.clone().unwrap_or_else(|| {
       Arc::new(std::sync::atomic::AtomicUsize::new(
         MAX_NUMERIC_RESOLUTION_WORK,
       ))
     });
-    probe.state.numeric_probe_work = Some(work.clone());
+    probe.numeric_context.work = Some(work.clone());
     probe.state.data_location = self.state.data_location.clone();
-    let marker =
-      numeric_recursion_marker(&self.state, "#numeric-target", target).ok_or_else(|| {
-        Error::from_validator(self, "numeric target resolution limit exceeded".to_string())
-      })?;
-    if !probe.state.visited_rules.insert(marker) {
-      self.add_error("recursive numeric target binding".to_string());
+    let marker = numeric_recursion_marker(
+      &self.state,
+      &self.numeric_context,
+      "#numeric-target",
+      target,
+    )
+    .ok_or_else(|| {
+      Error::from_validator(self, "numeric target resolution limit exceeded".to_string())
+    })?;
+    if !probe.state.visited_rules.insert(marker.clone()) {
+      self.record_numeric_cycle(&marker, "recursive numeric target binding".to_string())?;
       return Ok(());
     }
     probe.visit_type2(target)?;
@@ -658,8 +692,11 @@ impl<'a> JSONValidator<'a> {
 
     if matches!(ctrl, ControlOperator::EQ | ControlOperator::NE) {
       let mut probe = self.new_with_recursion_state(self.json.clone());
-      probe.state.numeric_probe_work = Some(work);
+      probe.numeric_context.work = Some(work);
       probe.state.data_location = self.state.data_location.clone();
+      if ctrl == ControlOperator::NE {
+        probe.numeric_context.enter_negative(&self.state);
+      }
       probe.visit_type2(controller)?;
       if probe.errors.is_empty() == (ctrl == ControlOperator::NE) {
         self.add_error(format!(
@@ -670,10 +707,7 @@ impl<'a> JSONValidator<'a> {
       return Ok(());
     }
 
-    let Some(value) = self.resolve_numeric_controller(controller)? else {
-      self.add_error("numeric comparison controller must denote a singleton".to_string());
-      return Ok(());
-    };
+    let value = ordering_value.expect("ordering controller is proved before target membership");
     if !json_numeric_value(&self.json).is_some_and(|actual| actual.compare(ctrl, &value)) {
       self.add_error(format!(
         "expected value {} {}, got {}",
@@ -687,7 +721,7 @@ impl<'a> JSONValidator<'a> {
     &mut self,
     controller: &Type2<'a>,
   ) -> std::result::Result<Option<token::Value<'a>>, Error> {
-    let work = self.state.numeric_probe_work.clone().unwrap_or_else(|| {
+    let work = self.numeric_context.work.clone().unwrap_or_else(|| {
       std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
         MAX_NUMERIC_RESOLUTION_WORK,
       ))
@@ -700,15 +734,17 @@ impl<'a> JSONValidator<'a> {
         _ => unreachable!("non-numeric controller candidate"),
       };
       let mut probe = self.new_with_recursion_state(value);
+      probe.numeric_context = self.numeric_context.candidate();
       probe.state.eval_generic_rule = None;
       probe
         .state
         .visited_rules
         .retain(|key| key.starts_with("#numeric-controller\u{0}"));
-      probe.state.numeric_probe_work = Some(work.clone());
+      probe.numeric_context.work = Some(work.clone());
       probe.state.data_location = self.state.data_location.clone();
       let marker = numeric_recursion_marker(
         &self.state,
+        &self.numeric_context,
         "#numeric-controller",
         &(alternative, candidate),
       )
@@ -759,15 +795,21 @@ impl<'a> JSONValidator<'a> {
     ident: &Identifier<'a>,
     args: &GenericArgs<'a>,
     rule: &Rule<'a>,
+    group_choice: bool,
   ) -> visitor::Result<Error> {
     let resolved_args = self.resolve_generic_arguments(args)?;
-    let recursion_key = numeric_recursion_marker(&self.state, "#generic", &(ident, &resolved_args))
-      .ok_or_else(|| {
-        Error::from_validator(
-          self,
-          "generic instantiation depth limit exceeded".to_string(),
-        )
-      })?;
+    let recursion_key = numeric_recursion_marker(
+      &self.state,
+      &self.numeric_context,
+      "#generic",
+      &(ident, &resolved_args),
+    )
+    .ok_or_else(|| {
+      Error::from_validator(
+        self,
+        "generic instantiation depth limit exceeded".to_string(),
+      )
+    })?;
     let mut child = self.new_with_recursion_state(self.json.clone());
     child.state.data_location = self.state.data_location.clone();
     if let Some(binding) = child
@@ -786,10 +828,14 @@ impl<'a> JSONValidator<'a> {
     }
     child.state.eval_generic_rule = Some(ident.ident);
     child.state.is_multi_type_choice = self.state.is_multi_type_choice;
-    if child.state.visited_rules.insert(recursion_key) {
+    child.state.is_group_to_choice_enum = group_choice;
+    if child.state.visited_rules.insert(recursion_key.clone()) {
       child.visit_rule(rule)?;
     } else {
-      child.add_error(format!("Recursive rule reference detected: {}", ident));
+      child.record_numeric_cycle(
+        &recursion_key,
+        format!("Recursive rule reference detected: {}", ident),
+      )?;
     }
     self.errors.append(&mut child.errors);
     Ok(())
@@ -906,6 +952,7 @@ impl<'a> JSONValidator<'a> {
   pub fn new(cddl: &'a CDDL<'a>, json: Value, enabled_features: Option<Box<[JsValue]>>) -> Self {
     JSONValidator {
       state: super::ValidationState::new(cddl, enabled_features),
+      numeric_context: Default::default(),
       json: Arc::new(json),
       errors: Vec::default(),
       object_value: None,
@@ -927,6 +974,7 @@ impl<'a> JSONValidator<'a> {
   pub fn new(cddl: &'a CDDL<'a>, json: Value) -> Self {
     JSONValidator {
       state: super::ValidationState::new(cddl),
+      numeric_context: Default::default(),
       json: Arc::new(json),
       errors: Vec::default(),
       object_value: None,
@@ -3237,7 +3285,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
         match self.json.as_ref() {
           Value::Number(n) => {
-            if let Some(f) = n.as_f64() {
+            if let Some(f) = n.as_f64().filter(|_| n.is_f64()) {
               if is_inclusive {
                 if f < *l || f > *u {
                   self.add_error(error_str);
@@ -4061,7 +4109,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
   }
 
   fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error> {
-    charge_numeric_probe(&self.state).map_err(|()| {
+    charge_numeric_probe(&self.numeric_context).map_err(|()| {
       Error::from_validator(
         self,
         "numeric controller candidate work limit exceeded".to_string(),
@@ -4155,33 +4203,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
-            let resolved_args = self.resolve_generic_arguments(ga)?;
-            if let Some(gr) = self
-              .state
-              .generic_rules
-              .iter_mut()
-              .find(|r| r.name == ident.ident)
-            {
-              gr.args.extend(resolved_args);
-            } else if let Some(params) = generic_params_from_rule(rule) {
-              self.state.generic_rules.push(GenericRule {
-                name: ident.ident,
-                params,
-                args: resolved_args,
-              });
-            }
-
-            let mut jv = self.new_child_validator(self.json.clone());
-
-            jv.state.generic_rules = self.state.generic_rules.clone();
-            jv.state.eval_generic_rule = Some(ident.ident);
-            jv.state.is_group_to_choice_enum = true;
-            jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-            jv.visit_rule(rule)?;
-
-            self.errors.append(&mut jv.errors);
-
-            return Ok(());
+            return self.validate_generic_instantiation(ident, ga, rule, true);
           }
         }
 
@@ -4212,7 +4234,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
-            return self.validate_generic_instantiation(ident, ga, rule);
+            return self.validate_generic_instantiation(ident, ga, rule, false);
           }
         }
 
@@ -4389,15 +4411,18 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
   fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error> {
     if let Some(arg) = generic_argument_for_ident(&self.state, ident) {
-      let marker = numeric_recursion_marker(&self.state, "#param", ident).ok_or_else(|| {
-        Error::from_validator(
-          self,
-          "generic binding resolution limit exceeded".to_string(),
-        )
-      })?;
+      let marker = numeric_recursion_marker(&self.state, &self.numeric_context, "#param", ident)
+        .ok_or_else(|| {
+          Error::from_validator(
+            self,
+            "generic binding resolution limit exceeded".to_string(),
+          )
+        })?;
       if !self.state.visited_rules.insert(marker.clone()) {
-        self.add_error(format!("Recursive generic binding detected: {}", ident));
-        return Ok(());
+        return self.record_numeric_cycle(
+          &marker,
+          format!("Recursive generic binding detected: {}", ident),
+        );
       }
       let result = self.visit_type1(&arg);
       self.state.visited_rules.remove(&marker);
@@ -4416,11 +4441,10 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     // Check for recursion before processing the identifier
     if recursive {
       // We've seen this rule before in the current validation path, indicating a cycle
-      self.add_error(format!(
+      return self.record_numeric_cycle(&visited_key, format!(
         "Recursive rule reference detected: {}. This may indicate a circular definition in the CDDL schema.",
         ident.ident
       ));
-      return Ok(());
     }
 
     // self.state.is_colon_shortcut_present is only true when the ident is part of a
