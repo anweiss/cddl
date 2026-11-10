@@ -11,8 +11,10 @@
 
 ## Setup
 
-Use Node 24 LTS, Python 3.11+ and Rust stable installed through rustup.
-The supported Rust minimum is 1.88.0. From the repository root:
+Use Node 24 LTS, Python 3.11+, Rust stable installed through rustup, and a
+host C/C++ toolchain (including the platform linker) for Pest's native
+stack-guard dependency. The supported Rust minimum is 1.88.0. From the
+repository root:
 
 ```sh
 npm run setup

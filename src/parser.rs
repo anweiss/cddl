@@ -1,6 +1,6 @@
 use super::{ast::*, error::ErrorMsg, pest_bridge};
 
-#[cfg(all(feature = "std", feature = "ast-span"))]
+#[cfg(feature = "ast-span")]
 use super::lexer::Position;
 
 use core::result;

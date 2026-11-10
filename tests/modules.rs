@@ -3,7 +3,269 @@
 //! Conformance tests for the CDDL module structure, drawn from the examples in
 //! draft-ietf-cbor-cddl-modules-07.
 
-use cddl::modules::{resolve_modules, MemoryModuleSource, ModuleError, ResolveOptions};
+use cddl::modules::{
+  resolve_modules, MemoryModuleSource, ModuleError, ResolveOptions, ResolvedCddl,
+};
+
+#[cfg(all(any(feature = "json", feature = "cbor"), not(feature = "lsp")))]
+fn assert_silent_validation(test_name: &str, validate: impl FnOnce()) {
+  const CHILD_TEST: &str = "CDDL_SILENT_VALIDATION_TEST";
+  if std::env::var(CHILD_TEST).as_deref() == Ok(test_name) {
+    validate();
+    return;
+  }
+
+  // Capture OS-level stderr in a child, including codespan diagnostics that
+  // bypass the Rust test harness's output capture.
+  let output = std::process::Command::new(std::env::current_exe().unwrap())
+    .args(["--exact", test_name, "--nocapture"])
+    .env(CHILD_TEST, test_name)
+    .output()
+    .unwrap();
+  assert!(output.status.success(), "validation subprocess failed");
+  assert!(output.stderr.is_empty(), "validation wrote to stderr");
+  assert!(
+    String::from_utf8_lossy(&output.stdout).contains("test result: ok. 1 passed; 0 failed;"),
+    "validation subprocess did not run exactly one test"
+  );
+}
+
+#[cfg(all(any(feature = "json", feature = "cbor"), not(feature = "lsp")))]
+#[test]
+#[should_panic(expected = "validation subprocess did not run exactly one test")]
+fn owning_document_silent_validation_rejects_missing_tests() {
+  assert_silent_validation("<missing validation test>", || {});
+}
+
+#[cfg(all(feature = "json", not(feature = "lsp")))]
+#[test]
+fn owning_document_json_parse_errors_are_silent() {
+  assert_silent_validation("owning_document_json_parse_errors_are_silent", || {
+    let document = ResolvedCddl::resolve(
+      "private_schema = {",
+      &MemoryModuleSource::new(),
+      &ResolveOptions::default(),
+    )
+    .unwrap();
+    let result = document.validate_json(
+      "1",
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    match result {
+      Err(cddl::validator::json::Error::CDDLParsing(error)) => {
+        assert_eq!(error, document.parse().unwrap_err().to_string());
+      }
+      _ => panic!("expected a CDDL parsing error"),
+    }
+  });
+}
+
+#[cfg(all(feature = "cbor", not(feature = "lsp")))]
+#[test]
+fn owning_document_cbor_parse_errors_are_silent() {
+  assert_silent_validation("owning_document_cbor_parse_errors_are_silent", || {
+    let document = ResolvedCddl::resolve(
+      "private_schema = {",
+      &MemoryModuleSource::new(),
+      &ResolveOptions::default(),
+    )
+    .unwrap();
+    let result = document.validate_cbor(
+      &[0x01],
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    match result {
+      Err(cddl::validator::cbor::Error::CDDLParsing(error)) => {
+        assert_eq!(error, document.parse().unwrap_err().to_string());
+      }
+      _ => panic!("expected a CDDL parsing error"),
+    }
+  });
+}
+
+#[test]
+fn owning_document_outlives_input_and_source() {
+  let document = {
+    let mut source = MemoryModuleSource::new();
+    source.insert("numbers", "value = uint\n");
+    let input = String::from("start = n.value\n;# import numbers as n\n");
+    ResolvedCddl::resolve(&input, &source, &ResolveOptions::default()).unwrap()
+  };
+  assert!(document.text().contains("n.value = uint"));
+  assert_eq!(document.parse().unwrap().rules.len(), 2);
+  assert_eq!(document.clone(), document);
+}
+
+#[test]
+fn owning_document_distinguishes_resolution_and_root_parse_errors() {
+  assert!(matches!(
+    ResolvedCddl::resolve(
+      ";# include missing\n",
+      &MemoryModuleSource::new(),
+      &ResolveOptions::default()
+    ),
+    Err(ModuleError::ModuleNotFound { line: 1, .. })
+  ));
+  let document = ResolvedCddl::resolve(
+    "start = {",
+    &MemoryModuleSource::new(),
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(document.parse().is_err());
+}
+
+#[cfg(all(any(feature = "json", feature = "cbor"), not(feature = "lsp")))]
+#[test]
+fn owning_document_validation_rejects_undefined_rules() {
+  let document = ResolvedCddl::resolve(
+    "start = undefined_rule\n",
+    &MemoryModuleSource::new(),
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(document.parse().is_ok());
+  #[cfg(feature = "json")]
+  assert!(matches!(
+    document.validate_json(
+      "1",
+      #[cfg(feature = "additional-controls")]
+      None,
+    ),
+    Err(cddl::validator::json::Error::Validation(_))
+  ));
+  #[cfg(feature = "cbor")]
+  assert!(matches!(
+    document.validate_cbor(
+      &[0x01],
+      #[cfg(feature = "additional-controls")]
+      None,
+    ),
+    Err(cddl::validator::cbor::Error::Validation(_))
+  ));
+}
+
+#[cfg(all(any(feature = "json", feature = "cbor"), not(feature = "lsp")))]
+#[test]
+fn owning_document_validation_failures_are_silent() {
+  assert_silent_validation("owning_document_validation_failures_are_silent", || {
+    let document = ResolvedCddl::resolve(
+      "start = uint\n",
+      &MemoryModuleSource::new(),
+      &ResolveOptions::default(),
+    )
+    .unwrap();
+    #[cfg(feature = "json")]
+    for json in ["-1", "{"] {
+      assert!(document
+        .validate_json(
+          json,
+          #[cfg(feature = "additional-controls")]
+          None,
+        )
+        .is_err());
+    }
+    #[cfg(feature = "cbor")]
+    for cbor in [&[0x20][..], &[]] {
+      assert!(document
+        .validate_cbor(
+          cbor,
+          #[cfg(feature = "additional-controls")]
+          None,
+        )
+        .is_err());
+    }
+  });
+}
+
+#[cfg(all(feature = "json", not(feature = "lsp")))]
+#[test]
+fn owning_document_validates_json() {
+  let mut source = MemoryModuleSource::new();
+  source.insert("numbers", "value = uint\n");
+  let document = ResolvedCddl::resolve(
+    "start = value\n;# import numbers\n",
+    &source,
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  #[cfg(feature = "additional-controls")]
+  let validate = |json: &str| document.validate_json(json, None);
+  #[cfg(not(feature = "additional-controls"))]
+  let validate = |json: &str| document.validate_json(json);
+  assert!(validate("1").is_ok());
+  assert!(validate("-1").is_err());
+  assert!(validate("{").is_err());
+}
+
+#[cfg(all(feature = "cbor", not(feature = "lsp")))]
+#[test]
+fn owning_document_validates_cbor() {
+  let document = ResolvedCddl::resolve(
+    "start = n.value\n;# import numbers as n\n",
+    &{
+      let mut source = MemoryModuleSource::new();
+      source.insert("numbers", "value = uint\n");
+      source
+    },
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  #[cfg(feature = "additional-controls")]
+  let validate = |bytes: &[u8]| document.validate_cbor(bytes, None);
+  #[cfg(not(feature = "additional-controls"))]
+  let validate = |bytes: &[u8]| document.validate_cbor(bytes);
+  assert!(validate(&[0x01]).is_ok());
+  assert!(validate(&[0x20]).is_err());
+  for bytes in [&[][..], &[0x18], &[0xff], &[0x01, 0x02]] {
+    let error = validate(bytes).unwrap_err();
+    assert!(matches!(
+      error,
+      cddl::validator::cbor::Error::CBORParsing(_)
+    ));
+    assert!(error.to_string().starts_with("error parsing cbor:"));
+  }
+}
+
+#[cfg(all(
+  feature = "additional-controls",
+  feature = "json",
+  not(feature = "lsp")
+))]
+#[test]
+fn owning_document_json_forwards_enabled_features() {
+  let document = ResolvedCddl::resolve(
+    "start = uint .feature \"numbers\"\n",
+    &MemoryModuleSource::new(),
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(document.validate_json("1", Some(&["numbers"])).is_ok());
+  assert!(document.validate_json("-1", Some(&["numbers"])).is_err());
+  assert!(document.validate_json("-1", Some(&[])).is_ok());
+}
+
+#[cfg(all(
+  feature = "additional-controls",
+  feature = "cbor",
+  not(feature = "lsp")
+))]
+#[test]
+fn owning_document_cbor_forwards_enabled_features() {
+  let document = ResolvedCddl::resolve(
+    "start = 1 .feature \"fixed\"\n",
+    &MemoryModuleSource::new(),
+    &ResolveOptions::default(),
+  )
+  .unwrap();
+  assert!(document.validate_cbor(&[0x01], Some(&["fixed"])).is_ok());
+  assert!(document.validate_cbor(&[0x02], Some(&["fixed"])).is_err());
+  assert!(document.validate_cbor(&[0x02], Some(&["other"])).is_ok());
+  assert!(document.validate_cbor(&[0x02], Some(&[])).is_ok());
+  assert!(document.validate_cbor(&[0x02], None).is_ok());
+}
 
 /// The CDDL of RFC 9052 used throughout §2.5 and §2.6 of the specification.
 const RFC9052: &str = r#"COSE_Key = {

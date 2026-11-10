@@ -16,6 +16,27 @@ describe('real WASM instance validation', () => {
     expect(result.title).toContain('does not conform');
     expect(result.failures.length).toBeGreaterThan(0);
   });
+  it('reports exhausted replay work as incomplete rather than nonconforming', () => {
+    const result = validate({
+      cddl: 'root = [* branch]\nbranch = { ? "x" => uint // x: tstr }',
+      text: JSON.stringify(Array.from({ length: 4097 }, () => ({ x: 'text' }))),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.title).toBe('Validation incomplete');
+    expect(result.detail).toContain('4096 additional map-candidate replays');
+    expect(result.failures).toEqual([result.detail]);
+  });
+  it('reports excessive map depth as incomplete rather than nonconforming', () => {
+    const rules = Array.from({ length: 64 }, (_, i) => `g${i} = (g${i + 1},)`);
+    const result = validate({
+      cddl: `root = { g0 }\n${rules.join('\n')}\ng64 = (tstr => uint)`,
+      text: '{"x":1}',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.title).toBe('Validation incomplete');
+    expect(result.detail).toContain('64 active calls');
+    expect(result.failures).toEqual([result.detail]);
+  });
   it.each(['01', '0x01', 'AQ==', 'AQ'])('decodes CBOR %s', (text) => {
     expect(validate({ kind: 'cbor', text }).ok).toBe(true);
   });

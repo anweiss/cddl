@@ -24,7 +24,8 @@ Also bundled into this repository is a basic language server implementation and 
 
 ## Contributing and local development
 
-With Rust stable, Node 24 LTS and Python 3.11+ installed, run `npm run setup`.
+With Rust stable, Node 24 LTS, Python 3.11+ and a host C/C++ toolchain
+installed, run `npm run setup`.
 See [agent guidance](AGENTS.md), [development commands](docs/development.md),
 [architecture](docs/architecture.md), [interactive QA](docs/qa.md) and
 [security and privacy](SECURITY.md). No application credentials or services are required.
@@ -233,19 +234,32 @@ cose.values = any
 
 Resolution is a source-to-source transformation into basic RFC 8610 CDDL,
 matching the behavior of the `cddlc -2tcddl` tool described in Appendix B of the
-draft. Resolve first, then parse the result:
+draft. `ResolvedCddl` owns the resolved text and exposes an AST borrowing it:
 
 ```rust
-use cddl::modules::{resolve_modules, FsModuleSource, ResolveOptions};
+use cddl::modules::{ResolvedCddl, FsModuleSource, ResolveOptions};
 
 let input = "start = cose.COSE_Key\n;# import rfc9052 as cose\n";
-let basic_cddl = resolve_modules(
+let document = ResolvedCddl::resolve(
   input,
   &FsModuleSource::from_env(),
   &ResolveOptions::default(),
 )?;
-let ast = cddl::parser::cddl_from_str(&basic_cddl, false)?;
+let ast = document.parse()?;
 ```
+
+The document outlives its input and module source; keep it alive while using
+the AST. `resolve()` reports module errors, while `parse()` checks the root's
+basic CDDL syntax without checking that every rule reference is defined.
+`text()` borrows the resolved text. The existing `resolve_modules()` function
+remains available to callers that only need a `String`.
+
+On native targets, `validate_json()` and `validate_cbor()` validate data against
+the document when their respective `json` or `cbor` feature is enabled and `lsp`
+is disabled. Their optional `enabled_features` argument is present only with
+`additional-controls`, matching the existing validator APIs. These helpers
+return errors without writing diagnostics to stderr. Malformed CBOR produces
+`CBORParsing`, distinct from `CDDLParsing` for malformed schema syntax.
 
 Modules are located by filename along `CDDL_INCLUDE_PATH`, whose elements are
 separated by `:` on Unix and by `;` on Windows, where `:` occurs in drive-letter
@@ -258,9 +272,29 @@ CDDL is reported as an error rather than silently producing a broken document.
 The same check applies on native and WASM targets.
 
 No RFC module collection is bundled; empty search-path elements are skipped.
-The playground and language server do not expose module resolution. Callers
-resolve then parse in two steps, and resolution removes directives rather than
-preserving them in the AST. Directive-like text inside literals is preserved.
+The playground UI and language-server integration do not yet use module
+resolution. Resolution removes directives rather than preserving them in the
+AST. Directive-like text inside literals is preserved.
+
+### JavaScript / WASM
+
+WASM builds with `modules` and `std` enabled export `resolve_cddl_modules()`.
+Supply an object mapping module names to CDDL strings; no filesystem or network
+access is performed:
+
+```javascript
+const resolved = resolve_cddl_modules(
+  ';# import numbers as n\n',
+  { numbers: 'value = uint\n' },
+  'n.value',
+);
+```
+
+The optional third argument selects the start rule, as with
+`ResolveOptions::start_rule`. Pass the returned basic CDDL string to the existing
+parser or validator WASM exports. Invalid module maps return a generic error
+without exposing their contents. This standalone API does not enable module
+resolution automatically in the playground UI or language server.
 
 ### CLI
 

@@ -258,6 +258,10 @@ function normaliseValidationFailure(err, kind) {
 
   const detail = (err instanceof Error ? err.message : String(err)).trimEnd();
 
+  if (kind === 'json' && detail.startsWith('JSON validation incomplete:')) {
+    return failure('Validation incomplete', detail, [detail], kind);
+  }
+
   if (kind === 'cbor' && isCborDecodeError(detail)) {
     return failure('Invalid CBOR input', detail, [detail], kind);
   }

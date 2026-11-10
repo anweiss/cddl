@@ -2,11 +2,14 @@
 
 ## Reproducible setup
 
-Install Git, Node 24 LTS, Python 3.11+ (including venv), and Rust stable via
-rustup. Then run `npm run setup` at the root. It installs from all npm locks,
-pins Python tooling, installs wasm-pack 0.15.0 if absent, builds web and
-Node/LSP WASM artifacts and installs `.githooks/pre-commit`. No secret values,
-`.env` files, databases or network services are required at runtime.
+Install Git, Node 24 LTS, Python 3.11+ (including venv), Rust stable via
+rustup, and a host C/C++ compiler and linker (such as Xcode Command Line Tools,
+GCC/Clang build tools, or MSVC Build Tools). Pest's native stack-guard
+dependency uses this host toolchain. Then run `npm run setup` at the root. It
+installs from all npm locks, pins Python tooling, installs wasm-pack 0.15.0 if
+absent, builds web and Node/LSP WASM artifacts and installs
+`.githooks/pre-commit`. No secret values, `.env` files, databases or network
+services are required at runtime.
 
 The first build downloads Rust crates and may take several minutes. Package
 registries must be reachable during setup. Never commit credentials to solve
@@ -48,9 +51,14 @@ isolated loopback static server and close it afterwards.
 ## Dependency and feature changes
 
 Commit npm and Cargo lockfiles. Use `npm run check:versions` when editing
-manifests. Pest packages are held together at 2.8.8 because Pest 2.9.3 pins
-a psm version that fails WASM linking. Upgrade the family only after both
-release WASM builds and tests pass. Do not use `npm audit fix --force`.
+manifests. Keep `pest`, `pest_derive`, `pest_generator`, `pest_meta` and
+`pest_vm` pinned to the same exact release; the supported family is 2.9.5.
+Pest's stack-guard path uses `stacker`/`psm` and requires a host C toolchain.
+Pest 2.9.5 makes stacker checks opt-in for non-native targets; do not enable
+that feature for WASM without validating the target. Before changing the
+family, run `npm run build:wasm` (web and Node/LSP targets), native tests,
+MSRV checks and the downstream consumer test. Do not use `npm audit fix
+--force`.
 Dependabot's seven-day cooldown applies to ordinary updates, not urgent
 security updates.
 

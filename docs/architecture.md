@@ -27,6 +27,188 @@ members; with a cut (`^`), a matching key whose value fails rejects the map.
 Occurrence bounds count matching pairs across all alternatives, not separately
 for each alternative.
 
+Optional JSON members without a cut also match complete pairs. If a key
+matches but its value does not, the member can be absent, leaving that pair
+for a later member. Skipping restores earlier ownership assignments as well
+as the tentative key. This member-level fallthrough path excludes explicit cuts
+and colon shortcuts; it does not establish conformance of every existing cut path.
+Discarded optional value diagnostics remain separate from active errors and are
+reported only if that exact pair is still unclaimed at coverage checking. A later
+successful member suppresses them; map boundaries, replay and validator reuse
+prevent stale diagnostics from leaking into other attempts.
+The `?`, `0*1`, `*1`, `*` and other zero-minimum bounds share this behavior;
+`0*0` skips the member without claiming a pair. If a selected group
+alternative leaves the map uncovered, validation retries the enclosing map
+with later alternatives, including choices inside inline and named groups.
+Checkpoints retain mutable validation state without cloning the input object.
+Hard visitor errors restore the checkpoint before propagating to the caller.
+Replay indices are checked before selecting a group, and exhausted searches
+report each distinct diagnostic once rather than repeating it for every path.
+Zero-minimum named and inline groups use state-only transactions for complete
+iterations. Their occurrence never makes required members optional; partial
+failed iterations roll back, and zero-width iterations stop repetition.
+Same-object child validators share immutable JSON input through `Arc<Value>`,
+including generic references inside inline repetitions and nested generic groups.
+Creating each child clones only the shared handle, not the complete object.
+Generic bindings, recursion markers and transaction state are still rebuilt for
+each iteration; children do not retain a previous iteration's evaluation state.
+An occurrence with maximum zero returns before entering its named rule or
+acquiring a depth slot, including otherwise-batchable generic references.
+The enclosing occurrence is restored after the optional group, without leaking
+it into that group's required members. Failed required choice prefixes stop
+before recording later decisions only when the sequence is proven hard-error-free;
+otherwise normal traversal preserves later regex and other evaluation errors.
+Coverage failures still replay.
+Failed prefixes do not check coverage against their incomplete ownership ledger,
+even when later siblings are visited to preserve hard errors. This marker is
+restored on optional rollback and isolated across maps, retries and reuse. Otherwise-successful
+attempts always check coverage, and complete failed traversals retain their
+coverage diagnostics.
+If a required mismatch precedes every replay decision, later choices become
+single-outcome nodes only for a proven hard-error-free scalar sequence.
+Its first traversal and pruning context remain intact; optional rollback restores
+replay eligibility. Suppression is scoped to the proven sequence and cannot leak
+from a nested scalar group into effectful enclosing siblings. Controlled values,
+named calls, inherited movable claims and structured input retain ordinary replay,
+including later-alternative hard errors.
+Nodes recorded only under scalar suppression do not authorize pruning outside
+that sequence. Ordinary decisions, including coalesced equivalent alternatives,
+retain their original pruning context.
+A recorded decision alone does not justify skipping fallible siblings.
+Choices whose arms contain only zero-minimum entries with absent literal keys
+also retain only their first outcome. This includes named-group DAGs and
+zero-minimum occurrence ranges, not just `?` literal members. No value is evaluated by
+this proof. Named depth requirements remain checked; present keys, dynamic keys,
+generic named references, cycles and explicit cuts retain ordinary choice handling.
+Inherited occurrence state also retains ordinary choice handling: an empty arrow
+member can clear that state while an empty named group restores it, changing how
+a later member consumes pairs. Literal-key and scalar-sequence proofs decline
+inherited occurrences and explicitly required inline or named-group occurrences, whose
+children can evaluate absent bareword values under the enclosing occurrence.
+An absent member's skip flag is consumed by that member, so an absent `?` arm
+cannot suppress a later sibling's value where a zero-maximum arm would not.
+Explicit colon occurrence operators other than `?` are excluded from the
+literal-key proofs: quoted keys can still report an absent key, and bareword
+keys can evaluate their values despite being absent. This includes required
+ranges and `+`, not only zero-minimum ranges. That evaluation can itself raise
+a hard depth error. The same exclusion applies to optional-failure proofs and
+the hard-error-free sequence proof used for suppression. Direct zero-maximum cut members are also
+excluded; a bound alone does not establish empty success for those visitors.
+Optional choices are skipped before registering replay decisions only when every
+arm provably fails without evaluating an earlier value or reassigning a claimed key.
+If entries remain after that mismatch, skipping them also requires the existing
+hard-error-free sequence proof; otherwise the optional arm is traversed normally.
+The tail proof also declines pending named-group generic parameters, whose
+bindings can shadow otherwise-safe scalar types.
+The proof can cross absent plain `?` literal members, then recognize a missing
+required literal key whose occurrence has a positive minimum (subject to the
+colon exclusions above), or an unclaimed string against plain, unshadowed `uint`,
+including transparent, single-definition type-alias chains. Alias cycles,
+incremental definitions, generic bindings and redefined prelude names decline
+this proof. The latter also excludes controls, explicit/inherited cuts, claimed
+keys, existing non-cut claims and non-string values. A value mismatch can
+revalidate earlier movable claims and raise a hard error, including an invalid
+regex. Present optional prefixes retain ordinary traversal,
+including hard errors. These required failures roll back without deferred
+optional-member diagnostics. No visitor probes, failure cache or budget changes
+are involved; arbitrary value constraints are not inferred impossible.
+Newly proven failures retain a single-outcome search node when an iteration would
+have run, preserving later required-mismatch pruning without adding alternatives.
+Closed maps also prove an input key impossible to claim when every alternative
+contains only literal keys and hard-error-free scalar value types. The proof
+unions keys across inline and non-generic named groups using an explicit worklist;
+completed groups are shared, while recursive groups decline the proof.
+Named-group depth requirements are retained with completed proofs and checked
+again against each caller's remaining depth, so shared groups cannot hide a
+later recursion-limit error.
+It runs no visitors and stops replay only **after** ordinary traversal succeeds
+and coverage fails, retaining that traversal's actual coverage diagnostics.
+Dynamic keys, controls, cuts, incremental/generic groups, inherited claims and
+structured values at known keys retain ordinary replay and hard-error ordering.
+Unknown-key values need not be scalar because no member can evaluate them.
+The existing missing-first-key shortcut and zero-iteration groups remain unrecorded.
+Single-member repetitions over non-cut string/any prelude key domains enumerate
+unclaimed pairs once, retaining occurrence bounds and individual movable claims
+without copying a growing ownership ledger for every pair. Transparent alias chains
+to these domains also batch; constrained, alternative, cyclic or generic-shadowed
+aliases do not bypass their normal validation. Earlier movable claims normally
+require the ordinary reassignment path. Plain-key batches may proceed when every
+remaining value provably matches an unshadowed `tstr`, `text`, `uint` or `any`
+value type, including a resolved generic argument: no mismatch can trigger a
+reassignment. This proof inspects the caller's data without cloning it or running
+extra validation. Constraints, shadows, mismatched generic binding counts and
+uncertain remaining values retain the ordinary path.
+Named-group batching and optional-failure proofs also decline references that
+name an active generic parameter, preserving parameter lookup before global
+rule lookup.
+Reassignment shares compatibility rows for identical members and captured generic bindings, and
+rejects an identical-claim demand exceeding its available matching pairs.
+Zero capacity or excess demand does not skip later distinct compatibility rows:
+their probes can raise hard errors, so capacity rejection follows those probes.
+This also surfaces previously suppressed regex errors in the tested star-inline
+and star-named repetition cases. Tested `2*2`, `+`, and insufficient-slot cases
+retain their prior outcomes; these are fixture-specific observations, not a
+general occurrence guarantee. Controls are not prevalidated globally.
+Only a single interchangeable claim class prefers free pairs before displacement;
+mixed classes retain DFS displacement order while sharing a per-class scan cursor
+within each augmentation. Already-incompatible or visited slots cannot become
+eligible during that search. An explicit path stack avoids recursive depth growth;
+neither optimization changes the replay-budget policy.
+Single-member choice-key repetitions also enumerate pairs once, probing each
+key domain and value under the selected generic bindings while retaining
+individual claims and occurrence bounds.
+Generic group replay carries recursion context: revisiting the same
+structural instantiation at the same data location without consuming another
+map key rejects that path, while changed arguments and productive calls remain
+eligible. Ordinary group guards also recognize consumed map pairs, socket
+prefixes distinguish rule identities, and literal colon labels are not rule
+references. Incremental-only group dispatch uses the same progress guard, and
+generic children retain their selected parameter names without changing the
+caller's bindings. Failed generic children retain consumed keys without duplicating
+the ownership prefix they inherited.
+
+Each top-level `JSONValidator::validate()` call permits 4096 **additional**
+map-candidate replays, shared cumulatively across nested maps and child
+validators. Initial paths are free, so ordinary large collections that do not
+backtrack do not consume this budget; their number and size are not bounded
+by the replay counter. Speculative rollback does not restore
+spent work. Reusing the validator starts a fresh budget and transient state
+without copying the input JSON.
+
+Exhaustion returns `json::Error::ResourceLimit { limit }`, not
+`Error::Validation`: validation is incomplete, and even a valid document can
+require an alternative beyond the limit. The error propagates rather than
+trying another type/group choice, accepting an optional entry, or returning
+first-path mismatch diagnostics. String-based WASM APIs retain this explanation
+in their error text. The playground recognizes the JSON incomplete-validation
+message and reports "Validation incomplete", not instance nonconformance,
+while retaining the limit explanation and an unsuccessful result.
+This bounds additional map-candidate replays only; it is
+not a blanket CPU, memory, recursion, or denial-of-service guarantee.
+
+Separately, named-rule calls made while map-candidate search is active in their
+visitor share a limit of 64 simultaneously active calls. Productive flat-map
+recursion is therefore bounded even when it consumes keys without replaying
+candidates. Exceeding this depth returns the distinct hard
+`json::Error::RecursionLimit { limit }`; it is not replay-budget exhaustion or an
+ordinary mismatch and cannot be swallowed by optional entries or type choices.
+Child visitors inherit the current validation's `Arc`-shared counters, including
+generic children. Scoped guards release active depth on success and error paths;
+each top-level `validate()` starts with fresh replay and depth counters.
+Both generic and non-generic batched named calls acquire a slot. Batch eligibility
+counts transparent key-alias depth and any pending named call; optional named
+proofs cannot bypass the reference's own depth check. Generic zero-progress
+markers are checked before acquiring another slot, preserving ordinary cycle
+mismatch and alternative fallback at the depth boundary.
+Detected zero-progress revisits retain their ordinary validation diagnostic.
+A long chain of previously unseen names can reach the depth limit before a
+cycle closes; that remains a hard error. This limit bounds named-rule calls
+during map validation, not every possible AST traversal.
+In particular, scalar-value children without an active map search do not acquire
+these depth slots.
+Hosted WASM validation runs the library regression suite in both default and
+JSON-only configurations, alongside the existing integration suites.
+
 An undefined group socket matches no entries, so `{ * $$s }` accepts an empty
 map. A failed inline group that may occur zero times, such as `? ($$s)`,
 releases its errors and any entries it claimed.
