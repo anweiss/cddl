@@ -265,6 +265,33 @@ fn optional_multi_field_groups_do_not_bypass_typed_key_dispatch() {
 }
 
 #[test]
+fn overlapping_group_routes_report_an_explicit_configuration_error() {
+  let source = r#"overlap = { ("a" => int // "b" => int), ("a" => tstr // "c" => int) }"#;
+  assert!(cddl_codegen_rust::cddl::validator::validate_json_from_str(
+    source,
+    r#"{"a":"text","b":1}"#,
+    None,
+  )
+  .is_ok());
+  let error = generate_rust_code(source).unwrap_err();
+  assert!(error
+    .to_string()
+    .contains("overlapping flattened group keys"));
+  let error =
+    generate_rust_code_for_rule(source, "overlap", None, &CodegenOptions::default()).unwrap_err();
+  assert!(error
+    .to_string()
+    .contains("overlapping flattened group keys"));
+  let error =
+    generate_rust_code(r#"overlap = { ? ("a" => int, "b" => int), ("a" => tstr // "c" => int) }"#)
+      .unwrap_err();
+  assert!(error
+    .to_string()
+    .contains("overlapping flattened group keys"));
+  assert!(generate_rust_code(r#"only = { ("a" => int // "a" => tstr) }"#).is_ok());
+}
+
+#[test]
 fn embedded_acronyms_are_normalized() {
   let output = generate_rust_code(
     r#"hashedURI-map = { url: tstr }

@@ -126,6 +126,8 @@ Integer literal keys become fixed fields (`? 1 => int` becomes `n1: Option<i64>`
 their CBOR serialization preserves integer keys and the value's encoding.
 Rust field-name collisions receive suffixes without renaming named wire keys;
 suffixes do not collide with other declared field names.
+Generated numeric-map helpers use private generic parameter names so schema
+types such as `S`, `D` and `A` retain their meaning.
 JSON object keys are strings, so integer-keyed wildcard entries round-trip
 through CBOR only. Choice enums with only built-in integer, boolean, string,
 byte-string or null payloads (including literal-only enums) derive `PartialEq`,
@@ -144,7 +146,9 @@ choices (`//`) become flattened untagged enums with one struct payload per alter
 struct containing all alternatives. Payloads reject unknown keys so an
 all-optional alternative cannot silently swallow another alternative's entries.
 Each choice claims only its own keys before testing alternatives, allowing sibling,
-nested and optional choices to coexist. Single-rule generation emits the helper
+nested and optional choices with disjoint routing keys to coexist. Overlapping
+sibling routing keys require backtracking and return a configuration error,
+rather than emitting a decoder that rejects valid data. Single-rule generation emits the helper
 graph in an output-specific module so repeated invocations do not collide.
 Map-choice helper enums do not receive the string catch-all from `other_variant`.
 Substituting an included group retains a flattened replacement instead of expanding

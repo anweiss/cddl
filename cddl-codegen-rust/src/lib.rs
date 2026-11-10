@@ -2797,15 +2797,22 @@ fn split_generic_args(args: &str) -> Vec<String> {
   out
 }
 
-fn render_struct(
-  output: &mut String,
-  name: &str,
-  fields: &[RustField],
-  doc: &[String],
-  tag_mod: &str,
-  opts: &CodegenOptions,
-  deny_unknown_fields: bool,
-) -> Result<(), CodegenError> {
+fn ensure_disjoint_group_keys(fields: &[RustField]) -> Result<(), CodegenError> {
+  let mut routed = BTreeSet::new();
+  for field in fields.iter().filter(|field| field.flatten_group) {
+    for key in &field.group_keys {
+      if !routed.insert(key) {
+        return Err(CodegenError::ConfigurationError(format!(
+          "overlapping flattened group keys ('{key}') require backtracking and are not supported"
+        )));
+      }
+    }
+  }
+  Ok(())
+}
+
+fn validate_group_layout(fields: &[RustField]) -> Result<(), CodegenError> {
+  ensure_disjoint_group_keys(fields)?;
   if fields
     .iter()
     .any(|field| field.flatten_group || field.flatten_object)
@@ -2818,6 +2825,19 @@ fn render_struct(
         .into(),
     ));
   }
+  Ok(())
+}
+
+fn render_struct(
+  output: &mut String,
+  name: &str,
+  fields: &[RustField],
+  doc: &[String],
+  tag_mod: &str,
+  opts: &CodegenOptions,
+  deny_unknown_fields: bool,
+) -> Result<(), CodegenError> {
+  validate_group_layout(fields)?;
   render_doc(output, doc, "")?;
 
   // Byte-string fields need serde_with to encode as CBOR major type 2 rather
@@ -2964,7 +2984,7 @@ fn render_integer_field_serializer(
   };
   writeln!(
     output,
-    "fn {helper}<S: serde::Serializer>(value: &{}, serializer: S) -> Result<S::Ok, S::Error> {{",
+    "fn {helper}<__CddlSerializer: serde::Serializer>(value: &{}, serializer: __CddlSerializer) -> Result<__CddlSerializer::Ok, __CddlSerializer::Error> {{",
     wrap_field_type(field, field.rust_type.clone())
   )?;
   writeln!(output, "    use serde::ser::SerializeMap;")?;
@@ -3016,7 +3036,7 @@ fn render_flatten_deserialize(
   writeln!(output, "impl<'de> serde::Deserialize<'de> for {} {{", name)?;
   writeln!(
     output,
-    "    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {{"
+    "    fn deserialize<__CddlDeserializer: serde::Deserializer<'de>>(d: __CddlDeserializer) -> Result<Self, __CddlDeserializer::Error> {{"
   )?;
   for (i, (field, spec)) in fields.iter().zip(specs).enumerate() {
     render_flatten_value_wrapper(output, i, field, spec.clone(), tag_mod)?;
@@ -3042,7 +3062,7 @@ fn render_flatten_deserialize(
   )?;
   writeln!(output, "            type Value = {};", name)?;
   writeln!(output, "            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {{ f.write_str(\"a map\") }}")?;
-  writeln!(output, "            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {{")?;
+  writeln!(output, "            fn visit_map<__CddlMapAccess: serde::de::MapAccess<'de>>(self, mut map: __CddlMapAccess) -> Result<Self::Value, __CddlMapAccess::Error> {{")?;
   render_flatten_visit_body(output, name, fields, &keys)?;
   writeln!(output, "            }}\n        }}")?;
   writeln!(

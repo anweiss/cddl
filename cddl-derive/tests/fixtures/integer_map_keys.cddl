@@ -16,3 +16,7 @@ literal-value = { 1 => value }
 container-values = { 2 => [* value] }
 colliding-literal-names = { 1 => int, n1: tstr, n1_1: bool }
 reversed-literal-names = { n1: tstr, 1 => int }
+s = int
+d = tstr
+letter-alias-keys = { 1 => s, 2 => d }
+a = { 1 => int }

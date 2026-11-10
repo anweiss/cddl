@@ -127,3 +127,23 @@ fn numeric_field_collisions_do_not_change_named_wire_keys() {
   let decoded: ciborium::Value = ciborium::from_reader(bytes.as_slice()).unwrap();
   assert_eq!(decoded, wire);
 }
+
+#[test]
+fn numeric_helpers_do_not_capture_schema_letters() {
+  let mut bytes = Vec::new();
+  ciborium::into_writer(
+    &LetterAliasKeys {
+      n1: 7,
+      n2: "text".into(),
+    },
+    &mut bytes,
+  )
+  .unwrap();
+  let item: LetterAliasKeys = ciborium::from_reader(bytes.as_slice()).unwrap();
+  assert_eq!(item.n1, 7);
+  assert_eq!(item.n2, "text");
+  bytes.clear();
+  ciborium::into_writer(&A { n1: 2 }, &mut bytes).unwrap();
+  let item: A = ciborium::from_reader(bytes.as_slice()).unwrap();
+  assert_eq!(item.n1, 2);
+}
