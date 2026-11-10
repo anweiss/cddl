@@ -187,6 +187,58 @@ pub struct CBORValidator<'a> {
 }
 
 impl<'a> CBORValidator<'a> {
+  fn visit_enumeration_choice<T: std::fmt::Debug + 'static>(
+    &mut self,
+    choice: &GroupChoice<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let previous = self.numeric_context.begin_evaluation();
+    let result = self.evaluate_enumeration_choice(choice);
+    self.numeric_context.work = previous;
+    result
+  }
+
+  fn evaluate_enumeration_choice<T: std::fmt::Debug + 'static>(
+    &mut self,
+    choice: &GroupChoice<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    charge_numeric_probe(&self.numeric_context)
+      .map_err(|()| Error::from_validator(self, "enumeration work limit exceeded".to_string()))?;
+    let choices = enumeration_type_choices(&self.state, choice).map_err(|()| {
+      Error::from_validator(self, "enumeration expansion limit exceeded".to_string())
+    })?;
+    if choices.is_empty() {
+      self.add_error("empty group enumeration has no members".to_string());
+      return Ok(());
+    }
+    let initial = self.errors.len();
+    for choice in &choices {
+      let before = self.errors.len();
+      let previous = std::mem::replace(&mut self.state.is_group_to_choice_enum, true);
+      let mut result = self.visit_type_choice(choice);
+      for error in &mut self.errors[before..] {
+        error.is_group_to_choice_enum = true;
+      }
+      if let Err(Error::Validation(errors)) = &mut result {
+        for error in errors {
+          error.is_group_to_choice_enum = true;
+        }
+      }
+      self.state.is_group_to_choice_enum = previous;
+      result?;
+      if self.errors.len() == before {
+        self.errors.truncate(initial);
+        return Ok(());
+      }
+    }
+    Ok(())
+  }
+
   fn record_numeric_cycle<T: std::fmt::Debug + 'static>(
     &mut self,
     marker: &str,
@@ -1135,6 +1187,7 @@ impl<'a> CBORValidator<'a> {
     cv.state.generic_rules = self.state.generic_rules.clone();
     cv.state.eval_generic_rule = self.state.eval_generic_rule;
     cv.state.visited_rules = self.state.visited_rules.clone();
+    cv.state.is_group_to_choice_enum = self.state.is_group_to_choice_enum;
     cv.numeric_context = self.numeric_context.clone();
     cv
   }
@@ -1239,6 +1292,7 @@ impl<'a> CBORValidator<'a> {
     let result = numeric_controller_value(&self.state, controller, |alternative, candidate| {
       let mut probe = self.new_with_recursion_state(token_value_into_cbor_value(candidate.clone()));
       probe.numeric_context = self.numeric_context.candidate();
+      probe.state.is_group_to_choice_enum = false;
       probe.state.eval_generic_rule = None;
       probe
         .state
@@ -1267,11 +1321,123 @@ impl<'a> CBORValidator<'a> {
     match result {
       Ok(value) => Ok(value),
       Err(NumericControllerError::Validation(error)) => Err(error),
+      Err(NumericControllerError::Proof(failure)) => {
+        Err(Error::from_validator(self, failure.message()))
+      }
       Err(NumericControllerError::ResourceLimit) => Err(Error::from_validator(
         self,
         "numeric controller resolution limit exceeded".to_string(),
       )),
     }
+  }
+
+  #[cfg(feature = "additional-controls")]
+  fn visit_numeric_sum<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+    controller: &Type2<'a>,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    Error<T>: From<Error<std::io::Error>>,
+  {
+    let computed = constrained_controller(target, ControlOperator::PLUS, controller);
+    let Some(value) = self.resolve_numeric_controller::<T>(&computed)? else {
+      return Ok(false);
+    };
+    let previous = self.state.ctrl;
+    self.state.ctrl = match previous {
+      Some(ControlOperator::SIZE | ControlOperator::BITS) => previous,
+      _ => Some(ControlOperator::PLUS),
+    };
+    let result: std::result::Result<(), Error<T>> = self.visit_type2(&Type1::from(value).type2);
+    self.state.ctrl = previous;
+    result.map(|_| true)
+  }
+
+  #[cfg(feature = "additional-controls")]
+  fn visit_addition_control<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+    controller: &Type2<'a>,
+  ) -> std::result::Result<(), Error<T>>
+  where
+    Error<T>: From<Error<std::io::Error>>,
+  {
+    if self.visit_numeric_sum::<T>(target, controller)? {
+      return Ok(());
+    }
+    let values = plus_operation(self.state.cddl, target, controller)
+      .map_err(|error| Error::from_validator(self, error))?;
+    let previous = self.state.ctrl;
+    self.state.ctrl = match previous {
+      Some(ControlOperator::SIZE | ControlOperator::BITS) => previous,
+      _ => Some(ControlOperator::PLUS),
+    };
+    let initial_errors = self.errors.len();
+    for value in values {
+      let before = self.errors.len();
+      if let Err(error) = self.visit_type2(&value) {
+        self.state.ctrl = previous;
+        return Err(error);
+      }
+      if self.errors.len() == before {
+        self.errors.truncate(initial_errors);
+        break;
+      }
+    }
+    self.state.ctrl = previous;
+    Ok(())
+  }
+
+  fn visit_integer_range(&mut self, lower: i128, upper: i128, inclusive: bool) {
+    let actual = match &self.cbor {
+      Value::Integer(value) => Some(i128::from(*value)),
+      Value::Bytes(value) => Some(value.len() as i128),
+      Value::Text(value) if self.state.ctrl == Some(ControlOperator::SIZE) => {
+        Some(value.len() as i128)
+      }
+      _ => None,
+    };
+    if !actual.is_some_and(|value| {
+      lower <= value
+        && if inclusive {
+          value <= upper
+        } else {
+          value < upper
+        }
+    }) {
+      self.add_error(format!(
+        "expected integer or length to be in range {} <= value {} {}, got {:?}",
+        lower,
+        if inclusive { "<=" } else { "<" },
+        upper,
+        self.cbor
+      ));
+    }
+  }
+
+  fn visit_resolved_range<T: std::fmt::Debug + 'static>(
+    &mut self,
+    lower: &Type2<'a>,
+    upper: &Type2<'a>,
+    inclusive: bool,
+  ) -> std::result::Result<(), Error<T>>
+  where
+    Error<T>: From<Error<std::io::Error>>,
+  {
+    let lower = numeric_literal(lower).or(self.resolve_numeric_controller::<T>(lower)?);
+    let upper = numeric_literal(upper).or(self.resolve_numeric_controller::<T>(upper)?);
+    let (Some(lower), Some(upper)) = (lower, upper) else {
+      return Err(Error::from_validator(
+        self,
+        "range endpoints must denote numeric singletons".to_string(),
+      ));
+    };
+    self.visit_range(
+      &Type1::from(lower).type2,
+      &Type1::from(upper).type2,
+      inclusive,
+    )
   }
 
   fn validate_array_items<T: std::fmt::Debug + 'static>(
@@ -1431,7 +1597,8 @@ impl<'a> CBORValidator<'a> {
     if !matches!(
       self.state.ctrl,
       Some(ControlOperator::SIZE | ControlOperator::BITS)
-    ) || !numeric_comparison(ctrl)
+    ) || !(numeric_comparison(ctrl)
+      || matches!(ctrl, ControlOperator::AND | ControlOperator::WITHIN))
     {
       return Ok(false);
     }
@@ -2249,37 +2416,7 @@ where
 
   fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<Error<T>> {
     if self.state.is_group_to_choice_enum {
-      let initial_error_count = self.errors.len();
-      for tc in type_choices_from_group_choice(self.state.cddl, gc).iter() {
-        let error_count = self.errors.len();
-        let prev_is_group_to_choice_enum = self.state.is_group_to_choice_enum;
-        // The group has been converted to type choices.
-        // Validate each type normally so its nested groups are not converted again.
-        self.state.is_group_to_choice_enum = false;
-        let mut result = self.visit_type_choice(tc);
-        for error in &mut self.errors[error_count..] {
-          error.is_group_to_choice_enum = true;
-        }
-        if let Err(Error::Validation(errors)) = &mut result {
-          for error in errors {
-            error.is_group_to_choice_enum = true;
-          }
-        }
-        // Restore enumeration mode for the remaining choices, even on errors.
-        self.state.is_group_to_choice_enum = prev_is_group_to_choice_enum;
-        result?;
-        if self.errors.len() == error_count {
-          let type_choice_error_count = self.errors.len() - initial_error_count;
-          if type_choice_error_count > 0 {
-            for _ in 0..type_choice_error_count {
-              self.errors.pop();
-            }
-          }
-          return Ok(());
-        }
-      }
-
-      return Ok(());
+      return self.visit_enumeration_choice(gc);
     }
 
     for (ge, _) in gc.group_entries.iter() {
@@ -2291,12 +2428,16 @@ where
 
   fn visit_range(
     &mut self,
-    lower: &Type2,
-    upper: &Type2,
+    lower: &Type2<'a>,
+    upper: &Type2<'a>,
     is_inclusive: bool,
   ) -> visitor::Result<Error<T>> {
     if let Value::Array(_) = &self.cbor {
       return self.validate_array_items(&ArrayItemToken::Range(lower, upper, is_inclusive));
+    }
+
+    if numeric_literal(lower).is_none() || numeric_literal(upper).is_none() {
+      return self.visit_resolved_range::<T>(lower, upper, is_inclusive);
     }
 
     // Resolve the bounds to numeric values
@@ -2371,78 +2512,7 @@ where
       (RangeBound::Int(l), RangeBound::Int(u)) => (l as i128, u as i128),
     };
 
-    match &self.cbor {
-      Value::Bytes(b) => {
-        let len = b.len() as i128;
-        if is_inclusive {
-          if len < l || len > u {
-            self.add_error(format!(
-              "expected uint to be in range {} <= value <= {}, got Bytes({:?})",
-              l, u, b
-            ));
-          }
-        } else if len < l || len >= u {
-          self.add_error(format!(
-            "expected uint to be in range {} <= value < {}, got Bytes({:?})",
-            l, u, b
-          ));
-        }
-      }
-      Value::Text(s) => match self.state.ctrl {
-        Some(ControlOperator::SIZE) => {
-          let len = s.len() as i128;
-          if is_inclusive {
-            if len < l || len > u {
-              self.add_error(format!(
-                "expected \"{}\" string length to be in the range {} <= value <= {}, got {}",
-                s, l, u, len
-              ));
-            }
-
-            return Ok(());
-          } else if len < l || len >= u {
-            self.add_error(format!(
-              "expected \"{}\" string length to be in the range {} <= value < {}, got {}",
-              s, l, u, len
-            ));
-            return Ok(());
-          }
-        }
-        _ => {
-          self.add_error(
-            "string value cannot be validated against a range without the .size control operator"
-              .to_string(),
-          );
-          return Ok(());
-        }
-      },
-      Value::Integer(i) => {
-        if is_inclusive {
-          if i128::from(*i) < l || i128::from(*i) > u {
-            self.add_error(format!(
-              "expected integer to be in range {} <= value <= {}, got {:?}",
-              l, u, i
-            ));
-          }
-        } else if i128::from(*i) < l || i128::from(*i) >= u {
-          self.add_error(format!(
-            "expected integer to be in range {} <= value < {}, got {:?}",
-            l, u, i
-          ));
-        }
-      }
-      _ => {
-        self.add_error(format!(
-          "expected value to be in range {} {} value {} {}, got {:?}",
-          l,
-          if is_inclusive { "<=" } else { "<" },
-          if is_inclusive { "<=" } else { "<" },
-          u,
-          self.cbor
-        ));
-      }
-    }
-
+    self.visit_integer_range(l, u, is_inclusive);
     Ok(())
   }
 
@@ -2472,6 +2542,11 @@ where
 
     if self.resolve_enclosing_numeric_control(target, ctrl, controller)? {
       return Ok(());
+    }
+    #[cfg(feature = "additional-controls")]
+    if ctrl == ControlOperator::PLUS {
+      // The result's domain need not match either operand's domain.
+      return self.visit_addition_control::<T>(target, controller);
     }
     if matches!(self.cbor, Value::Integer(_) | Value::Float(_))
       && matches!(
@@ -2990,35 +3065,7 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      ControlOperator::PLUS => {
-        self.state.ctrl = Some(ctrl);
-
-        match plus_operation(self.state.cddl, target, controller) {
-          Ok(values) => {
-            let error_count = self.errors.len();
-            for v in values.iter() {
-              let cur_errors = self.errors.len();
-
-              self.visit_type2(v)?;
-
-              self.visit_type2(v)?;
-              if self.errors.len() == cur_errors {
-                for _ in 0..self.errors.len() - error_count {
-                  self.errors.pop();
-                }
-
-                break;
-              }
-            }
-          }
-
-          Err(e) => self.add_error(e),
-        }
-
-        self.state.ctrl = None;
-
-        Ok(())
-      }
+      ControlOperator::PLUS => self.visit_addition_control::<T>(target, controller),
       #[cfg(feature = "additional-controls")]
       ControlOperator::ABNF => {
         self.state.ctrl = Some(ctrl);
@@ -3703,6 +3750,7 @@ where
   }
 
   fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error<T>> {
+    enter_enumeration_value(&mut self.state, t2);
     charge_numeric_probe(&self.numeric_context).map_err(|()| {
       Error::from_validator(
         self,
@@ -3999,7 +4047,12 @@ where
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
-            return self.validate_generic_instantiation(ident, ga, rule, false);
+            return self.validate_generic_instantiation(
+              ident,
+              ga,
+              rule,
+              self.state.is_group_to_choice_enum,
+            );
           }
         }
 

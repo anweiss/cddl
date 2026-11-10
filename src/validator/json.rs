@@ -549,6 +549,46 @@ pub struct JSONValidator<'a> {
 }
 
 impl<'a> JSONValidator<'a> {
+  fn visit_enumeration_choice(&mut self, choice: &GroupChoice<'a>) -> visitor::Result<Error> {
+    let previous = self.numeric_context.begin_evaluation();
+    let result = self.evaluate_enumeration_choice(choice);
+    self.numeric_context.work = previous;
+    result
+  }
+
+  fn evaluate_enumeration_choice(&mut self, choice: &GroupChoice<'a>) -> visitor::Result<Error> {
+    charge_numeric_probe(&self.numeric_context)
+      .map_err(|()| Error::from_validator(self, "enumeration work limit exceeded".to_string()))?;
+    let choices = enumeration_type_choices(&self.state, choice).map_err(|()| {
+      Error::from_validator(self, "enumeration expansion limit exceeded".to_string())
+    })?;
+    if choices.is_empty() {
+      self.add_error("empty group enumeration has no members".to_string());
+      return Ok(());
+    }
+    let initial = self.errors.len();
+    for choice in &choices {
+      let before = self.errors.len();
+      let previous = std::mem::replace(&mut self.state.is_group_to_choice_enum, true);
+      let mut result = self.visit_type_choice(choice);
+      for error in &mut self.errors[before..] {
+        error.is_group_to_choice_enum = true;
+      }
+      if let Err(Error::Validation(errors)) = &mut result {
+        for error in errors {
+          error.is_group_to_choice_enum = true;
+        }
+      }
+      self.state.is_group_to_choice_enum = previous;
+      result?;
+      if self.errors.len() == before {
+        self.errors.truncate(initial);
+        return Ok(());
+      }
+    }
+    Ok(())
+  }
+
   fn record_numeric_cycle(&mut self, marker: &str, message: String) -> visitor::Result<Error> {
     match self.numeric_context.recursion(marker) {
       NumericRecursion::Cut => {
@@ -640,6 +680,7 @@ impl<'a> JSONValidator<'a> {
     jv.state.generic_rules = self.state.generic_rules.clone();
     jv.state.eval_generic_rule = self.state.eval_generic_rule;
     jv.state.visited_rules = self.state.visited_rules.clone();
+    jv.state.is_group_to_choice_enum = self.state.is_group_to_choice_enum;
     jv
   }
 
@@ -735,6 +776,7 @@ impl<'a> JSONValidator<'a> {
       };
       let mut probe = self.new_with_recursion_state(value);
       probe.numeric_context = self.numeric_context.candidate();
+      probe.state.is_group_to_choice_enum = false;
       probe.state.eval_generic_rule = None;
       probe
         .state
@@ -763,11 +805,106 @@ impl<'a> JSONValidator<'a> {
     match result {
       Ok(value) => Ok(value),
       Err(NumericControllerError::Validation(error)) => Err(error),
+      Err(NumericControllerError::Proof(failure)) => {
+        Err(Error::from_validator(self, failure.message()))
+      }
       Err(NumericControllerError::ResourceLimit) => Err(Error::from_validator(
         self,
         "numeric controller resolution limit exceeded".to_string(),
       )),
     }
+  }
+
+  #[cfg(feature = "additional-controls")]
+  fn visit_numeric_sum(
+    &mut self,
+    target: &Type2<'a>,
+    controller: &Type2<'a>,
+  ) -> std::result::Result<bool, Error> {
+    let computed = constrained_controller(target, ControlOperator::PLUS, controller);
+    let Some(value) = self.resolve_numeric_controller(&computed)? else {
+      return Ok(false);
+    };
+    let previous = self.state.ctrl;
+    self.state.ctrl = match previous {
+      Some(ControlOperator::SIZE | ControlOperator::BITS) => previous,
+      _ => Some(ControlOperator::PLUS),
+    };
+    let result = self.visit_type2(&Type1::from(value).type2);
+    self.state.ctrl = previous;
+    result.map(|_| true)
+  }
+
+  fn visit_integer_range(&mut self, lower: i128, upper: i128, inclusive: bool) {
+    let actual = match self.json.as_ref() {
+      Value::String(value) if self.state.ctrl == Some(ControlOperator::SIZE) => {
+        Some(value.len() as i128)
+      }
+      _ => match json_numeric_value(&self.json) {
+        Some(NumericValue::Integer(value)) => Some(value),
+        _ => None,
+      },
+    };
+    if !actual.is_some_and(|value| {
+      lower <= value
+        && if inclusive {
+          value <= upper
+        } else {
+          value < upper
+        }
+    }) {
+      self.add_error(format!(
+        "expected integer to be in range {} <= value {} {}, got {}",
+        lower,
+        if inclusive { "<=" } else { "<" },
+        upper,
+        self.json
+      ));
+    }
+  }
+
+  fn visit_float_range(&mut self, lower: f64, upper: f64, inclusive: bool) {
+    let actual = match json_numeric_value(&self.json) {
+      Some(NumericValue::Float(value)) => Some(value),
+      _ => None,
+    };
+    if !actual.is_some_and(|value| {
+      lower <= value
+        && if inclusive {
+          value <= upper
+        } else {
+          value < upper
+        }
+    }) {
+      self.add_error(format!(
+        "expected float to be in range {} <= value {} {}, got {}",
+        lower,
+        if inclusive { "<=" } else { "<" },
+        upper,
+        self.json
+      ));
+    }
+  }
+
+  fn visit_resolved_range(
+    &mut self,
+    lower: &Type2<'a>,
+    upper: &Type2<'a>,
+    inclusive: bool,
+  ) -> std::result::Result<(), Error> {
+    let lower = numeric_literal(lower).or(self.resolve_numeric_controller(lower)?);
+    let upper = numeric_literal(upper).or(self.resolve_numeric_controller(upper)?);
+    let (Some(lower), Some(upper)) = (lower, upper) else {
+      return Err(Error::from_validator(
+        self,
+        "range endpoints must denote numeric singletons".to_string(),
+      ));
+    };
+    self.visit_range(
+      &Type1::from(lower).type2,
+      &Type1::from(upper).type2,
+      inclusive,
+    )
   }
 
   fn enter_map_rule(&self) -> std::result::Result<Option<MapRuleGuard>, Error> {
@@ -850,7 +987,8 @@ impl<'a> JSONValidator<'a> {
     if !matches!(
       self.state.ctrl,
       Some(ControlOperator::SIZE | ControlOperator::BITS)
-    ) || !numeric_comparison(ctrl)
+    ) || !(numeric_comparison(ctrl)
+      || matches!(ctrl, ControlOperator::AND | ControlOperator::WITHIN))
     {
       return Ok(false);
     }
@@ -3121,37 +3259,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
   fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<Error> {
     if self.state.is_group_to_choice_enum {
-      let initial_error_count = self.errors.len();
-      for tc in type_choices_from_group_choice(self.state.cddl, gc).iter() {
-        let error_count = self.errors.len();
-        let prev_is_group_to_choice_enum = self.state.is_group_to_choice_enum;
-        // The group has been converted to type choices.
-        // Validate each type normally so its nested groups are not converted again.
-        self.state.is_group_to_choice_enum = false;
-        let mut result = self.visit_type_choice(tc);
-        for error in &mut self.errors[error_count..] {
-          error.is_group_to_choice_enum = true;
-        }
-        if let Err(Error::Validation(errors)) = &mut result {
-          for error in errors {
-            error.is_group_to_choice_enum = true;
-          }
-        }
-        // Restore enumeration mode for the remaining choices, even on errors.
-        self.state.is_group_to_choice_enum = prev_is_group_to_choice_enum;
-        result?;
-        if self.errors.len() == error_count {
-          let type_choice_error_count = self.errors.len() - initial_error_count;
-          if type_choice_error_count > 0 {
-            for _ in 0..type_choice_error_count {
-              self.errors.pop();
-            }
-          }
-          return Ok(());
-        }
-      }
-
-      return Ok(());
+      return self.visit_enumeration_choice(gc);
     }
 
     self.visit_group_sequence(gc)
@@ -3159,156 +3267,33 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
   fn visit_range(
     &mut self,
-    lower: &Type2,
-    upper: &Type2,
+    lower: &Type2<'a>,
+    upper: &Type2<'a>,
     is_inclusive: bool,
   ) -> visitor::Result<Error> {
     if matches!(self.json.as_ref(), Value::Array(_)) {
       return self.validate_array_items(&ArrayItemToken::Range(lower, upper, is_inclusive));
     }
 
+    if numeric_literal(lower).is_none() || numeric_literal(upper).is_none() {
+      return self.visit_resolved_range(lower, upper, is_inclusive);
+    }
+
     match (lower, upper) {
       (Type2::IntValue { value: l, .. }, Type2::IntValue { value: u, .. }) => {
-        let error_str = if is_inclusive {
-          format!(
-            "expected integer to be in range {} <= value <= {}, got {}",
-            l, u, self.json
-          )
-        } else {
-          // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
-          format!(
-            "expected integer to be in range {} <= value < {}, got {}",
-            l, u, self.json
-          )
-        };
-
-        match self.json.as_ref() {
-          Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-              if is_inclusive {
-                if i < *l as i64 || i > *u as i64 {
-                  self.add_error(error_str);
-                }
-              } else {
-                // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
-                if i < *l as i64 || i >= *u as i64 {
-                  self.add_error(error_str);
-                }
-              }
-            } else {
-              self.add_error(error_str);
-              return Ok(());
-            }
-          }
-          _ => {
-            self.add_error(format!(
-              "invalid cddl range. value must be an integer type. got {}",
-              self.json
-            ));
-            return Ok(());
-          }
-        }
+        self.visit_integer_range(*l as i128, *u as i128, is_inclusive);
       }
       (Type2::UintValue { value: l, .. }, Type2::UintValue { value: u, .. }) => {
-        let error_str = if is_inclusive {
-          format!(
-            "expected uint to be in range {} <= value <= {}, got {}",
-            l, u, self.json
-          )
-        } else {
-          // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
-          format!(
-            "expected uint to be in range {} <= value < {}, got {}",
-            l, u, self.json
-          )
-        };
-
-        match self.json.as_ref() {
-          Value::Number(n) => {
-            if let Some(i) = n.as_u64() {
-              // Fix: Cast all usize values to u64
-              let lower = *l as u64;
-              let upper = *u as u64;
-              if is_inclusive {
-                if i < lower || i > upper {
-                  self.add_error(error_str);
-                }
-              } else if i < lower || i >= upper {
-                self.add_error(error_str);
-              }
-            } else {
-              self.add_error(error_str);
-              return Ok(());
-            }
-          }
-          Value::String(s) => match self.state.ctrl {
-            Some(ControlOperator::SIZE) => {
-              let len = s.len() as u64; // Fix: Convert len to u64
-                                        // Fix: Cast all usize values to u64
-              let lower = *l as u64;
-              let upper = *u as u64;
-              if is_inclusive {
-                if len < lower || len > upper {
-                  self.add_error(error_str);
-                }
-              } else if len < lower || len >= upper {
-                self.add_error(error_str);
-              }
-            }
-            _ => {
-              self.add_error("string value cannot be validated against a range without the .size control operator".to_string());
-              return Ok(());
-            }
-          },
-          _ => {
-            self.add_error(format!(
-              "invalid cddl range. value must be a uint type. got {}",
-              self.json
-            ));
-            return Ok(());
-          }
-        }
+        self.visit_integer_range(*l as i128, *u as i128, is_inclusive);
+      }
+      (Type2::IntValue { value: l, .. }, Type2::UintValue { value: u, .. }) => {
+        self.visit_integer_range(*l as i128, *u as i128, is_inclusive)
+      }
+      (Type2::UintValue { value: l, .. }, Type2::IntValue { value: u, .. }) => {
+        self.visit_integer_range(*l as i128, *u as i128, is_inclusive)
       }
       (Type2::FloatValue { value: l, .. }, Type2::FloatValue { value: u, .. }) => {
-        let error_str = if is_inclusive {
-          format!(
-            "expected float to be in range {} <= value <= {}, got {}",
-            l, u, self.json
-          )
-        } else {
-          // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
-          format!(
-            "expected float to be in range {} <= value < {}, got {}",
-            l, u, self.json
-          )
-        };
-
-        match self.json.as_ref() {
-          Value::Number(n) => {
-            if let Some(f) = n.as_f64().filter(|_| n.is_f64()) {
-              if is_inclusive {
-                if f < *l || f > *u {
-                  self.add_error(error_str);
-                }
-              } else {
-                // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
-                if f < *l || f >= *u {
-                  self.add_error(error_str);
-                }
-              }
-            } else {
-              self.add_error(error_str);
-              return Ok(());
-            }
-          }
-          _ => {
-            self.add_error(format!(
-              "invalid cddl range. value must be a float type. got {}",
-              self.json
-            ));
-            return Ok(());
-          }
-        }
+        self.visit_float_range(*l, *u, is_inclusive);
       }
       _ => {
         self.add_error(
@@ -3583,7 +3568,14 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       }
       #[cfg(feature = "additional-controls")]
       ControlOperator::PLUS => {
-        self.state.ctrl = Some(ctrl);
+        if self.visit_numeric_sum(target, controller)? {
+          return Ok(());
+        }
+        let previous = self.state.ctrl;
+        self.state.ctrl = match previous {
+          Some(ControlOperator::SIZE | ControlOperator::BITS) => previous,
+          _ => Some(ctrl),
+        };
 
         // Substitute generic parameters in target and controller before calling plus_operation
         let substituted_target = self
@@ -3614,10 +3606,13 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             }
           }
 
-          Err(e) => self.add_error(e),
+          Err(e) => {
+            self.state.ctrl = previous;
+            return Err(Error::from_validator(self, e));
+          }
         }
 
-        self.state.ctrl = None;
+        self.state.ctrl = previous;
       }
       #[cfg(feature = "additional-controls")]
       ControlOperator::ABNF => {
@@ -4109,6 +4104,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
   }
 
   fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error> {
+    enter_enumeration_value(&mut self.state, t2);
     charge_numeric_probe(&self.numeric_context).map_err(|()| {
       Error::from_validator(
         self,
@@ -4234,7 +4230,12 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
-            return self.validate_generic_instantiation(ident, ga, rule, false);
+            return self.validate_generic_instantiation(
+              ident,
+              ga,
+              rule,
+              self.state.is_group_to_choice_enum,
+            );
           }
         }
 

@@ -12,6 +12,8 @@ pub mod json;
 mod control;
 mod numeric_structure;
 use numeric_structure::*;
+mod numeric_domains;
+use numeric_domains::*;
 
 #[cfg(feature = "ast-span")]
 use crate::ast::Span;
@@ -1521,6 +1523,10 @@ fn numeric_comparison(ctrl: ControlOperator) -> bool {
 fn complete_numeric_candidate(operator: &RangeCtlOp) -> bool {
   match operator {
     RangeCtlOp::RangeOp { .. } => true,
+    RangeCtlOp::CtlOp {
+      ctrl: ControlOperator::AND | ControlOperator::WITHIN,
+      ..
+    } => true,
     #[cfg(feature = "additional-controls")]
     RangeCtlOp::CtlOp {
       ctrl: ControlOperator::PLUS,
@@ -1588,6 +1594,7 @@ fn charge_numeric_probe(context: &NumericContext) -> std::result::Result<(), ()>
 enum NumericDomain<'a> {
   Empty,
   Singleton(token::Value<'a>),
+  IntegerRange(IntegerBounds),
   Unknown,
 }
 
@@ -1602,8 +1609,24 @@ fn merge_numeric_domains<'a>(
     {
       NumericDomain::Singleton(a)
     }
-    _ => NumericDomain::Unknown,
+    (left, right) => merge_integer_domains(left, right),
   }
+}
+
+fn merge_integer_domains<'a>(
+  left: NumericDomain<'a>,
+  right: NumericDomain<'a>,
+) -> NumericDomain<'a> {
+  let (Some(a), Some(b)) = (left.integer_bounds(), right.integer_bounds()) else {
+    return NumericDomain::Unknown;
+  };
+  if a.upper + 1 < b.lower || b.upper + 1 < a.lower {
+    return NumericDomain::Unknown;
+  }
+  NumericDomain::IntegerRange(IntegerBounds {
+    lower: a.lower.min(b.lower),
+    upper: a.upper.max(b.upper),
+  })
 }
 
 fn numeric_literals_equal(a: &token::Value, b: &token::Value) -> bool {
@@ -1641,6 +1664,7 @@ fn numeric_instantiation_key(
 enum NumericControllerError<E> {
   Validation(E),
   ResourceLimit,
+  Proof(NumericProofFailure),
 }
 
 enum NumericValue {
@@ -1744,10 +1768,16 @@ fn numeric_controller_value<'a, E>(
   let domain = resolver
     .type2_value(&controller)
     .map_err(NumericControllerError::Validation)?;
+  if let Some(failure) = resolver.failure {
+    return Err(NumericControllerError::Proof(failure));
+  }
   if resolver.exhausted {
     return Err(NumericControllerError::ResourceLimit);
   }
   Ok(match domain {
+    NumericDomain::Singleton(token::Value::INT(value)) if value >= 0 => {
+      Some(token::Value::UINT(value as usize))
+    }
     NumericDomain::Singleton(value) => Some(value),
     _ => None,
   })
@@ -1764,6 +1794,7 @@ struct NumericControllerResolver<'s, 'a, F> {
   depth: usize,
   remaining: usize,
   exhausted: bool,
+  failure: Option<NumericProofFailure>,
 }
 
 impl<'s, 'a, E, F> NumericControllerResolver<'s, 'a, F>
@@ -1787,6 +1818,7 @@ where
       depth: 0,
       remaining: MAX_NUMERIC_RESOLUTION_WORK,
       exhausted: false,
+      failure: None,
     })
   }
 
@@ -1798,6 +1830,9 @@ where
     &mut self,
     resolve: impl FnOnce(&mut Self) -> std::result::Result<NumericDomain<'a>, E>,
   ) -> std::result::Result<NumericDomain<'a>, E> {
+    if self.failure.is_some() {
+      return Ok(NumericDomain::Unknown);
+    }
     // Check before resolving arguments, formatting keys or cloning/substituting
     // bodies: changing-argument cycles otherwise evade exact-key detection.
     if self.depth >= MAX_NUMERIC_RESOLUTION_DEPTH || self.remaining == 0 {
@@ -1836,8 +1871,11 @@ where
   }
 
   fn type1_value(&mut self, value: &Type1<'a>) -> std::result::Result<NumericDomain<'a>, E> {
+    if let Some(domain) = self.ordered_integer_value(value)? {
+      return Ok(domain);
+    }
     let candidate = self.type1_candidate(value)?;
-    if self.exhausted {
+    if self.exhausted || self.failure.is_some() {
       return Ok(NumericDomain::Unknown);
     }
     // Ranges and computed sums are already proved by their resolved operands.
@@ -1888,7 +1926,11 @@ where
         ..
       }) => self.plus_value(&value.type2, &value.operator.as_ref().unwrap().type2),
       Some(RangeCtlOp::CtlOp {
-        ctrl: ControlOperator::EQ | ControlOperator::AND | ControlOperator::WITHIN,
+        ctrl: ControlOperator::AND | ControlOperator::WITHIN,
+        ..
+      }) => self.intersection_value(&value.type2, &value.operator.as_ref().unwrap().type2),
+      Some(RangeCtlOp::CtlOp {
+        ctrl: ControlOperator::EQ,
         ..
       }) => {
         let candidate = self.type2_value(&value.operator.as_ref().unwrap().type2)?;
@@ -1915,6 +1957,12 @@ where
     let (NumericDomain::Singleton(lower), NumericDomain::Singleton(upper)) = (lower, upper) else {
       return Ok(NumericDomain::Unknown);
     };
+    if let (Some(lower), Some(upper)) = (
+      numeric_literal_integer(&lower),
+      numeric_literal_integer(&upper),
+    ) {
+      return Ok(self.proved_integer(lower, upper - i128::from(!inclusive)));
+    }
     use std::cmp::Ordering;
     Ok(match numeric_literal_order(&lower, &upper) {
       Some(Ordering::Greater) => NumericDomain::Empty,
@@ -1938,7 +1986,11 @@ where
     target: &Type2<'a>,
     controller: &Type2<'a>,
   ) -> std::result::Result<NumericDomain<'a>, E> {
+    let cuts = self.cycle_cuts;
     let (target, controller) = (self.type2_value(target)?, self.type2_value(controller)?);
+    if self.cycle_cuts != cuts {
+      return Ok(self.failed_proof(NumericProofFailure::CyclicComputation));
+    }
     if target == NumericDomain::Empty || controller == NumericDomain::Empty {
       return Ok(NumericDomain::Empty);
     }
@@ -1947,19 +1999,10 @@ where
     else {
       return Ok(NumericDomain::Unknown);
     };
-    let values = control::plus_operation(
-      self.state.cddl,
-      &Type1::from(target).type2,
-      &Type1::from(controller).type2,
-    );
-    let Ok(values) = values else {
-      return Ok(NumericDomain::Unknown);
-    };
-    let mut result = NumericDomain::Empty;
-    for value in values {
-      result = merge_numeric_domains(result, self.type2_value(&value)?);
-    }
-    Ok(result)
+    Ok(match checked_numeric_addition(&target, &controller) {
+      Ok(value) => NumericDomain::Singleton(value),
+      Err(failure) => self.failed_proof(failure),
+    })
   }
 
   fn choices_value<'b>(
@@ -2039,7 +2082,7 @@ where
     self.active.remove(&key);
     // A cut is a least-fixed-point assumption about the active chain, not a
     // completed proof. Never reuse that result from an unguarded context.
-    if cuts == self.cycle_cuts && !self.exhausted {
+    if cuts == self.cycle_cuts && !self.exhausted && self.failure.is_none() {
       if let Ok(value) = &result {
         self.memo.insert(key, value.clone());
       }
@@ -2134,7 +2177,7 @@ where
   ) -> std::result::Result<NumericDomain<'a>, E> {
     let types = type_choice_types_from_ident(self.state.cddl, ident);
     if types.is_empty() {
-      return Ok(NumericDomain::Unknown);
+      return Ok(primitive_integer_domain(ident));
     }
     let params = rule_from_ident(self.state.cddl, ident)
       .and_then(generic_params_from_rule)

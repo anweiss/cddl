@@ -1,4 +1,5 @@
 use super::*;
+use crate::ast::TypeGroupnameEntry;
 use std::fmt::{self, Write};
 use std::sync::{Arc, Mutex};
 
@@ -53,6 +54,16 @@ pub(super) enum NumericRecursion {
 }
 
 impl NumericContext {
+  pub(super) fn begin_evaluation(&mut self) -> Option<Arc<std::sync::atomic::AtomicUsize>> {
+    let previous = self.work.clone();
+    self.work.get_or_insert_with(|| {
+      Arc::new(std::sync::atomic::AtomicUsize::new(
+        MAX_NUMERIC_RESOLUTION_WORK,
+      ))
+    });
+    previous
+  }
+
   pub(super) fn enter_negative(&mut self, state: &ValidationState<'_>) {
     self
       .negative_boundaries
@@ -225,6 +236,79 @@ pub(super) fn group_entry_substitution_fits<'a>(
   SubstitutionWork::new(bindings)
     .visit_group_entry(value)
     .is_ok()
+}
+
+pub(super) fn enumeration_type_choices<'a>(
+  state: &ValidationState<'a>,
+  choice: &GroupChoice<'a>,
+) -> Result<Vec<TypeChoice<'a>>, ()> {
+  let bindings = HashMap::new();
+  SubstitutionWork::new(&bindings)
+    .visit_group_choice(choice)
+    .map_err(|_| ())?;
+  let mut result = Vec::new();
+  for (entry, _) in &choice.group_entries {
+    let type2 = match entry {
+      GroupEntry::ValueMemberKey { ge, .. } => {
+        result.extend(ge.entry_type.type_choices.iter().cloned());
+        continue;
+      }
+      GroupEntry::TypeGroupname { ge, .. } => enumeration_reference(state, ge),
+      GroupEntry::InlineGroup { group, .. } => Type2::ChoiceFromInlineGroup {
+        group: group.clone(),
+        #[cfg(feature = "ast-span")]
+        span: Span::default(),
+        #[cfg(feature = "ast-comments")]
+        comments: None,
+        #[cfg(feature = "ast-comments")]
+        comments_before_group: None,
+        #[cfg(feature = "ast-comments")]
+        comments_after_group: None,
+      },
+    };
+    let mut type1 = Type1::from(token::Value::UINT(0));
+    type1.type2 = type2;
+    result.push(TypeChoice {
+      type1,
+      #[cfg(feature = "ast-comments")]
+      comments_before_type: None,
+      #[cfg(feature = "ast-comments")]
+      comments_after_type: None,
+    });
+  }
+  Ok(result)
+}
+
+pub(super) fn enter_enumeration_value(state: &mut ValidationState<'_>, value: &Type2<'_>) {
+  state.is_group_to_choice_enum &= !matches!(
+    value,
+    Type2::Array { .. } | Type2::Map { .. } | Type2::TaggedData { .. }
+  );
+}
+
+fn enumeration_reference<'a>(
+  state: &ValidationState<'a>,
+  entry: &TypeGroupnameEntry<'a>,
+) -> Type2<'a> {
+  if group_rule_from_ident(state.cddl, &entry.name).is_some()
+    || !group_choice_alternates_from_ident(state.cddl, &entry.name).is_empty()
+  {
+    Type2::ChoiceFromGroup {
+      ident: entry.name.clone(),
+      generic_args: entry.generic_args.clone(),
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+      #[cfg(feature = "ast-comments")]
+      comments: None,
+    }
+  } else {
+    Type2::Typename {
+      ident: entry.name.clone(),
+      generic_args: entry.generic_args.clone(),
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    }
+  }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

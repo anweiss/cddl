@@ -84,6 +84,245 @@ const CONTROL_DOMAINS: &[(&str, bool)] = &[
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn bare_group_enumeration_cycles_are_bounded_before_expansion() {
+  #[cfg(not(target_arch = "wasm32"))]
+  if isolated_numeric_repro("bare_group_enumeration_cycles_are_bounded_before_expansion") {
+    return;
+  }
+  for schema in [
+    "x = &g<float16> .gt 0.0\ng<t> = (g<t>, value: t)",
+    "x = &g .gt 0.0\ng = (g, value: float16)",
+    "x = &g<float16> .gt 0.0\ng<t> = (h<t>, value: t)\nh<u> = (g<u>)",
+  ] {
+    assert_numeric_case(schema, "1.5", true);
+    assert_numeric_case(schema, "1.1", false);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn enumeration_membership_preserves_bare_primitives_and_empty_domains() {
+  assert_numeric_case("x = float64 .ne &(float16)", "1.1", true);
+  assert_numeric_case("x = float64 .eq &(float16)", "1.5", true);
+  assert_numeric_case("x = float64 .ne &(float16)", "1.5", false);
+  assert_numeric_case("x = float64 .ne &()", "1.5", true);
+  assert_numeric_case("x = float64 .eq &()", "1.5", false);
+  assert_numeric_case("x = &()", "1.5", false);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn nested_group_enumerations_preserve_instantiated_lexical_scopes() {
+  let schema = "x = float64 .ne &g<float16>\ng<t> = (h<t>, zero: 0.0)\nh<u> = (value: u)";
+  assert_numeric_case(schema, "1.5", false);
+  assert_numeric_case(schema, "1.1", true);
+  assert_numeric_case(
+    "x = &g<float64, 0.0>\ng<t, float64> = (h<t>, zero: 0.0)\nh<u> = (value: u)",
+    "1.5",
+    true,
+  );
+  assert_numeric_case("x = &g<float16>\ng<t> = (value: [t])", "[1.5]", true);
+  assert_numeric_case("x = &g<float16>\ng<t> = (value: [t])", "[1.1]", false);
+  assert_numeric_case(
+    "x = &g<float16>\ng<t> = (value: {item: t})",
+    "{\"item\":1.5}",
+    true,
+  );
+  assert_numeric_case(
+    "x = &g<float16>\ng<t> = (value: {item: t})",
+    "{\"item\":1.1}",
+    false,
+  );
+}
+
+#[cfg(feature = "additional-controls")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn computed_controller_cycle_cuts_are_not_singleton_proofs() {
+  #[cfg(not(target_arch = "wasm32"))]
+  if isolated_numeric_repro("computed_controller_cycle_cuts_are_not_singleton_proofs") {
+    return;
+  }
+  assert_numeric_case("x = int .gt c\nc = 0 / (c .plus 1)", "1", false);
+  assert_numeric_case("x = int .gt c\nc = (c .plus 1) / 0", "1", false);
+  assert_numeric_case("x = int .ne c\nc = 0 / (c .plus 1)", "-1", false);
+  assert_numeric_case("x = int .ne c\nc = float64 / (c .plus 1)", "-1", false);
+  #[cfg(not(target_arch = "wasm32"))]
+  for error in numeric_error_messages("x = int .gt c\nc = 0 / (c .plus 1)", "1") {
+    assert!(error.contains("active cycle cut"));
+  }
+}
+
+#[cfg(feature = "additional-controls")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn computed_addition_is_signed_checked_and_representable() {
+  #[cfg(not(target_arch = "wasm32"))]
+  if isolated_numeric_repro("computed_addition_is_signed_checked_and_representable") {
+    return;
+  }
+  for (sum, data, expected) in [
+    ("1 .plus -2", "0", false),
+    ("1 .plus -2", "-2", true),
+    ("-2 .plus 1", "0", false),
+    ("1 .plus 1.5", "2.0", true),
+    ("1.5 .plus 1", "2.0", true),
+  ] {
+    assert_numeric_case(
+      &format!("x = number .lt boundary\nboundary = {sum}"),
+      data,
+      expected,
+    );
+  }
+  for (data, expected) in [("2", true), ("3", true), ("4", false)] {
+    assert_numeric_case("x = 1 .plus (1 / 2)", data, expected);
+  }
+  assert_numeric_case("x = uint .size (1 .plus -1)", "0", true);
+  assert_numeric_case("x = uint .size (1 .plus -1)", "1", false);
+}
+
+#[cfg(feature = "additional-controls")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn computed_addition_overflow_is_a_hard_error() {
+  #[cfg(not(target_arch = "wasm32"))]
+  if isolated_numeric_repro("computed_addition_overflow_is_a_hard_error") {
+    return;
+  }
+  let overflow = format!("{} .plus 1", usize::MAX);
+  assert_numeric_case(&format!("x = int .lt ({overflow})"), "0", false);
+  assert_numeric_case(&format!("x = int .ne ({overflow})"), "0", false);
+  let underflow = format!("{} .plus -1", isize::MIN);
+  assert_numeric_case(&format!("x = int .lt ({underflow})"), "0", false);
+  assert_numeric_case("x = float64 .ne (1.0e308 .plus 1.0e308)", "1.5", false);
+  #[cfg(not(target_arch = "wasm32"))]
+  for error in numeric_error_messages(&format!("x = int .ne ({overflow})"), "0") {
+    assert!(error.contains("not representable"));
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn range_targets_resolve_constrained_endpoints_in_scope() {
+  for schema in [
+    "x = bounded .gt 0.0\nbounded = lower..2.0\nlower = float64 .eq 0.0",
+    "x = bounded<float64> .gt 0.0\nbounded<t> = (t .eq 0.0)..(t .eq 2.0)",
+    "x = bounded .gt -1\nbounded = lower..2\nlower = uint .eq 0",
+  ] {
+    let data = if schema.contains("lower..2\n") {
+      "1"
+    } else {
+      "1.5"
+    };
+    assert_numeric_case(schema, data, true);
+    assert_numeric_case(schema, "3.5", false);
+  }
+  assert_numeric_case(
+    "x = bounded .gt 0.0\nbounded = (float16 .eq 1.1)..2.0",
+    "1.5",
+    false,
+  );
+  let signed = "x = bounded .gt -2\nbounded = lower..upper\nlower = int .eq -1\nupper = int .eq 1";
+  assert_numeric_case(signed, "0", true);
+  assert_numeric_case(signed, "2", false);
+  assert_numeric_case(signed, "0.0", false);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn signed_zero_singleton_controllers_keep_unsigned_operations() {
+  assert_numeric_case("x = uint .size (uint .eq -0)", "0", true);
+  assert_numeric_case("x = uint .size (uint .eq -0)", "1", false);
+  #[cfg(feature = "json")]
+  assert!(validate_json("x = tstr .size (uint .eq -0)", "\"\""));
+  #[cfg(feature = "cbor")]
+  {
+    let mut encoded = Vec::new();
+    ciborium::ser::into_writer(&1u64, &mut encoded).unwrap();
+    assert!(validate_cbor("x = uint .bits (uint .eq -0)", &encoded));
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn intersection_candidates_are_proved_against_independent_operands() {
+  for op in ["and", "within"] {
+    for domain in [format!("0.0 .{op} float64"), format!("float64 .{op} 0.0")] {
+      let schema = format!("x = float64 .gt zero\nzero = {domain}");
+      assert_numeric_case(&schema, "1.5", true);
+      assert_numeric_case(&schema, "0.0", false);
+    }
+    assert_numeric_case(&format!("x = uint .size (0 .{op} uint)"), "0", true);
+    assert_numeric_case(&format!("x = float64 .gt (0.0 .{op} uint)"), "1.5", false);
+    #[cfg(feature = "cbor")]
+    {
+      assert!(validate_cbor(
+        &format!("x = uint .bits (0 .{op} uint)"),
+        &[1]
+      ));
+      assert!(!validate_cbor(
+        &format!("x = uint .bits (0 .{op} uint)"),
+        &[2]
+      ));
+    }
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn integer_constraints_prove_singleton_empty_and_nonsingleton_domains() {
+  for domain in [
+    "uint .le 0",
+    "uint .lt 1",
+    "uint .lt 1.0",
+    "uint .le 0.0",
+    "nint .ge -1",
+    "nint .ge -1.0",
+    "(int .ge -1) .lt 0",
+    "(0..2) .le 0",
+    "(0 / 1) .lt 1",
+  ] {
+    assert_numeric_case(
+      &format!("x = float64 .gt zero\nzero = {domain}"),
+      "1.5",
+      true,
+    );
+    #[cfg(target_pointer_width = "64")]
+    {
+      assert_numeric_case(
+        "x = float64 .gt (uint .ge 18446744073709551615)",
+        "18446744073709551616.0",
+        true,
+      );
+      assert_numeric_case(
+        "x = float64 .gt (uint .ge 18446744073709551616.0)",
+        "18446744073709551616.0",
+        false,
+      );
+    }
+  }
+  for domain in [
+    "uint .lt 0",
+    "uint .le -1",
+    "uint .le 1",
+    "nint .lt -1",
+    "float64 .le 0.0",
+  ] {
+    assert_numeric_case(
+      &format!("x = float64 .gt zero\nzero = {domain}"),
+      "1.5",
+      false,
+    );
+  }
+  assert_numeric_case(
+    "x = float64 .gt limit<uint>\nlimit<t> = t .le 0",
+    "1.5",
+    true,
+  );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn integer_membership_controls_preserve_negative_domains() {
   for controller in ["nint", "negative"] {
     let eq = format!("x = int .eq {controller}\nnegative = nint");

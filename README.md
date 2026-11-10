@@ -551,7 +551,10 @@ implementation resource limits, not additional CDDL value constraints:
 * 48 active generic instantiations without progress at one data location;
 * a separate allowance of 4096 ordinary-evaluator visits for a numeric target
   and equality/inequality membership check, or across candidate checks within
-  one controller proof, shared with nested child validators.
+  one controller proof, shared with nested child validators. Ordinary
+  group-to-choice enumeration also installs this allowance when none is active;
+* with `additional-controls`, each fallback `.plus` evaluation has 48 nested
+  steps and 4096 work steps, including alias and operand expansion.
 
 Completed-domain caches and counters belong to that proof or evaluation, not
 to a global cache or subsequent public validation calls. Nested probes inherit
@@ -577,7 +580,16 @@ Non-singleton ordering controllers and recursive numeric constraints that depend
 their own negation are also explicit errors, not ordinary nonmembership.
 Positive recursive alternatives still use ordinary cycle cuts. Numeric
 group-to-choice controllers share the proof limits and preserve their generic
-bindings and alternative constraints.
+bindings and alternative constraints. Ordinary enumerations preserve bare
+primitive references and nested instantiated groups; an empty enumeration
+matches no value. Recursive group references are checked before descent.
+Computed numeric operands that depend on a cycle cut cannot establish a
+singleton. Addition uses checked, sign-preserving arithmetic; overflow,
+nonfinite results and integer results outside the target's pointer-sized
+literal representation are explicit errors, never values that `.ne` can accept.
+Constrained range endpoints use the same bounded singleton proofs.
+Integer ordering constraints can prove empty, singleton or bounded integer
+domains without merging integer and floating-point literal domains.
 
 #### Supported JSON validation features
 

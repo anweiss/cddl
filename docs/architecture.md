@@ -52,6 +52,11 @@ Numeric target checks share a 4096-visit ordinary-evaluator allowance with
 their equality/inequality membership checks; controller candidate checks have
 their own 4096-visit allowance. Nested child validators inherit the active
 allowance instead of replenishing it.
+Ordinary group-to-choice enumeration installs that allowance only if none is
+active, then restores the caller's context. It evaluates unexpanded references
+through instantiation-aware guards, preserving primitive names, lexical generic
+scopes and ordinary value-container semantics. Empty enumerations are empty
+domains, not successful matches.
 Exhaustion and recursive constraint proofs return errors,
 not validity assumptions that `.ne` could invert. These budgets and caches
 are local to each resolution or evaluation, never shared across public
@@ -82,7 +87,20 @@ Constrained singleton size/bit controllers are proved separately before
 applying the enclosing operation. Singleton and empty ranges are classified
 from their resolved endpoints, equivalent signed/unsigned integer spellings
 merge without merging integer and float domains, and `.plus` controllers use
-the values produced by the existing addition implementation.
+checked, sign-preserving sums. Integer overflow or an unrepresentable
+pointer-sized integer result, and nonfinite floating sums, are hard errors.
+The multi-choice arithmetic fallback also bounds alias/operand expansion to
+48 nested steps and 4096 work steps per evaluation.
+Computed operands that used a positive cycle cut cannot prove a singleton;
+this is a typed proof failure, not an empty computed domain. Such failures,
+like other cuts and errors, are never memoized as completed proofs.
+Intersections prove candidates against each operand independently, without
+replaying an enclosing `.and` or `.within` operation.
+Bounded integer ordering constraints are narrowed using exact comparisons,
+including mixed floating bounds; transition-search steps consume the same
+4096-step resolver allowance. Empty, singleton and contiguous integer domains
+remain distinct from floating-point domains. Ordinary range membership resolves
+constrained endpoints through these bounded proofs before checking the value.
 Adjacent exclusive integer bounds denote their lower integer; floating ranges
 keep their separate, nondiscrete domain. Bounded inline/named group enumerations
 resolve their alternatives with the same scope, constraint, cache, and work
