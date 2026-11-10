@@ -34,6 +34,13 @@ releases its errors and any entries it claimed.
 The `b64url` prelude accepts unpadded URL-safe base64 text in JSON. In CBOR it
 requires tag 33 around a text payload and validates that payload with the same
 decoder; untagged text, other tags and non-text payloads are rejected.
+Other tagged CBOR prelude types also require their declared tags, including
+`time` (1) and `uri` (32); date/time and base64url payload checks still apply.
+
+Numeric target and controller-domain probes cache failed as well as successful
+proofs. Controller proofs are keyed by operand and resolved generic bindings;
+cached failures replay at the current data location. Alternatives decide whether
+they matched using isolated diagnostics before deduplicating failed probes.
 
 The client never imports server internals. Browser modules never import LSP
 sources. ESLint enforces these source boundaries; the generated WASM packages

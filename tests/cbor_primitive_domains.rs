@@ -275,6 +275,73 @@ fn comparison_controllers_respect_their_own_domains() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn mixed_numeric_targets_preserve_nonnumeric_members() {
   assert!(accepts("x = v .and any\nv = uint / any", &[0xf6]));
+  for arm in ["tstr", "bstr"] {
+    for control in ["and any", "within any", "eq 1"] {
+      assert!(accepts(
+        &format!("x = v .{control}\nv = uint / {arm}"),
+        &[0x01]
+      ));
+    }
+    assert!(!accepts(&format!("x = v .eq 2\nv = uint / {arm}"), &[0x01]));
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn duplicate_failed_probes_do_not_accept_group_alternatives() {
+  for schema in [
+    "root = &(a: v .eq 1, b: v .eq 2)\nv = uint .and &(two: 2)",
+    "root = &g\ng = (a: v .eq 1, b: v .eq 2)\nv = uint .and &(two: 2)",
+  ] {
+    #[cfg(not(target_arch = "wasm32"))]
+    assert!(cddl::cddl_from_str(schema, false).is_ok(), "{}", schema);
+    assert!(!accepts(schema, &[0x01]), "{}", schema);
+  }
+  assert!(accepts(
+    "root = &(a: v .eq 1, b: uint)\nv = uint .and &(two: 2)",
+    &[0x01]
+  ));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn failed_comparison_controller_chain_proofs_remain_bounded() {
+  // The unoptimized WASM runner has a smaller, fixed stack than the native CLI.
+  let depth = if cfg!(target_arch = "wasm32") { 8 } else { 24 };
+  let mut schema = format!("x = n{depth}\nn0 = uint .eq 0\n");
+  for level in 1..=depth {
+    schema.push_str(&format!(
+      "n{level} = uint .ge b{level} / uint .gt b{level}\nb{level} = n{prev} .eq 1\n",
+      prev = level - 1
+    ));
+  }
+  // This deep recursive proof needs the same stack budget as the native CLI,
+  // rather than the smaller stack Rust allocates to each test worker.
+  #[cfg(not(target_arch = "wasm32"))]
+  std::thread::Builder::new()
+    .stack_size(8 * 1024 * 1024)
+    .spawn(move || assert!(!accepts(&schema, &[0x01])))
+    .unwrap()
+    .join()
+    .unwrap();
+  #[cfg(target_arch = "wasm32")]
+  assert!(!accepts(&schema, &[0x01]));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn tagged_preludes_require_tags_even_for_valid_payloads() {
+  for (ty, payload) in [
+    ("time", &[0x01][..]),
+    ("uri", &[0x61, b'x'][..]),
+    ("b64url", &[0x62, b'Z', b'g'][..]),
+    ("tdate", b"\x741970-01-01T00:00:00Z"),
+  ] {
+    assert!(!accepts(&format!("x = {ty}"), payload), "{}", ty);
+    assert!(accepts(&format!("x = {ty} / any"), payload), "{}", ty);
+  }
+  assert!(!accepts("x = tdate", b"\xc0\x61x"));
+  assert!(accepts("x = tdate", b"\xc0\x741970-01-01T00:00:00Z"));
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
@@ -317,6 +384,12 @@ fn numeric_probe_cache_preserves_generic_context() {
     &[0x00]
   ));
   assert!(accepts(&format!("x = check<1,1>{rules}"), &[0x01]));
+  let rules = "\ncheck<T> = uint .gt bound<T>\nbound<T> = g<T> .eq 1\ng<T> = uint .eq T";
+  assert!(accepts(&format!("x = check<0> / check<1>{rules}"), &[0x02]));
+  assert!(!accepts(
+    &format!("x = check<0> / check<0>{rules}"),
+    &[0x02]
+  ));
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
