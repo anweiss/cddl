@@ -10,6 +10,8 @@ pub mod csv_validator;
 pub mod json;
 
 mod control;
+mod numeric_structure;
+use numeric_structure::*;
 
 #[cfg(feature = "ast-span")]
 use crate::ast::Span;
@@ -142,9 +144,10 @@ pub struct ValidationState<'a> {
   pub is_multi_type_choice_type_rule_validating_array: bool,
   /// Track visited rules to prevent infinite recursion during validation
   pub visited_rules: HashSet<String>,
-  /// Work remaining in one numeric-controller candidate proof, shared only
-  /// by its child validators; ordinary public validators leave this unset.
+  /// Work remaining in one numeric target or controller evaluation, inherited
+  /// by child validators. Public validation does not retain a spent allowance.
   pub numeric_probe_work: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+  numeric_identities: std::sync::Arc<std::sync::Mutex<NumericIdentities>>,
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   /// Enabled features for validation
@@ -187,6 +190,7 @@ impl<'a> ValidationState<'a> {
       is_multi_type_choice_type_rule_validating_array: false,
       visited_rules: HashSet::new(),
       numeric_probe_work: None,
+      numeric_identities: Default::default(),
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
@@ -218,6 +222,7 @@ impl<'a> ValidationState<'a> {
       is_multi_type_choice_type_rule_validating_array: false,
       visited_rules: HashSet::new(),
       numeric_probe_work: None,
+      numeric_identities: Default::default(),
     }
   }
 
@@ -246,6 +251,7 @@ impl<'a> ValidationState<'a> {
       is_multi_type_choice_type_rule_validating_array: false,
       visited_rules: HashSet::new(),
       numeric_probe_work: None,
+      numeric_identities: Default::default(),
       enabled_features,
       has_feature_errors: false,
       disabled_features: None,
@@ -277,6 +283,7 @@ impl<'a> ValidationState<'a> {
       is_multi_type_choice_type_rule_validating_array: false,
       visited_rules: HashSet::new(),
       numeric_probe_work: None,
+      numeric_identities: Default::default(),
     }
   }
 }
@@ -990,14 +997,14 @@ fn expand_key_generic_alternatives<'a>(
   let Some(rule) = rule_from_ident(state.cddl, ident) else {
     return (vec![candidate.clone()], true);
   };
-  if !matches!(rule, Rule::Type { .. }) {
-    return (vec![candidate.clone()], true);
-  }
-  let Some(params) = generic_params_from_rule(rule) else {
+  let Some(params) = generic_params_from_rule(rule).filter(|_| matches!(rule, Rule::Type { .. }))
+  else {
     return (vec![candidate.clone()], true);
   };
   let key = qualified_ident_key(ident);
-  let resolved = resolved_generic_args(state, args);
+  let Ok(resolved) = resolved_generic_args(state, args) else {
+    return (Vec::new(), false);
+  };
   // Instantiations are cached by name and resolved arguments, so a DAG of
   // generic aliases expands each distinct instantiation once.
   let memo_key = generic_instantiation_key(&key, &resolved);
@@ -1397,15 +1404,7 @@ fn resolve_argument_in_caller<'a>(state: &ValidationState<'a>, arg: &Type1<'a>) 
     .iter()
     .filter_map(|param| generic_argument_for_param(state, param).map(|arg| (*param, arg)))
     .collect();
-  let mut resolved = arg.clone();
-  for _ in 0..bindings.len() {
-    let next = substitute_generic_params(&resolved, &bindings);
-    if next == resolved {
-      break;
-    }
-    resolved = next;
-  }
-  normalize_generic_argument(resolved)
+  normalize_generic_argument(substitute_generic_params(arg, &bindings))
 }
 
 fn normalize_generic_argument<'a>(mut arg: Type1<'a>) -> Type1<'a> {
@@ -1435,12 +1434,130 @@ fn active_generic_context<'s, 'a>(
   Some((rule.name, &rule.args[start..]))
 }
 
+fn current_generic_bindings<'a>(state: &ValidationState<'a>) -> HashMap<&'a str, Type1<'a>> {
+  state
+    .generic_rules
+    .iter()
+    .find(|rule| Some(rule.name) == state.eval_generic_rule)
+    .into_iter()
+    .flat_map(|rule| &rule.params)
+    .filter_map(|param| generic_argument_for_param(state, param).map(|arg| (*param, arg)))
+    .collect()
+}
+
+fn instantiated_type_choices<'a>(
+  state: &ValidationState<'a>,
+  ident: &Identifier<'a>,
+) -> std::result::Result<Vec<std::borrow::Cow<'a, Type<'a>>>, ()> {
+  let bindings = if state.eval_generic_rule == Some(ident.ident)
+    && rule_from_ident(state.cddl, ident)
+      .and_then(generic_params_from_rule)
+      .is_some()
+  {
+    current_generic_bindings(state)
+  } else {
+    HashMap::new()
+  };
+  type_choice_types_from_ident(state.cddl, ident)
+    .into_iter()
+    .map(|value| {
+      if bindings.is_empty() {
+        return Ok(std::borrow::Cow::Borrowed(value));
+      }
+      if !value
+        .type_choices
+        .iter()
+        .all(|choice| numeric_substitution_fits(&choice.type1, &bindings))
+      {
+        return Err(());
+      }
+      let mut expanded = value.clone();
+      substitute_type_params(&mut expanded, &bindings);
+      Ok(std::borrow::Cow::Owned(expanded))
+    })
+    .collect()
+}
+
+fn constrained_controller<'a>(
+  target: &Type2<'a>,
+  ctrl: ControlOperator,
+  controller: &Type2<'a>,
+) -> Type2<'a> {
+  let mut value = Type1::from(token::Value::UINT(0));
+  value.type2 = target.clone();
+  value.operator = Some(crate::ast::Operator {
+    operator: RangeCtlOp::CtlOp {
+      ctrl,
+      #[cfg(feature = "ast-span")]
+      span: Span::default(),
+    },
+    type2: controller.clone(),
+    #[cfg(feature = "ast-comments")]
+    comments_before_operator: None,
+    #[cfg(feature = "ast-comments")]
+    comments_after_operator: None,
+  });
+  bound_type2(&value)
+}
+
+fn instantiated_group_entry<'a>(
+  state: &ValidationState<'a>,
+  entry: &GroupEntry<'a>,
+) -> std::result::Result<Option<GroupEntry<'a>>, ()> {
+  if state.eval_generic_rule.is_none() {
+    return Ok(None);
+  }
+  let bindings = current_generic_bindings(state);
+  if !group_entry_substitution_fits(entry, &bindings) {
+    return Err(());
+  }
+  let mut group = Group::from(entry.clone());
+  substitute_group_params(&mut group, &bindings);
+  Ok(Some(
+    group.group_choices.remove(0).group_entries.remove(0).0,
+  ))
+}
+
+fn numeric_comparison(ctrl: ControlOperator) -> bool {
+  matches!(
+    ctrl,
+    ControlOperator::EQ
+      | ControlOperator::NE
+      | ControlOperator::LT
+      | ControlOperator::LE
+      | ControlOperator::GT
+      | ControlOperator::GE
+  )
+}
+
+fn complete_numeric_candidate(operator: &RangeCtlOp) -> bool {
+  match operator {
+    RangeCtlOp::RangeOp { .. } => true,
+    #[cfg(feature = "additional-controls")]
+    RangeCtlOp::CtlOp {
+      ctrl: ControlOperator::PLUS,
+      ..
+    } => true,
+    _ => false,
+  }
+}
+
+#[cfg(feature = "cbor")]
+fn reset_numeric_identities(state: &mut ValidationState) {
+  if state.numeric_probe_work.is_none() && state.visited_rules.is_empty() {
+    state.numeric_identities = Default::default();
+  }
+}
+
 fn numeric_recursion_marker(
   state: &ValidationState,
   category: &str,
   subject: &impl std::fmt::Debug,
 ) -> Option<String> {
-  let location = format!("\u{0}{}", state.data_location);
+  let location = format!(
+    "\u{0}{}",
+    compact_numeric_key(state, format_args!("{}", state.data_location))
+  );
   let depth = state
     .visited_rules
     .iter()
@@ -1449,16 +1566,15 @@ fn numeric_recursion_marker(
   if depth >= MAX_NUMERIC_RESOLUTION_DEPTH {
     return None;
   }
-  bounded_numeric_key(format_args!(
-    "{category}\u{0}{:?}\u{0}{subject:?}{location}",
-    active_generic_context(state)
-  ))
+  let identity = compact_numeric_key(
+    state,
+    format_args!("{:?}\u{0}{subject:?}", active_generic_context(state)),
+  );
+  Some(format!("{category}\u{0}{identity}{location}"))
 }
 
 const MAX_NUMERIC_RESOLUTION_DEPTH: usize = 48;
 const MAX_NUMERIC_RESOLUTION_WORK: usize = 4096;
-const MAX_NUMERIC_KEY_BYTES: usize = 16 * 1024;
-const MAX_NUMERIC_SUBSTITUTION_BYTES: usize = 4 * 1024 * 1024;
 
 fn charge_numeric_probe(state: &ValidationState) -> std::result::Result<(), ()> {
   if let Some(work) = &state.numeric_probe_work {
@@ -1470,42 +1586,6 @@ fn charge_numeric_probe(state: &ValidationState) -> std::result::Result<(), ()> 
       .map_err(|_| ())?;
   }
   Ok(())
-}
-
-struct NumericKey(String);
-
-impl std::fmt::Write for NumericKey {
-  fn write_str(&mut self, value: &str) -> std::fmt::Result {
-    if self.0.len().saturating_add(value.len()) > MAX_NUMERIC_KEY_BYTES {
-      return Err(std::fmt::Error);
-    }
-    self.0.push_str(value);
-    Ok(())
-  }
-}
-
-fn bounded_numeric_key(args: std::fmt::Arguments) -> Option<String> {
-  let mut key = NumericKey(String::new());
-  std::fmt::write(&mut key, args).ok()?;
-  Some(key.0)
-}
-
-fn numeric_substitution_fits(
-  value: &impl std::fmt::Debug,
-  bindings: &HashMap<&str, Type1>,
-) -> bool {
-  let Some(template) = bounded_numeric_key(format_args!("{value:?}")) else {
-    return false;
-  };
-  let mut largest = 1;
-  for arg in bindings.values() {
-    let Some(arg) = bounded_numeric_key(format_args!("{arg:?}")) else {
-      return false;
-    };
-    largest = largest.max(arg.len());
-  }
-  // Debug structure is an upper bound on the number of substituted references.
-  template.len().saturating_mul(largest) <= MAX_NUMERIC_SUBSTITUTION_BYTES
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1521,11 +1601,45 @@ fn merge_numeric_domains<'a>(
 ) -> NumericDomain<'a> {
   match (left, right) {
     (NumericDomain::Empty, domain) | (domain, NumericDomain::Empty) => domain,
-    (NumericDomain::Singleton(a), NumericDomain::Singleton(b)) if a == b => {
+    (NumericDomain::Singleton(a), NumericDomain::Singleton(b))
+      if numeric_literals_equal(&a, &b) =>
+    {
       NumericDomain::Singleton(a)
     }
     _ => NumericDomain::Unknown,
   }
+}
+
+fn numeric_literals_equal(a: &token::Value, b: &token::Value) -> bool {
+  match (a, b) {
+    (token::Value::INT(a), token::Value::UINT(b))
+    | (token::Value::UINT(b), token::Value::INT(a)) => *a >= 0 && *a as usize == *b,
+    _ => a == b,
+  }
+}
+
+fn numeric_literal_integer(value: &token::Value) -> Option<i128> {
+  match value {
+    token::Value::INT(value) => Some(*value as i128),
+    token::Value::UINT(value) => Some(*value as i128),
+    _ => None,
+  }
+}
+
+fn numeric_literal_order(a: &token::Value, b: &token::Value) -> Option<std::cmp::Ordering> {
+  match (a, b) {
+    (token::Value::FLOAT(a), token::Value::FLOAT(b)) => a.partial_cmp(b),
+    _ => Some(numeric_literal_integer(a)?.cmp(&numeric_literal_integer(b)?)),
+  }
+}
+
+fn numeric_instantiation_key(
+  state: &ValidationState,
+  context: &str,
+  ident: &Identifier,
+  args: &[Type1],
+) -> String {
+  compact_numeric_key(state, format_args!("{context}\u{0}{ident}<{args:?}>"))
 }
 
 enum NumericControllerError<E> {
@@ -1623,11 +1737,16 @@ fn numeric_controller_value<'a, E>(
   controller: &Type2<'a>,
   validate: impl FnMut(&Type1<'a>, &token::Value<'a>) -> std::result::Result<bool, E>,
 ) -> std::result::Result<Option<token::Value<'a>>, NumericControllerError<E>> {
+  let bindings = current_generic_bindings(state);
+  if !numeric_type2_substitution_fits(controller, &bindings) {
+    return Err(NumericControllerError::ResourceLimit);
+  }
+  let controller = substitute_type2_params(controller, &bindings);
   let Some(mut resolver) = NumericControllerResolver::new(state, validate) else {
     return Err(NumericControllerError::ResourceLimit);
   };
   let domain = resolver
-    .type2_value(controller)
+    .type2_value(&controller)
     .map_err(NumericControllerError::Validation)?;
   if resolver.exhausted {
     return Err(NumericControllerError::ResourceLimit);
@@ -1655,7 +1774,7 @@ where
   F: FnMut(&Type1<'a>, &token::Value<'a>) -> std::result::Result<bool, E>,
 {
   fn new(state: &'s ValidationState<'a>, validate: F) -> Option<Self> {
-    let context = bounded_numeric_key(format_args!("{:?}", active_generic_context(state)))?;
+    let context = compact_numeric_key(state, format_args!("{:?}", active_generic_context(state)));
     Some(NumericControllerResolver {
       state,
       context,
@@ -1706,6 +1825,15 @@ where
     if self.exhausted {
       return Ok(NumericDomain::Unknown);
     }
+    // Ranges and computed sums are already proved by their resolved operands.
+    // Replaying their unresolved aliases would lose the operands' constraints.
+    if value
+      .operator
+      .as_ref()
+      .is_some_and(|operator| complete_numeric_candidate(&operator.operator))
+    {
+      return Ok(candidate);
+    }
     if let (Some(_), NumericDomain::Singleton(literal)) = (&value.operator, &candidate) {
       let mut alternative = value.clone();
       let target = self.type2_value(&value.type2)?;
@@ -1715,7 +1843,12 @@ where
       if target == NumericDomain::Empty {
         return Ok(NumericDomain::Empty);
       }
-      if target == candidate {
+      if target == candidate
+        && matches!(
+          value.operator.as_ref().map(|operator| &operator.operator),
+          Some(RangeCtlOp::CtlOp { ctrl, .. }) if numeric_comparison(*ctrl)
+        )
+      {
         // The entire target domain has already been proved, including its
         // constraints. Do not replay an alias DAG in the ordinary evaluator.
         alternative.type2 = Type1::from(literal.clone()).type2;
@@ -1729,7 +1862,16 @@ where
 
   fn type1_candidate(&mut self, value: &Type1<'a>) -> std::result::Result<NumericDomain<'a>, E> {
     match value.operator.as_ref().map(|operator| &operator.operator) {
-      Some(RangeCtlOp::RangeOp { .. }) => Ok(NumericDomain::Unknown),
+      Some(RangeCtlOp::RangeOp { is_inclusive, .. }) => self.range_value(
+        &value.type2,
+        &value.operator.as_ref().unwrap().type2,
+        *is_inclusive,
+      ),
+      #[cfg(feature = "additional-controls")]
+      Some(RangeCtlOp::CtlOp {
+        ctrl: ControlOperator::PLUS,
+        ..
+      }) => self.plus_value(&value.type2, &value.operator.as_ref().unwrap().type2),
       Some(RangeCtlOp::CtlOp {
         ctrl: ControlOperator::EQ | ControlOperator::AND | ControlOperator::WITHIN,
         ..
@@ -1743,6 +1885,58 @@ where
       }
       _ => self.type2_value(&value.type2),
     }
+  }
+
+  fn range_value(
+    &mut self,
+    lower: &Type2<'a>,
+    upper: &Type2<'a>,
+    inclusive: bool,
+  ) -> std::result::Result<NumericDomain<'a>, E> {
+    let (lower, upper) = (self.type2_value(lower)?, self.type2_value(upper)?);
+    if lower == NumericDomain::Empty || upper == NumericDomain::Empty {
+      return Ok(NumericDomain::Empty);
+    }
+    let (NumericDomain::Singleton(lower), NumericDomain::Singleton(upper)) = (lower, upper) else {
+      return Ok(NumericDomain::Unknown);
+    };
+    use std::cmp::Ordering;
+    Ok(match numeric_literal_order(&lower, &upper) {
+      Some(Ordering::Greater) => NumericDomain::Empty,
+      Some(Ordering::Equal) if !inclusive => NumericDomain::Empty,
+      Some(Ordering::Equal) => NumericDomain::Singleton(lower),
+      _ => NumericDomain::Unknown,
+    })
+  }
+
+  #[cfg(feature = "additional-controls")]
+  fn plus_value(
+    &mut self,
+    target: &Type2<'a>,
+    controller: &Type2<'a>,
+  ) -> std::result::Result<NumericDomain<'a>, E> {
+    let (target, controller) = (self.type2_value(target)?, self.type2_value(controller)?);
+    if target == NumericDomain::Empty || controller == NumericDomain::Empty {
+      return Ok(NumericDomain::Empty);
+    }
+    let (NumericDomain::Singleton(target), NumericDomain::Singleton(controller)) =
+      (target, controller)
+    else {
+      return Ok(NumericDomain::Unknown);
+    };
+    let values = control::plus_operation(
+      self.state.cddl,
+      &Type1::from(target).type2,
+      &Type1::from(controller).type2,
+    );
+    let Ok(values) = values else {
+      return Ok(NumericDomain::Unknown);
+    };
+    let mut result = NumericDomain::Empty;
+    for value in values {
+      result = merge_numeric_domains(result, self.type2_value(&value)?);
+    }
+    Ok(result)
   }
 
   fn choices_value<'b>(
@@ -1772,33 +1966,16 @@ where
     let Some(args) = args else {
       return Some(Vec::new());
     };
-    bounded_numeric_key(format_args!("{args:?}"))?;
-    let bindings: HashMap<_, _> = self
-      .state
-      .generic_rules
-      .iter()
-      .find(|rule| Some(rule.name) == self.state.eval_generic_rule)
-      .into_iter()
-      .flat_map(|rule| &rule.params)
-      .filter_map(|param| generic_argument_for_param(self.state, param).map(|arg| (*param, arg)))
-      .collect();
-    let mut resolved = Vec::new();
-    for arg in &args.args {
-      let mut value = (*arg.arg).clone();
-      for _ in 0..bindings.len() {
-        if !numeric_substitution_fits(&value, &bindings) {
-          return None;
-        }
-        let next = substitute_generic_params(&value, &bindings);
-        if next == value {
-          break;
-        }
-        value = next;
-        bounded_numeric_key(format_args!("{value:?}"))?;
-      }
-      resolved.push(normalize_generic_argument(value));
+    if !generic_arguments_fit(args, &HashMap::new()) {
+      return None;
     }
-    Some(resolved)
+    Some(
+      args
+        .args
+        .iter()
+        .map(|arg| normalize_generic_argument((*arg.arg).clone()))
+        .collect(),
+    )
   }
 
   fn ident_value(
@@ -1806,9 +1983,9 @@ where
     ident: &Identifier<'a>,
     args: Option<&GenericArgs<'a>>,
   ) -> std::result::Result<NumericDomain<'a>, E> {
-    let Some((resolved, key)) = self.resolve_args(args).and_then(|resolved| {
-      bounded_numeric_key(format_args!("{}\u{0}{ident}<{resolved:?}>", self.context))
-        .map(|key| (resolved, key))
+    let Some((resolved, key)) = self.resolve_args(args).map(|resolved| {
+      let key = numeric_instantiation_key(self.state, &self.context, ident, &resolved);
+      (resolved, key)
     }) else {
       self.exhausted = true;
       return Ok(NumericDomain::Unknown);
@@ -1821,10 +1998,7 @@ where
       return Ok(NumericDomain::Empty);
     }
     let cuts = self.cycle_cuts;
-    let result = match generic_argument_for_ident(self.state, ident) {
-      Some(arg) if args.is_none() => self.type1_value(&resolve_generic_argument(self.state, &arg)),
-      _ => self.rule_value(ident, resolved),
-    };
+    let result = self.rule_value(ident, resolved);
     self.active.remove(&key);
     // A cut is a least-fixed-point assumption about the active chain, not a
     // completed proof. Never reuse that result from an unguarded context.
@@ -1863,12 +2037,20 @@ where
 pub(crate) fn resolved_generic_args<'a>(
   state: &ValidationState<'a>,
   args: &GenericArgs<'a>,
-) -> Vec<Type1<'a>> {
-  args
-    .args
-    .iter()
-    .map(|arg| resolve_argument_in_caller(state, &arg.arg))
-    .collect()
+) -> std::result::Result<Vec<Type1<'a>>, ()> {
+  let bindings = current_generic_bindings(state);
+  if !generic_arguments_fit(args, &bindings)
+    || numeric_recursion_marker(state, "#generic", args).is_none()
+  {
+    return Err(());
+  }
+  Ok(
+    args
+      .args
+      .iter()
+      .map(|arg| resolve_argument_in_caller(state, &arg.arg))
+      .collect(),
+  )
 }
 
 /// Find all group choice alternate rules from a given identifier
@@ -2638,9 +2820,15 @@ mod tests {
     let state = numeric_test_state(&cddl);
     let mut resolver = NumericControllerResolver::new(&state, |_, _| Ok::<_, ()>(true)).unwrap();
     let target = numeric_rule_target(&cddl, "root");
-    resolver
-      .active
-      .insert(format!("{}\u{0}b<[]>", resolver.context));
+    let Type2::Typename { ident, .. } = numeric_rule_target(&cddl, "a") else {
+      unreachable!()
+    };
+    resolver.active.insert(numeric_instantiation_key(
+      &state,
+      &resolver.context,
+      ident,
+      &[],
+    ));
     assert_eq!(resolver.type2_value(target).unwrap(), NumericDomain::Empty);
     assert!(resolver.memo.is_empty());
     resolver.active.clear();

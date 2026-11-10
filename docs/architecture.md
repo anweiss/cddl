@@ -37,25 +37,41 @@ before combining choices. Completed proofs, including empty and unknown
 domains, are memoized by structural instantiation within one resolution;
 results depending on active-cycle cuts are never memoized. Proven alias
 domains are not replayed through the ordinary evaluator.
-Resolution is bounded to 48 nested steps and 4096 work steps, with 16 KiB
-structural keys and a conservative 4 MiB substitution-size bound checked
-before expansion. Candidate checks through the ordinary evaluator share a
-separate 4096-visit budget within that proof, including nested child validators.
+Resolution is bounded to 48 nested steps and 4096 work steps. Generic argument
+lists and substituted alternatives are preflighted for 4096 structural visits
+and 128 structural descent steps before expansion or key construction.
+Ordinary generic instantiation also bounds zero-progress, same-location depth
+to 48, including non-numeric changing-argument cycles. Collision-checked
+structural identities are interned instead of storing byte-limited formatted
+keys, so long literal payloads and data locations are not rejected by key size.
+Numeric target checks share a 4096-visit ordinary-evaluator allowance with
+their equality/inequality membership checks; controller candidate checks have
+their own 4096-visit allowance. Nested child validators inherit the active
+allowance instead of replenishing it.
 Exhaustion and recursive constraint proofs return errors,
 not validity assumptions that `.ne` could invert. These budgets and caches
-are local to each resolution, never shared across public validation calls.
+are local to each resolution or evaluation, never shared across public
+validation calls.
 Mixed integer/float ordering compares integral parts exactly before fractional
 remainders, preserving 64-bit boundaries without rounding integers to floats.
 Equality and inequality retain controller-domain membership semantics.
 The AST's integer literals remain pointer-sized; wasm32 checks exercise
 64-bit data against floating controllers, while 64-bit integer controller
 literals require a 64-bit target.
-Generic instantiations substitute nested
-arguments in the caller's environment; redundant parentheses are normalized,
+Generic instantiations substitute nested arguments once in the caller's
+environment, without revisiting inserted bindings. Type/group bodies,
+array-sequence entries and controller candidates then use their own closed
+binding scope; candidate values have fresh ordinary recursion guards while
+retaining proof-cycle guards and work allowances. Redundant parentheses are normalized,
 and zero-progress parameter and numeric-target bindings are guarded by active
 rule, structural arguments and data location. Socket-prefixed names are not
 parameter references. Unconstrained arguments remain bare targets for controls
 such as `.size` and `.bits`.
+Constrained singleton size/bit controllers are proved separately before
+applying the enclosing operation. Singleton and empty ranges are classified
+from their resolved endpoints, equivalent signed/unsigned integer spellings
+merge without merging integer and float domains, and `.plus` controllers use
+the values produced by the existing addition implementation.
 
 Map key type choices match each key independently: `{ * (int / tstr) => any }`
 accepts mixed integer and text keys in CBOR. Named choices and constraints on

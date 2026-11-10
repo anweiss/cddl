@@ -606,6 +606,7 @@ impl<'a> JSONValidator<'a> {
     jv.map_replay_budget = self.map_replay_budget.clone();
     jv.map_rule_depth = self.map_rule_depth.clone();
     jv.state.numeric_probe_work = self.state.numeric_probe_work.clone();
+    jv.state.numeric_identities = self.state.numeric_identities.clone();
     jv
   }
 
@@ -615,6 +616,7 @@ impl<'a> JSONValidator<'a> {
     let mut fresh = self.new_child_validator(json);
     fresh.map_replay_budget = Arc::new(MapReplayBudget::new(limit));
     fresh.map_rule_depth = Arc::new(MapRuleDepth::new(self.map_rule_depth.limit));
+    fresh.state.numeric_identities = Default::default();
     *self = fresh;
   }
 
@@ -633,6 +635,12 @@ impl<'a> JSONValidator<'a> {
     controller: &Type2<'a>,
   ) -> visitor::Result<Error> {
     let mut probe = self.new_with_recursion_state(self.json.clone());
+    let work = self.state.numeric_probe_work.clone().unwrap_or_else(|| {
+      Arc::new(std::sync::atomic::AtomicUsize::new(
+        MAX_NUMERIC_RESOLUTION_WORK,
+      ))
+    });
+    probe.state.numeric_probe_work = Some(work.clone());
     probe.state.data_location = self.state.data_location.clone();
     let marker =
       numeric_recursion_marker(&self.state, "#numeric-target", target).ok_or_else(|| {
@@ -650,6 +658,7 @@ impl<'a> JSONValidator<'a> {
 
     if matches!(ctrl, ControlOperator::EQ | ControlOperator::NE) {
       let mut probe = self.new_with_recursion_state(self.json.clone());
+      probe.state.numeric_probe_work = Some(work);
       probe.state.data_location = self.state.data_location.clone();
       probe.visit_type2(controller)?;
       if probe.errors.is_empty() == (ctrl == ControlOperator::NE) {
@@ -691,6 +700,11 @@ impl<'a> JSONValidator<'a> {
         _ => unreachable!("non-numeric controller candidate"),
       };
       let mut probe = self.new_with_recursion_state(value);
+      probe.state.eval_generic_rule = None;
+      probe
+        .state
+        .visited_rules
+        .retain(|key| key.starts_with("#numeric-controller\u{0}"));
       probe.state.numeric_probe_work = Some(work.clone());
       probe.state.data_location = self.state.data_location.clone();
       let marker = numeric_recursion_marker(
@@ -726,6 +740,109 @@ impl<'a> JSONValidator<'a> {
       .as_ref()
       .map(|_| self.map_rule_depth.enter())
       .transpose()
+  }
+
+  fn resolve_generic_arguments(
+    &self,
+    args: &GenericArgs<'a>,
+  ) -> std::result::Result<Vec<Type1<'a>>, Error> {
+    resolved_generic_args(&self.state, args).map_err(|()| {
+      Error::from_validator(
+        self,
+        "generic argument resolution limit exceeded".to_string(),
+      )
+    })
+  }
+
+  fn validate_generic_instantiation(
+    &mut self,
+    ident: &Identifier<'a>,
+    args: &GenericArgs<'a>,
+    rule: &Rule<'a>,
+  ) -> visitor::Result<Error> {
+    let resolved_args = self.resolve_generic_arguments(args)?;
+    let recursion_key = numeric_recursion_marker(&self.state, "#generic", &(ident, &resolved_args))
+      .ok_or_else(|| {
+        Error::from_validator(
+          self,
+          "generic instantiation depth limit exceeded".to_string(),
+        )
+      })?;
+    let mut child = self.new_with_recursion_state(self.json.clone());
+    child.state.data_location = self.state.data_location.clone();
+    if let Some(binding) = child
+      .state
+      .generic_rules
+      .iter_mut()
+      .find(|binding| binding.name == ident.ident)
+    {
+      binding.args = resolved_args;
+    } else if let Some(params) = generic_params_from_rule(rule) {
+      child.state.generic_rules.push(GenericRule {
+        name: ident.ident,
+        params,
+        args: resolved_args,
+      });
+    }
+    child.state.eval_generic_rule = Some(ident.ident);
+    child.state.is_multi_type_choice = self.state.is_multi_type_choice;
+    if child.state.visited_rules.insert(recursion_key) {
+      child.visit_rule(rule)?;
+    } else {
+      child.add_error(format!("Recursive rule reference detected: {}", ident));
+    }
+    self.errors.append(&mut child.errors);
+    Ok(())
+  }
+
+  fn resolve_enclosing_numeric_control(
+    &mut self,
+    target: &Type2<'a>,
+    ctrl: ControlOperator,
+    controller: &Type2<'a>,
+  ) -> std::result::Result<bool, Error> {
+    if !matches!(
+      self.state.ctrl,
+      Some(ControlOperator::SIZE | ControlOperator::BITS)
+    ) || !numeric_comparison(ctrl)
+    {
+      return Ok(false);
+    }
+    let Some(value) =
+      self.resolve_numeric_controller(&constrained_controller(target, ctrl, controller))?
+    else {
+      return Ok(false);
+    };
+    self.visit_value(&value)?;
+    Ok(true)
+  }
+
+  fn visit_closed_group_entry(&mut self, entry: &GroupEntry<'a>) -> visitor::Result<Error> {
+    if let (GroupEntry::ValueMemberKey { ge, .. }, Value::Object(_)) = (entry, self.json.as_ref()) {
+      if let Some((key_type, alternatives, is_cut)) = choice_member_key(&self.state, ge) {
+        return self.visit_choice_key_entry(ge, key_type, &alternatives, is_cut);
+      }
+      let (min, max) = occurrence_bounds(ge.occur.as_ref().map(|o| o.occur));
+      if matches!(&ge.member_key, Some(MemberKey::Type1 { is_cut: false, .. })) && min == 0 {
+        return self.visit_zero_minimum_entry(entry, max);
+      }
+    }
+    if let GroupEntry::TypeGroupname { ge, .. } = entry {
+      if ge.occur.is_some()
+        && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 == 0
+        && matches!(self.json.as_ref(), Value::Object(_))
+      {
+        return self.visit_optional_named_group(ge);
+      }
+      let prior_occurrence = self.state.occurrence;
+      let error_count = self.errors.len();
+      walk_group_entry(self, entry)?;
+      if ge.occur.is_some() && self.errors.len() == error_count {
+        self.state.occurrence = prior_occurrence;
+      }
+      return Ok(());
+    }
+    walk_group_entry(self, entry)
   }
 
   fn visit_named_rule_path<F>(&mut self, marker: String, visit: F) -> Result
@@ -1604,7 +1721,7 @@ impl<'a> JSONValidator<'a> {
     args: &GenericArgs<'a>,
     rule: &Rule<'a>,
   ) -> Result {
-    let resolved_args = resolved_generic_args(&self.state, args);
+    let resolved_args = self.resolve_generic_arguments(args)?;
     let instance =
       generic_instantiation_key(&qualified_ident_key(&entry.name), resolved_args.iter());
     let Some(mut jv) = self.generic_group_child(instance) else {
@@ -1957,8 +2074,19 @@ impl<'a> JSONValidator<'a> {
   /// error checkpoint. Failed arms are tentative; their errors are retained
   /// only when every arm fails.
   fn visit_named_type_choice(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error> {
-    let choices = type_choice_types_from_ident(self.state.cddl, ident);
+    let choices = instantiated_type_choices(&self.state, ident).map_err(|()| {
+      Error::from_validator(self, "generic body expansion limit exceeded".to_string())
+    })?;
+    let previous = self.state.eval_generic_rule.take();
+    let result = self.visit_closed_type_choices(&choices);
+    self.state.eval_generic_rule = previous;
+    result
+  }
 
+  fn visit_closed_type_choices(
+    &mut self,
+    choices: &[std::borrow::Cow<'a, Type<'a>>],
+  ) -> visitor::Result<Error> {
     if choices.len() > 1 {
       self.state.is_multi_type_choice = true;
 
@@ -2323,6 +2451,25 @@ impl<'a> JSONValidator<'a> {
     cursor: usize,
     ctx: &mut ArraySeqCtx<'a, ValidationError>,
   ) -> std::result::Result<Option<usize>, Error> {
+    let expanded = instantiated_group_entry(&self.state, entry).map_err(|()| {
+      Error::from_validator(self, "generic group expansion limit exceeded".to_string())
+    })?;
+    let Some(expanded) = expanded else {
+      return self.seq_match_closed_entry(entry, elems, cursor, ctx);
+    };
+    let previous = self.state.eval_generic_rule.take();
+    let result = self.seq_match_closed_entry(&expanded, elems, cursor, ctx);
+    self.state.eval_generic_rule = previous;
+    result
+  }
+
+  fn seq_match_closed_entry(
+    &mut self,
+    entry: &GroupEntry<'a>,
+    elems: &[Value],
+    cursor: usize,
+    ctx: &mut ArraySeqCtx<'a, ValidationError>,
+  ) -> std::result::Result<Option<usize>, Error> {
     let occur = match entry {
       GroupEntry::ValueMemberKey { ge, .. } => ge.occur.as_ref().map(|o| o.occur),
       GroupEntry::TypeGroupname { ge, .. } => ge.occur.as_ref().map(|o| o.occur),
@@ -2391,7 +2538,7 @@ impl<'a> JSONValidator<'a> {
         self.seq_match_leaf(elems, cursor, ctx, |jv| {
           if let Some(ga) = &ge.generic_args {
             if let Some(rule) = rule_from_ident(jv.state.cddl, &ge.name) {
-              let resolved_args = resolved_generic_args(&jv.state, ga);
+              let resolved_args = jv.resolve_generic_arguments(ga)?;
               if let Some(gr) = jv
                 .state
                 .generic_rules
@@ -2487,7 +2634,7 @@ impl<'a> JSONValidator<'a> {
       .map(|_| self.state.generic_rules.clone());
     if let Some(ga) = &ge.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &ge.name) {
-        let resolved_args = resolved_generic_args(&self.state, ga);
+        let resolved_args = self.resolve_generic_arguments(ga)?;
         if let Some(gr) = self
           .state
           .generic_rules
@@ -2554,7 +2701,7 @@ impl<'a> JSONValidator<'a> {
     let prev_eval = self.state.eval_generic_rule;
     let prev_generic_rules = generic_args.map(|_| self.state.generic_rules.clone());
     if let Some(ga) = generic_args {
-      let resolved_args = resolved_generic_args(&self.state, ga);
+      let resolved_args = self.resolve_generic_arguments(ga)?;
       if let Some(gr) = self
         .state
         .generic_rules
@@ -3151,6 +3298,9 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       }
     }
 
+    if self.resolve_enclosing_numeric_control(target, ctrl, controller)? {
+      return Ok(());
+    }
     if matches!(self.json.as_ref(), Value::Number(_))
       && matches!(
         ctrl,
@@ -4005,7 +4155,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
-            let resolved_args = resolved_generic_args(&self.state, ga);
+            let resolved_args = self.resolve_generic_arguments(ga)?;
             if let Some(gr) = self
               .state
               .generic_rules
@@ -4062,40 +4212,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
-            let resolved_args = resolved_generic_args(&self.state, ga);
-            let recursion_key = format!(
-              "{}\u{0}{}",
-              generic_instantiation_key(&qualified_ident_key(ident), resolved_args.iter()),
-              self.state.data_location
-            );
-            let mut jv = self.new_with_recursion_state(self.json.clone());
-            jv.state.data_location = self.state.data_location.clone();
-            if let Some(gr) = jv
-              .state
-              .generic_rules
-              .iter_mut()
-              .find(|r| r.name == ident.ident)
-            {
-              gr.args = resolved_args;
-            } else if let Some(params) = generic_params_from_rule(rule) {
-              jv.state.generic_rules.push(GenericRule {
-                name: ident.ident,
-                params,
-                args: resolved_args,
-              });
-            }
-
-            jv.state.eval_generic_rule = Some(ident.ident);
-            jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-            if jv.state.visited_rules.insert(recursion_key) {
-              jv.visit_rule(rule)?;
-            } else {
-              jv.add_error(format!("Recursive rule reference detected: {}", ident));
-            }
-
-            self.errors.append(&mut jv.errors);
-
-            return Ok(());
+            return self.validate_generic_instantiation(ident, ga, rule);
           }
         }
 
@@ -4119,7 +4236,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
         if let Some(ga) = generic_args {
           if let Some(rule) = unwrap_rule_from_ident(self.state.cddl, ident) {
-            let resolved_args = resolved_generic_args(&self.state, ga);
+            let resolved_args = self.resolve_generic_arguments(ga)?;
             if let Some(gr) = self
               .state
               .generic_rules
@@ -4687,34 +4804,16 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
   }
 
   fn visit_group_entry(&mut self, entry: &GroupEntry<'a>) -> visitor::Result<Error> {
-    if let (GroupEntry::ValueMemberKey { ge, .. }, Value::Object(_)) = (entry, self.json.as_ref()) {
-      if let Some((key_type, alternatives, is_cut)) = choice_member_key(&self.state, ge) {
-        return self.visit_choice_key_entry(ge, key_type, &alternatives, is_cut);
-      }
-      let (min, max) = occurrence_bounds(ge.occur.as_ref().map(|o| o.occur));
-      if matches!(&ge.member_key, Some(MemberKey::Type1 { is_cut: false, .. })) && min == 0 {
-        return self.visit_zero_minimum_entry(entry, max);
-      }
-    }
-    if let GroupEntry::TypeGroupname { ge, .. } = entry {
-      if ge.occur.is_some()
-        && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 == 0
-        && matches!(self.json.as_ref(), Value::Object(_))
-      {
-        return self.visit_optional_named_group(ge);
-      }
-      // A group reference's occurrence applies to the referenced group
-      // alone: once the group has matched, restore the prior indicator so
-      // `? g` cannot relax later required members, mirroring inline groups.
-      let prior_occurrence = self.state.occurrence;
-      let error_count = self.errors.len();
-      walk_group_entry(self, entry)?;
-      if ge.occur.is_some() && self.errors.len() == error_count {
-        self.state.occurrence = prior_occurrence;
-      }
-      return Ok(());
-    }
-    walk_group_entry(self, entry)
+    let expanded = instantiated_group_entry(&self.state, entry).map_err(|()| {
+      Error::from_validator(self, "generic group expansion limit exceeded".to_string())
+    })?;
+    let Some(expanded) = expanded else {
+      return self.visit_closed_group_entry(entry);
+    };
+    let previous = self.state.eval_generic_rule.take();
+    let result = self.visit_closed_group_entry(&expanded);
+    self.state.eval_generic_rule = previous;
+    result
   }
 
   fn visit_inline_group_entry(
@@ -4867,7 +4966,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         _ => Some(format!("expected value {}, got {}", v, self.json)),
       },
       token::Value::FLOAT(v) => match self.json.as_ref() {
-        Value::Number(n) => match n.as_f64() {
+        Value::Number(n) => match n.as_f64().filter(|_| n.is_f64()) {
           Some(f) => match &self.state.ctrl {
             Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) if f != *v => None,
             Some(ControlOperator::LT) if f < *v => None,

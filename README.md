@@ -538,27 +538,32 @@ time = #6.1(number)
 
 The first non-group rule defined by a CDDL data structure definition determines the root type, which is subsequently used for validating the top-level JSON data type.
 
-#### Numeric controller resolution limits (JSON and CBOR)
+#### Numeric and generic resolution limits (JSON and CBOR)
 
-Native and WebAssembly JSON/CBOR validators bound the work needed to prove a
-numeric ordering controller's singleton value. These are implementation
-resource limits, not additional CDDL value constraints:
+Native and WebAssembly JSON/CBOR validators bound numeric target checks,
+numeric controller proofs, and generic argument expansion. These are
+implementation resource limits, not additional CDDL value constraints:
 
 * 48 nested resolution steps and 4096 resolver work steps;
-* 16 KiB structural keys and a conservative 4 MiB structural substitution-size
-  estimate, checked before expansion;
-* a separate budget of 4096 ordinary-evaluator visits across candidate checks
-  within one proof, shared with nested child validators.
+* 4096 structural visits and 128 structural descent steps when preflighting an
+  argument list or a substituted alternative, before cloning or constructing
+  instantiation keys;
+* 48 active generic instantiations without progress at one data location;
+* a separate allowance of 4096 ordinary-evaluator visits for a numeric target
+  and equality/inequality membership check, or across candidate checks within
+  one controller proof, shared with nested child validators.
 
-Resolution caches and counters are local to the proof, not persisted across
-public validation calls or data values; nested candidate validators inherit the
-active proof's visit budget rather than starting a fresh allowance. Numeric-target
-and generic-parameter expansion guards also bound same-location depth and
-structural-key size.
+Completed-domain caches and counters belong to that proof or evaluation, not
+to a global cache or subsequent public validation calls. Nested probes inherit
+the active visit allowance rather than replenishing it. Generic bounds also
+apply outside numeric proofs, including non-numeric zero-progress argument
+growth. Recursion markers use collision-checked, interned structural identities;
+there is no formatted-key byte limit on string literals or data locations.
 
 Exhaustion returns an explicit error, such as
 `numeric controller resolution limit exceeded` or
-`numeric controller candidate work limit exceeded`; recursive constraint proofs
+`numeric controller candidate work limit exceeded` or
+`generic body expansion limit exceeded`; recursive constraint proofs
 also return errors. Even a valid schema/value can require more work than these
 limits allow. Exhaustion is not guessed acceptance or a computed empty domain,
 and `.ne` cannot invert it into successful validation. See
@@ -717,7 +722,7 @@ assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
 
 This crate also uses [Serde](https://serde.rs/) and [ciborium](https://crates.io/crates/ciborium) for validating CBOR data structures. CBOR validation is done via the loosely typed [ `ciborium::value::Value` ](https://github.com/enarx/ciborium/blob/main/ciborium/src/value/mod.rs#L22) enum. In addition to all of the same features implemented by the JSON validator, this crate also supports validating CBOR tags (e.g. `#6.32(tstr)` ), CBOR major types (e.g. `#1.2` ), table types (e.g. `{ [ + tstr ] => int }` ) and byte strings. The `.bits` , `.cbor` and `.cborseq` control operators are all supported as well.
 
-The [numeric controller resolution limits](#numeric-controller-resolution-limits-json-and-cbor)
+The [numeric and generic resolution limits](#numeric-and-generic-resolution-limits-json-and-cbor)
 above apply equally to CBOR validation.
 
 The following tags are supported when validating CBOR:

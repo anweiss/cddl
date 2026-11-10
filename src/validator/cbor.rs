@@ -1114,6 +1114,7 @@ impl<'a> CBORValidator<'a> {
     cv.state.eval_generic_rule = self.state.eval_generic_rule;
     cv.state.visited_rules = self.state.visited_rules.clone();
     cv.state.numeric_probe_work = self.state.numeric_probe_work.clone();
+    cv.state.numeric_identities = self.state.numeric_identities.clone();
     cv
   }
 
@@ -1130,6 +1131,12 @@ impl<'a> CBORValidator<'a> {
     // first primitive: choices, literals, inner controls and generics all
     // contribute to the target's complete value domain.
     let mut probe = self.new_with_recursion_state(self.cbor.clone());
+    let work = self.state.numeric_probe_work.clone().unwrap_or_else(|| {
+      std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
+        MAX_NUMERIC_RESOLUTION_WORK,
+      ))
+    });
+    probe.state.numeric_probe_work = Some(work.clone());
     probe.state.data_location = self.state.data_location.clone();
     let marker =
       numeric_recursion_marker(&self.state, "#numeric-target", target).ok_or_else(|| {
@@ -1147,6 +1154,7 @@ impl<'a> CBORValidator<'a> {
 
     if matches!(ctrl, ControlOperator::EQ | ControlOperator::NE) {
       let mut probe = self.new_with_recursion_state(self.cbor.clone());
+      probe.state.numeric_probe_work = Some(work);
       probe.state.data_location = self.state.data_location.clone();
       probe.visit_type2(controller)?;
       if probe.errors.is_empty() == (ctrl == ControlOperator::NE) {
@@ -1190,6 +1198,11 @@ impl<'a> CBORValidator<'a> {
     });
     let result = numeric_controller_value(&self.state, controller, |alternative, candidate| {
       let mut probe = self.new_with_recursion_state(token_value_into_cbor_value(candidate.clone()));
+      probe.state.eval_generic_rule = None;
+      probe
+        .state
+        .visited_rules
+        .retain(|key| key.starts_with("#numeric-controller\u{0}"));
       probe.state.numeric_probe_work = Some(work.clone());
       probe.state.data_location = self.state.data_location.clone();
       let marker = numeric_recursion_marker(
@@ -1251,8 +1264,22 @@ impl<'a> CBORValidator<'a> {
   where
     cbor::Error<T>: From<cbor::Error<std::io::Error>>,
   {
-    let choices = type_choice_types_from_ident(self.state.cddl, ident);
+    let choices = instantiated_type_choices(&self.state, ident).map_err(|()| {
+      Error::from_validator(self, "generic body expansion limit exceeded".to_string())
+    })?;
+    let previous = self.state.eval_generic_rule.take();
+    let result = self.visit_closed_type_choices(&choices);
+    self.state.eval_generic_rule = previous;
+    result
+  }
 
+  fn visit_closed_type_choices<T: std::fmt::Debug + 'static>(
+    &mut self,
+    choices: &[std::borrow::Cow<'a, Type<'a>>],
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
     if choices.len() > 1 {
       self.state.is_multi_type_choice = true;
 
@@ -1282,6 +1309,126 @@ impl<'a> CBORValidator<'a> {
     }
 
     Ok(())
+  }
+
+  fn resolve_generic_arguments<T: std::fmt::Debug + 'static>(
+    &self,
+    args: &GenericArgs<'a>,
+  ) -> std::result::Result<Vec<Type1<'a>>, Error<T>> {
+    resolved_generic_args(&self.state, args).map_err(|()| {
+      Error::from_validator(
+        self,
+        "generic argument resolution limit exceeded".to_string(),
+      )
+    })
+  }
+
+  fn validate_generic_instantiation<T: std::fmt::Debug + 'static>(
+    &mut self,
+    ident: &Identifier<'a>,
+    args: &GenericArgs<'a>,
+    rule: &Rule<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let resolved_args = self.resolve_generic_arguments(args)?;
+    let recursion_key = numeric_recursion_marker(&self.state, "#generic", &(ident, &resolved_args))
+      .ok_or_else(|| {
+        Error::from_validator(
+          self,
+          "generic instantiation depth limit exceeded".to_string(),
+        )
+      })?;
+    let mut child = self.new_with_recursion_state(self.cbor.clone());
+    child.state.data_location = self.state.data_location.clone();
+    if let Some(binding) = child
+      .state
+      .generic_rules
+      .iter_mut()
+      .find(|binding| binding.name == ident.ident)
+    {
+      binding.args = resolved_args;
+    } else if let Some(params) = generic_params_from_rule(rule) {
+      child.state.generic_rules.push(GenericRule {
+        name: ident.ident,
+        params,
+        args: resolved_args,
+      });
+    }
+    child.state.eval_generic_rule = Some(ident.ident);
+    child.state.is_multi_type_choice = self.state.is_multi_type_choice;
+    if child.state.visited_rules.insert(recursion_key) {
+      child.visit_rule(rule)?;
+    } else {
+      child.add_error(format!("Recursive rule reference detected: {}", ident));
+    }
+    self.errors.append(&mut child.errors);
+    Ok(())
+  }
+
+  fn resolve_enclosing_numeric_control<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+    ctrl: ControlOperator,
+    controller: &Type2<'a>,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    if !matches!(
+      self.state.ctrl,
+      Some(ControlOperator::SIZE | ControlOperator::BITS)
+    ) || !numeric_comparison(ctrl)
+    {
+      return Ok(false);
+    }
+    let Some(value) =
+      self.resolve_numeric_controller(&constrained_controller(target, ctrl, controller))?
+    else {
+      return Ok(false);
+    };
+    self.visit_value(&value)?;
+    Ok(true)
+  }
+
+  fn visit_closed_group_entry<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entry: &GroupEntry<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    if let (GroupEntry::ValueMemberKey { ge, .. }, Value::Map(_)) = (entry, &self.cbor) {
+      if let Some((key_type, alternatives, is_cut)) =
+        choice_member_key_for_depth(&self.state, ge, map_key_depth(&self.cbor))
+      {
+        return self.visit_choice_key_entry::<T>(ge, key_type, &alternatives, is_cut);
+      }
+    }
+    if let GroupEntry::TypeGroupname { ge, .. } = entry {
+      if ge.occur.is_some()
+        && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 == 0
+        && matches!(self.cbor, Value::Map(_))
+      {
+        let checkpoint = self.clone();
+        walk_group_entry(self, entry)?;
+        if self.errors.len() > checkpoint.errors.len() {
+          *self = checkpoint;
+        } else {
+          self.state.occurrence = checkpoint.state.occurrence;
+        }
+        return Ok(());
+      }
+      let prior_occurrence = self.state.occurrence;
+      let error_count = self.errors.len();
+      walk_group_entry(self, entry)?;
+      if ge.occur.is_some() && self.errors.len() == error_count {
+        self.state.occurrence = prior_occurrence;
+      }
+      return Ok(());
+    }
+    walk_group_entry(self, entry)
   }
 
   // Helper function to resolve a Type2 bound to a usize value
@@ -1399,6 +1546,28 @@ impl<'a> CBORValidator<'a> {
   where
     cbor::Error<T>: From<cbor::Error<std::io::Error>>,
   {
+    let expanded = instantiated_group_entry(&self.state, entry).map_err(|()| {
+      Error::from_validator(self, "generic group expansion limit exceeded".to_string())
+    })?;
+    let Some(expanded) = expanded else {
+      return self.seq_match_closed_entry(entry, elems, cursor, ctx);
+    };
+    let previous = self.state.eval_generic_rule.take();
+    let result = self.seq_match_closed_entry(&expanded, elems, cursor, ctx);
+    self.state.eval_generic_rule = previous;
+    result
+  }
+
+  fn seq_match_closed_entry<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entry: &GroupEntry<'a>,
+    elems: &[Value],
+    cursor: usize,
+    ctx: &mut ArraySeqCtx<'a, ValidationError>,
+  ) -> std::result::Result<Option<usize>, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
     let occur = match entry {
       GroupEntry::ValueMemberKey { ge, .. } => ge.occur.as_ref().map(|o| o.occur),
       GroupEntry::TypeGroupname { ge, .. } => ge.occur.as_ref().map(|o| o.occur),
@@ -1470,7 +1639,7 @@ impl<'a> CBORValidator<'a> {
         self.seq_match_leaf(elems, cursor, ctx, |cv| {
           if let Some(ga) = &ge.generic_args {
             if let Some(rule) = rule_from_ident(cv.state.cddl, &ge.name) {
-              let resolved_args = resolved_generic_args(&cv.state, ga);
+              let resolved_args = cv.resolve_generic_arguments(ga)?;
               if let Some(gr) = cv
                 .state
                 .generic_rules
@@ -1569,7 +1738,7 @@ impl<'a> CBORValidator<'a> {
       .map(|_| self.state.generic_rules.clone());
     if let Some(ga) = &ge.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &ge.name) {
-        let resolved_args = resolved_generic_args(&self.state, ga);
+        let resolved_args = self.resolve_generic_arguments(ga)?;
         if let Some(gr) = self
           .state
           .generic_rules
@@ -1639,7 +1808,7 @@ impl<'a> CBORValidator<'a> {
     let prev_eval = self.state.eval_generic_rule;
     let prev_generic_rules = generic_args.map(|_| self.state.generic_rules.clone());
     if let Some(ga) = generic_args {
-      let resolved_args = resolved_generic_args(&self.state, ga);
+      let resolved_args = self.resolve_generic_arguments(ga)?;
       if let Some(gr) = self
         .state
         .generic_rules
@@ -1828,6 +1997,7 @@ where
   cbor::Error<T>: From<cbor::Error<std::io::Error>>,
 {
   fn validate(&mut self) -> std::result::Result<(), cbor::Error<T>> {
+    reset_numeric_identities(&mut self.state);
     for r in self.state.cddl.rules.iter() {
       // First type rule is root
       if let Rule::Type { rule, .. } = r {
@@ -2248,6 +2418,9 @@ where
       }
     }
 
+    if self.resolve_enclosing_numeric_control(target, ctrl, controller)? {
+      return Ok(());
+    }
     if matches!(self.cbor, Value::Integer(_) | Value::Float(_))
       && matches!(
         ctrl,
@@ -3743,7 +3916,7 @@ where
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
-            let resolved_args = resolved_generic_args(&self.state, ga);
+            let resolved_args = self.resolve_generic_arguments(ga)?;
             if let Some(gr) = self
               .state
               .generic_rules
@@ -3813,40 +3986,7 @@ where
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
-            let resolved_args = resolved_generic_args(&self.state, ga);
-            let recursion_key = format!(
-              "{}\u{0}{}",
-              generic_instantiation_key(&qualified_ident_key(ident), resolved_args.iter()),
-              self.state.data_location
-            );
-            let mut cv = self.new_with_recursion_state(self.cbor.clone());
-            cv.state.data_location = self.state.data_location.clone();
-            if let Some(gr) = cv
-              .state
-              .generic_rules
-              .iter_mut()
-              .find(|gr| gr.name == ident.ident)
-            {
-              gr.args = resolved_args;
-            } else if let Some(params) = generic_params_from_rule(rule) {
-              cv.state.generic_rules.push(GenericRule {
-                name: ident.ident,
-                params,
-                args: resolved_args,
-              });
-            }
-
-            cv.state.eval_generic_rule = Some(ident.ident);
-            cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-            if cv.state.visited_rules.insert(recursion_key) {
-              cv.visit_rule(rule)?;
-            } else {
-              cv.add_error(format!("Recursive rule reference detected: {}", ident));
-            }
-
-            self.errors.append(&mut cv.errors);
-
-            return Ok(());
+            return self.validate_generic_instantiation(ident, ga, rule);
           }
         }
 
@@ -3879,7 +4019,7 @@ where
 
         if let Some(ga) = generic_args {
           if let Some(rule) = unwrap_rule_from_ident(self.state.cddl, ident) {
-            let resolved_args = resolved_generic_args(&self.state, ga);
+            let resolved_args = self.resolve_generic_arguments(ga)?;
             if let Some(gr) = self
               .state
               .generic_rules
@@ -4263,7 +4403,11 @@ where
     // (RFC 8610 Appendix A PEG matching) while a zero-progress reference
     // like `a /= a` is still caught at its fixed position. NUL cannot
     // appear in an identifier, so the key is unambiguous.
-    let visited_key = format!("{}\u{0}{}", ident.ident, self.state.data_location);
+    let visited_key = format!(
+      "{}\u{0}{}",
+      qualified_ident_key(ident),
+      self.state.data_location
+    );
 
     // self.state.is_colon_shortcut_present is only true when the ident is part of a
     // member key
@@ -4768,7 +4912,7 @@ where
 
     if let Some(ga) = &entry.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &entry.name) {
-        let resolved_args = resolved_generic_args(&self.state, ga);
+        let resolved_args = self.resolve_generic_arguments(ga)?;
         if let Some(gr) = self
           .state
           .generic_rules
@@ -4857,41 +5001,16 @@ where
   }
 
   fn visit_group_entry(&mut self, entry: &GroupEntry<'a>) -> visitor::Result<Error<T>> {
-    if let (GroupEntry::ValueMemberKey { ge, .. }, Value::Map(_)) = (entry, &self.cbor) {
-      if let Some((key_type, alternatives, is_cut)) =
-        choice_member_key_for_depth(&self.state, ge, map_key_depth(&self.cbor))
-      {
-        return self.visit_choice_key_entry::<T>(ge, key_type, &alternatives, is_cut);
-      }
-    }
-    if let GroupEntry::TypeGroupname { ge, .. } = entry {
-      if ge.occur.is_some()
-        && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 == 0
-        && matches!(self.cbor, Value::Map(_))
-      {
-        // A failed reference that may occur zero times takes its zero-width
-        // path, exactly like an optional inline group.
-        let checkpoint = self.clone();
-        walk_group_entry(self, entry)?;
-        if self.errors.len() > checkpoint.errors.len() {
-          *self = checkpoint;
-        } else {
-          self.state.occurrence = checkpoint.state.occurrence;
-        }
-        return Ok(());
-      }
-      // A group reference's occurrence applies to the referenced group
-      // alone: once the group has matched, restore the prior indicator so
-      // `? g` cannot relax later required members, mirroring inline groups.
-      let prior_occurrence = self.state.occurrence;
-      let error_count = self.errors.len();
-      walk_group_entry(self, entry)?;
-      if ge.occur.is_some() && self.errors.len() == error_count {
-        self.state.occurrence = prior_occurrence;
-      }
-      return Ok(());
-    }
-    walk_group_entry(self, entry)
+    let expanded = instantiated_group_entry(&self.state, entry).map_err(|()| {
+      Error::from_validator(self, "generic group expansion limit exceeded".to_string())
+    })?;
+    let Some(expanded) = expanded else {
+      return self.visit_closed_group_entry(entry);
+    };
+    let previous = self.state.eval_generic_rule.take();
+    let result = self.visit_closed_group_entry(&expanded);
+    self.state.eval_generic_rule = previous;
+    result
   }
 
   fn visit_inline_group_entry(
