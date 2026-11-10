@@ -132,6 +132,8 @@ pub(crate) enum RustTypeDef {
 pub(crate) struct RustField {
   pub name: String,
   pub original_name: String,
+  /// Original containing rule, retained when fields move into group helpers.
+  pub source_rule: Option<String>,
   pub integer_key: Option<i128>,
   pub rust_type: String,
   pub is_optional: bool,
@@ -330,7 +332,7 @@ fn apply_field_encodings(
   aliases: &AliasMap,
 ) -> Result<(), CodegenError> {
   for field in fields {
-    let key = format!("{}.{}", to_cddl_lookup_name(name), field.original_name);
+    let key = field_substitution_key(name, field);
     if field.tag.is_some() || opts.substitutions.contains_key(&key) {
       continue;
     }
@@ -609,7 +611,7 @@ fn apply_options(defs: &mut Vec<RustTypeDef>, opts: &CodegenOptions) {
     match def {
       RustTypeDef::Struct { name, fields, .. } => {
         for field in fields.iter_mut() {
-          let key = format!("{}.{}", to_cddl_lookup_name(name), field.original_name);
+          let key = field_substitution_key(name, field);
           if let Some(sub) = opts.substitutions.get(&key) {
             // An explicit substitution replaces the type outright, so any CBOR
             // tag inferred from the original prelude type no longer applies.
@@ -681,6 +683,14 @@ fn rewrite_type(ty: &mut String, rule_subs: &BTreeMap<String, String>, any_type:
 /// having to know the PascalCase name codegen chose.
 fn to_cddl_lookup_name(rust_name: &str) -> String {
   pascal_to_cddl_name(rust_name)
+}
+
+fn field_substitution_key(name: &str, field: &RustField) -> String {
+  let rule = field
+    .source_rule
+    .clone()
+    .unwrap_or_else(|| to_cddl_lookup_name(name));
+  format!("{}.{}", rule, field.original_name)
 }
 
 /// Generate Rust source code for all rules in a CDDL document using default
@@ -1092,7 +1102,7 @@ fn collect_type_defs(
       } => {
         let name = to_pascal_case(group_rule.name.ident);
         let doc = ast_or_map_rule_doc(rule, group_rule.name.span.2, comments);
-        let fields = groups.entry_fields(&group_rule.entry, &name)?;
+        let fields = groups.entry_fields(&group_rule.entry, &name, group_rule.name.ident)?;
         defs.push(RustTypeDef::Struct {
           name,
           fields,
@@ -1282,7 +1292,7 @@ fn type_rule_to_rust_def<'b>(
     let type1 = &tc.type1;
     match &type1.type2 {
       Type2::Map { group, .. } => {
-        let fields = groups.fields(group, &name)?;
+        let fields = groups.fields(group, &name, rule.name.ident)?;
         Ok(Some(RustTypeDef::Struct {
           name,
           fields,
@@ -1546,14 +1556,19 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
     unreachable!()
   }
 
-  fn fields(&mut self, group: &Group<'b>, parent: &str) -> Result<Vec<RustField>, CodegenError> {
+  fn fields(
+    &mut self,
+    group: &Group<'b>,
+    parent: &str,
+    source_rule: &str,
+  ) -> Result<Vec<RustField>, CodegenError> {
     if group.group_choices.len() > 1 {
-      return self.choice_field(group, parent);
+      return self.choice_field(group, parent, source_rule);
     }
     let mut fields = Vec::new();
     for choice in &group.group_choices {
       for (entry, _) in &choice.group_entries {
-        fields.extend(self.entry_fields(entry, parent)?);
+        fields.extend(self.entry_fields(entry, parent, source_rule)?);
       }
     }
     deduplicate_field_names(&mut fields);
@@ -1564,8 +1579,9 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
     &mut self,
     entry: &GroupEntry<'b>,
     parent: &str,
+    source_rule: &str,
   ) -> Result<Vec<RustField>, CodegenError> {
-    let (fields, optional) = match entry {
+    let (mut fields, optional) = match entry {
       GroupEntry::TypeGroupname { ge, .. } => {
         let included = self.cddl.rules.iter().find_map(|rule| match rule {
           Rule::Group { rule, .. } if rule.name.ident == ge.name.ident => Some(&rule.entry),
@@ -1577,6 +1593,7 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
               group_entry_to_fields(entry, self.comments, self.opts)?.unwrap_or_default();
             for field in &mut fields {
               field.flatten_object = true;
+              field.source_rule = Some(source_rule.into());
             }
             return Ok(fields);
           }
@@ -1587,7 +1604,7 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
             )));
           }
           self.visiting.push(ge.name.ident.into());
-          let fields = self.entry_fields(included, parent)?;
+          let fields = self.entry_fields(included, parent, source_rule)?;
           self.visiting.pop();
           (
             fields,
@@ -1603,7 +1620,7 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
         }
       }
       GroupEntry::InlineGroup { group, occur, .. } => (
-        self.fields(group, parent)?,
+        self.fields(group, parent, source_rule)?,
         occur
           .as_ref()
           .is_some_and(|o| matches!(o.occur, Occur::Optional { .. })),
@@ -1613,6 +1630,9 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
         false,
       ),
     };
+    for field in &mut fields {
+      field.source_rule = Some(source_rule.into());
+    }
     if optional {
       return self.optional_fields(fields, parent);
     }
@@ -1654,6 +1674,7 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
     &mut self,
     group: &Group<'b>,
     parent: &str,
+    source_rule: &str,
   ) -> Result<Vec<RustField>, CodegenError> {
     let name = self.helper_name(parent);
     let mut variants = Vec::new();
@@ -1672,7 +1693,7 @@ impl<'a, 'b> GroupLowerer<'a, 'b> {
       let payload = self.helper_name(&name);
       let mut fields = Vec::new();
       for (entry, _) in &choice.group_entries {
-        fields.extend(self.entry_fields(entry, &payload)?);
+        fields.extend(self.entry_fields(entry, &payload, source_rule)?);
       }
       deduplicate_field_names(&mut fields);
       if fields
@@ -1728,6 +1749,7 @@ fn routed_group_field(name: String, group_keys: BTreeSet<String>, is_optional: b
   RustField {
     name: field_name.clone(),
     original_name: field_name,
+    source_rule: None,
     integer_key: None,
     rust_type: name,
     is_optional,
@@ -1842,6 +1864,7 @@ fn group_entry_to_fields(
       Ok(Some(vec![RustField {
         name: field_name,
         original_name: ident.to_string(),
+        source_rule: None,
         integer_key: None,
         rust_type,
         is_optional,
@@ -1906,6 +1929,7 @@ fn value_member_key_to_field(
       return Ok(Some(RustField {
         name: "entries".to_string(),
         original_name: "entries".to_string(),
+        source_rule: None,
         integer_key: None,
         rust_type,
         is_optional: false,
@@ -1924,6 +1948,7 @@ fn value_member_key_to_field(
       return Ok(Some(RustField {
         name: "value".to_string(),
         original_name: "value".to_string(),
+        source_rule: None,
         integer_key: None,
         rust_type,
         is_optional: false,
@@ -1963,6 +1988,7 @@ fn value_member_key_to_field(
   Ok(Some(RustField {
     name: field_name,
     original_name,
+    source_rule: None,
     integer_key: match &vmke.member_key {
       Some(MemberKey::Type1 { t1, .. }) => literal_integer_key(t1),
       _ => None,

@@ -16,3 +16,6 @@ optional-substituted-item = { a: int, ? common }
 required-pair = (x: int, y: int)
 optional-pair = { ? required-pair }
 recursive-pair = { ? (value: int, child: recursive-pair) }
+override-optional = { ? (x: bstr, y: int) }
+override-choice = { (x: bstr // y: int) }
+override-nested = { (a: int, (x: bstr // y: int) // z: bool) }

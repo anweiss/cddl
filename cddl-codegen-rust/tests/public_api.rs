@@ -120,6 +120,23 @@ fn public_options_preserve_substitutions_and_aliases() {
 }
 
 #[test]
+fn grouped_fields_preserve_rule_qualified_substitutions() {
+  let mut options = CodegenOptions::default();
+  options.substitutions.insert("item.x".into(), "u64".into());
+  for source in [
+    "item = { ? (x: bstr, y: int) }",
+    "item = { (x: bstr // y: int) }",
+    "item = { (a: int, (x: bstr // y: int) // z: bool) }",
+    "pair = (x: bstr, y: int)\nitem = { ? pair }",
+  ] {
+    let output = generate_rust_code_with_options(source, &options).unwrap();
+    assert!(output.contains("pub x: u64,"), "{output}");
+    let output = generate_rust_code_for_rule(source, "item", Some("Renamed"), &options).unwrap();
+    assert!(output.contains("pub x: u64,"), "{output}");
+  }
+}
+
+#[test]
 fn mixed_literals_have_string_serialization() {
   let output = generate_rust_code(r#"action = "created" / tstr"#).unwrap();
   assert!(output.contains(r#"Self::Created => s.serialize_str("created")"#));

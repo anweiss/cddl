@@ -150,6 +150,9 @@ nested and optional choices with disjoint routing keys to coexist. Overlapping
 sibling routing keys require backtracking and return a configuration error,
 rather than emitting a decoder that rejects valid data. Single-rule generation emits the helper
 graph in an output-specific module so repeated invocations do not collide.
+Field substitutions retain their original containing-rule keys (such as
+`item.x`) inside included, optional and choice groups, including renamed
+single-rule output.
 Map-choice helper enums do not receive the string catch-all from `other_variant`.
 Substituting an included group retains a flattened replacement instead of expanding
 the original fields; optional inclusions retain their `Option` wrapper.

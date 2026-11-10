@@ -218,3 +218,41 @@ mod other_variants {
     assert_eq!(serde_json::to_value(item).unwrap(), value);
   }
 }
+
+mod field_substitutions {
+  cddl_derive::cddl_typegen!(
+    "tests/fixtures/group_inclusions.cddl",
+    substitute("override-optional.x" = "u64"),
+    substitute("override-choice.x" = "u64"),
+    substitute("override-nested.x" = "u64")
+  );
+
+  #[cddl_derive::cddl(
+    path = "tests/fixtures/group_inclusions.cddl",
+    rule = "override-optional",
+    fundamental_aliases = true,
+    substitute("override-optional.x" = "u64")
+  )]
+  struct Renamed;
+
+  fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(value: serde_json::Value) {
+    let item: T = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&item).unwrap(), value);
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&item, &mut bytes).unwrap();
+    let decoded: T = ciborium::from_reader(bytes.as_slice()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+  }
+
+  #[test]
+  fn grouped_field_overrides_replace_the_type_and_its_encoding() {
+    for value in [serde_json::json!({}), serde_json::json!({"x": 7, "y": 1})] {
+      round_trip::<OverrideOptional>(value.clone());
+      round_trip::<Renamed>(value);
+    }
+    round_trip::<OverrideChoice>(serde_json::json!({"x": 7}));
+    round_trip::<OverrideChoice>(serde_json::json!({"y": 1}));
+    round_trip::<OverrideNested>(serde_json::json!({"a": 1, "x": 7}));
+    round_trip::<OverrideNested>(serde_json::json!({"z": true}));
+  }
+}
