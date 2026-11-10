@@ -74,7 +74,41 @@ const CONTROL_DOMAINS: &[(&str, bool)] = &[
   ("x = float64 .lt 2.0", true),
   ("x = float64 .le 2.0", true),
   ("x = float64 .ge 0.0", true),
+  ("x = float64 .eq float64", true),
+  ("x = float64 .ne float64", false),
+  ("x = float64 .eq float16", false),
+  ("x = float64 .ne float16", true),
+  ("x = float64 .eq (float16 / 1.1)", true),
+  ("x = float64 .ne (float16 / 1.1)", false),
 ];
+
+const WRAPPED_GENERIC_SCHEMAS: &[&str] = &[
+  "x = a<float16>\na<t> = t / [a<(t)>]",
+  "x = a<float16>\na<t> = t / [a<((t))>]",
+  "x = a<float16>\na<t> = t / [a<(t .ge 1.0)>]",
+];
+
+fn comparison_cases() -> impl Iterator<Item = (String, f64, bool)> {
+  IntoIterator::into_iter([
+    ("eq", [false, true, false]),
+    ("ne", [true, false, true]),
+    ("gt", [false, false, true]),
+    ("ge", [false, true, true]),
+    ("lt", [true, false, false]),
+    ("le", [true, true, false]),
+  ])
+  .flat_map(|(operator, expected)| {
+    IntoIterator::into_iter([-1.5, 0.0, 1.5])
+      .zip(expected)
+      .map(move |(value, expected)| {
+        (
+          format!("x = float64 .{operator} zero\nzero = float64 .eq 0.0"),
+          value,
+          expected,
+        )
+      })
+  })
+}
 
 #[cfg(feature = "cbor")]
 mod cbor {
@@ -86,6 +120,92 @@ mod cbor {
   const FLOAT64_1_5: &[u8] = b"\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00";
   const FLOAT64_INFINITY: &[u8] = b"\xfb\x7f\xf0\x00\x00\x00\x00\x00\x00";
   const FLOAT64_NAN: &[u8] = b"\xfb\x7f\xf8\x00\x00\x00\x00\x00\x00";
+
+  fn encoded_float(value: f64) -> Vec<u8> {
+    let mut encoded = vec![0xfb];
+    encoded.extend_from_slice(&value.to_be_bytes());
+    encoded
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn wrapped_generic_arguments_resolve_in_the_caller() {
+    for schema in super::WRAPPED_GENERIC_SCHEMAS {
+      for depth in [1, 2, 8] {
+        let mut valid = vec![0x81; depth];
+        valid.extend_from_slice(FLOAT64_1_5);
+        assert!(validate_cbor(schema, &valid), "{}", schema);
+        let mut invalid = vec![0x81; depth];
+        invalid.extend_from_slice(FLOAT64_1_1);
+        assert!(!validate_cbor(schema, &invalid), "{}", schema);
+      }
+    }
+    assert!(!validate_cbor(
+      "x = a<float16>\na<t> = t / a<(t)>",
+      FLOAT64_1_1,
+    ));
+    assert!(!validate_cbor(
+      "x = a<float64>\na<t> = t / [a<(t .lt 1.0)>]",
+      &[vec![0x81], encoded_float(1.5)].concat(),
+    ));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn constrained_singleton_controllers_preserve_outer_comparisons() {
+    for (schema, value, expected) in super::comparison_cases() {
+      assert_eq!(
+        validate_cbor(&schema, &encoded_float(value)),
+        expected,
+        "{}",
+        schema
+      );
+    }
+    for zero in [
+      "zero = (float64 .eq 0.0) .ge 0.0",
+      "zero = singleton<float64, 0.0>\nsingleton<t, v> = t .eq v",
+      "zero = 0.0 / zero",
+    ] {
+      let schema = format!("x = compare<float64, zero>\ncompare<t, c> = t .gt c\n{zero}");
+      assert!(validate_cbor(&schema, FLOAT64_1_5), "{}", schema);
+      assert!(!validate_cbor(&schema, &encoded_float(0.0)), "{}", schema);
+    }
+    assert!(!validate_cbor(
+      "x = float64 .gt bad\nbad = float16 .eq 1.1",
+      FLOAT64_1_5,
+    ));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn unconstrained_generic_targets_keep_text_byte_and_bits_controls() {
+    for (data, expected) in [
+      (&b"\x62ab"[..], false),
+      (&b"\x63abc"[..], true),
+      (&b"\x64abcd"[..], false),
+    ] {
+      for controller in ["n", "3"] {
+        let schema = format!("x = sized<tstr>\nsized<t> = t .size {controller}\nn = 3");
+        assert_eq!(validate_cbor(&schema, data), expected);
+      }
+    }
+    for (data, expected) in [
+      (&b"\x42ab"[..], false),
+      (&b"\x43abc"[..], true),
+      (&b"\x44abcd"[..], false),
+    ] {
+      assert_eq!(
+        validate_cbor("x = sized<bstr>\nsized<t> = t .size n\nn = 3", data),
+        expected
+      );
+    }
+    for (data, expected) in [(&b"\x01"[..], false), (&b"\x02"[..], true)] {
+      assert_eq!(
+        validate_cbor("x = bit<uint>\nbit<t> = t .bits n\nn = 1", data),
+        expected
+      );
+    }
+  }
 
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
   #[cfg_attr(not(target_arch = "wasm32"), test)]
@@ -248,6 +368,89 @@ mod cbor {
 #[cfg(feature = "json")]
 mod json {
   use super::validate_json;
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn wrapped_generic_arguments_resolve_in_the_caller() {
+    for schema in super::WRAPPED_GENERIC_SCHEMAS {
+      for depth in [1, 2, 8] {
+        let valid = format!("{}1.5{}", "[".repeat(depth), "]".repeat(depth));
+        let invalid = format!("{}1.1{}", "[".repeat(depth), "]".repeat(depth));
+        assert!(validate_json(schema, &valid), "{}", schema);
+        assert!(!validate_json(schema, &invalid), "{}", schema);
+      }
+    }
+    assert!(!validate_json("x = a<float16>\na<t> = t / a<(t)>", "1.1"));
+    assert!(!validate_json(
+      "x = a<float64>\na<t> = t / [a<(t .lt 1.0)>]",
+      "[1.5]",
+    ));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn constrained_singleton_controllers_preserve_outer_comparisons() {
+    for (schema, value, expected) in super::comparison_cases() {
+      let data = format!("{value:.1}");
+      assert_eq!(validate_json(&schema, &data), expected, "{}", schema);
+    }
+    for zero in [
+      "zero = (float64 .eq 0.0) .ge 0.0",
+      "zero = singleton<float64, 0.0>\nsingleton<t, v> = t .eq v",
+      "zero = 0.0 / zero",
+    ] {
+      let schema = format!("x = compare<float64, zero>\ncompare<t, c> = t .gt c\n{zero}");
+      assert!(validate_json(&schema, "1.5"), "{}", schema);
+      assert!(!validate_json(&schema, "0.0"), "{}", schema);
+    }
+    assert!(!validate_json(
+      "x = float64 .gt bad\nbad = float16 .eq 1.1",
+      "1.5"
+    ));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn unconstrained_generic_targets_keep_text_size_controls() {
+    for (data, expected) in [(r#""ab""#, false), (r#""abc""#, true), (r#""abcd""#, false)] {
+      for controller in ["n", "3"] {
+        let schema = format!("x = sized<tstr>\nsized<t> = t .size {controller}\nn = 3");
+        assert_eq!(validate_json(&schema, data), expected);
+      }
+    }
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn exact_binary32_decimals_roundtrip_through_json() {
+    const EXACT: &str = "956.0343017578125";
+    for schema in [
+      "x = float32",
+      "x = float32 .eq 956.0343017578125",
+      "x = 956.0343017578125",
+    ] {
+      assert!(validate_json(schema, EXACT), "{}", schema);
+    }
+    assert!(!validate_json("x = float16", EXACT));
+    assert!(!validate_json("x = 956.0343017578125", "956.0343017578124"));
+  }
+
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+  #[cfg_attr(not(target_arch = "wasm32"), test)]
+  fn integer_controls_keep_the_full_unsigned_json_domain() {
+    for data in ["9223372036854775808", "18446744073709551615"] {
+      for target in ["int", "number", "uint"] {
+        for bound in ["0", "-1"] {
+          let schema = format!("x = {target} .gt {bound}");
+          assert!(validate_json(&schema, data), "{}", schema);
+        }
+      }
+      assert!(!validate_json("x = float64 .gt 0.0", data));
+    }
+    assert!(validate_json("x = int .gt -2", "-1"));
+    assert!(validate_json("x = number .gt -2", "-1"));
+    assert!(!validate_json("x = uint .gt -2", "-1"));
+  }
 
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
   #[cfg_attr(not(target_arch = "wasm32"), test)]

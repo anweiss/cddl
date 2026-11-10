@@ -1364,6 +1364,193 @@ pub(crate) fn resolve_generic_argument<'a>(
   resolved
 }
 
+/// Instantiation must resolve nested parameter references before replacing
+/// the caller's bindings; lexical analysis of other expressions stays separate.
+fn resolve_argument_in_caller<'a>(state: &ValidationState<'a>, arg: &Type1<'a>) -> Type1<'a> {
+  let Some(rule) = state
+    .generic_rules
+    .iter()
+    .find(|rule| Some(rule.name) == state.eval_generic_rule)
+  else {
+    return normalize_generic_argument(arg.clone());
+  };
+  let bindings: HashMap<_, _> = rule
+    .params
+    .iter()
+    .filter_map(|param| generic_argument_for_param(state, param).map(|arg| (*param, arg)))
+    .collect();
+  let mut resolved = arg.clone();
+  for _ in 0..bindings.len() {
+    let next = substitute_generic_params(&resolved, &bindings);
+    if next == resolved {
+      break;
+    }
+    resolved = next;
+  }
+  normalize_generic_argument(resolved)
+}
+
+fn normalize_generic_argument<'a>(mut arg: Type1<'a>) -> Type1<'a> {
+  while let Type2::ParenthesizedType { pt, .. } = &arg.type2 {
+    let [choice] = pt.type_choices.as_slice() else {
+      break;
+    };
+    if arg.operator.is_none() {
+      arg = choice.type1.clone();
+    } else if choice.type1.operator.is_none() {
+      arg.type2 = choice.type1.type2.clone();
+    } else {
+      break;
+    }
+  }
+  arg
+}
+
+// None is an empty recursive branch; Err is a non-singleton or unknown domain.
+type NumericSingleton<'a> = std::result::Result<Option<token::Value<'a>>, ()>;
+
+enum NumericValue {
+  Integer(i128),
+  Float(f64),
+}
+
+impl NumericValue {
+  fn compare(self, ctrl: ControlOperator, controller: &token::Value) -> bool {
+    match (self, controller) {
+      (Self::Integer(value), token::Value::INT(bound)) => {
+        compare_numeric_values(value, *bound as i128, ctrl)
+      }
+      (Self::Integer(value), token::Value::UINT(bound)) => {
+        compare_numeric_values(value, *bound as i128, ctrl)
+      }
+      (Self::Float(value), token::Value::FLOAT(bound)) => {
+        compare_numeric_values(value, *bound, ctrl)
+      }
+      _ => false,
+    }
+  }
+}
+
+fn compare_numeric_values<T: PartialOrd>(value: T, bound: T, ctrl: ControlOperator) -> bool {
+  match ctrl {
+    ControlOperator::EQ => value == bound,
+    ControlOperator::NE => value != bound,
+    ControlOperator::GT => value > bound,
+    ControlOperator::GE => value >= bound,
+    ControlOperator::LT => value < bound,
+    ControlOperator::LE => value <= bound,
+    _ => false,
+  }
+}
+
+/// Find the only possible numeric literal in a controller. The validator
+/// separately checks this candidate against the controller's full constraints.
+fn numeric_controller_value<'a>(
+  state: &ValidationState<'a>,
+  controller: &Type2<'a>,
+) -> Option<token::Value<'a>> {
+  NumericControllerResolver {
+    state,
+    active: HashSet::new(),
+  }
+  .type2_value(controller)
+  .ok()
+  .flatten()
+}
+
+struct NumericControllerResolver<'s, 'a> {
+  state: &'s ValidationState<'a>,
+  active: HashSet<String>,
+}
+
+impl<'a> NumericControllerResolver<'_, 'a> {
+  fn type2_value(&mut self, value: &Type2<'a>) -> NumericSingleton<'a> {
+    match value {
+      Type2::IntValue { value, .. } => Ok(Some(token::Value::INT(*value))),
+      Type2::UintValue { value, .. } => Ok(Some(token::Value::UINT(*value))),
+      Type2::FloatValue { value, .. } => Ok(Some(token::Value::FLOAT(*value))),
+      Type2::ParenthesizedType { pt, .. } => {
+        self.choices_value(pt.type_choices.iter().map(|choice| choice.type1.clone()))
+      }
+      Type2::Typename {
+        ident,
+        generic_args,
+        ..
+      } => self.ident_value(ident, generic_args.as_ref()),
+      _ => Err(()),
+    }
+  }
+
+  fn type1_value(&mut self, value: &Type1<'a>) -> NumericSingleton<'a> {
+    match value.operator.as_ref().map(|operator| &operator.operator) {
+      Some(RangeCtlOp::RangeOp { .. }) => Err(()),
+      Some(RangeCtlOp::CtlOp {
+        ctrl: ControlOperator::EQ | ControlOperator::AND | ControlOperator::WITHIN,
+        ..
+      }) => self
+        .type2_value(&value.operator.as_ref().ok_or(())?.type2)
+        .or_else(|_| self.type2_value(&value.type2)),
+      _ => self.type2_value(&value.type2),
+    }
+  }
+
+  fn choices_value(
+    &mut self,
+    choices: impl IntoIterator<Item = Type1<'a>>,
+  ) -> NumericSingleton<'a> {
+    let mut value = None;
+    for choice in choices {
+      if let Some(next) = self.type1_value(&choice)? {
+        if value.as_ref().is_some_and(|value| value != &next) {
+          return Err(());
+        }
+        value = Some(next);
+      }
+    }
+    Ok(value)
+  }
+
+  fn ident_value(
+    &mut self,
+    ident: &Identifier<'a>,
+    args: Option<&GenericArgs<'a>>,
+  ) -> NumericSingleton<'a> {
+    let resolved = args
+      .map(|args| resolved_generic_args(self.state, args))
+      .unwrap_or_default();
+    let key = generic_instantiation_key(&qualified_ident_key(ident), resolved.iter());
+    if !self.active.insert(key.clone()) {
+      return Ok(None);
+    }
+    let result = match generic_argument_for_param(self.state, ident.ident) {
+      Some(arg) if args.is_none() => self.type1_value(&resolve_generic_argument(self.state, &arg)),
+      _ => self.rule_value(ident, resolved),
+    };
+    self.active.remove(&key);
+    result
+  }
+
+  fn rule_value(&mut self, ident: &Identifier<'a>, args: Vec<Type1<'a>>) -> NumericSingleton<'a> {
+    let types = type_choice_types_from_ident(self.state.cddl, ident);
+    if types.is_empty() {
+      return Err(());
+    }
+    let params = rule_from_ident(self.state.cddl, ident)
+      .and_then(generic_params_from_rule)
+      .unwrap_or_default();
+    let bindings = params.into_iter().zip(args).collect();
+    let choices = types
+      .iter()
+      .flat_map(|ty| {
+        ty.type_choices
+          .iter()
+          .map(|choice| substitute_generic_params(&choice.type1, &bindings))
+      })
+      .collect::<Vec<_>>();
+    self.choices_value(choices)
+  }
+}
+
 /// The arguments of a generic instantiation resolved against the caller's
 /// evaluation environment.
 pub(crate) fn resolved_generic_args<'a>(
@@ -1373,7 +1560,7 @@ pub(crate) fn resolved_generic_args<'a>(
   args
     .args
     .iter()
-    .map(|arg| resolve_generic_argument(state, &arg.arg))
+    .map(|arg| resolve_argument_in_caller(state, &arg.arg))
     .collect()
 }
 

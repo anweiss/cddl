@@ -1130,19 +1130,58 @@ impl<'a> CBORValidator<'a> {
     // contribute to the target's complete value domain.
     let mut probe = self.new_with_recursion_state(self.cbor.clone());
     probe.state.data_location = self.state.data_location.clone();
+    let marker = format!(
+      "#numeric-target\u{0}{target:?}\u{0}{}",
+      self.state.data_location
+    );
+    if !probe.state.visited_rules.insert(marker) {
+      self.add_error("recursive numeric target binding".to_string());
+      return Ok(());
+    }
     probe.visit_type2(target)?;
     if !probe.errors.is_empty() {
       self.add_error(format!("expected type {}, got {:?}", target, self.cbor));
       return Ok(());
     }
 
-    let previous = self.state.ctrl.take();
-    if ctrl != ControlOperator::EQ {
-      self.state.ctrl = Some(ctrl);
+    if matches!(ctrl, ControlOperator::EQ | ControlOperator::NE) {
+      let mut probe = self.new_with_recursion_state(self.cbor.clone());
+      probe.state.data_location = self.state.data_location.clone();
+      probe.visit_type2(controller)?;
+      if probe.errors.is_empty() == (ctrl == ControlOperator::NE) {
+        self.add_error(format!(
+          "expected {} {}, got {:?}",
+          ctrl, controller, self.cbor
+        ));
+      }
+      return Ok(());
     }
-    let result = self.visit_type2(controller);
-    self.state.ctrl = previous;
-    result
+
+    let Some(value) = numeric_controller_value(&self.state, controller) else {
+      self.add_error("numeric comparison controller must denote a singleton".to_string());
+      return Ok(());
+    };
+    let mut controller_probe =
+      self.new_with_recursion_state(token_value_into_cbor_value(value.clone()));
+    controller_probe.state.data_location = self.state.data_location.clone();
+    controller_probe.visit_type2(controller)?;
+    if !controller_probe.errors.is_empty() {
+      self.add_error("numeric comparison controller has no matching value".to_string());
+      return Ok(());
+    }
+
+    let matches = match &self.cbor {
+      Value::Integer(actual) => NumericValue::Integer(i128::from(*actual)).compare(ctrl, &value),
+      Value::Float(actual) => NumericValue::Float(*actual).compare(ctrl, &value),
+      _ => false,
+    };
+    if !matches {
+      self.add_error(format!(
+        "expected value {} {}, got {:?}",
+        ctrl, value, self.cbor
+      ));
+    }
+    Ok(())
   }
 
   fn validate_array_items<T: std::fmt::Debug + 'static>(
@@ -2177,7 +2216,7 @@ where
             for (idx, gp) in gr.params.iter().enumerate() {
               if let Some(arg) = gr.args.get(idx) {
                 if *gp == target_ident.ident {
-                  let t2 = Type2::from(arg.clone());
+                  let t2 = bound_type2(arg);
 
                   if *gp == controller_ident.ident {
                     return self.visit_control_operator(&t2, ctrl, &t2);
@@ -2202,7 +2241,7 @@ where
           for (idx, gp) in gr.params.iter().enumerate() {
             if let Some(arg) = gr.args.get(idx) {
               if *gp == target_ident.ident {
-                let t2 = Type2::from(arg.clone());
+                let t2 = bound_type2(arg);
                 return self.visit_control_operator(&t2, ctrl, controller);
               }
             }
@@ -4198,22 +4237,18 @@ where
   }
 
   fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error<T>> {
-    if let Some(name) = self.state.eval_generic_rule {
-      if let Some(gr) = self
-        .state
-        .generic_rules
-        .iter()
-        .find(|&gr| gr.name == name)
-        .cloned()
-      {
-        for (idx, gp) in gr.params.iter().enumerate() {
-          if *gp == ident.ident {
-            if let Some(arg) = gr.args.get(idx) {
-              return self.visit_type1(arg);
-            }
-          }
-        }
+    if let Some(arg) = generic_argument_for_param(&self.state, ident.ident) {
+      let marker = format!(
+        "#param\u{0}{:?}\u{0}{}\u{0}{}",
+        self.state.eval_generic_rule, ident, self.state.data_location
+      );
+      if !self.state.visited_rules.insert(marker.clone()) {
+        self.add_error(format!("Recursive generic binding detected: {}", ident));
+        return Ok(());
       }
+      let result = self.visit_type1(&arg);
+      self.state.visited_rules.remove(&marker);
+      return result;
     }
 
     // A revisited rule only indicates a cycle when validation has not

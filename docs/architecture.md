@@ -29,6 +29,15 @@ constraints and generic arguments. A zero-progress recursive alternative
 fails rather than widening that domain or recursing indefinitely.
 Float literal alternatives compare exactly, without an epsilon tolerance
 that would admit nearby values outside the declared domain.
+JSON number parsing round-trips binary64 values exactly, preserving decimal
+spellings of binary32 values and the full unsigned 64-bit integer domain.
+Ordering controllers resolve to a singleton independently of the instance,
+and that singleton is checked against its own constraints before the outer
+comparison is applied. Equality and inequality retain controller-domain
+membership semantics. Generic instantiations substitute nested
+arguments in the caller's environment; redundant parentheses are normalized,
+and zero-progress parameter bindings are guarded. Unconstrained arguments
+remain bare targets for controls such as `.size` and `.bits`.
 
 Map key type choices match each key independently: `{ * (int / tstr) => any }`
 accepts mixed integer and text keys in CBOR. Named choices and constraints on
