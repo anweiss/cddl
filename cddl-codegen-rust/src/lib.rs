@@ -294,7 +294,7 @@ fn apply_alias_encodings(
       alias_encoding(name, &aliases, &mut Vec::new())?;
     }
   }
-  let helper_names: Vec<_> = root
+  let helper_names: BTreeSet<_> = root
     .map(|root| included_group_helpers(defs, root))
     .unwrap_or_default()
     .iter()
@@ -1490,7 +1490,12 @@ fn included_group_helpers(defs: &[RustTypeDef], root: &str) -> Vec<RustTypeDef> 
               .map(|f| f.rust_type.clone()),
           );
         }
-        RustTypeDef::Enum { name, variants, .. } if name != root && names.contains(name) => {
+        RustTypeDef::Enum {
+          name,
+          variants,
+          group_choice: true,
+          ..
+        } if names.contains(name) => {
           names.extend(variants.iter().filter_map(|v| v.inner_type.clone()));
         }
         _ => {}
@@ -3946,6 +3951,35 @@ fn is_rust_keyword(s: &str) -> bool {
 mod tests {
   use super::*;
   use cddl::parser::cddl_from_str;
+
+  #[test]
+  fn helper_closure_includes_root_group_enum_payloads_but_not_external_types() {
+    let cddl = cddl_from_str("item = { a: int // b: int }\nouter = item / tstr", true).unwrap();
+    let defs =
+      collect_type_defs(&cddl, &CommentMap::default(), &CodegenOptions::default()).unwrap();
+    let (root, variants) = defs
+      .iter()
+      .find_map(|def| match def {
+        RustTypeDef::Enum {
+          name,
+          variants,
+          group_choice: true,
+          ..
+        } => Some((name, variants)),
+        _ => None,
+      })
+      .unwrap();
+    let helpers = included_group_helpers(&defs, root);
+    for payload in variants
+      .iter()
+      .filter_map(|variant| variant.inner_type.as_ref())
+    {
+      assert!(helpers
+        .iter()
+        .any(|def| matches!(def, RustTypeDef::Struct {name, ..} if name == payload)));
+    }
+    assert!(included_group_helpers(&defs, "Outer").is_empty());
+  }
 
   #[test]
   fn deduplication_ignores_docs_but_preserves_distinct_payloads() {
