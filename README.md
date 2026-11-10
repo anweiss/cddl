@@ -538,6 +538,33 @@ time = #6.1(number)
 
 The first non-group rule defined by a CDDL data structure definition determines the root type, which is subsequently used for validating the top-level JSON data type.
 
+#### Numeric controller resolution limits (JSON and CBOR)
+
+Native and WebAssembly JSON/CBOR validators bound the work needed to prove a
+numeric ordering controller's singleton value. These are implementation
+resource limits, not additional CDDL value constraints:
+
+* 48 nested resolution steps and 4096 resolver work steps;
+* 16 KiB structural keys and a conservative 4 MiB structural substitution-size
+  estimate, checked before expansion;
+* a separate budget of 4096 ordinary-evaluator visits across candidate checks
+  within one proof, shared with nested child validators.
+
+Resolution caches and counters are local to the proof, not persisted across
+public validation calls or data values; nested candidate validators inherit the
+active proof's visit budget rather than starting a fresh allowance. Numeric-target
+and generic-parameter expansion guards also bound same-location depth and
+structural-key size.
+
+Exhaustion returns an explicit error, such as
+`numeric controller resolution limit exceeded` or
+`numeric controller candidate work limit exceeded`; recursive constraint proofs
+also return errors. Even a valid schema/value can require more work than these
+limits allow. Exhaustion is not guessed acceptance or a computed empty domain,
+and `.ne` cannot invert it into successful validation. See
+[the architecture notes](docs/architecture.md) for proof caching and recursion
+details.
+
 #### Supported JSON validation features
 
 The following types and features of CDDL are supported by this crate for validating JSON:
@@ -689,6 +716,9 @@ assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
 ```
 
 This crate also uses [Serde](https://serde.rs/) and [ciborium](https://crates.io/crates/ciborium) for validating CBOR data structures. CBOR validation is done via the loosely typed [ `ciborium::value::Value` ](https://github.com/enarx/ciborium/blob/main/ciborium/src/value/mod.rs#L22) enum. In addition to all of the same features implemented by the JSON validator, this crate also supports validating CBOR tags (e.g. `#6.32(tstr)` ), CBOR major types (e.g. `#1.2` ), table types (e.g. `{ [ + tstr ] => int }` ) and byte strings. The `.bits` , `.cbor` and `.cborseq` control operators are all supported as well.
+
+The [numeric controller resolution limits](#numeric-controller-resolution-limits-json-and-cbor)
+above apply equally to CBOR validation.
 
 The following tags are supported when validating CBOR:
 
