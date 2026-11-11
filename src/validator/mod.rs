@@ -14,6 +14,8 @@ mod numeric_structure;
 use numeric_structure::*;
 mod numeric_domains;
 use numeric_domains::*;
+mod numeric_sets;
+use numeric_sets::*;
 
 #[cfg(feature = "ast-span")]
 use crate::ast::Span;
@@ -650,6 +652,26 @@ pub fn group_rule_from_ident<'a>(cddl: &'a CDDL, ident: &Identifier) -> Option<&
     }
     _ => None,
   })
+}
+
+fn enumeration_rule_from_ident<'a>(cddl: &'a CDDL<'a>, ident: &Identifier) -> Option<&'a Rule<'a>> {
+  rule_from_ident(cddl, ident).or_else(|| {
+    cddl
+      .rules
+      .iter()
+      .find(|rule| matches!(rule, Rule::Group { rule, .. } if rule.name == *ident))
+  })
+}
+
+fn evaluation_rule_from_ident<'a>(
+  state: &ValidationState<'a>,
+  ident: &Identifier,
+) -> Option<&'a Rule<'a>> {
+  if state.is_group_to_choice_enum {
+    enumeration_rule_from_ident(state.cddl, ident)
+  } else {
+    rule_from_ident(state.cddl, ident)
+  }
 }
 
 /// Find non-group choice alternate rule from a given identifier
@@ -1524,7 +1546,8 @@ fn complete_numeric_candidate(operator: &RangeCtlOp) -> bool {
   match operator {
     RangeCtlOp::RangeOp { .. } => true,
     RangeCtlOp::CtlOp {
-      ctrl: ControlOperator::AND | ControlOperator::WITHIN,
+      ctrl:
+        ControlOperator::AND | ControlOperator::WITHIN | ControlOperator::EQ | ControlOperator::NE,
       ..
     } => true,
     #[cfg(feature = "additional-controls")]
@@ -1595,6 +1618,8 @@ enum NumericDomain<'a> {
   Empty,
   Singleton(token::Value<'a>),
   IntegerRange(IntegerBounds),
+  IntegerSet(Vec<IntegerBounds>),
+  Literals(Vec<token::Value<'a>>),
   Unknown,
 }
 
@@ -1617,16 +1642,7 @@ fn merge_integer_domains<'a>(
   left: NumericDomain<'a>,
   right: NumericDomain<'a>,
 ) -> NumericDomain<'a> {
-  let (Some(a), Some(b)) = (left.integer_bounds(), right.integer_bounds()) else {
-    return NumericDomain::Unknown;
-  };
-  if a.upper + 1 < b.lower || b.upper + 1 < a.lower {
-    return NumericDomain::Unknown;
-  }
-  NumericDomain::IntegerRange(IntegerBounds {
-    lower: a.lower.min(b.lower),
-    upper: a.upper.max(b.upper),
-  })
+  union_numeric_domains(left, right)
 }
 
 fn numeric_literals_equal(a: &token::Value, b: &token::Value) -> bool {
@@ -1752,11 +1768,22 @@ fn compare_mixed_numeric(integer: i128, float: f64, ctrl: ControlOperator, rever
 
 /// Prove a controller singleton only after checking each candidate against
 /// its originating alternative. All proof state belongs to this invocation.
+#[cfg(test)]
 fn numeric_controller_value<'a, E>(
   state: &ValidationState<'a>,
   controller: &Type2<'a>,
   validate: impl FnMut(&Type1<'a>, &token::Value<'a>) -> std::result::Result<bool, E>,
 ) -> std::result::Result<Option<token::Value<'a>>, NumericControllerError<E>> {
+  numeric_controller_result(state, controller, false, validate)
+    .map(|values| values.and_then(|mut values| values.pop()))
+}
+
+fn numeric_controller_result<'a, E>(
+  state: &ValidationState<'a>,
+  controller: &Type2<'a>,
+  all: bool,
+  validate: impl FnMut(&Type1<'a>, &token::Value<'a>) -> std::result::Result<bool, E>,
+) -> std::result::Result<Option<Vec<token::Value<'a>>>, NumericControllerError<E>> {
   let bindings = current_generic_bindings(state);
   if !numeric_type2_substitution_fits(controller, &bindings) {
     return Err(NumericControllerError::ResourceLimit);
@@ -1774,13 +1801,23 @@ fn numeric_controller_value<'a, E>(
   if resolver.exhausted {
     return Err(NumericControllerError::ResourceLimit);
   }
-  Ok(match domain {
-    NumericDomain::Singleton(token::Value::INT(value)) if value >= 0 => {
-      Some(token::Value::UINT(value as usize))
+  let values = if all {
+    finite_literals(&domain, resolver.remaining)
+  } else {
+    match domain {
+      NumericDomain::Singleton(value) => Some(vec![value]),
+      _ => None,
     }
-    NumericDomain::Singleton(value) => Some(value),
-    _ => None,
-  })
+  };
+  Ok(values.map(|values| {
+    values
+      .into_iter()
+      .map(|value| match value {
+        token::Value::INT(value) if value >= 0 => token::Value::UINT(value as usize),
+        value => value,
+      })
+      .collect()
+  }))
 }
 
 struct NumericControllerResolver<'s, 'a, F> {
@@ -1789,6 +1826,7 @@ struct NumericControllerResolver<'s, 'a, F> {
   context: String,
   validate: F,
   active: HashSet<String>,
+  negative: HashSet<String>,
   memo: HashMap<String, NumericDomain<'a>>,
   cycle_cuts: usize,
   depth: usize,
@@ -1813,6 +1851,7 @@ where
       context,
       validate,
       active: HashSet::new(),
+      negative: HashSet::new(),
       memo: HashMap::new(),
       cycle_cuts: 0,
       depth: 0,
@@ -1887,6 +1926,14 @@ where
     {
       return Ok(candidate);
     }
+    if value.operator.is_some()
+      && matches!(
+        candidate,
+        NumericDomain::IntegerRange(_) | NumericDomain::IntegerSet(_) | NumericDomain::Literals(_)
+      )
+    {
+      return Ok(NumericDomain::Unknown);
+    }
     if let (Some(_), NumericDomain::Singleton(literal)) = (&value.operator, &candidate) {
       let mut alternative = value.clone();
       let target = self.type2_value(&value.type2)?;
@@ -1930,16 +1977,19 @@ where
         ..
       }) => self.intersection_value(&value.type2, &value.operator.as_ref().unwrap().type2),
       Some(RangeCtlOp::CtlOp {
-        ctrl: ControlOperator::EQ,
+        ctrl: ControlOperator::EQ | ControlOperator::NE,
         ..
-      }) => {
-        let candidate = self.type2_value(&value.operator.as_ref().unwrap().type2)?;
-        if candidate == NumericDomain::Unknown {
-          self.type2_value(&value.type2)
-        } else {
-          Ok(candidate)
-        }
-      }
+      }) => self.equality_value(
+        &value.type2,
+        &value.operator.as_ref().unwrap().type2,
+        matches!(
+          &value.operator.as_ref().unwrap().operator,
+          RangeCtlOp::CtlOp {
+            ctrl: ControlOperator::NE,
+            ..
+          }
+        ),
+      ),
       _ => self.type2_value(&value.type2),
     }
   }
@@ -1994,15 +2044,25 @@ where
     if target == NumericDomain::Empty || controller == NumericDomain::Empty {
       return Ok(NumericDomain::Empty);
     }
-    let (NumericDomain::Singleton(target), NumericDomain::Singleton(controller)) =
-      (target, controller)
-    else {
+    let Some(targets) = finite_literals(&target, self.remaining) else {
       return Ok(NumericDomain::Unknown);
     };
-    Ok(match checked_numeric_addition(&target, &controller) {
-      Ok(value) => NumericDomain::Singleton(value),
-      Err(failure) => self.failed_proof(failure),
-    })
+    let Some(controllers) = finite_literals(&controller, self.remaining) else {
+      return Ok(NumericDomain::Unknown);
+    };
+    let mut result = NumericDomain::Empty;
+    for target in targets {
+      for controller in &controllers {
+        if !self.proof_step() {
+          return Ok(NumericDomain::Unknown);
+        }
+        match checked_numeric_addition(&target, controller) {
+          Ok(value) => result = merge_numeric_domains(result, NumericDomain::Singleton(value)),
+          Err(failure) => return Ok(self.failed_proof(failure)),
+        }
+      }
+    }
+    Ok(result)
   }
 
   fn choices_value<'b>(
@@ -2070,8 +2130,7 @@ where
       return Ok(cached.clone());
     }
     if !self.active.insert(key.clone()) {
-      self.cycle_cuts += 1;
-      return Ok(NumericDomain::Empty);
+      return Ok(self.cut_domain(&key));
     }
     let cuts = self.cycle_cuts;
     let result = if group {
@@ -2095,7 +2154,7 @@ where
     ident: &Identifier<'a>,
     args: Vec<Type1<'a>>,
   ) -> std::result::Result<NumericDomain<'a>, E> {
-    let params = rule_from_ident(self.state.cddl, ident)
+    let params = enumeration_rule_from_ident(self.state.cddl, ident)
       .and_then(generic_params_from_rule)
       .unwrap_or_default();
     let bindings = params.into_iter().zip(args).collect();
@@ -2165,7 +2224,8 @@ where
       GroupEntry::TypeGroupname { ge, .. } => self.ident_value_mode(
         &ge.name,
         ge.generic_args.as_ref(),
-        group_rule_from_ident(self.state.cddl, &ge.name).is_some(),
+        enumeration_rule_from_ident(self.state.cddl, &ge.name)
+          .is_some_and(|rule| matches!(rule, Rule::Group { .. })),
       ),
     }
   }

@@ -13,6 +13,7 @@ pub(super) enum NumericProofFailure {
   ArithmeticOverflow,
   CyclicComputation,
   InvalidController,
+  NegativeRecursion,
 }
 
 impl NumericProofFailure {
@@ -22,6 +23,7 @@ impl NumericProofFailure {
       Self::ArithmeticOverflow => "numeric addition overflow",
       Self::CyclicComputation => "numeric computation depends on an active cycle cut",
       Self::InvalidController => "numeric comparison controller must denote a singleton",
+      Self::NegativeRecursion => "numeric constraint depends on its own negation",
     }
     .to_string()
   }
@@ -111,6 +113,18 @@ pub(super) fn checked_numeric_addition<'a>(
       .ok_or(NumericProofFailure::ArithmeticOverflow)
       .and_then(integer_token);
   }
+  if let Some(left) = numeric_literal_integer(left) {
+    let right = numeric_float(right)
+      .ok_or(NumericProofFailure::Representability)?
+      .floor();
+    if !right.is_finite() || right < i128::MIN as f64 || right >= i128::MAX as f64 {
+      return Err(NumericProofFailure::ArithmeticOverflow);
+    }
+    return left
+      .checked_add(right as i128)
+      .ok_or(NumericProofFailure::ArithmeticOverflow)
+      .and_then(integer_token);
+  }
   let sum = numeric_float(left).ok_or(NumericProofFailure::Representability)?
     + numeric_float(right).ok_or(NumericProofFailure::Representability)?;
   if !sum.is_finite() {
@@ -151,17 +165,53 @@ where
     ) {
       return Ok(None);
     }
-    let target = self.type2_value(&value.type2)?;
-    let Some(bounds) = target.integer_bounds() else {
-      return Ok(None);
-    };
     let controller = self.type2_value(&operator.type2)?;
+    if self.exhausted || self.failure.is_some() {
+      return Ok(Some(NumericDomain::Unknown));
+    }
     let NumericDomain::Singleton(controller) = controller else {
       return Ok(Some(
         self.failed_proof(NumericProofFailure::InvalidController),
       ));
     };
-    Ok(Some(self.constrained_integer(bounds, ctrl, &controller)))
+    let target = self.type2_value(&value.type2)?;
+    if target == NumericDomain::Empty {
+      return Ok(Some(target));
+    }
+    let Some(bounds) = integer_parts(&target) else {
+      return Ok(
+        finite_literals(&target, self.remaining)
+          .map(|values| self.ordered_literals(values, ctrl, &controller)),
+      );
+    };
+    let mut result = NumericDomain::Empty;
+    for bound in bounds {
+      let next = self.constrained_integer(bound, ctrl, &controller);
+      result = merge_numeric_domains(result, next);
+    }
+    Ok(Some(result))
+  }
+
+  fn ordered_literals(
+    &mut self,
+    values: Vec<token::Value<'a>>,
+    ctrl: ControlOperator,
+    controller: &token::Value<'a>,
+  ) -> NumericDomain<'a> {
+    let mut result = NumericDomain::Empty;
+    for value in values {
+      if !self.proof_step() {
+        return NumericDomain::Unknown;
+      }
+      let actual = match &value {
+        token::Value::FLOAT(value) => NumericValue::Float(*value),
+        _ => NumericValue::Integer(numeric_literal_integer(&value).expect("numeric literal")),
+      };
+      if actual.compare(ctrl, controller) {
+        result = merge_numeric_domains(result, NumericDomain::Singleton(value));
+      }
+    }
+    result
   }
 
   fn constrained_integer(
@@ -223,23 +273,29 @@ where
     if left == NumericDomain::Empty || right == NumericDomain::Empty {
       return Ok(NumericDomain::Empty);
     }
-    if let (Some(a), Some(b)) = (left.integer_bounds(), right.integer_bounds()) {
-      return Ok(self.proved_integer(a.lower.max(b.lower), a.upper.min(b.upper)));
+    if let (Some(a), Some(b)) = (integer_parts(&left), integer_parts(&right)) {
+      return Ok(self.integer_membership(a, b, false));
     }
-    let candidate = match (&left, &right) {
-      (NumericDomain::Singleton(value), _) | (_, NumericDomain::Singleton(value)) => value.clone(),
-      _ => return Ok(NumericDomain::Unknown),
+    let Some(candidates) =
+      finite_literals(&left, self.remaining).or_else(|| finite_literals(&right, self.remaining))
+    else {
+      return Ok(NumericDomain::Unknown);
     };
-    if self.candidate_in_domain(target, &left, &candidate)?
-      && self.candidate_in_domain(controller, &right, &candidate)?
-    {
-      Ok(NumericDomain::Singleton(candidate))
-    } else {
-      Ok(NumericDomain::Empty)
+    let mut result = NumericDomain::Empty;
+    for candidate in candidates {
+      if !self.proof_step() {
+        return Ok(NumericDomain::Unknown);
+      }
+      if self.candidate_in_domain(target, &left, &candidate)?
+        && self.candidate_in_domain(controller, &right, &candidate)?
+      {
+        result = merge_numeric_domains(result, NumericDomain::Singleton(candidate));
+      }
     }
+    Ok(result)
   }
 
-  fn candidate_in_domain(
+  pub(super) fn candidate_in_domain(
     &mut self,
     value: &Type2<'a>,
     domain: &NumericDomain<'a>,
@@ -251,6 +307,15 @@ where
       NumericDomain::IntegerRange(bounds) => Ok(
         numeric_literal_integer(candidate)
           .is_some_and(|value| value >= bounds.lower && value <= bounds.upper),
+      ),
+      NumericDomain::IntegerSet(bounds) => Ok(
+        numeric_literal_integer(candidate)
+          .is_some_and(|value| bounds.iter().any(|b| value >= b.lower && value <= b.upper)),
+      ),
+      NumericDomain::Literals(values) => Ok(
+        values
+          .iter()
+          .any(|value| numeric_literals_equal(value, candidate)),
       ),
       NumericDomain::Unknown => {
         let mut alternative = Type1::from(candidate.clone());

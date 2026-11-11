@@ -553,8 +553,8 @@ implementation resource limits, not additional CDDL value constraints:
   and equality/inequality membership check, or across candidate checks within
   one controller proof, shared with nested child validators. Ordinary
   group-to-choice enumeration also installs this allowance when none is active;
-* with `additional-controls`, each fallback `.plus` evaluation has 48 nested
-  steps and 4096 work steps, including alias and operand expansion.
+* with `additional-controls`, finite `.plus` operands and results use the same
+  48-step depth and 4096-step proof-work limits, including constrained alternatives.
 
 Completed-domain caches and counters belong to that proof or evaluation, not
 to a global cache or subsequent public validation calls. Nested probes inherit
@@ -589,7 +589,22 @@ nonfinite results and integer results outside the target's pointer-sized
 literal representation are explicit errors, never values that `.ne` can accept.
 Constrained range endpoints use the same bounded singleton proofs.
 Integer ordering constraints can prove empty, singleton or bounded integer
-domains without merging integer and floating-point literal domains.
+domains, including disjoint alternatives and excluded holes, without merging
+integer and floating-point literal domains. Equality and inequality constraints
+filter these domains before further narrowing; invalid ordering controllers
+remain hard errors even when their targets are empty.
+
+Computed `.plus` results follow [RFC 9165 Section 2.1](https://www.rfc-editor.org/rfc/rfc9165.html#section-2.1):
+an integer target retains an integer result, flooring a floating controller
+before checked integer addition without rounding the target through `f64`.
+For example, `1 .plus 1.5` denotes integer `2`, while `1.5 .plus 1` denotes
+floating `2.5`. Computed floating results require exact equality, not an epsilon.
+Finite alternatives from both operands form a bounded cross-product; each
+alternative retains its own constraints. Operands that cannot be proved finite
+return an explicit arithmetic-operand error instead of guessed computed values.
+Tagged payload children inherit active work allowances but start at a fresh
+data location; same-value generic unwrap children retain recursion guards.
+Group enumerations also support definitions consisting entirely of `//=`.
 
 #### Supported JSON validation features
 

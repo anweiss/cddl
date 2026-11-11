@@ -82,6 +82,183 @@ const CONTROL_DOMAINS: &[(&str, bool)] = &[
   ("x = float64 .ne (float16 / 1.1)", false),
 ];
 
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn tagged_payloads_inherit_active_numeric_work() {
+  #[cfg(not(target_arch = "wasm32"))]
+  if isolated_numeric_repro("tagged_payloads_inherit_active_numeric_work") {
+    return;
+  }
+  let mut schema = "x = &(v: #6.0(bad30 / float64))\nbad0 = float16 .eq 1.1\n".to_string();
+  for index in 1..=30 {
+    schema.push_str(&format!(
+      "bad{index} = bad{} / bad{}\n",
+      index - 1,
+      index - 1
+    ));
+  }
+  let value = ciborium::value::Value::Tag(0, Box::new(ciborium::value::Value::Float(1.5)));
+  let mut encoded = Vec::new();
+  ciborium::ser::into_writer(&value, &mut encoded).unwrap();
+  assert!(!validate_cbor(&schema, &encoded));
+  assert!(validate_cbor("x = &(v: #6.0(float64))", &encoded));
+  assert!(validate_cbor(
+    "x = &(v: item)\nitem = float64 / #6.0(item)",
+    &encoded
+  ));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn generic_unwraps_preserve_same_value_guards() {
+  #[cfg(not(target_arch = "wasm32"))]
+  if isolated_numeric_repro("generic_unwraps_preserve_same_value_guards") {
+    return;
+  }
+  assert_numeric_case(
+    "x = (~a<float64> / float64) .gt 0.0\na<t> = [t] / ~a<t>",
+    "1.5",
+    true,
+  );
+  assert_numeric_case("x = ~a<float16>\na<t> = [t]", "[1.5]", true);
+  assert_numeric_case("x = ~a<float16>\na<t> = [t]", "[1.1]", false);
+  assert_numeric_case("x = ~a<float16>\na<t> = [t] / [a<t>]", "[[1.5]]", true);
+  assert_numeric_case("x = ~a<float16>\na<t> = [t] / [a<t>]", "[[1.1]]", false);
+}
+
+#[cfg(feature = "additional-controls")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn multivalue_computations_preserve_originating_constraints() {
+  let schema = "x = (1.0 .plus c) .gt 0.0\nc = 0.1 / 0.2 / 0.3 .lt 0.0";
+  assert_numeric_case(schema, "1.3", false);
+  assert_numeric_case(schema, "1.1", true);
+  assert_numeric_case(schema, "1.2", true);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn size_controls_validate_the_actual_target_domain() {
+  assert_numeric_case("x = (tstr .size 1) .gt 0", "1", false);
+  assert_numeric_case("x = (uint .size 1) .gt 0", "1", true);
+  assert_numeric_case("x = tstr .size 1", "\"a\"", true);
+  assert_numeric_case("x = tstr .size 1", "1", false);
+  assert_numeric_case("x = uint .size 1", "\"a\"", false);
+}
+
+#[cfg(feature = "additional-controls")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn computed_float_membership_is_exact() {
+  for schema in ["x = 0.0 .plus 0.0", "x = 0.0 .plus (0.0 / 1.0)"] {
+    assert_numeric_case(schema, "1e-20", false);
+    assert_numeric_case(schema, "0.0", true);
+  }
+  assert_numeric_case("x = float64 .ne (0.0 .plus 0.0)", "1e-20", true);
+  assert_numeric_case("x = 0.0 .plus 0.0", "0", false);
+  assert_numeric_case("x = 1e20 .plus 1e20", "2e20", true);
+  assert_numeric_case("x = 1e20 .plus 1e20", "200000000000000030000.0", false);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn integer_proofs_preserve_equality_sets_and_excluded_holes() {
+  for domain in ["(uint .ne 0) .le 0", "(uint .eq (1 / 2)) .le 0"] {
+    assert_numeric_case(&format!("x = float64 .gt c\nc = {domain}"), "1.5", false);
+  }
+  assert_numeric_case("x = float64 .gt ((uint .eq (0 / 2)) .lt 1)", "1.5", true);
+  assert_numeric_case("x = float64 .gt ((uint .ne 1) .le 0)", "1.5", true);
+  assert_numeric_case("x = float64 .gt ((uint .ne 0.0) .le 0)", "1.5", true);
+  assert_numeric_case("x = float64 .gt ((uint .eq 0.0) .le 0)", "1.5", false);
+}
+
+#[cfg(feature = "additional-controls")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn mixed_addition_uses_rfc_target_type_and_floor_conversion() {
+  for (sum, expected, rejected) in [
+    ("1 .plus 1.5", "2", "2.5"),
+    ("1.5 .plus 1", "2.5", "2"),
+    ("1 .plus -1.5", "-1", "0"),
+    ("-1 .plus 0.5", "-1", "0"),
+  ] {
+    assert_numeric_case(&format!("x = {sum}"), expected, true);
+    assert_numeric_case(&format!("x = {sum}"), rejected, false);
+  }
+  #[cfg(target_pointer_width = "64")]
+  assert_numeric_case("x = 9007199254740993 .plus 0.5", "9007199254740993", true);
+  assert_numeric_case(
+    &format!("x = {} .plus 0.5", usize::MAX),
+    &usize::MAX.to_string(),
+    true,
+  );
+  for (data, expected) in [("2", true), ("3", true), ("2.5", false), ("3.5", false)] {
+    assert_numeric_case("x = (1 .plus (1.5 / 2.5)) .gt 0", data, expected);
+  }
+  assert_numeric_case("x = float64 .gt (1 .plus 1.5)", "2.25", true);
+  assert_numeric_case("x = float64 .gt (1 .plus 1.5)", "1.75", false);
+  for (data, expected) in [("2", true), ("3", true), ("4", true), ("2.5", false)] {
+    assert_numeric_case("x = (1 / 2) .plus (1.5 / 2.5)", data, expected);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn invalid_ordering_controllers_precede_empty_target_classification() {
+  for domain in [
+    "0 / ((uint .lt 0) .gt (0 / 1))",
+    "0 / ((uint .ne uint) .gt (0 / 1))",
+    "0 / (((uint .lt 0) .gt (0 / 1)) .eq (uint .lt 0))",
+  ] {
+    assert_numeric_case(&format!("x = float64 .gt c\nc = {domain}"), "1.5", false);
+    assert_numeric_case(
+      &format!("x = float64 .ne (float64 .gt c)\nc = {domain}"),
+      "-1.5",
+      false,
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    for error in numeric_error_messages(&format!("x = float64 .gt c\nc = {domain}"), "1.5") {
+      assert!(error.contains("must denote a singleton"));
+    }
+  }
+  assert_numeric_case(
+    "x = float64 .gt (0 / (a .eq (uint .lt 0)))\na = float64 .ne a",
+    "1.5",
+    false,
+  );
+  let exhausted = "x = float64 .gt ((uint .lt 0) .gt c<int>)\nc<t> = c<[t]>";
+  assert_numeric_case(exhausted, "1.5", false);
+  #[cfg(not(target_arch = "wasm32"))]
+  assert_numeric_limit(exhausted, "1.5");
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn disjoint_integer_domains_survive_constraint_narrowing() {
+  for domain in ["(0 / 2) .lt 1", "(0 / 2) .ne 2", "(0 / 2) .eq 0"] {
+    assert_numeric_case(&format!("x = float64 .gt ({domain})"), "1.5", true);
+  }
+  for domain in ["(0 / 2) .lt 0", "(0 / 2) .le 2", "(0 / 2) .gt 2"] {
+    assert_numeric_case(&format!("x = float64 .gt ({domain})"), "1.5", false);
+  }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn alternate_only_group_enumerations_preserve_scoped_domains() {
+  assert_numeric_case("x = &(g)\ng //= (zero: 0.0)", "0.0", true);
+  assert_numeric_case("x = float64 .gt &(g)\ng //= (zero: 0.0)", "1.5", true);
+  assert_numeric_case("x = &g<float16>\ng<t> //= (value: t)", "1.5", true);
+  assert_numeric_case("x = &g<float16>\ng<t> //= (value: t)", "1.1", false);
+  assert_numeric_case(
+    "x = float64 .gt &g<float16>\ng<t> //= (zero: t .eq 0.0)\ng<t> //= (empty: t .eq 1.1)",
+    "1.5",
+    true,
+  );
+  assert_numeric_case("x = float64 .gt &($$g)\n$$g //= (zero: 0.0)", "1.5", true);
+}
+
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn bare_group_enumeration_cycles_are_bounded_before_expansion() {
@@ -165,7 +342,7 @@ fn computed_addition_is_signed_checked_and_representable() {
     ("1 .plus -2", "0", false),
     ("1 .plus -2", "-2", true),
     ("-2 .plus 1", "0", false),
-    ("1 .plus 1.5", "2.0", true),
+    ("1 .plus 1.5", "2.0", false),
     ("1.5 .plus 1", "2.0", true),
   ] {
     assert_numeric_case(
@@ -194,6 +371,16 @@ fn computed_addition_overflow_is_a_hard_error() {
   assert_numeric_case(&format!("x = int .ne ({overflow})"), "0", false);
   let underflow = format!("{} .plus -1", isize::MIN);
   assert_numeric_case(&format!("x = int .lt ({underflow})"), "0", false);
+  assert_numeric_case(
+    &format!("x = int .ne ({} .plus 1.5)", usize::MAX),
+    "0",
+    false,
+  );
+  assert_numeric_case(
+    &format!("x = int .ne ({} .plus -0.5)", isize::MIN),
+    "0",
+    false,
+  );
   assert_numeric_case("x = float64 .ne (1.0e308 .plus 1.0e308)", "1.5", false);
   #[cfg(not(target_arch = "wasm32"))]
   for error in numeric_error_messages(&format!("x = int .ne ({overflow})"), "0") {

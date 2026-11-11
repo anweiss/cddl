@@ -1284,40 +1284,55 @@ impl<'a> CBORValidator<'a> {
   where
     cbor::Error<T>: From<cbor::Error<std::io::Error>>,
   {
+    self
+      .resolve_numeric_values::<T>(controller, false)
+      .map(|values| values.and_then(|mut values| values.pop()))
+  }
+
+  fn resolve_numeric_values<T: std::fmt::Debug + 'static>(
+    &mut self,
+    controller: &Type2<'a>,
+    all: bool,
+  ) -> std::result::Result<Option<Vec<token::Value<'a>>>, Error<T>>
+  where
+    Error<T>: From<Error<std::io::Error>>,
+  {
     let work = self.numeric_context.work.clone().unwrap_or_else(|| {
       std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
         MAX_NUMERIC_RESOLUTION_WORK,
       ))
     });
-    let result = numeric_controller_value(&self.state, controller, |alternative, candidate| {
-      let mut probe = self.new_with_recursion_state(token_value_into_cbor_value(candidate.clone()));
-      probe.numeric_context = self.numeric_context.candidate();
-      probe.state.is_group_to_choice_enum = false;
-      probe.state.eval_generic_rule = None;
-      probe
-        .state
-        .visited_rules
-        .retain(|key| key.starts_with("#numeric-controller\u{0}"));
-      probe.numeric_context.work = Some(work.clone());
-      probe.state.data_location = self.state.data_location.clone();
-      let marker = numeric_recursion_marker(
-        &self.state,
-        &self.numeric_context,
-        "#numeric-controller",
-        &(alternative, candidate),
-      )
-      .ok_or_else(|| {
-        Error::from_validator(self, "numeric controller proof limit exceeded".to_string())
-      })?;
-      if !probe.state.visited_rules.insert(marker) {
-        return Err(Error::from_validator(
-          self,
-          "recursive numeric controller proof".to_string(),
-        ));
-      }
-      probe.visit_type1(alternative)?;
-      Ok(probe.errors.is_empty())
-    });
+    let result =
+      numeric_controller_result(&self.state, controller, all, |alternative, candidate| {
+        let mut probe =
+          self.new_with_recursion_state(token_value_into_cbor_value(candidate.clone()));
+        probe.numeric_context = self.numeric_context.candidate();
+        probe.state.is_group_to_choice_enum = false;
+        probe.state.eval_generic_rule = None;
+        probe
+          .state
+          .visited_rules
+          .retain(|key| key.starts_with("#numeric-controller\u{0}"));
+        probe.numeric_context.work = Some(work.clone());
+        probe.state.data_location = self.state.data_location.clone();
+        let marker = numeric_recursion_marker(
+          &self.state,
+          &self.numeric_context,
+          "#numeric-controller",
+          &(alternative, candidate),
+        )
+        .ok_or_else(|| {
+          Error::from_validator(self, "numeric controller proof limit exceeded".to_string())
+        })?;
+        if !probe.state.visited_rules.insert(marker) {
+          return Err(Error::from_validator(
+            self,
+            "recursive numeric controller proof".to_string(),
+          ));
+        }
+        probe.visit_type1(alternative)?;
+        Ok(probe.errors.is_empty())
+      });
     match result {
       Ok(value) => Ok(value),
       Err(NumericControllerError::Validation(error)) => Err(error),
@@ -1341,15 +1356,32 @@ impl<'a> CBORValidator<'a> {
     Error<T>: From<Error<std::io::Error>>,
   {
     let computed = constrained_controller(target, ControlOperator::PLUS, controller);
-    let Some(value) = self.resolve_numeric_controller::<T>(&computed)? else {
-      return Ok(false);
+    let Some(values) = self.resolve_numeric_values::<T>(&computed, true)? else {
+      return Err(Error::from_validator(
+        self,
+        "numeric arithmetic operands must denote finite numeric values".to_string(),
+      ));
     };
     let previous = self.state.ctrl;
     self.state.ctrl = match previous {
       Some(ControlOperator::SIZE | ControlOperator::BITS) => previous,
       _ => Some(ControlOperator::PLUS),
     };
-    let result: std::result::Result<(), Error<T>> = self.visit_type2(&Type1::from(value).type2);
+    let before = self.errors.len();
+    let result: std::result::Result<(), Error<T>> = (|| {
+      if values.is_empty() {
+        self.add_error("computed numeric domain is empty".to_string());
+      }
+      for value in values {
+        let current = self.errors.len();
+        self.visit_value(&value)?;
+        if self.errors.len() == current {
+          self.errors.truncate(before);
+          break;
+        }
+      }
+      Ok(())
+    })();
     self.state.ctrl = previous;
     result.map(|_| true)
   }
@@ -4015,12 +4047,12 @@ where
         ..
       } => {
         if let Some(ga) = generic_args {
-          if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
+          if let Some(rule) = enumeration_rule_from_ident(self.state.cddl, ident) {
             return self.validate_generic_instantiation(ident, ga, rule, true);
           }
         }
 
-        if group_rule_from_ident(self.state.cddl, ident).is_none() {
+        if enumeration_rule_from_ident(self.state.cddl, ident).is_none() {
           self.add_error(format!(
             "rule {} must be a group rule to turn it into a choice",
             ident
@@ -4085,45 +4117,7 @@ where
 
         if let Some(ga) = generic_args {
           if let Some(rule) = unwrap_rule_from_ident(self.state.cddl, ident) {
-            let resolved_args = self.resolve_generic_arguments(ga)?;
-            if let Some(gr) = self
-              .state
-              .generic_rules
-              .iter_mut()
-              .find(|gr| gr.name == ident.ident)
-            {
-              gr.args.extend(resolved_args);
-            } else if let Some(params) = generic_params_from_rule(rule) {
-              self.state.generic_rules.push(GenericRule {
-                name: ident.ident,
-                params,
-                args: resolved_args,
-              });
-            }
-
-            #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
-            let mut cv = CBORValidator::new(
-              self.state.cddl,
-              self.cbor.clone(),
-              self.state.enabled_features.clone(),
-            );
-            #[cfg(all(feature = "additional-controls", not(target_arch = "wasm32")))]
-            let mut cv = CBORValidator::new(
-              self.state.cddl,
-              self.cbor.clone(),
-              self.state.enabled_features,
-            );
-            #[cfg(not(feature = "additional-controls"))]
-            let mut cv = CBORValidator::new(self.state.cddl, self.cbor.clone());
-
-            cv.state.generic_rules = self.state.generic_rules.clone();
-            cv.state.eval_generic_rule = Some(ident.ident);
-            cv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-            cv.visit_rule(rule)?;
-
-            self.errors.append(&mut cv.errors);
-
-            return Ok(());
+            return self.validate_generic_instantiation::<T>(ident, ga, rule, false);
           }
         }
 
@@ -4183,6 +4177,8 @@ where
           cv.state.is_multi_group_choice = self.state.is_multi_group_choice;
           cv.state.data_location.push_str(&self.state.data_location);
           cv.state.type_group_name_entry = self.state.type_group_name_entry;
+          cv.numeric_context = self.numeric_context.candidate();
+          cv.state.data_location.push_str("/tag");
           cv.visit_type(t)?;
 
           self.errors.append(&mut cv.errors);
@@ -4481,7 +4477,7 @@ where
     // self.state.is_colon_shortcut_present is only true when the ident is part of a
     // member key
     if !self.state.is_colon_shortcut_present {
-      if let Some(r) = rule_from_ident(self.state.cddl, ident) {
+      if let Some(r) = evaluation_rule_from_ident(&self.state, ident) {
         // Check for recursion to prevent stack overflow
         if self.state.visited_rules.contains(&visited_key) {
           return self.record_numeric_cycle(
@@ -5240,7 +5236,7 @@ where
           Some(ControlOperator::GE) if *f >= *v => None,
           #[cfg(feature = "additional-controls")]
           Some(ControlOperator::PLUS) => {
-            if (*f - *v).abs() < f64::EPSILON {
+            if *f == *v {
               None
             } else {
               Some(format!("expected computed .plus value {}, got {:?}", v, f))
