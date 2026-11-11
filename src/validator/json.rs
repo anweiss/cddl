@@ -518,6 +518,7 @@ pub struct JSONValidator<'a> {
   /// Access shared fields directly via `Deref` (e.g., `self.state.cddl`,
   /// `self.state.is_root`, `self.state.data_location`).
   pub state: super::ValidationState<'a>,
+  pub(super) numeric_context: NumericContext,
   json: Arc<Value>,
   errors: Vec<ValidationError>,
   // JSON object value hoisted from previous state of AST evaluation
@@ -548,12 +549,66 @@ pub struct JSONValidator<'a> {
 }
 
 impl<'a> JSONValidator<'a> {
+  fn visit_enumeration_choice(&mut self, choice: &GroupChoice<'a>) -> visitor::Result<Error> {
+    let previous = self.numeric_context.begin_evaluation();
+    let result = self.evaluate_enumeration_choice(choice);
+    self.numeric_context.work = previous;
+    result
+  }
+
+  fn evaluate_enumeration_choice(&mut self, choice: &GroupChoice<'a>) -> visitor::Result<Error> {
+    charge_numeric_probe(&self.numeric_context)
+      .map_err(|()| Error::from_validator(self, "enumeration work limit exceeded".to_string()))?;
+    let choices = enumeration_type_choices(&self.state, choice).map_err(|()| {
+      Error::from_validator(self, "enumeration expansion limit exceeded".to_string())
+    })?;
+    if choices.is_empty() {
+      self.add_error("empty group enumeration has no members".to_string());
+      return Ok(());
+    }
+    let initial = self.errors.len();
+    for choice in &choices {
+      let before = self.errors.len();
+      let previous = std::mem::replace(&mut self.state.is_group_to_choice_enum, true);
+      let mut result = self.visit_type_choice(choice);
+      for error in &mut self.errors[before..] {
+        error.is_group_to_choice_enum = true;
+      }
+      if let Err(Error::Validation(errors)) = &mut result {
+        for error in errors {
+          error.is_group_to_choice_enum = true;
+        }
+      }
+      self.state.is_group_to_choice_enum = previous;
+      result?;
+      if self.errors.len() == before {
+        self.errors.truncate(initial);
+        return Ok(());
+      }
+    }
+    Ok(())
+  }
+
+  fn record_numeric_cycle(&mut self, marker: &str, message: String) -> visitor::Result<Error> {
+    match self.numeric_context.recursion(marker) {
+      NumericRecursion::Cut => {
+        self.add_error(message);
+        Ok(())
+      }
+      NumericRecursion::InvalidConstraint => Err(Error::from_validator(
+        self,
+        "recursive numeric constraint depends on its own negation".to_string(),
+      )),
+    }
+  }
+
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   /// New JSONValidation from CDDL AST and JSON value
   pub fn new(cddl: &'a CDDL<'a>, json: Value, enabled_features: Option<&'a [&'a str]>) -> Self {
     JSONValidator {
       state: super::ValidationState::new(cddl, enabled_features),
+      numeric_context: Default::default(),
       json: Arc::new(json),
       errors: Vec::default(),
       object_value: None,
@@ -575,6 +630,7 @@ impl<'a> JSONValidator<'a> {
   pub fn new(cddl: &'a CDDL<'a>, json: Value) -> Self {
     JSONValidator {
       state: super::ValidationState::new(cddl),
+      numeric_context: Default::default(),
       json: Arc::new(json),
       errors: Vec::default(),
       object_value: None,
@@ -605,6 +661,7 @@ impl<'a> JSONValidator<'a> {
     jv.json = json.into();
     jv.map_replay_budget = self.map_replay_budget.clone();
     jv.map_rule_depth = self.map_rule_depth.clone();
+    jv.numeric_context = self.numeric_context.clone();
     jv
   }
 
@@ -614,6 +671,7 @@ impl<'a> JSONValidator<'a> {
     let mut fresh = self.new_child_validator(json);
     fresh.map_replay_budget = Arc::new(MapReplayBudget::new(limit));
     fresh.map_rule_depth = Arc::new(MapRuleDepth::new(self.map_rule_depth.limit));
+    fresh.numeric_context = Default::default();
     *self = fresh;
   }
 
@@ -622,7 +680,259 @@ impl<'a> JSONValidator<'a> {
     jv.state.generic_rules = self.state.generic_rules.clone();
     jv.state.eval_generic_rule = self.state.eval_generic_rule;
     jv.state.visited_rules = self.state.visited_rules.clone();
+    jv.state.is_group_to_choice_enum = self.state.is_group_to_choice_enum;
     jv
+  }
+
+  fn validate_numeric_control(
+    &mut self,
+    target: &Type2<'a>,
+    ctrl: ControlOperator,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<Error> {
+    let ordering_value = if matches!(ctrl, ControlOperator::EQ | ControlOperator::NE) {
+      None
+    } else {
+      Some(
+        self
+          .resolve_numeric_controller(controller)?
+          .ok_or_else(|| {
+            Error::from_validator(
+              self,
+              "numeric comparison controller must denote a singleton".to_string(),
+            )
+          })?,
+      )
+    };
+    let mut probe = self.new_with_recursion_state(self.json.clone());
+    let work = self.numeric_context.work.clone().unwrap_or_else(|| {
+      Arc::new(std::sync::atomic::AtomicUsize::new(
+        MAX_NUMERIC_RESOLUTION_WORK,
+      ))
+    });
+    probe.numeric_context.work = Some(work.clone());
+    probe.state.data_location = self.state.data_location.clone();
+    let marker = numeric_recursion_marker(
+      &self.state,
+      &self.numeric_context,
+      "#numeric-target",
+      target,
+    )
+    .ok_or_else(|| {
+      Error::from_validator(self, "numeric target resolution limit exceeded".to_string())
+    })?;
+    if !probe.state.visited_rules.insert(marker.clone()) {
+      self.record_numeric_cycle(&marker, "recursive numeric target binding".to_string())?;
+      return Ok(());
+    }
+    probe.visit_type2(target)?;
+    if !probe.errors.is_empty() {
+      self.add_error(format!("expected type {}, got {}", target, self.json));
+      return Ok(());
+    }
+
+    if matches!(ctrl, ControlOperator::EQ | ControlOperator::NE) {
+      let mut probe = self.new_with_recursion_state(self.json.clone());
+      probe.numeric_context.work = Some(work);
+      probe.state.data_location = self.state.data_location.clone();
+      if ctrl == ControlOperator::NE {
+        probe.numeric_context.enter_negative(&self.state);
+      }
+      probe.visit_type2(controller)?;
+      if probe.errors.is_empty() == (ctrl == ControlOperator::NE) {
+        self.add_error(format!(
+          "expected {} {}, got {}",
+          ctrl, controller, self.json
+        ));
+      }
+      return Ok(());
+    }
+
+    let value = ordering_value.expect("ordering controller is proved before target membership");
+    if !json_numeric_value(&self.json).is_some_and(|actual| actual.compare(ctrl, &value)) {
+      self.add_error(format!(
+        "expected value {} {}, got {}",
+        ctrl, value, self.json
+      ));
+    }
+    Ok(())
+  }
+
+  fn resolve_numeric_controller(
+    &mut self,
+    controller: &Type2<'a>,
+  ) -> std::result::Result<Option<token::Value<'a>>, Error> {
+    self
+      .resolve_numeric_values(controller, false)
+      .map(|values| values.and_then(|mut values| values.pop()))
+  }
+
+  fn resolve_numeric_values(
+    &mut self,
+    controller: &Type2<'a>,
+    all: bool,
+  ) -> std::result::Result<Option<Vec<token::Value<'a>>>, Error> {
+    let work = self.numeric_context.work.clone().unwrap_or_else(|| {
+      std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
+        MAX_NUMERIC_RESOLUTION_WORK,
+      ))
+    });
+    let result =
+      numeric_controller_result(&self.state, controller, all, |alternative, candidate| {
+        let value = match candidate {
+          token::Value::INT(value) => Value::from(*value as i64),
+          token::Value::UINT(value) => Value::from(*value as u64),
+          token::Value::FLOAT(value) => Value::from(*value),
+          _ => unreachable!("non-numeric controller candidate"),
+        };
+        let mut probe = self.new_with_recursion_state(value);
+        probe.numeric_context = self.numeric_context.candidate();
+        probe.state.is_group_to_choice_enum = false;
+        probe.state.eval_generic_rule = None;
+        probe
+          .state
+          .visited_rules
+          .retain(|key| key.starts_with("#numeric-controller\u{0}"));
+        probe.numeric_context.work = Some(work.clone());
+        probe.state.data_location = self.state.data_location.clone();
+        let marker = numeric_recursion_marker(
+          &self.state,
+          &self.numeric_context,
+          "#numeric-controller",
+          &(alternative, candidate),
+        )
+        .ok_or_else(|| {
+          Error::from_validator(self, "numeric controller proof limit exceeded".to_string())
+        })?;
+        if !probe.state.visited_rules.insert(marker) {
+          return Err(Error::from_validator(
+            self,
+            "recursive numeric controller proof".to_string(),
+          ));
+        }
+        probe.visit_type1(alternative)?;
+        Ok(probe.errors.is_empty())
+      });
+    match result {
+      Ok(value) => Ok(value),
+      Err(NumericControllerError::Validation(error)) => Err(error),
+      Err(NumericControllerError::Proof(failure)) => {
+        Err(Error::from_validator(self, failure.message()))
+      }
+      Err(NumericControllerError::ResourceLimit) => Err(Error::from_validator(
+        self,
+        "numeric controller resolution limit exceeded".to_string(),
+      )),
+    }
+  }
+
+  #[cfg(feature = "additional-controls")]
+  fn visit_numeric_sum(
+    &mut self,
+    target: &Type2<'a>,
+    controller: &Type2<'a>,
+  ) -> std::result::Result<bool, Error> {
+    let computed = constrained_controller(target, ControlOperator::PLUS, controller);
+    let Some(values) = self.resolve_numeric_values(&computed, true)? else {
+      return Err(Error::from_validator(
+        self,
+        "numeric arithmetic operands must denote finite numeric values".to_string(),
+      ));
+    };
+    let previous = self.state.ctrl;
+    self.state.ctrl = match previous {
+      Some(ControlOperator::SIZE | ControlOperator::BITS) => previous,
+      _ => Some(ControlOperator::PLUS),
+    };
+    let before = self.errors.len();
+    let result = (|| {
+      if values.is_empty() {
+        self.add_error("computed numeric domain is empty".to_string());
+      }
+      for value in values {
+        let current = self.errors.len();
+        self.visit_value(&value)?;
+        if self.errors.len() == current {
+          self.errors.truncate(before);
+          break;
+        }
+      }
+      Ok(())
+    })();
+    self.state.ctrl = previous;
+    result.map(|_| true)
+  }
+
+  fn visit_integer_range(&mut self, lower: i128, upper: i128, inclusive: bool) {
+    let actual = match self.json.as_ref() {
+      Value::String(value) if self.state.ctrl == Some(ControlOperator::SIZE) => {
+        Some(value.len() as i128)
+      }
+      _ => match json_numeric_value(&self.json) {
+        Some(NumericValue::Integer(value)) => Some(value),
+        _ => None,
+      },
+    };
+    if !actual.is_some_and(|value| {
+      lower <= value
+        && if inclusive {
+          value <= upper
+        } else {
+          value < upper
+        }
+    }) {
+      self.add_error(format!(
+        "expected integer to be in range {} <= value {} {}, got {}",
+        lower,
+        if inclusive { "<=" } else { "<" },
+        upper,
+        self.json
+      ));
+    }
+  }
+
+  fn visit_float_range(&mut self, lower: f64, upper: f64, inclusive: bool) {
+    let actual = match json_numeric_value(&self.json) {
+      Some(NumericValue::Float(value)) => Some(value),
+      _ => None,
+    };
+    if !actual.is_some_and(|value| {
+      lower <= value
+        && if inclusive {
+          value <= upper
+        } else {
+          value < upper
+        }
+    }) {
+      self.add_error(format!(
+        "expected float to be in range {} <= value {} {}, got {}",
+        lower,
+        if inclusive { "<=" } else { "<" },
+        upper,
+        self.json
+      ));
+    }
+  }
+
+  fn visit_resolved_range(
+    &mut self,
+    lower: &Type2<'a>,
+    upper: &Type2<'a>,
+    inclusive: bool,
+  ) -> std::result::Result<(), Error> {
+    let lower = numeric_literal(lower).or(self.resolve_numeric_controller(lower)?);
+    let upper = numeric_literal(upper).or(self.resolve_numeric_controller(upper)?);
+    let (Some(lower), Some(upper)) = (lower, upper) else {
+      return Err(Error::from_validator(
+        self,
+        "range endpoints must denote numeric singletons".to_string(),
+      ));
+    };
+    self.visit_range(
+      &Type1::from(lower).type2,
+      &Type1::from(upper).type2,
+      inclusive,
+    )
   }
 
   fn enter_map_rule(&self) -> std::result::Result<Option<MapRuleGuard>, Error> {
@@ -631,6 +941,129 @@ impl<'a> JSONValidator<'a> {
       .as_ref()
       .map(|_| self.map_rule_depth.enter())
       .transpose()
+  }
+
+  fn resolve_generic_arguments(
+    &self,
+    args: &GenericArgs<'a>,
+  ) -> std::result::Result<Vec<Type1<'a>>, Error> {
+    resolved_generic_args(&self.state, args).map_err(|()| {
+      Error::from_validator(
+        self,
+        "generic argument resolution limit exceeded".to_string(),
+      )
+    })
+  }
+
+  fn validate_generic_instantiation(
+    &mut self,
+    ident: &Identifier<'a>,
+    args: &GenericArgs<'a>,
+    rule: &Rule<'a>,
+    group_choice: bool,
+  ) -> visitor::Result<Error> {
+    let resolved_args = self.resolve_generic_arguments(args)?;
+    let recursion_key = numeric_recursion_marker(
+      &self.state,
+      &self.numeric_context,
+      "#generic",
+      &(ident, &resolved_args),
+    )
+    .ok_or_else(|| {
+      Error::from_validator(
+        self,
+        "generic instantiation depth limit exceeded".to_string(),
+      )
+    })?;
+    let mut child = self.new_with_recursion_state(self.json.clone());
+    child.state.data_location = self.state.data_location.clone();
+    if let Some(binding) = child
+      .state
+      .generic_rules
+      .iter_mut()
+      .find(|binding| binding.name == ident.ident)
+    {
+      binding.args = resolved_args;
+    } else if let Some(params) = generic_params_from_rule(rule) {
+      child.state.generic_rules.push(GenericRule {
+        name: ident.ident,
+        params,
+        args: resolved_args,
+      });
+    }
+    child.state.eval_generic_rule = Some(ident.ident);
+    child.state.is_multi_type_choice = self.state.is_multi_type_choice;
+    child.state.is_group_to_choice_enum = group_choice;
+    if child.state.visited_rules.insert(recursion_key.clone()) {
+      child.visit_rule(rule)?;
+    } else {
+      child.record_numeric_cycle(
+        &recursion_key,
+        format!("Recursive rule reference detected: {}", ident),
+      )?;
+    }
+    self.errors.append(&mut child.errors);
+    Ok(())
+  }
+
+  fn resolve_enclosing_numeric_control(
+    &mut self,
+    target: &Type2<'a>,
+    ctrl: ControlOperator,
+    controller: &Type2<'a>,
+  ) -> std::result::Result<bool, Error> {
+    if !matches!(
+      self.state.ctrl,
+      Some(ControlOperator::SIZE | ControlOperator::BITS)
+    ) || !(numeric_comparison(ctrl)
+      || matches!(ctrl, ControlOperator::AND | ControlOperator::WITHIN))
+    {
+      return Ok(false);
+    }
+    let Some(value) =
+      self.resolve_numeric_controller(&constrained_controller(target, ctrl, controller))?
+    else {
+      return Ok(false);
+    };
+    self.visit_value(&value)?;
+    Ok(true)
+  }
+
+  fn validate_size_target(&mut self, target: &Type2<'a>) -> std::result::Result<bool, Error> {
+    let mut probe = self.new_with_recursion_state(self.json.clone());
+    probe.state.data_location = self.state.data_location.clone();
+    probe.visit_type2(target)?;
+    let valid = probe.errors.is_empty();
+    self.errors.append(&mut probe.errors);
+    Ok(valid)
+  }
+
+  fn visit_closed_group_entry(&mut self, entry: &GroupEntry<'a>) -> visitor::Result<Error> {
+    if let (GroupEntry::ValueMemberKey { ge, .. }, Value::Object(_)) = (entry, self.json.as_ref()) {
+      if let Some((key_type, alternatives, is_cut)) = choice_member_key(&self.state, ge) {
+        return self.visit_choice_key_entry(ge, key_type, &alternatives, is_cut);
+      }
+      let (min, max) = occurrence_bounds(ge.occur.as_ref().map(|o| o.occur));
+      if matches!(&ge.member_key, Some(MemberKey::Type1 { is_cut: false, .. })) && min == 0 {
+        return self.visit_zero_minimum_entry(entry, max);
+      }
+    }
+    if let GroupEntry::TypeGroupname { ge, .. } = entry {
+      if ge.occur.is_some()
+        && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 == 0
+        && matches!(self.json.as_ref(), Value::Object(_))
+      {
+        return self.visit_optional_named_group(ge);
+      }
+      let prior_occurrence = self.state.occurrence;
+      let error_count = self.errors.len();
+      walk_group_entry(self, entry)?;
+      if ge.occur.is_some() && self.errors.len() == error_count {
+        self.state.occurrence = prior_occurrence;
+      }
+      return Ok(());
+    }
+    walk_group_entry(self, entry)
   }
 
   fn visit_named_rule_path<F>(&mut self, marker: String, visit: F) -> Result
@@ -694,6 +1127,7 @@ impl<'a> JSONValidator<'a> {
   pub fn new(cddl: &'a CDDL<'a>, json: Value, enabled_features: Option<Box<[JsValue]>>) -> Self {
     JSONValidator {
       state: super::ValidationState::new(cddl, enabled_features),
+      numeric_context: Default::default(),
       json: Arc::new(json),
       errors: Vec::default(),
       object_value: None,
@@ -715,6 +1149,7 @@ impl<'a> JSONValidator<'a> {
   pub fn new(cddl: &'a CDDL<'a>, json: Value) -> Self {
     JSONValidator {
       state: super::ValidationState::new(cddl),
+      numeric_context: Default::default(),
       json: Arc::new(json),
       errors: Vec::default(),
       object_value: None,
@@ -1509,7 +1944,7 @@ impl<'a> JSONValidator<'a> {
     args: &GenericArgs<'a>,
     rule: &Rule<'a>,
   ) -> Result {
-    let resolved_args = resolved_generic_args(&self.state, args);
+    let resolved_args = self.resolve_generic_arguments(args)?;
     let instance =
       generic_instantiation_key(&qualified_ident_key(&entry.name), resolved_args.iter());
     let Some(mut jv) = self.generic_group_child(instance) else {
@@ -1862,8 +2297,19 @@ impl<'a> JSONValidator<'a> {
   /// error checkpoint. Failed arms are tentative; their errors are retained
   /// only when every arm fails.
   fn visit_named_type_choice(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error> {
-    let choices = type_choice_types_from_ident(self.state.cddl, ident);
+    let choices = instantiated_type_choices(&self.state, ident).map_err(|()| {
+      Error::from_validator(self, "generic body expansion limit exceeded".to_string())
+    })?;
+    let previous = self.state.eval_generic_rule.take();
+    let result = self.visit_closed_type_choices(&choices);
+    self.state.eval_generic_rule = previous;
+    result
+  }
 
+  fn visit_closed_type_choices(
+    &mut self,
+    choices: &[std::borrow::Cow<'a, Type<'a>>],
+  ) -> visitor::Result<Error> {
     if choices.len() > 1 {
       self.state.is_multi_type_choice = true;
 
@@ -2228,6 +2674,25 @@ impl<'a> JSONValidator<'a> {
     cursor: usize,
     ctx: &mut ArraySeqCtx<'a, ValidationError>,
   ) -> std::result::Result<Option<usize>, Error> {
+    let expanded = instantiated_group_entry(&self.state, entry).map_err(|()| {
+      Error::from_validator(self, "generic group expansion limit exceeded".to_string())
+    })?;
+    let Some(expanded) = expanded else {
+      return self.seq_match_closed_entry(entry, elems, cursor, ctx);
+    };
+    let previous = self.state.eval_generic_rule.take();
+    let result = self.seq_match_closed_entry(&expanded, elems, cursor, ctx);
+    self.state.eval_generic_rule = previous;
+    result
+  }
+
+  fn seq_match_closed_entry(
+    &mut self,
+    entry: &GroupEntry<'a>,
+    elems: &[Value],
+    cursor: usize,
+    ctx: &mut ArraySeqCtx<'a, ValidationError>,
+  ) -> std::result::Result<Option<usize>, Error> {
     let occur = match entry {
       GroupEntry::ValueMemberKey { ge, .. } => ge.occur.as_ref().map(|o| o.occur),
       GroupEntry::TypeGroupname { ge, .. } => ge.occur.as_ref().map(|o| o.occur),
@@ -2296,7 +2761,7 @@ impl<'a> JSONValidator<'a> {
         self.seq_match_leaf(elems, cursor, ctx, |jv| {
           if let Some(ga) = &ge.generic_args {
             if let Some(rule) = rule_from_ident(jv.state.cddl, &ge.name) {
-              let resolved_args = resolved_generic_args(&jv.state, ga);
+              let resolved_args = jv.resolve_generic_arguments(ga)?;
               if let Some(gr) = jv
                 .state
                 .generic_rules
@@ -2392,7 +2857,7 @@ impl<'a> JSONValidator<'a> {
       .map(|_| self.state.generic_rules.clone());
     if let Some(ga) = &ge.generic_args {
       if let Some(rule) = rule_from_ident(self.state.cddl, &ge.name) {
-        let resolved_args = resolved_generic_args(&self.state, ga);
+        let resolved_args = self.resolve_generic_arguments(ga)?;
         if let Some(gr) = self
           .state
           .generic_rules
@@ -2459,7 +2924,7 @@ impl<'a> JSONValidator<'a> {
     let prev_eval = self.state.eval_generic_rule;
     let prev_generic_rules = generic_args.map(|_| self.state.generic_rules.clone());
     if let Some(ga) = generic_args {
-      let resolved_args = resolved_generic_args(&self.state, ga);
+      let resolved_args = self.resolve_generic_arguments(ga)?;
       if let Some(gr) = self
         .state
         .generic_rules
@@ -2831,37 +3296,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
   fn visit_group_choice(&mut self, gc: &GroupChoice<'a>) -> visitor::Result<Error> {
     if self.state.is_group_to_choice_enum {
-      let initial_error_count = self.errors.len();
-      for tc in type_choices_from_group_choice(self.state.cddl, gc).iter() {
-        let error_count = self.errors.len();
-        let prev_is_group_to_choice_enum = self.state.is_group_to_choice_enum;
-        // The group has been converted to type choices.
-        // Validate each type normally so its nested groups are not converted again.
-        self.state.is_group_to_choice_enum = false;
-        let mut result = self.visit_type_choice(tc);
-        for error in &mut self.errors[error_count..] {
-          error.is_group_to_choice_enum = true;
-        }
-        if let Err(Error::Validation(errors)) = &mut result {
-          for error in errors {
-            error.is_group_to_choice_enum = true;
-          }
-        }
-        // Restore enumeration mode for the remaining choices, even on errors.
-        self.state.is_group_to_choice_enum = prev_is_group_to_choice_enum;
-        result?;
-        if self.errors.len() == error_count {
-          let type_choice_error_count = self.errors.len() - initial_error_count;
-          if type_choice_error_count > 0 {
-            for _ in 0..type_choice_error_count {
-              self.errors.pop();
-            }
-          }
-          return Ok(());
-        }
-      }
-
-      return Ok(());
+      return self.visit_enumeration_choice(gc);
     }
 
     self.visit_group_sequence(gc)
@@ -2869,156 +3304,33 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
   fn visit_range(
     &mut self,
-    lower: &Type2,
-    upper: &Type2,
+    lower: &Type2<'a>,
+    upper: &Type2<'a>,
     is_inclusive: bool,
   ) -> visitor::Result<Error> {
     if matches!(self.json.as_ref(), Value::Array(_)) {
       return self.validate_array_items(&ArrayItemToken::Range(lower, upper, is_inclusive));
     }
 
+    if numeric_literal(lower).is_none() || numeric_literal(upper).is_none() {
+      return self.visit_resolved_range(lower, upper, is_inclusive);
+    }
+
     match (lower, upper) {
       (Type2::IntValue { value: l, .. }, Type2::IntValue { value: u, .. }) => {
-        let error_str = if is_inclusive {
-          format!(
-            "expected integer to be in range {} <= value <= {}, got {}",
-            l, u, self.json
-          )
-        } else {
-          // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
-          format!(
-            "expected integer to be in range {} <= value < {}, got {}",
-            l, u, self.json
-          )
-        };
-
-        match self.json.as_ref() {
-          Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-              if is_inclusive {
-                if i < *l as i64 || i > *u as i64 {
-                  self.add_error(error_str);
-                }
-              } else {
-                // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
-                if i < *l as i64 || i >= *u as i64 {
-                  self.add_error(error_str);
-                }
-              }
-            } else {
-              self.add_error(error_str);
-              return Ok(());
-            }
-          }
-          _ => {
-            self.add_error(format!(
-              "invalid cddl range. value must be an integer type. got {}",
-              self.json
-            ));
-            return Ok(());
-          }
-        }
+        self.visit_integer_range(*l as i128, *u as i128, is_inclusive);
       }
       (Type2::UintValue { value: l, .. }, Type2::UintValue { value: u, .. }) => {
-        let error_str = if is_inclusive {
-          format!(
-            "expected uint to be in range {} <= value <= {}, got {}",
-            l, u, self.json
-          )
-        } else {
-          // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
-          format!(
-            "expected uint to be in range {} <= value < {}, got {}",
-            l, u, self.json
-          )
-        };
-
-        match self.json.as_ref() {
-          Value::Number(n) => {
-            if let Some(i) = n.as_u64() {
-              // Fix: Cast all usize values to u64
-              let lower = *l as u64;
-              let upper = *u as u64;
-              if is_inclusive {
-                if i < lower || i > upper {
-                  self.add_error(error_str);
-                }
-              } else if i < lower || i >= upper {
-                self.add_error(error_str);
-              }
-            } else {
-              self.add_error(error_str);
-              return Ok(());
-            }
-          }
-          Value::String(s) => match self.state.ctrl {
-            Some(ControlOperator::SIZE) => {
-              let len = s.len() as u64; // Fix: Convert len to u64
-                                        // Fix: Cast all usize values to u64
-              let lower = *l as u64;
-              let upper = *u as u64;
-              if is_inclusive {
-                if len < lower || len > upper {
-                  self.add_error(error_str);
-                }
-              } else if len < lower || len >= upper {
-                self.add_error(error_str);
-              }
-            }
-            _ => {
-              self.add_error("string value cannot be validated against a range without the .size control operator".to_string());
-              return Ok(());
-            }
-          },
-          _ => {
-            self.add_error(format!(
-              "invalid cddl range. value must be a uint type. got {}",
-              self.json
-            ));
-            return Ok(());
-          }
-        }
+        self.visit_integer_range(*l as i128, *u as i128, is_inclusive);
+      }
+      (Type2::IntValue { value: l, .. }, Type2::UintValue { value: u, .. }) => {
+        self.visit_integer_range(*l as i128, *u as i128, is_inclusive)
+      }
+      (Type2::UintValue { value: l, .. }, Type2::IntValue { value: u, .. }) => {
+        self.visit_integer_range(*l as i128, *u as i128, is_inclusive)
       }
       (Type2::FloatValue { value: l, .. }, Type2::FloatValue { value: u, .. }) => {
-        let error_str = if is_inclusive {
-          format!(
-            "expected float to be in range {} <= value <= {}, got {}",
-            l, u, self.json
-          )
-        } else {
-          // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
-          format!(
-            "expected float to be in range {} <= value < {}, got {}",
-            l, u, self.json
-          )
-        };
-
-        match self.json.as_ref() {
-          Value::Number(n) => {
-            if let Some(f) = n.as_f64() {
-              if is_inclusive {
-                if f < *l || f > *u {
-                  self.add_error(error_str);
-                }
-              } else {
-                // Changed: For ... ranges, make it inclusive on lower bound, exclusive on upper bound
-                if f < *l || f >= *u {
-                  self.add_error(error_str);
-                }
-              }
-            } else {
-              self.add_error(error_str);
-              return Ok(());
-            }
-          }
-          _ => {
-            self.add_error(format!(
-              "invalid cddl range. value must be a float type. got {}",
-              self.json
-            ));
-            return Ok(());
-          }
-        }
+        self.visit_float_range(*l, *u, is_inclusive);
       }
       _ => {
         self.add_error(
@@ -3040,59 +3352,42 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
   ) -> visitor::Result<Error> {
     if let Type2::Typename {
       ident: target_ident,
+      generic_args: None,
       ..
     } = target
     {
-      if let Type2::Typename {
-        ident: controller_ident,
-        ..
-      } = controller
-      {
-        if let Some(name) = self.state.eval_generic_rule {
-          if let Some(gr) = self
-            .state
-            .generic_rules
-            .iter()
-            .find(|r| r.name == name)
-            .cloned()
-          {
-            for (idx, gp) in gr.params.iter().enumerate() {
-              if let Some(arg) = gr.args.get(idx) {
-                if *gp == target_ident.ident {
-                  let t2 = Type2::from(arg.clone());
-
-                  if *gp == controller_ident.ident {
-                    return self.visit_control_operator(&t2, ctrl, &t2);
-                  }
-
-                  return self.visit_control_operator(&arg.type2, ctrl, controller);
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if let Some(name) = self.state.eval_generic_rule {
-        if let Some(gr) = self
-          .state
-          .generic_rules
-          .iter()
-          .find(|r| r.name == name)
-          .cloned()
+      if let Some(arg) = generic_argument_for_ident(&self.state, target_ident) {
+        let target = bound_type2(&arg);
+        let controller = if matches!(controller, Type2::Typename { ident, generic_args: None, .. } if ident == target_ident)
         {
-          for (idx, gp) in gr.params.iter().enumerate() {
-            if let Some(arg) = gr.args.get(idx) {
-              if *gp == target_ident.ident {
-                let t2 = Type2::from(arg.clone());
-                return self.visit_control_operator(&t2, ctrl, controller);
-              }
-            }
-          }
-        }
+          &target
+        } else {
+          controller
+        };
+        return self.visit_control_operator(&target, ctrl, controller);
       }
     }
 
+    if self.resolve_enclosing_numeric_control(target, ctrl, controller)? {
+      return Ok(());
+    }
+    if matches!(self.json.as_ref(), Value::Number(_))
+      && matches!(
+        ctrl,
+        ControlOperator::EQ
+          | ControlOperator::NE
+          | ControlOperator::LT
+          | ControlOperator::GT
+          | ControlOperator::GE
+          | ControlOperator::LE
+      )
+    {
+      return self.validate_numeric_control(target, ctrl, controller);
+    }
+
+    if ctrl == ControlOperator::SIZE && !self.validate_size_target(target)? {
+      return Ok(());
+    }
     match ctrl {
       ControlOperator::EQ => return self.validate_equality_control(target, controller),
       ControlOperator::NE => match target {
@@ -3313,7 +3608,14 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       }
       #[cfg(feature = "additional-controls")]
       ControlOperator::PLUS => {
-        self.state.ctrl = Some(ctrl);
+        if self.visit_numeric_sum(target, controller)? {
+          return Ok(());
+        }
+        let previous = self.state.ctrl;
+        self.state.ctrl = match previous {
+          Some(ControlOperator::SIZE | ControlOperator::BITS) => previous,
+          _ => Some(ctrl),
+        };
 
         // Substitute generic parameters in target and controller before calling plus_operation
         let substituted_target = self
@@ -3344,10 +3646,13 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             }
           }
 
-          Err(e) => self.add_error(e),
+          Err(e) => {
+            self.state.ctrl = previous;
+            return Err(Error::from_validator(self, e));
+          }
         }
 
-        self.state.ctrl = None;
+        self.state.ctrl = previous;
       }
       #[cfg(feature = "additional-controls")]
       ControlOperator::ABNF => {
@@ -3839,6 +4144,13 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
   }
 
   fn visit_type2(&mut self, t2: &Type2<'a>) -> visitor::Result<Error> {
+    enter_enumeration_value(&mut self.state, t2);
+    charge_numeric_probe(&self.numeric_context).map_err(|()| {
+      Error::from_validator(
+        self,
+        "numeric controller candidate work limit exceeded".to_string(),
+      )
+    })?;
     match t2 {
       Type2::TextValue { value, .. } => self.visit_value(&token::Value::TEXT(value.clone())),
       Type2::Map { group, .. } => match self.json.as_ref() {
@@ -3926,38 +4238,12 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         ..
       } => {
         if let Some(ga) = generic_args {
-          if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
-            let resolved_args = resolved_generic_args(&self.state, ga);
-            if let Some(gr) = self
-              .state
-              .generic_rules
-              .iter_mut()
-              .find(|r| r.name == ident.ident)
-            {
-              gr.args.extend(resolved_args);
-            } else if let Some(params) = generic_params_from_rule(rule) {
-              self.state.generic_rules.push(GenericRule {
-                name: ident.ident,
-                params,
-                args: resolved_args,
-              });
-            }
-
-            let mut jv = self.new_child_validator(self.json.clone());
-
-            jv.state.generic_rules = self.state.generic_rules.clone();
-            jv.state.eval_generic_rule = Some(ident.ident);
-            jv.state.is_group_to_choice_enum = true;
-            jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-            jv.visit_rule(rule)?;
-
-            self.errors.append(&mut jv.errors);
-
-            return Ok(());
+          if let Some(rule) = enumeration_rule_from_ident(self.state.cddl, ident) {
+            return self.validate_generic_instantiation(ident, ga, rule, true);
           }
         }
 
-        if group_rule_from_ident(self.state.cddl, ident).is_none() {
+        if enumeration_rule_from_ident(self.state.cddl, ident).is_none() {
           self.add_error(format!(
             "rule {} must be a group rule to turn it into a choice",
             ident
@@ -3984,32 +4270,12 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       } => {
         if let Some(ga) = generic_args {
           if let Some(rule) = rule_from_ident(self.state.cddl, ident) {
-            let resolved_args = resolved_generic_args(&self.state, ga);
-            if let Some(gr) = self
-              .state
-              .generic_rules
-              .iter_mut()
-              .find(|r| r.name == ident.ident)
-            {
-              gr.args.extend(resolved_args);
-            } else if let Some(params) = generic_params_from_rule(rule) {
-              self.state.generic_rules.push(GenericRule {
-                name: ident.ident,
-                params,
-                args: resolved_args,
-              });
-            }
-
-            let mut jv = self.new_child_validator(self.json.clone());
-
-            jv.state.generic_rules = self.state.generic_rules.clone();
-            jv.state.eval_generic_rule = Some(ident.ident);
-            jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-            jv.visit_rule(rule)?;
-
-            self.errors.append(&mut jv.errors);
-
-            return Ok(());
+            return self.validate_generic_instantiation(
+              ident,
+              ga,
+              rule,
+              self.state.is_group_to_choice_enum,
+            );
           }
         }
 
@@ -4033,32 +4299,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
         if let Some(ga) = generic_args {
           if let Some(rule) = unwrap_rule_from_ident(self.state.cddl, ident) {
-            let resolved_args = resolved_generic_args(&self.state, ga);
-            if let Some(gr) = self
-              .state
-              .generic_rules
-              .iter_mut()
-              .find(|gr| gr.name == ident.ident)
-            {
-              gr.args.extend(resolved_args);
-            } else if let Some(params) = generic_params_from_rule(rule) {
-              self.state.generic_rules.push(GenericRule {
-                name: ident.ident,
-                params,
-                args: resolved_args,
-              });
-            }
-
-            let mut jv = self.new_child_validator(self.json.clone());
-
-            jv.state.generic_rules = self.state.generic_rules.clone();
-            jv.state.eval_generic_rule = Some(ident.ident);
-            jv.state.is_multi_type_choice = self.state.is_multi_type_choice;
-            jv.visit_rule(rule)?;
-
-            self.errors.append(&mut jv.errors);
-
-            return Ok(());
+            return self.validate_generic_instantiation(ident, ga, rule, false);
           }
         }
 
@@ -4185,22 +4426,23 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
   }
 
   fn visit_identifier(&mut self, ident: &Identifier<'a>) -> visitor::Result<Error> {
-    if let Some(name) = self.state.eval_generic_rule {
-      if let Some(gr) = self
-        .state
-        .generic_rules
-        .iter()
-        .find(|&gr| gr.name == name)
-        .cloned()
-      {
-        for (idx, gp) in gr.params.iter().enumerate() {
-          if *gp == ident.ident {
-            if let Some(arg) = gr.args.get(idx) {
-              return self.visit_type1(arg);
-            }
-          }
-        }
+    if let Some(arg) = generic_argument_for_ident(&self.state, ident) {
+      let marker = numeric_recursion_marker(&self.state, &self.numeric_context, "#param", ident)
+        .ok_or_else(|| {
+          Error::from_validator(
+            self,
+            "generic binding resolution limit exceeded".to_string(),
+          )
+        })?;
+      if !self.state.visited_rules.insert(marker.clone()) {
+        return self.record_numeric_cycle(
+          &marker,
+          format!("Recursive generic binding detected: {}", ident),
+        );
       }
+      let result = self.visit_type1(&arg);
+      self.state.visited_rules.remove(&marker);
+      return result;
     }
 
     // A revisited rule only indicates a cycle when validation has not
@@ -4215,17 +4457,16 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     // Check for recursion before processing the identifier
     if recursive {
       // We've seen this rule before in the current validation path, indicating a cycle
-      self.add_error(format!(
+      return self.record_numeric_cycle(&visited_key, format!(
         "Recursive rule reference detected: {}. This may indicate a circular definition in the CDDL schema.",
         ident.ident
       ));
-      return Ok(());
     }
 
     // self.state.is_colon_shortcut_present is only true when the ident is part of a
     // member key
     if !self.state.is_colon_shortcut_present {
-      if let Some(r) = rule_from_ident(self.state.cddl, ident) {
+      if let Some(r) = evaluation_rule_from_ident(&self.state, ident) {
         return self.visit_named_rule_path(visited_key, |validator| validator.visit_rule(r));
       }
 
@@ -4306,11 +4547,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             }
           }
         } else if let Some(kind) = ident_numeric_kind(self.state.cddl, ident) {
-          let matches_kind = match kind {
-            NumericKind::Int => n.is_i64(),
-            NumericKind::Float => n.is_f64(),
-            NumericKind::Both => n.is_i64() || n.is_f64(),
-          };
+          let matches_kind = numeric_ident_matches_json_number(ident, kind, n);
           if matches_kind {
             return Ok(());
           }
@@ -4607,34 +4844,16 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
   }
 
   fn visit_group_entry(&mut self, entry: &GroupEntry<'a>) -> visitor::Result<Error> {
-    if let (GroupEntry::ValueMemberKey { ge, .. }, Value::Object(_)) = (entry, self.json.as_ref()) {
-      if let Some((key_type, alternatives, is_cut)) = choice_member_key(&self.state, ge) {
-        return self.visit_choice_key_entry(ge, key_type, &alternatives, is_cut);
-      }
-      let (min, max) = occurrence_bounds(ge.occur.as_ref().map(|o| o.occur));
-      if matches!(&ge.member_key, Some(MemberKey::Type1 { is_cut: false, .. })) && min == 0 {
-        return self.visit_zero_minimum_entry(entry, max);
-      }
-    }
-    if let GroupEntry::TypeGroupname { ge, .. } = entry {
-      if ge.occur.is_some()
-        && occurrence_bounds(ge.occur.as_ref().map(|o| o.occur)).0 == 0
-        && matches!(self.json.as_ref(), Value::Object(_))
-      {
-        return self.visit_optional_named_group(ge);
-      }
-      // A group reference's occurrence applies to the referenced group
-      // alone: once the group has matched, restore the prior indicator so
-      // `? g` cannot relax later required members, mirroring inline groups.
-      let prior_occurrence = self.state.occurrence;
-      let error_count = self.errors.len();
-      walk_group_entry(self, entry)?;
-      if ge.occur.is_some() && self.errors.len() == error_count {
-        self.state.occurrence = prior_occurrence;
-      }
-      return Ok(());
-    }
-    walk_group_entry(self, entry)
+    let expanded = instantiated_group_entry(&self.state, entry).map_err(|()| {
+      Error::from_validator(self, "generic group expansion limit exceeded".to_string())
+    })?;
+    let Some(expanded) = expanded else {
+      return self.visit_closed_group_entry(entry);
+    };
+    let previous = self.state.eval_generic_rule.take();
+    let result = self.visit_closed_group_entry(&expanded);
+    self.state.eval_generic_rule = previous;
+    result
   }
 
   fn visit_inline_group_entry(
@@ -4787,20 +5006,16 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         _ => Some(format!("expected value {}, got {}", v, self.json)),
       },
       token::Value::FLOAT(v) => match self.json.as_ref() {
-        Value::Number(n) => match n.as_f64() {
+        Value::Number(n) => match n.as_f64().filter(|_| n.is_f64()) {
           Some(f) => match &self.state.ctrl {
-            Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT)
-              if (f - *v).abs() > f64::EPSILON =>
-            {
-              None
-            }
+            Some(ControlOperator::NE) | Some(ControlOperator::DEFAULT) if f != *v => None,
             Some(ControlOperator::LT) if f < *v => None,
             Some(ControlOperator::LE) if f <= *v => None,
             Some(ControlOperator::GT) if f > *v => None,
             Some(ControlOperator::GE) if f >= *v => None,
             #[cfg(feature = "additional-controls")]
             Some(ControlOperator::PLUS) => {
-              if (f - *v).abs() < f64::EPSILON {
+              if f == *v {
                 None
               } else {
                 Some(format!("expected computed .plus value {}, got {}", v, n))
@@ -4808,7 +5023,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             }
             #[cfg(feature = "additional-controls")]
             None | Some(ControlOperator::FEATURE) => {
-              if (f - *v).abs() < f64::EPSILON {
+              if f == *v {
                 None
               } else {
                 Some(format!("expected value {}, got {}", v, n))
@@ -4816,7 +5031,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             }
             #[cfg(not(feature = "additional-controls"))]
             None => {
-              if (f - *v).abs() < f64::EPSILON {
+              if f == *v {
                 None
               } else {
                 Some(format!("expected value {}, got {}", v, n))
@@ -4950,6 +5165,38 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
     self.state.occurrence = Some(o.occur);
 
     Ok(())
+  }
+}
+
+fn json_numeric_value(value: &Value) -> Option<NumericValue> {
+  let Value::Number(number) = value else {
+    return None;
+  };
+  if number.is_f64() {
+    return number.as_f64().map(NumericValue::Float);
+  }
+  number
+    .as_i64()
+    .map(i128::from)
+    .or_else(|| number.as_u64().map(i128::from))
+    .map(NumericValue::Integer)
+}
+
+fn numeric_ident_matches_json_number(
+  ident: &Identifier,
+  kind: NumericKind,
+  number: &serde_json::Number,
+) -> bool {
+  let matches_float = || {
+    number.is_f64()
+      && number
+        .as_f64()
+        .is_some_and(|value| primitive_float_ident_matches_value(ident, value).unwrap_or(true))
+  };
+  match kind {
+    NumericKind::Int => number.is_i64() || number.is_u64(),
+    NumericKind::Float => matches_float(),
+    NumericKind::Both => number.is_i64() || number.is_u64() || matches_float(),
   }
 }
 

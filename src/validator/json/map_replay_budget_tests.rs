@@ -230,6 +230,12 @@ fn map_replay_tail_proof_preserves_pending_generic_shadowing() {
       r#"root = { ? g<bad>, * tstr => any } / any g<T> = (missing: uint, boom: T // absent: uint, boom: T) bad = tstr .regexp "[""#,
       r#"{"boom":"text"}"#,
     ),
+    // Bare generic targets now retain the regexp's hard error even when
+    // the parameter shadows a prelude name.
+    (
+      r#"root = { ? g<bad>, * tstr => any } / any g<tstr> = (a: uint, boom: tstr // b: uint, boom: tstr) bad = tstr .regexp "[""#,
+      r#"{"a":"x","b":"y","boom":"text"}"#,
+    ),
   ] {
     let cddl = cddl_from_pest_str(schema).unwrap();
     let mut validator = limited_validator(&cddl, serde_json::from_str(input).unwrap(), 4096);
@@ -257,10 +263,6 @@ fn map_replay_tail_proof_preserves_pending_generic_shadowing() {
     (
       r#"root = { 0*0 g<bad>, * tstr => any } / any g<uint> = (missing: uint, boom: uint // absent: uint, boom: uint) bad = tstr .regexp "[""#,
       r#"{"boom":"text"}"#,
-    ),
-    (
-      r#"root = { ? g<bad>, * tstr => any } / any g<tstr> = (a: uint, boom: tstr // b: uint, boom: tstr) bad = tstr .regexp "[""#,
-      r#"{"a":"x","b":"y","boom":"text"}"#,
     ),
   ] {
     let cddl = cddl_from_pest_str(schema).unwrap();

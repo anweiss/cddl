@@ -374,7 +374,7 @@ impl<'a> JSONValidator<'a> {
       let mut scoped = self.new_with_recursion_state(Value::Null);
       scoped.set_generic_group_bindings(
         entry.name.ident,
-        resolved_generic_args(&self.state, args),
+        resolved_generic_args(&self.state, args).ok()?,
         rule.generic_params.as_ref().map(|params| {
           params
             .params

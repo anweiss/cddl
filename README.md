@@ -538,6 +538,74 @@ time = #6.1(number)
 
 The first non-group rule defined by a CDDL data structure definition determines the root type, which is subsequently used for validating the top-level JSON data type.
 
+#### Numeric and generic resolution limits (JSON and CBOR)
+
+Native and WebAssembly JSON/CBOR validators bound numeric target checks,
+numeric controller proofs, and generic argument expansion. These are
+implementation resource limits, not additional CDDL value constraints:
+
+* 48 nested resolution steps and 4096 resolver work steps;
+* 4096 structural visits and 128 structural descent steps when preflighting an
+  argument list or a substituted alternative, before cloning or constructing
+  instantiation keys;
+* 48 active generic instantiations without progress at one data location;
+* a separate allowance of 4096 ordinary-evaluator visits for a numeric target
+  and equality/inequality membership check, or across candidate checks within
+  one controller proof, shared with nested child validators. Ordinary
+  group-to-choice enumeration also installs this allowance when none is active;
+* with `additional-controls`, finite `.plus` operands and results use the same
+  48-step depth and 4096-step proof-work limits, including constrained alternatives.
+
+Completed-domain caches and counters belong to that proof or evaluation, not
+to a global cache or subsequent public validation calls. Nested probes inherit
+the active visit allowance rather than replenishing it. Generic bounds also
+apply outside numeric proofs, including non-numeric zero-progress argument
+growth. Recursion markers use collision-checked, interned structural identities;
+there is no formatted-key byte limit on string literals or data locations.
+Locations are retained only in active recursion markers, not in the structural
+identity table, so completed array elements do not accumulate location metadata.
+All numeric bookkeeping is private to the format validators; the public
+`ValidationState` remains usable with struct-update construction.
+
+Exhaustion returns an explicit error, such as
+`numeric controller resolution limit exceeded` or
+`numeric controller candidate work limit exceeded` or
+`generic body expansion limit exceeded`; recursive constraint proofs
+also return errors. Even a valid schema/value can require more work than these
+limits allow. Exhaustion is not guessed acceptance or a computed empty domain,
+and `.ne` cannot invert it into successful validation. See
+[the architecture notes](docs/architecture.md) for proof caching and recursion
+details.
+Non-singleton ordering controllers and recursive numeric constraints that depend on
+their own negation are also explicit errors, not ordinary nonmembership.
+Positive recursive alternatives still use ordinary cycle cuts. Numeric
+group-to-choice controllers share the proof limits and preserve their generic
+bindings and alternative constraints. Ordinary enumerations preserve bare
+primitive references and nested instantiated groups; an empty enumeration
+matches no value. Recursive group references are checked before descent.
+Computed numeric operands that depend on a cycle cut cannot establish a
+singleton. Addition uses checked, sign-preserving arithmetic; overflow,
+nonfinite results and integer results outside the target's pointer-sized
+literal representation are explicit errors, never values that `.ne` can accept.
+Constrained range endpoints use the same bounded singleton proofs.
+Integer ordering constraints can prove empty, singleton or bounded integer
+domains, including disjoint alternatives and excluded holes, without merging
+integer and floating-point literal domains. Equality and inequality constraints
+filter these domains before further narrowing; invalid ordering controllers
+remain hard errors even when their targets are empty.
+
+Computed `.plus` results follow [RFC 9165 Section 2.1](https://www.rfc-editor.org/rfc/rfc9165.html#section-2.1):
+an integer target retains an integer result, flooring a floating controller
+before checked integer addition without rounding the target through `f64`.
+For example, `1 .plus 1.5` denotes integer `2`, while `1.5 .plus 1` denotes
+floating `2.5`. Computed floating results require exact equality, not an epsilon.
+Finite alternatives from both operands form a bounded cross-product; each
+alternative retains its own constraints. Operands that cannot be proved finite
+return an explicit arithmetic-operand error instead of guessed computed values.
+Tagged payload children inherit active work allowances but start at a fresh
+data location; same-value generic unwrap children retain recursion guards.
+Group enumerations also support definitions consisting entirely of `//=`.
+
 #### Supported JSON validation features
 
 The following types and features of CDDL are supported by this crate for validating JSON:
@@ -689,6 +757,9 @@ assert!(validate_cbor_from_slice(cddl, cbor).is_ok())
 ```
 
 This crate also uses [Serde](https://serde.rs/) and [ciborium](https://crates.io/crates/ciborium) for validating CBOR data structures. CBOR validation is done via the loosely typed [ `ciborium::value::Value` ](https://github.com/enarx/ciborium/blob/main/ciborium/src/value/mod.rs#L22) enum. In addition to all of the same features implemented by the JSON validator, this crate also supports validating CBOR tags (e.g. `#6.32(tstr)` ), CBOR major types (e.g. `#1.2` ), table types (e.g. `{ [ + tstr ] => int }` ) and byte strings. The `.bits` , `.cbor` and `.cborseq` control operators are all supported as well.
+
+The [numeric and generic resolution limits](#numeric-and-generic-resolution-limits-json-and-cbor)
+above apply equally to CBOR validation.
 
 The following tags are supported when validating CBOR:
 
