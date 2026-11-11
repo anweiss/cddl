@@ -165,11 +165,20 @@ where
     ) {
       return Ok(None);
     }
+    let cuts = self.cycle_cuts;
     let controller = self.type2_value(&operator.type2)?;
     if self.exhausted || self.failure.is_some() {
       return Ok(Some(NumericDomain::Unknown));
     }
     let NumericDomain::Singleton(controller) = controller else {
+      // A positive cycle cut is not proof that the controller is invalid.
+      // A finite equality candidate can instead be checked in its own context.
+      if self.candidate_target
+        && self.cycle_cuts != cuts
+        && matches!(controller, NumericDomain::Empty | NumericDomain::Unknown)
+      {
+        return Ok(Some(NumericDomain::Unknown));
+      }
       return Ok(Some(
         self.failed_proof(NumericProofFailure::InvalidController),
       ));

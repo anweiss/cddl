@@ -109,6 +109,10 @@ constrained endpoints through these bounded proofs before checking the value.
 Interval unions merge only overlapping or adjacent ranges. Equality intersects
 and inequality subtracts membership domains before later ordering filters;
 finite floating/mixed alternatives retain their individual literals and origins.
+Equality and inequality filters check candidates directly against proved operand
+domains, without replaying those operands under a different control context.
+An unresolved candidate uses the bounded same-value validator; a positive
+cycle cut makes a candidate proof inconclusive, not a cached empty domain.
 Computed sums evaluate the bounded cross-product of finite target and controller
 alternatives, charging each addition to the proof-work allowance. Unproved
 nonfinite operand domains are explicit errors, not partial computed domains.

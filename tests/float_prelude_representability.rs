@@ -173,6 +173,57 @@ fn integer_proofs_preserve_equality_sets_and_excluded_holes() {
   assert_numeric_case("x = float64 .gt ((uint .eq 0.0) .le 0)", "1.5", false);
 }
 
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn equality_filters_use_proved_operand_domains() {
+  for operator in ["and", "within"] {
+    let eq = format!("x = float64 .gt c\nc = (0.0 .{operator} float64) .eq 0.0");
+    let ne = format!("x = float64 .gt c\nc = 0.0 .ne (0.0 .{operator} float64)");
+    assert_numeric_case(&ne, "1.5", false);
+    assert_numeric_case(&ne, "0.0", false);
+    assert_numeric_case(&eq, "1.5", true);
+    assert_numeric_case(&eq, "0.0", false);
+  }
+  assert_numeric_case("x = float64 .gt ((0.0 .and float64) .ne 1.0)", "1.5", true);
+  assert_numeric_case("x = float64 .gt ((0.0 .and float64) .eq 0)", "1.5", false);
+  assert_numeric_case("x = float64 .gt ((0 / 2) .ne (2 / 4))", "1.5", true);
+  assert_numeric_case(
+    "x = float64 .gt c\nc = value .eq 0.0\nvalue = 0.0 .and float64",
+    "1.5",
+    true,
+  );
+  assert_numeric_case(
+    "x = float64 .gt c\nc = 0.0 .ne value\nvalue = 0.0 .and float64",
+    "1.5",
+    false,
+  );
+  assert_numeric_case("x = float64 .gt c<float64>\nc<t> = t .eq 0.0", "1.5", true);
+  assert_numeric_case("x = float64 .gt c<float16>\nc<t> = t .eq 1.1", "1.5", false);
+  assert_numeric_case(
+    "x = float64 .gt c\nc = a .eq 0.0\na = float64 .ne a",
+    "1.5",
+    false,
+  );
+  #[cfg(not(target_arch = "wasm32"))]
+  for error in numeric_error_messages("x = float64 .gt c\nc = a .eq 0.0\na = float64 .ne a", "1.5")
+  {
+    assert!(error.contains("own negation"));
+  }
+  for control in ["eq", "ne"] {
+    let invalid = format!("x = float64 .ne (float64 .gt ((0.0 .and float64) .{control} bad))\nbad = float64 .gt (0 / 1)");
+    assert_numeric_case(&invalid, "-1.5", false);
+    #[cfg(not(target_arch = "wasm32"))]
+    for error in numeric_error_messages(&invalid, "-1.5") {
+      assert!(error.contains("must denote a singleton"));
+    }
+    let exhausted =
+      format!("x = float64 .gt ((0.0 .and float64) .{control} bad<int>)\nbad<t> = bad<[t]>");
+    assert_numeric_case(&exhausted, "1.5", false);
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_numeric_limit(&exhausted, "1.5");
+  }
+}
+
 #[cfg(feature = "additional-controls")]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]

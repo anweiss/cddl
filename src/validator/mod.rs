@@ -1829,6 +1829,7 @@ struct NumericControllerResolver<'s, 'a, F> {
   negative: HashSet<String>,
   memo: HashMap<String, NumericDomain<'a>>,
   cycle_cuts: usize,
+  candidate_target: bool,
   depth: usize,
   remaining: usize,
   exhausted: bool,
@@ -1854,6 +1855,7 @@ where
       negative: HashSet::new(),
       memo: HashMap::new(),
       cycle_cuts: 0,
+      candidate_target: false,
       depth: 0,
       remaining: MAX_NUMERIC_RESOLUTION_WORK,
       exhausted: false,
@@ -3062,7 +3064,7 @@ mod tests {
 
   #[test]
   fn numeric_controller_callback_failures_are_not_cached_or_left_active() {
-    let cddl = cddl_from_str("root = a\na = 0.0 .eq 0.0", true).unwrap();
+    let cddl = cddl_from_str("root = a\na = float64 .eq 0.0", true).unwrap();
     let state = numeric_test_state(&cddl);
     let mut fail = true;
     let mut resolver = NumericControllerResolver::new(&state, |_, _| {
@@ -3074,9 +3076,13 @@ mod tests {
     })
     .unwrap();
     let target = numeric_rule_target(&cddl, "root");
+    let Type2::Typename { ident, .. } = target else {
+      unreachable!()
+    };
+    let key = numeric_instantiation_key(&resolver.numeric_context, &resolver.context, ident, &[]);
     assert_eq!(resolver.type2_value(target), Err(()));
     assert!(resolver.active.is_empty());
-    assert!(resolver.memo.is_empty());
+    assert!(!resolver.memo.contains_key(&key));
     assert_eq!(resolver.depth, 0);
     assert_eq!(
       resolver.type2_value(target).unwrap(),

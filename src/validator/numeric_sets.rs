@@ -117,15 +117,17 @@ where
     let right = self.type2_value(controller);
     self.negative = previous;
     let right = right?;
-    if right == NumericDomain::Empty {
-      self.type2_value(target)?;
-    }
+    let previous_target = self.candidate_target;
+    self.candidate_target |=
+      !invert && finite_literals(&right, self.remaining).is_some_and(|values| !values.is_empty());
+    let left = self.type2_value(target);
+    self.candidate_target = previous_target;
+    let left = left?;
     if !invert {
       if let Some(values) = finite_literals(&right, self.remaining) {
-        return self.filter_candidates(values, target, false);
+        return self.filter_candidates(values, target, &left, false);
       }
     }
-    let left = self.type2_value(target)?;
     let right_integers = integer_parts(&right).or_else(|| {
       finite_literals(&right, self.remaining).map(|values| {
         values
@@ -144,13 +146,14 @@ where
     let Some(values) = finite_literals(&left, self.remaining) else {
       return Ok(NumericDomain::Unknown);
     };
-    self.filter_candidates(values, controller, invert)
+    self.filter_candidates(values, controller, &right, invert)
   }
 
   fn filter_candidates(
     &mut self,
     values: Vec<token::Value<'a>>,
     operand: &Type2<'a>,
+    operand_domain: &NumericDomain<'a>,
     invert: bool,
   ) -> Result<NumericDomain<'a>, E> {
     let mut domain = NumericDomain::Empty;
@@ -158,9 +161,7 @@ where
       if !self.proof_step() {
         return Ok(NumericDomain::Unknown);
       }
-      let mut alternative = Type1::from(value.clone());
-      alternative.type2 = operand.clone();
-      if (self.validate)(&alternative, &value)? != invert {
+      if self.candidate_in_domain(operand, operand_domain, &value)? != invert {
         domain = merge_numeric_domains(domain, NumericDomain::Singleton(value));
       }
     }
