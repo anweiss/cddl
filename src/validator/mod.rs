@@ -754,12 +754,17 @@ pub(crate) fn choice_member_key_for_depth<'e, 'a>(
   // A cut recursive reference must not reach the scalar path, which follows
   // it without end, even when a single alternative remains. A control over a
   // choice (`(int / tstr) .and any`) also matches each key on its own, by
-  // probing the complete constrained type.
+  // probing the complete constrained type. So does a range (`10..20`), which
+  // constrains each key, not the map.
   let choice = alternatives.len() > 1
     || !acyclic
-    || alternatives
-      .first()
-      .is_some_and(|alternative| control_targets_choice(state, alternative));
+    || alternatives.first().is_some_and(|alternative| {
+      control_targets_choice(state, alternative)
+        || matches!(
+          alternative.operator.as_ref().map(|o| &o.operator),
+          Some(RangeCtlOp::RangeOp { .. })
+        )
+    });
   choice.then_some((t1.as_ref(), alternatives, *is_cut))
 }
 
