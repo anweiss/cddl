@@ -47,7 +47,7 @@ jobs:
           npm run webpack
 
       - name: Run unit tests and integration tests
-        uses: GabrielBB/xvfb-action@v1.5
+        uses: GabrielBB/xvfb-action@v1.7
         with:
           working-directory: ./cddl-lsp
           run: npm test
