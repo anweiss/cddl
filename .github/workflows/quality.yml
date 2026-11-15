@@ -31,7 +31,7 @@ jobs:
             cddl-lsp/package-lock.json
             cddl-lsp/client/package-lock.json
             cddl-lsp/server/package-lock.json
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
