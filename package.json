@@ -47,7 +47,7 @@
     "knip": "6.44.1",
     "prettier": "3.9.10",
     "typescript": "6.0.3",
-    "vitest": "5.0.5"
+    "vitest": "5.1.0"
   },
   "overrides": {
     "minimatch": "11.0.3"
