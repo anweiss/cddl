@@ -26,7 +26,7 @@ fn json_dates_and_times() {
     ("root = time", "9223372036854775807", false),
     ("root = time", "1e100", false),
   ] {
-    let result = cddl::validate_json_from_str(
+    let result = cddl::validator::validate_json_from_str(
       schema,
       input,
       #[cfg(feature = "additional-controls")]
@@ -78,7 +78,7 @@ fn cbor_dates_and_times() {
       };
       let mut bytes = Vec::new();
       ciborium::ser::into_writer(&value, &mut bytes).unwrap();
-      let result = cddl::validate_cbor_from_slice(
+      let result = cddl::validator::validate_cbor_from_slice(
         schema,
         &bytes,
         #[cfg(feature = "additional-controls")]
