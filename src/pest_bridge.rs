@@ -853,79 +853,81 @@ struct RuleBlock {
 /// a rule definition (`identifier` followed by `=`, `/=` or `//=`).  Everything
 /// up to the next such line belongs to the current block.
 #[cfg(target_arch = "wasm32")]
+fn is_rule_start(line: &str) -> bool {
+  let mut chars = line.trim_start().chars().peekable();
+  if !consume_rule_identifier(&mut chars) {
+    return false;
+  }
+  skip_rule_whitespace(&mut chars);
+  if chars.peek() == Some(&'<') {
+    consume_rule_generic_params(&mut chars);
+    skip_rule_whitespace(&mut chars);
+  }
+  matches!(chars.peek(), Some(&'='))
+    || (chars.peek() == Some(&'/') && consume_rule_extension_operator(&mut chars))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn consume_rule_identifier(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+  match chars.peek() {
+    Some(&c) if c.is_ascii_alphabetic() || c == '_' || c == '$' || c == '@' => {
+      chars.next();
+    }
+    _ => return false,
+  }
+  while let Some(&c) = chars.peek() {
+    if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '$' | '@' | '.') {
+      chars.next();
+    } else {
+      break;
+    }
+  }
+  true
+}
+
+#[cfg(target_arch = "wasm32")]
+fn skip_rule_whitespace(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+  while matches!(chars.peek(), Some(' ' | '\t')) {
+    chars.next();
+  }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn consume_rule_generic_params(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+  let mut depth = 0i32;
+  while let Some(c) = chars.next() {
+    match c {
+      '<' => depth += 1,
+      '>' => {
+        depth -= 1;
+        if depth == 0 {
+          break;
+        }
+      }
+      _ => {}
+    }
+  }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn consume_rule_extension_operator(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+  chars.next();
+  match chars.peek() {
+    Some(&'=') => true,
+    Some(&'/') => {
+      chars.next();
+      chars.peek() == Some(&'=')
+    }
+    _ => false,
+  }
+}
+
+#[cfg(target_arch = "wasm32")]
 fn split_rule_blocks(input: &str) -> Vec<RuleBlock> {
   let mut blocks: Vec<RuleBlock> = Vec::new();
   let mut current_lines: Vec<&str> = Vec::new();
   let mut current_start_line: usize = 1;
   let mut current_byte_offset: usize = 0;
-
-  // Regex-free: a line starts a rule if its non-comment prefix matches
-  // `<identifier>  <ws>*  ( = | /= | //= )`
-  fn is_rule_start(line: &str) -> bool {
-    let stripped = line.trim_start();
-    // Identifier: starts with [a-zA-Z_$@], followed by [a-zA-Z0-9_\-$@]*
-    let mut chars = stripped.chars().peekable();
-    match chars.peek() {
-      Some(&c) if c.is_ascii_alphabetic() || c == '_' || c == '$' || c == '@' => {
-        chars.next();
-      }
-      _ => return false,
-    }
-    while let Some(&c) = chars.peek() {
-      if c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '$' || c == '@' || c == '.' {
-        chars.next();
-      } else {
-        break;
-      }
-    }
-    // Skip whitespace
-    while let Some(&c) = chars.peek() {
-      if c == ' ' || c == '\t' {
-        chars.next();
-      } else {
-        break;
-      }
-    }
-    // Optional generic params <...>
-    if chars.peek() == Some(&'<') {
-      let mut depth = 0i32;
-      while let Some(&c) = chars.peek() {
-        chars.next();
-        if c == '<' {
-          depth += 1;
-        } else if c == '>' {
-          depth -= 1;
-          if depth == 0 {
-            break;
-          }
-        }
-      }
-      // Skip whitespace after '>'
-      while let Some(&c) = chars.peek() {
-        if c == ' ' || c == '\t' {
-          chars.next();
-        } else {
-          break;
-        }
-      }
-    }
-    // Must see `=`, `/=` or `//=`
-    match chars.peek() {
-      Some(&'=') => true,
-      Some(&'/') => {
-        chars.next();
-        match chars.peek() {
-          Some(&'=') => true, // `/=`
-          Some(&'/') => {
-            chars.next();
-            chars.peek() == Some(&'=') // `//=`
-          }
-          _ => false,
-        }
-      }
-      _ => false,
-    }
-  }
 
   let lines: Vec<&str> = input.split('\n').collect();
   let mut byte_pos: usize = 0;
@@ -2578,67 +2580,12 @@ fn convert_value_to_type2<'a>(
 /// Unescape text value (supports RFC 9682 \u{hex} escapes and surrogate pairs)
 fn unescape_text(text: &str) -> String {
   let mut result = String::new();
-  let mut chars = text.chars();
+  let mut chars = text.chars().peekable();
 
   while let Some(ch) = chars.next() {
     if ch == '\\' {
       if let Some(next_ch) = chars.next() {
-        match next_ch {
-          'n' => result.push('\n'),
-          'r' => result.push('\r'),
-          't' => result.push('\t'),
-          '\\' => result.push('\\'),
-          '"' => result.push('"'),
-          '\'' => result.push('\''),
-          '/' => result.push('/'),
-          'b' => result.push('\u{0008}'),
-          'f' => result.push('\u{000C}'),
-          'u' => {
-            // Check for RFC 9682 \u{hex} form
-            let mut peekable = chars.clone();
-            if peekable.next() == Some('{') {
-              // Consume the '{'
-              chars.next();
-              let hex: String = chars.by_ref().take_while(|c| *c != '}').collect();
-              if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
-                if let Some(unicode_char) = char::from_u32(code_point) {
-                  result.push(unicode_char);
-                }
-              }
-            } else {
-              // Standard \uXXXX form
-              let hex: String = chars.by_ref().take(4).collect();
-              if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
-                // Check for surrogate pair: \uHHHH\uLLLL
-                if (0xD800..=0xDBFF).contains(&code_point) {
-                  // High surrogate - look for \uLLLL
-                  let mut peekable2 = chars.clone();
-                  if peekable2.next() == Some('\\') && peekable2.next() == Some('u') {
-                    // Consume \u
-                    chars.next();
-                    chars.next();
-                    let low_hex: String = chars.by_ref().take(4).collect();
-                    if let Ok(low_surrogate) = u32::from_str_radix(&low_hex, 16) {
-                      if (0xDC00..=0xDFFF).contains(&low_surrogate) {
-                        let combined =
-                          0x10000 + ((code_point - 0xD800) << 10) + (low_surrogate - 0xDC00);
-                        if let Some(unicode_char) = char::from_u32(combined) {
-                          result.push(unicode_char);
-                        }
-                      }
-                    }
-                  }
-                } else if let Some(unicode_char) = char::from_u32(code_point) {
-                  result.push(unicode_char);
-                }
-              }
-            }
-          }
-          _ => {
-            result.push('\\');
-            result.push(next_ch);
-          }
-        }
+        unescape_character(next_ch, &mut chars, &mut result);
       }
     } else {
       result.push(ch);
@@ -2646,6 +2593,82 @@ fn unescape_text(text: &str) -> String {
   }
 
   result
+}
+
+fn unescape_character(
+  escaped: char,
+  chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+  result: &mut String,
+) {
+  match escaped {
+    'n' => result.push('\n'),
+    'r' => result.push('\r'),
+    't' => result.push('\t'),
+    '\\' => result.push('\\'),
+    '"' => result.push('"'),
+    '\'' => result.push('\''),
+    '/' => result.push('/'),
+    'b' => result.push('\u{0008}'),
+    'f' => result.push('\u{000C}'),
+    'u' => unescape_unicode(chars, result),
+    _ => {
+      result.push('\\');
+      result.push(escaped);
+    }
+  }
+}
+
+fn unescape_unicode(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, result: &mut String) {
+  let mut peekable = chars.clone();
+  if peekable.next() == Some('{') {
+    chars.next();
+    let hex: String = chars.by_ref().take_while(|c| *c != '}').collect();
+    push_unicode_code_point(&hex, result);
+    return;
+  }
+
+  let hex: String = chars.by_ref().take(4).collect();
+  let Ok(code_point) = u32::from_str_radix(&hex, 16) else {
+    return;
+  };
+  if (0xD800..=0xDBFF).contains(&code_point) {
+    unescape_surrogate_pair(code_point, chars, result);
+  } else {
+    push_unicode_value(code_point, result);
+  }
+}
+
+fn unescape_surrogate_pair(
+  high_surrogate: u32,
+  chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+  result: &mut String,
+) {
+  let mut peekable = chars.clone();
+  if peekable.next() != Some('\\') || peekable.next() != Some('u') {
+    return;
+  }
+  chars.next();
+  chars.next();
+  let low_hex: String = chars.by_ref().take(4).collect();
+  let Ok(low_surrogate) = u32::from_str_radix(&low_hex, 16) else {
+    return;
+  };
+  if (0xDC00..=0xDFFF).contains(&low_surrogate) {
+    let code_point = 0x10000 + ((high_surrogate - 0xD800) << 10) + (low_surrogate - 0xDC00);
+    push_unicode_value(code_point, result);
+  }
+}
+
+fn push_unicode_code_point(hex: &str, result: &mut String) {
+  if let Ok(code_point) = u32::from_str_radix(hex, 16) {
+    push_unicode_value(code_point, result);
+  }
+}
+
+fn push_unicode_value(code_point: u32, result: &mut String) {
+  if let Some(unicode_char) = char::from_u32(code_point) {
+    result.push(unicode_char);
+  }
 }
 
 /// Convert number to Type2
