@@ -1023,9 +1023,10 @@ function updateProblems(errors) {
   }
   updateProblemStatus(errorCount, warningCount);
   if (!problemsBody) return;
-  renderProblemRows(errors);
+  renderProblemRows(errors, problemsBody);
 }
 
+/** @param {number} errorCount @param {number} warningCount */
 function updateProblemStatus(errorCount, warningCount) {
   if (statusPill) statusPill.className = 'status-pill';
   if (errorCount > 0) {
@@ -1044,11 +1045,12 @@ function updateProblemStatus(errorCount, warningCount) {
   }
 }
 
-function renderProblemRows(errors) {
+/** @param {Diagnostic[]} errors @param {HTMLElement} body */
+function renderProblemRows(errors, body) {
   const count = errors.length;
   if (count === 0) {
-    problemsBody.innerHTML = '';
-    problemsBody.appendChild(createEmptyState());
+    body.innerHTML = '';
+    body.appendChild(createEmptyState());
     return;
   }
 
@@ -1077,8 +1079,8 @@ function renderProblemRows(errors) {
 
     frag.appendChild(row);
   }
-  problemsBody.innerHTML = '';
-  problemsBody.appendChild(frag);
+  body.innerHTML = '';
+  body.appendChild(frag);
 }
 
 function createEmptyState() {
