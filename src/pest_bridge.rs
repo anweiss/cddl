@@ -2597,7 +2597,7 @@ fn unescape_text(text: &str) -> String {
 
 fn unescape_character(
   escaped: char,
-  chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+  chars: &mut core::iter::Peekable<core::str::Chars<'_>>,
   result: &mut String,
 ) {
   match escaped {
@@ -2618,7 +2618,7 @@ fn unescape_character(
   }
 }
 
-fn unescape_unicode(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, result: &mut String) {
+fn unescape_unicode(chars: &mut core::iter::Peekable<core::str::Chars<'_>>, result: &mut String) {
   let mut peekable = chars.clone();
   if peekable.next() == Some('{') {
     chars.next();
@@ -2640,7 +2640,7 @@ fn unescape_unicode(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, result
 
 fn unescape_surrogate_pair(
   high_surrogate: u32,
-  chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+  chars: &mut core::iter::Peekable<core::str::Chars<'_>>,
   result: &mut String,
 ) {
   let mut peekable = chars.clone();
