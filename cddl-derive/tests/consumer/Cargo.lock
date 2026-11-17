@@ -231,6 +231,7 @@ dependencies = [
  "data-encoding",
  "displaydoc",
  "fancy-regex",
+ "half",
  "hex",
  "hexf-parse",
  "itertools 0.15.0",

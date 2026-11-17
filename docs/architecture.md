@@ -19,6 +19,115 @@ describe the JavaScript boundary. The language server implements the standard
 Language Server Protocol, with capabilities returned by `initialize`; its
 stdio integration tests check diagnostics, completions and symbols.
 
+Float prelude types constrain IEEE 754 value representability, not the width
+of a CBOR encoding. `float16` requires an exact binary16 round trip;
+`float32` and `float16-32` require an exact binary32 round trip. All float
+precisions admit infinities and NaNs; JSON has neither special value.
+Numeric comparison controls validate their entire target domain before
+applying the controller, retaining aliases, literals, choices, inner
+constraints and generic arguments. A zero-progress recursive alternative
+fails rather than widening that domain or recursing indefinitely.
+Float literal alternatives compare exactly, without an epsilon tolerance
+that would admit nearby values outside the declared domain.
+JSON number parsing round-trips binary64 values exactly, preserving decimal
+spellings of binary32 values and the full unsigned 64-bit integer domain.
+Ordering controllers resolve to a singleton independently of the instance,
+discarding candidates that fail their originating alternative's constraints
+before combining choices. Completed proofs, including empty and unknown
+domains, are memoized by structural instantiation within one resolution;
+results depending on active-cycle cuts are never memoized. Proven alias
+domains are not replayed through the ordinary evaluator.
+Resolution is bounded to 48 nested steps and 4096 work steps. Generic argument
+lists and substituted alternatives are preflighted for 4096 structural visits
+and 128 structural descent steps before expansion or key construction.
+Ordinary generic instantiation also bounds zero-progress, same-location depth
+to 48, including non-numeric changing-argument cycles. Collision-checked
+structural identities are interned instead of storing byte-limited formatted
+keys, so long literal payloads and data locations are not rejected by key size.
+Only type structures are interned: raw locations live in active markers and
+are removed as evaluation unwinds, without retaining every completed element.
+Identity tables, negative-dependency boundaries, and work allowances belong to
+private format-validator contexts, not the public `ValidationState` API.
+Numeric target checks share a 4096-visit ordinary-evaluator allowance with
+their equality/inequality membership checks; controller candidate checks have
+their own 4096-visit allowance. Nested child validators inherit the active
+allowance instead of replenishing it.
+Ordinary group-to-choice enumeration installs that allowance only if none is
+active, then restores the caller's context. It evaluates unexpanded references
+through instantiation-aware guards, preserving primitive names, lexical generic
+scopes and ordinary value-container semantics. Empty enumerations are empty
+domains, not successful matches.
+Exhaustion and recursive constraint proofs return errors,
+not validity assumptions that `.ne` could invert. These budgets and caches
+are local to each resolution or evaluation, never shared across public
+validation calls.
+Ordering controllers with non-singleton domains are hard errors as well.
+Their domains are proved before target membership, so a target mismatch cannot
+hide an invalid controller inside `.ne`.
+Recursion crossing an active negative-membership dependency is distinguished
+from an ordinary positive cycle cut; only the latter can denote an empty
+recursive alternative. Candidate-value proofs start fresh negative dependencies
+alongside their fresh ordinary guards.
+Mixed integer/float ordering compares integral parts exactly before fractional
+remainders, preserving 64-bit boundaries without rounding integers to floats.
+Equality and inequality retain controller-domain membership semantics.
+The AST's integer literals remain pointer-sized; wasm32 checks exercise
+64-bit data against floating controllers, while 64-bit integer controller
+literals require a 64-bit target.
+Generic instantiations substitute nested arguments once in the caller's
+environment, without revisiting inserted bindings. Type/group bodies,
+array-sequence entries and controller candidates then use their own closed
+binding scope; candidate values have fresh ordinary recursion guards while
+retaining proof-cycle guards and work allowances. Redundant parentheses are normalized,
+and zero-progress parameter and numeric-target bindings are guarded by active
+rule, structural arguments and data location. Socket-prefixed names are not
+parameter references. Unconstrained arguments remain bare targets for controls
+such as `.size` and `.bits`.
+Constrained singleton size/bit controllers are proved separately before
+applying the enclosing operation. Singleton and empty ranges are classified
+from their resolved endpoints, equivalent signed/unsigned integer spellings
+merge without merging integer and float domains, and `.plus` controllers use
+checked, sign-preserving sums. Integer overflow or an unrepresentable
+pointer-sized integer result, and nonfinite floating sums, are hard errors.
+Singleton and multi-value arithmetic share bounded operand proofs, including
+each alternative's constraints, rather than collecting unfiltered literals.
+Finite operands/results consume the existing 48-depth/4096-work proof limits.
+RFC 9165 Section 2.1 preserves the target's result type: integer targets add
+the floored floating controller with checked integer arithmetic, never casting
+the integer target through `f64`; floating targets retain floating sums.
+Computed floating membership is exact, with no epsilon tolerance.
+Computed operands that used a positive cycle cut cannot prove a singleton;
+this is a typed proof failure, not an empty computed domain. Such failures,
+like other cuts and errors, are never memoized as completed proofs.
+Intersections prove candidates against each operand independently, without
+replaying an enclosing `.and` or `.within` operation.
+Bounded integer ordering constraints are narrowed using exact comparisons,
+including mixed floating bounds; transition-search steps consume the same
+4096-step resolver allowance. Empty, singleton and disjoint integer domains
+remain distinct from floating-point domains. Ordinary range membership resolves
+constrained endpoints through these bounded proofs before checking the value.
+Interval unions merge only overlapping or adjacent ranges. Equality intersects
+and inequality subtracts membership domains before later ordering filters;
+finite floating/mixed alternatives retain their individual literals and origins.
+Equality and inequality filters check candidates directly against proved operand
+domains, without replaying those operands under a different control context.
+An unresolved candidate uses the bounded same-value validator; a positive
+cycle cut makes a candidate proof inconclusive, not a cached empty domain.
+Computed sums evaluate the bounded cross-product of finite target and controller
+alternatives, charging each addition to the proof-work allowance. Unproved
+nonfinite operand domains are explicit errors, not partial computed domains.
+Ordering controllers are proved before target classification, including empty
+targets, so invalid constraints cannot become memoized empty alternatives.
+Adjacent exclusive integer bounds denote their lower integer; floating ranges
+keep their separate, nondiscrete domain. Bounded inline/named group enumerations
+resolve their alternatives with the same scope, constraint, cache, and work
+rules as numeric type controllers. Expansion preflight counts bound bare group
+entries before cloning their replacements.
+Alternate-only groups obtain their generic parameters from the available
+definitions. Same-value generic unwraps use guarded instantiation and preserve
+active markers/work. Actual tagged-payload children inherit numeric work while
+resetting ordinary recursion/negative scopes at a distinct payload location.
+
 Map key type choices match each key independently: `{ * (int / tstr) => any }`
 accepts mixed integer and text keys in CBOR. Named choices and constraints on
 their alternatives are also checked. Such a member claims a key/value pair only
