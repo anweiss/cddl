@@ -20,7 +20,6 @@ use std::{
   },
 };
 
-use chrono::{TimeZone, Utc};
 use serde_json::Value;
 
 mod map_proofs;
@@ -4288,7 +4287,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
           }
         } else if is_ident_time_data_type(self.state.cddl, ident) {
           if let Some(n) = n.as_i64() {
-            if let chrono::LocalResult::None = Utc.timestamp_millis_opt(n * 1000) {
+            if !super::valid_time_integer(n.into()) {
               self.add_error(format!(
                 "expected time data type, invalid UNIX timestamp {}",
                 n,
@@ -4298,12 +4297,13 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             return Ok(());
           } else if let Some(n) = n.as_f64() {
             // truncates fractional milliseconds when validating
-            if let chrono::LocalResult::None = Utc.timestamp_millis_opt((n * 1000f64) as i64) {
+            if !super::valid_time_float(n) {
               self.add_error(format!(
                 "expected time data type, invalid UNIX timestamp {}",
                 n,
               ));
             }
+            return Ok(());
           }
         } else if let Some(kind) = ident_numeric_kind(self.state.cddl, ident) {
           let matches_kind = match kind {
@@ -4332,8 +4332,8 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
             ));
           }
         } else if is_ident_tdate_data_type(self.state.cddl, ident) {
-          if let Err(e) = chrono::DateTime::parse_from_rfc3339(s) {
-            self.add_error(format!("expected tdate data type, decoding error: {}", e));
+          if !super::valid_tdate(s) {
+            self.add_error("expected tdate data type, invalid RFC 3339 timestamp".into());
           }
         } else if is_ident_string_data_type(self.state.cddl, ident) {
           return Ok(());
