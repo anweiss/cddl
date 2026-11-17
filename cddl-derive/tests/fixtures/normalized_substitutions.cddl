@@ -1,0 +1,3 @@
+COSE_Key = { 1 => bstr }
+Generic_Headers = (uint => tstr // tstr => int)
+item = { Generic_Headers }

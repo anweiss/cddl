@@ -16,7 +16,7 @@ use cddl::ast::{
   Group, GroupChoice, GroupEntry, MemberKey, Occur, Rule, Type, Type1, Type2, TypeChoice, TypeRule,
   ValueMemberKeyEntry, CDDL,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 /// Errors that can occur during code generation.
@@ -112,6 +112,7 @@ pub(crate) enum RustTypeDef {
     name: String,
     fields: Vec<RustField>,
     doc: Vec<String>,
+    deny_unknown_fields: bool,
   },
   TypeAlias {
     name: String,
@@ -122,6 +123,7 @@ pub(crate) enum RustTypeDef {
     name: String,
     variants: Vec<RustEnumVariant>,
     doc: Vec<String>,
+    group_choice: bool,
   },
 }
 
@@ -130,6 +132,9 @@ pub(crate) enum RustTypeDef {
 pub(crate) struct RustField {
   pub name: String,
   pub original_name: String,
+  /// Original containing rule, retained when fields move into group helpers.
+  pub source_rule: Option<String>,
+  pub integer_key: Option<i128>,
   pub rust_type: String,
   pub is_optional: bool,
   pub doc: Vec<String>,
@@ -141,6 +146,12 @@ pub(crate) struct RustField {
   pub encoding: Option<Encoding>,
   /// A typed map key consumes entries from the enclosing map.
   pub flatten: bool,
+  /// An included group uses a routed, flattened representation.
+  pub flatten_group: bool,
+  /// A substituted group retains an opaque flattened object.
+  pub flatten_object: bool,
+  /// Named keys claimed by this choice, including nested choices.
+  pub group_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -285,9 +296,18 @@ fn apply_alias_encodings(
       alias_encoding(name, &aliases, &mut Vec::new())?;
     }
   }
+  let helper_names: BTreeSet<_> = root
+    .map(|root| included_group_helpers(defs, root))
+    .unwrap_or_default()
+    .iter()
+    .filter_map(|def| match def {
+      RustTypeDef::Struct { name, .. } => Some(name.clone()),
+      _ => None,
+    })
+    .collect();
   for def in defs {
     if let RustTypeDef::Struct { name, fields, .. } = def {
-      if root.is_some() && root != Some(name.as_str()) {
+      if root.is_some() && root != Some(name.as_str()) && !helper_names.contains(name) {
         continue;
       }
       let metadata_fields = metadata.iter().find_map(|def| match def {
@@ -298,19 +318,29 @@ fn apply_alias_encodings(
         } if metadata_name == name => Some(fields),
         _ => None,
       });
-      for field in fields {
-        let key = format!("{}.{}", to_cddl_lookup_name(name), field.original_name);
-        if field.tag.is_some() || opts.substitutions.contains_key(&key) {
-          continue;
-        }
-        let encoding_type = metadata_fields
-          .and_then(|fields| fields.iter().find(|f| f.name == field.name))
-          .map_or(field.rust_type.as_str(), |f| f.rust_type.as_str());
-        match alias_encoding(encoding_type, &aliases, &mut Vec::new())? {
-          Some(Encoding::Tag(tag)) => field.tag = Some(tag),
-          encoding => field.encoding = encoding,
-        }
-      }
+      apply_field_encodings(name, fields, metadata_fields, opts, &aliases)?;
+    }
+  }
+  Ok(())
+}
+
+fn apply_field_encodings(
+  name: &str,
+  fields: &mut [RustField],
+  metadata_fields: Option<&Vec<RustField>>,
+  opts: &CodegenOptions,
+  aliases: &AliasMap,
+) -> Result<(), CodegenError> {
+  for field in fields {
+    if field.tag.is_some() || field_substitution(name, field, opts).is_some() {
+      continue;
+    }
+    let encoding_type = metadata_fields
+      .and_then(|fields| fields.iter().find(|f| f.name == field.name))
+      .map_or(field.rust_type.as_str(), |f| f.rust_type.as_str());
+    match alias_encoding(encoding_type, aliases, &mut Vec::new())? {
+      Some(Encoding::Tag(tag)) => field.tag = Some(tag),
+      encoding => field.encoding = encoding,
     }
   }
   Ok(())
@@ -545,11 +575,19 @@ fn split_comment(line: &str) -> (&str, Option<&str>) {
   (line, None)
 }
 
+fn rule_substitutions(opts: &CodegenOptions) -> BTreeMap<String, String> {
+  opts
+    .substitutions
+    .iter()
+    .filter(|(key, _)| !key.contains('.'))
+    .map(|(key, value)| (to_pascal_case(key), value.clone()))
+    .collect()
+}
+
 /// Apply caller-supplied options to the collected type definitions.
 ///
-/// This runs after the CDDL has been lowered to `RustTypeDef`s so that the
-/// conversion itself stays option-free: everything here is a rewrite of the
-/// already-generated Rust type strings.
+/// Lowering retains substituted group references; this rewrites their types
+/// along with the other already-generated Rust type strings.
 fn apply_options(defs: &mut Vec<RustTypeDef>, opts: &CodegenOptions) {
   if opts.is_default() {
     return;
@@ -557,12 +595,7 @@ fn apply_options(defs: &mut Vec<RustTypeDef>, opts: &CodegenOptions) {
 
   // Rule-level substitutions replace every reference to a rule, so the rule's
   // own definition is dropped.
-  let rule_subs: BTreeMap<String, String> = opts
-    .substitutions
-    .iter()
-    .filter(|(k, _)| !k.contains('.'))
-    .map(|(k, v)| (to_pascal_case(k), v.clone()))
-    .collect();
+  let rule_subs = rule_substitutions(opts);
 
   if !rule_subs.is_empty() {
     defs.retain(|d| {
@@ -581,8 +614,7 @@ fn apply_options(defs: &mut Vec<RustTypeDef>, opts: &CodegenOptions) {
     match def {
       RustTypeDef::Struct { name, fields, .. } => {
         for field in fields.iter_mut() {
-          let key = format!("{}.{}", to_cddl_lookup_name(name), field.original_name);
-          if let Some(sub) = opts.substitutions.get(&key) {
+          if let Some(sub) = field_substitution(name, field, opts) {
             // An explicit substitution replaces the type outright, so any CBOR
             // tag inferred from the original prelude type no longer applies.
             field.rust_type.clone_from(sub);
@@ -653,6 +685,26 @@ fn rewrite_type(ty: &mut String, rule_subs: &BTreeMap<String, String>, any_type:
 /// having to know the PascalCase name codegen chose.
 fn to_cddl_lookup_name(rust_name: &str) -> String {
   pascal_to_cddl_name(rust_name)
+}
+
+fn field_substitution<'a>(
+  name: &str,
+  field: &RustField,
+  opts: &'a CodegenOptions,
+) -> Option<&'a String> {
+  let rule = field
+    .source_rule
+    .as_deref()
+    .map(to_pascal_case)
+    .unwrap_or_else(|| name.to_owned());
+  let key = format!("{}.{}", to_cddl_lookup_name(&rule), field.original_name);
+  opts.substitutions.get(&key).or_else(|| {
+    field.source_rule.as_ref().and_then(|rule| {
+      opts
+        .substitutions
+        .get(&format!("{}.{}", rule, field.original_name))
+    })
+  })
 }
 
 /// Generate Rust source code for all rules in a CDDL document using default
@@ -727,6 +779,8 @@ pub fn generate_rust_code_for_rule_from_ast(
   let fundamental_aliases = append_fundamental_aliases(cddl, &mut type_defs, opts, false)?;
   let rust_rule_name = to_pascal_case(rule_name);
   apply_alias_encodings(cddl, &mut type_defs, opts, Some(&rust_rule_name))?;
+  let mut key_aliases = known_type_aliases(&type_defs);
+  let mut group_helpers = included_group_helpers(&type_defs, &rust_rule_name);
   let mut matching = type_defs
     .into_iter()
     .find(|d| match d {
@@ -745,7 +799,9 @@ pub fn generate_rust_code_for_rule_from_ast(
   let emit_name = output_name.unwrap_or(&rust_rule_name);
   let exact_name = emit_name.strip_prefix("r#").unwrap_or(emit_name);
   let alias_mod = format!("__cddl_prelude_{}", exact_name);
-  let used = referenced_fundamental_aliases(std::slice::from_ref(&matching));
+  let mut scoped_defs = group_helpers.clone();
+  scoped_defs.push(matching.clone());
+  let used = referenced_fundamental_aliases(&scoped_defs);
   let mut scoped = BTreeMap::new();
   let aliases: Vec<_> = fundamental_aliases
     .iter()
@@ -776,25 +832,29 @@ pub fn generate_rust_code_for_rule_from_ast(
         rewrite_type(&mut target, &paths, DEFAULT_ANY_TYPE);
         render_type_alias(&mut output, name, &target, doc)?;
         scoped.insert(name.clone(), format!("{}::{}", alias_mod, name));
+        key_aliases.insert(format!("{}::{}", alias_mod, name), target.clone());
       }
     }
     writeln!(output, "}}")?;
-    match &mut matching {
-      RustTypeDef::Struct { fields, .. } => {
-        for field in fields {
-          rewrite_type(&mut field.rust_type, &scoped, DEFAULT_ANY_TYPE);
-        }
-      }
-      RustTypeDef::TypeAlias { target, .. } => rewrite_type(target, &scoped, DEFAULT_ANY_TYPE),
-      RustTypeDef::Enum { variants, .. } => {
-        for inner in variants.iter_mut().filter_map(|v| v.inner_type.as_mut()) {
-          rewrite_type(inner, &scoped, DEFAULT_ANY_TYPE);
-        }
-      }
+    for def in std::iter::once(&mut matching).chain(group_helpers.iter_mut()) {
+      rewrite_def_types(def, &scoped);
     }
   }
+  let group_mod = format!("__cddl_groups_{}", exact_name);
+  scope_group_helpers(
+    &mut matching,
+    &mut group_helpers,
+    &rust_rule_name,
+    emit_name,
+    &group_mod,
+  );
   match &matching {
-    RustTypeDef::Struct { name, fields, doc } => {
+    RustTypeDef::Struct {
+      name,
+      fields,
+      doc,
+      deny_unknown_fields,
+    } => {
       let emit_name = output_name.unwrap_or(name);
       // Scope the helper module to this type, so several single-type macro
       // invocations can coexist in one file without colliding.
@@ -804,15 +864,72 @@ pub fn generate_rust_code_for_rule_from_ast(
         to_snake_case(emit_name)
       };
       let tag_mod = format!("{}_{}", TAG_HELPER_MOD, suffix);
-      let tags = collect_tags(std::slice::from_ref(&matching));
+      let mut scoped_defs = group_helpers.clone();
+      scoped_defs.push(matching.clone());
+      let tags = collect_tags(&scoped_defs);
       render_tag_helpers(
         &mut output,
         &tag_mod,
         &tags,
-        needs_tag_adapters(std::slice::from_ref(&matching)),
-        needs_explicit_tags(std::slice::from_ref(&matching)),
+        needs_tag_adapters(&scoped_defs),
+        needs_explicit_tags(&scoped_defs),
       )?;
-      render_struct(&mut output, emit_name, fields, doc, &tag_mod, opts)?;
+      render_struct(
+        &mut output,
+        emit_name,
+        fields,
+        doc,
+        &tag_mod,
+        opts,
+        *deny_unknown_fields,
+      )?;
+      if !group_helpers.is_empty() {
+        writeln!(
+          output,
+          "#[doc(hidden)] #[allow(non_snake_case)] pub mod {group_mod} {{"
+        )?;
+        writeln!(output, "    #[allow(unused_imports)] use super::*;")?;
+      }
+      for helper in &group_helpers {
+        match helper {
+          RustTypeDef::Struct {
+            name,
+            fields,
+            doc,
+            deny_unknown_fields,
+          } => {
+            render_struct(
+              &mut output,
+              name,
+              fields,
+              doc,
+              &format!("super::{}", tag_mod),
+              opts,
+              *deny_unknown_fields,
+            )?;
+          }
+          RustTypeDef::Enum {
+            name,
+            variants,
+            doc,
+            group_choice,
+          } => {
+            render_enum(
+              &mut output,
+              name,
+              variants,
+              doc,
+              opts,
+              &key_aliases,
+              *group_choice,
+            )?;
+          }
+          RustTypeDef::TypeAlias { .. } => {}
+        }
+      }
+      if !group_helpers.is_empty() {
+        writeln!(output, "}}")?;
+      }
     }
     RustTypeDef::TypeAlias { name, target, doc } => {
       let emit_name = output_name.unwrap_or(name);
@@ -822,12 +939,81 @@ pub fn generate_rust_code_for_rule_from_ast(
       name,
       variants,
       doc,
+      group_choice,
     } => {
       let emit_name = output_name.unwrap_or(name);
-      render_enum(&mut output, emit_name, variants, doc, opts)?;
+      render_enum(
+        &mut output,
+        emit_name,
+        variants,
+        doc,
+        opts,
+        &key_aliases,
+        *group_choice,
+      )?;
     }
   }
   Ok(output)
+}
+
+fn rewrite_def_types(def: &mut RustTypeDef, replacements: &BTreeMap<String, String>) {
+  match def {
+    RustTypeDef::Struct { fields, .. } => {
+      for field in fields {
+        rewrite_type(&mut field.rust_type, replacements, DEFAULT_ANY_TYPE);
+      }
+    }
+    RustTypeDef::TypeAlias { target, .. } => rewrite_type(target, replacements, DEFAULT_ANY_TYPE),
+    RustTypeDef::Enum { variants, .. } => {
+      for inner in variants.iter_mut().filter_map(|v| v.inner_type.as_mut()) {
+        rewrite_type(inner, replacements, DEFAULT_ANY_TYPE);
+      }
+    }
+  }
+}
+
+fn scope_group_helpers(
+  root: &mut RustTypeDef,
+  helpers: &mut [RustTypeDef],
+  rule_name: &str,
+  output_name: &str,
+  module: &str,
+) {
+  let root_name = BTreeMap::from([(rule_name.to_string(), output_name.to_string())]);
+  rewrite_def_types(root, &root_name);
+  let mut qualified = BTreeMap::new();
+  for helper in helpers {
+    // Explicit caller-relative substitutions move one level into the helper
+    // module; bare names retain their meaning through `use super::*`.
+    let paths = referenced_fundamental_aliases(std::slice::from_ref(helper))
+      .into_iter()
+      .filter_map(|path| {
+        if let Some(tail) = path.strip_prefix("self::") {
+          Some((path.clone(), format!("super::{}", tail)))
+        } else if path.starts_with("super::") {
+          Some((path.clone(), format!("super::{}", path)))
+        } else {
+          None
+        }
+      })
+      .collect();
+    rewrite_def_types(helper, &paths);
+    rewrite_def_types(helper, &root_name);
+    if let RustTypeDef::Struct { name, .. } | RustTypeDef::Enum { name, .. } = helper {
+      qualified.insert(name.clone(), format!("{}::{}", module, name));
+    }
+  }
+  rewrite_def_types(root, &qualified);
+}
+
+fn known_type_aliases(defs: &[RustTypeDef]) -> BTreeMap<String, String> {
+  defs
+    .iter()
+    .filter_map(|def| match def {
+      RustTypeDef::TypeAlias { name, target, .. } => Some((name.clone(), target.clone())),
+      _ => None,
+    })
+    .collect()
 }
 
 /// Convert a PascalCase struct name to a CDDL-style kebab-case identifier.
@@ -891,8 +1077,14 @@ fn collect_type_defs(
   }
 
   let mut defs = Vec::new();
+  let rule_subs = rule_substitutions(opts);
+  let mut groups = GroupLowerer::new(cddl, comments, opts, &rule_subs);
   let mut merged: std::collections::HashSet<String> = std::collections::HashSet::new();
-  for rule in &cddl.rules {
+  for rule in cddl
+    .rules
+    .iter()
+    .filter(|rule| !rule_is_substituted(rule, &rule_subs))
+  {
     match rule {
       Rule::Type {
         rule: type_rule, ..
@@ -915,7 +1107,7 @@ fn collect_type_defs(
           }
         } else {
           let doc = ast_or_map_rule_doc(rule, type_rule.name.span.2, comments);
-          if let Some(def) = type_rule_to_rust_def(type_rule, comments, doc, opts)? {
+          if let Some(def) = type_rule_to_rust_def(type_rule, comments, doc, opts, &mut groups)? {
             defs.push(def);
           }
         }
@@ -925,14 +1117,27 @@ fn collect_type_defs(
       } => {
         let name = to_pascal_case(group_rule.name.ident);
         let doc = ast_or_map_rule_doc(rule, group_rule.name.span.2, comments);
-        if let Some(fields) = group_entry_to_fields(&group_rule.entry, comments, opts)? {
-          defs.push(RustTypeDef::Struct { name, fields, doc });
-        }
+        let fields = groups.entry_fields(&group_rule.entry, &name, group_rule.name.ident)?;
+        defs.push(RustTypeDef::Struct {
+          name,
+          fields,
+          doc,
+          deny_unknown_fields: false,
+        });
       }
     }
   }
+  defs.extend(groups.helpers);
   apply_recursive_boxing(&mut defs);
   Ok(defs)
+}
+
+fn rule_is_substituted(rule: &Rule<'_>, substitutions: &BTreeMap<String, String>) -> bool {
+  let name = match rule {
+    Rule::Type { rule, .. } => rule.name.ident,
+    Rule::Group { rule, .. } => rule.name.ident,
+  };
+  substitutions.contains_key(&to_pascal_case(name))
 }
 
 /// Merge the type choices of several socket/plug type rule alternates into a
@@ -954,6 +1159,7 @@ fn merge_type_rules_to_enum(
     name: name.to_string(),
     variants,
     doc,
+    group_choice: false,
   })
 }
 
@@ -1083,11 +1289,12 @@ fn compute_scc_ids(edges: &[Vec<usize>]) -> Vec<usize> {
   scc_ids
 }
 
-fn type_rule_to_rust_def(
-  rule: &TypeRule<'_>,
+fn type_rule_to_rust_def<'b>(
+  rule: &TypeRule<'b>,
   comments: &CommentMap,
   doc: Vec<String>,
   opts: &CodegenOptions,
+  groups: &mut GroupLowerer<'_, 'b>,
 ) -> Result<Option<RustTypeDef>, CodegenError> {
   let name = to_pascal_case(rule.name.ident);
   let ty = &rule.value;
@@ -1100,8 +1307,13 @@ fn type_rule_to_rust_def(
     let type1 = &tc.type1;
     match &type1.type2 {
       Type2::Map { group, .. } => {
-        let fields = group_to_fields(group, comments, opts)?;
-        Ok(Some(RustTypeDef::Struct { name, fields, doc }))
+        let fields = groups.fields(group, &name, rule.name.ident)?;
+        Ok(Some(RustTypeDef::Struct {
+          name,
+          fields,
+          doc,
+          deny_unknown_fields: false,
+        }))
       }
       Type2::Array { group, .. } => {
         let rust_type = array_group_to_type(group, opts)?;
@@ -1122,14 +1334,15 @@ fn type_rule_to_rust_def(
         let target = type_to_rust_string(pt, opts)?;
         Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
       }
-      Type2::Unwrap { ident, .. } => {
+      Type2::Unwrap { ident, .. } | Type2::ChoiceFromGroup { ident, .. } => {
         let target = to_pascal_case(ident.ident);
         Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
       }
       Type2::IntValue { .. }
       | Type2::UintValue { .. }
       | Type2::FloatValue { .. }
-      | Type2::TextValue { .. } => {
+      | Type2::TextValue { .. }
+      | Type2::TaggedData { .. } => {
         // Literal value rules (e.g. `color = "red"`) and numeric range rules
         // (e.g. `scale = 1..10`, whose lower bound is parsed as a value) are
         // emitted as type aliases to the underlying Rust type so that other
@@ -1143,15 +1356,8 @@ fn type_rule_to_rust_def(
           name,
           variants,
           doc,
+          group_choice: false,
         }))
-      }
-      Type2::ChoiceFromGroup { ident, .. } => {
-        let target = to_pascal_case(ident.ident);
-        Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
-      }
-      Type2::TaggedData { .. } => {
-        let target = type1_to_rust_string(type1, opts)?;
-        Ok(Some(RustTypeDef::TypeAlias { name, target, doc }))
       }
       _ => Ok(None),
     }
@@ -1176,6 +1382,7 @@ fn type_choices_to_enum(
     name: name.to_string(),
     variants,
     doc,
+    group_choice: false,
   })
 }
 
@@ -1240,7 +1447,13 @@ fn type_choice_to_variant(
       } else {
         fields
           .iter()
-          .map(|f| to_pascal_case(&f.original_name))
+          .map(|f| {
+            to_pascal_case(if f.integer_key.is_some() {
+              &f.name
+            } else {
+              &f.original_name
+            })
+          })
           .collect::<Vec<_>>()
           .join("")
       };
@@ -1276,6 +1489,306 @@ fn type_choice_to_variant(
   }
 }
 
+/// Resolve group inclusions in map position, without changing ordinary typed
+/// fields or array/tuple lowering.
+struct GroupLowerer<'a, 'b> {
+  cddl: &'a CDDL<'b>,
+  comments: &'a CommentMap,
+  opts: &'a CodegenOptions,
+  substitutions: &'a BTreeMap<String, String>,
+  helpers: Vec<RustTypeDef>,
+  names: std::collections::HashSet<String>,
+  visiting: Vec<String>,
+}
+
+fn included_group_helpers(defs: &[RustTypeDef], root: &str) -> Vec<RustTypeDef> {
+  let mut names = std::collections::BTreeSet::new();
+  names.insert(root.to_string());
+  loop {
+    let before = names.len();
+    for def in defs {
+      match def {
+        RustTypeDef::Struct { name, fields, .. } if names.contains(name) => {
+          names.extend(
+            fields
+              .iter()
+              .filter(|f| f.flatten_group)
+              .map(|f| f.rust_type.clone()),
+          );
+        }
+        RustTypeDef::Enum {
+          name,
+          variants,
+          group_choice: true,
+          ..
+        } if names.contains(name) => {
+          names.extend(variants.iter().filter_map(|v| v.inner_type.clone()));
+        }
+        _ => {}
+      }
+    }
+    if names.len() == before {
+      break;
+    }
+  }
+  names.remove(root);
+  defs
+    .iter()
+    .filter(|def| match def {
+      RustTypeDef::Struct { name, .. } | RustTypeDef::Enum { name, .. } => names.contains(name),
+      _ => false,
+    })
+    .cloned()
+    .collect()
+}
+
+impl<'a, 'b> GroupLowerer<'a, 'b> {
+  fn new(
+    cddl: &'a CDDL<'b>,
+    comments: &'a CommentMap,
+    opts: &'a CodegenOptions,
+    substitutions: &'a BTreeMap<String, String>,
+  ) -> Self {
+    let names = cddl
+      .rules
+      .iter()
+      .map(|rule| match rule {
+        Rule::Type { rule, .. } => to_pascal_case(rule.name.ident),
+        Rule::Group { rule, .. } => to_pascal_case(rule.name.ident),
+      })
+      .collect();
+    Self {
+      cddl,
+      comments,
+      opts,
+      substitutions,
+      helpers: Vec::new(),
+      names,
+      visiting: Vec::new(),
+    }
+  }
+
+  fn helper_name(&mut self, parent: &str) -> String {
+    for index in 1.. {
+      let name = format!("{}Group{}", parent, index);
+      if self.names.insert(name.clone()) {
+        return name;
+      }
+    }
+    unreachable!()
+  }
+
+  fn fields(
+    &mut self,
+    group: &Group<'b>,
+    parent: &str,
+    source_rule: &str,
+  ) -> Result<Vec<RustField>, CodegenError> {
+    if group.group_choices.len() > 1 {
+      return self.choice_field(group, parent, source_rule);
+    }
+    let mut fields = Vec::new();
+    for choice in &group.group_choices {
+      for (entry, _) in &choice.group_entries {
+        fields.extend(self.entry_fields(entry, parent, source_rule)?);
+      }
+    }
+    deduplicate_field_names(&mut fields);
+    Ok(fields)
+  }
+
+  fn entry_fields(
+    &mut self,
+    entry: &GroupEntry<'b>,
+    parent: &str,
+    source_rule: &str,
+  ) -> Result<Vec<RustField>, CodegenError> {
+    let (mut fields, optional) = match entry {
+      GroupEntry::TypeGroupname { ge, .. } => {
+        let included = self.cddl.rules.iter().find_map(|rule| match rule {
+          Rule::Group { rule, .. } if rule.name.ident == ge.name.ident => Some(&rule.entry),
+          _ => None,
+        });
+        if let Some(included) = included {
+          if self
+            .substitutions
+            .contains_key(&to_pascal_case(ge.name.ident))
+          {
+            let mut fields =
+              group_entry_to_fields(entry, self.comments, self.opts)?.unwrap_or_default();
+            for field in &mut fields {
+              field.flatten_object = true;
+              field.source_rule = Some(source_rule.into());
+            }
+            return Ok(fields);
+          }
+          if self.visiting.iter().any(|name| name == ge.name.ident) {
+            return Err(CodegenError::ConfigurationError(format!(
+              "recursive group inclusion involving '{}'",
+              ge.name.ident
+            )));
+          }
+          self.visiting.push(ge.name.ident.into());
+          let fields = self.entry_fields(included, parent, source_rule)?;
+          self.visiting.pop();
+          (
+            fields,
+            ge.occur
+              .as_ref()
+              .is_some_and(|o| matches!(o.occur, Occur::Optional { .. })),
+          )
+        } else {
+          (
+            group_entry_to_fields(entry, self.comments, self.opts)?.unwrap_or_default(),
+            false,
+          )
+        }
+      }
+      GroupEntry::InlineGroup { group, occur, .. } => (
+        self.fields(group, parent, source_rule)?,
+        occur
+          .as_ref()
+          .is_some_and(|o| matches!(o.occur, Occur::Optional { .. })),
+      ),
+      _ => (
+        group_entry_to_fields(entry, self.comments, self.opts)?.unwrap_or_default(),
+        false,
+      ),
+    };
+    for field in &mut fields {
+      field.source_rule = Some(source_rule.into());
+    }
+    if optional {
+      return self.optional_fields(fields, parent);
+    }
+    Ok(fields)
+  }
+
+  fn optional_fields(
+    &mut self,
+    mut fields: Vec<RustField>,
+    parent: &str,
+  ) -> Result<Vec<RustField>, CodegenError> {
+    if fields.len() > 1 && fields.iter().any(|field| !field.is_optional) {
+      if fields
+        .iter()
+        .any(|field| field.flatten || field.flatten_object || field.integer_key.is_some())
+      {
+        return Err(CodegenError::ConfigurationError(
+          "optional multi-field groups combined with typed map entries, substituted groups or integer literal keys are not supported"
+            .into(),
+        ));
+      }
+      let name = self.helper_name(parent);
+      let group_keys = group_field_keys(&fields);
+      self.helpers.push(RustTypeDef::Struct {
+        name: name.clone(),
+        fields,
+        doc: Vec::new(),
+        deny_unknown_fields: true,
+      });
+      return Ok(vec![routed_group_field(name, group_keys, true)]);
+    }
+    for field in &mut fields {
+      field.is_optional = true;
+    }
+    Ok(fields)
+  }
+
+  fn choice_field(
+    &mut self,
+    group: &Group<'b>,
+    parent: &str,
+    source_rule: &str,
+  ) -> Result<Vec<RustField>, CodegenError> {
+    let name = self.helper_name(parent);
+    let mut variants = Vec::new();
+    let mut group_keys = BTreeSet::new();
+    for (index, choice) in group.group_choices.iter().enumerate() {
+      let mut variant_name = match choice.group_entries.as_slice() {
+        [(GroupEntry::TypeGroupname { ge, .. }, _)] => to_pascal_case(ge.name.ident),
+        _ => format!("Choice{}", index + 1),
+      };
+      if variants
+        .iter()
+        .any(|variant: &RustEnumVariant| variant.name == variant_name)
+      {
+        variant_name = format!("{}Choice{}", variant_name, index + 1);
+      }
+      let payload = self.helper_name(&name);
+      let mut fields = Vec::new();
+      for (entry, _) in &choice.group_entries {
+        fields.extend(self.entry_fields(entry, &payload, source_rule)?);
+      }
+      deduplicate_field_names(&mut fields);
+      if fields
+        .iter()
+        .any(|field| field.flatten || field.flatten_object || field.integer_key.is_some())
+      {
+        return Err(CodegenError::ConfigurationError(
+          "group choices combined with typed map entries, substituted groups or integer literal keys are not supported"
+            .into(),
+        ));
+      }
+      group_keys.extend(group_field_keys(&fields));
+      // Optional fields must not let the first untagged branch swallow keys
+      // belonging to another branch.
+      self.helpers.push(RustTypeDef::Struct {
+        name: payload.clone(),
+        fields,
+        doc: Vec::new(),
+        deny_unknown_fields: true,
+      });
+      variants.push(RustEnumVariant {
+        name: variant_name,
+        inner_type: Some(payload),
+        doc: Vec::new(),
+        rename: None,
+      });
+    }
+    self.helpers.push(RustTypeDef::Enum {
+      name: name.clone(),
+      variants,
+      doc: Vec::new(),
+      group_choice: true,
+    });
+    Ok(vec![routed_group_field(name, group_keys, false)])
+  }
+}
+
+fn group_field_keys(fields: &[RustField]) -> BTreeSet<String> {
+  fields
+    .iter()
+    .flat_map(|field| {
+      if field.flatten_group {
+        field.group_keys.clone()
+      } else {
+        vec![field.original_name.clone()]
+      }
+    })
+    .collect()
+}
+
+fn routed_group_field(name: String, group_keys: BTreeSet<String>, is_optional: bool) -> RustField {
+  let field_name = to_snake_case(&name);
+  RustField {
+    name: field_name.clone(),
+    original_name: field_name,
+    source_rule: None,
+    integer_key: None,
+    rust_type: name,
+    is_optional,
+    doc: Vec::new(),
+    is_boxed: false,
+    tag: None,
+    encoding: None,
+    flatten: false,
+    flatten_group: true,
+    flatten_object: false,
+    group_keys: group_keys.into_iter().collect(),
+  }
+}
+
 fn group_to_fields(
   group: &Group<'_>,
   comments: &CommentMap,
@@ -1298,27 +1811,32 @@ fn group_to_fields(
 /// the same field twice and fail to compile with "field `entries` specified
 /// more than once". Repeats get a `_1`, `_2`, ... suffix.
 ///
-/// When a field's `original_name` matches the name being replaced, the field is
-/// synthetic (there is no corresponding CDDL key) and the `original_name` is
-/// renamed alongside it, so that no misleading `#[serde(rename = "entries")]`
-/// is emitted for the second and subsequent fields.
+/// Reserve initial Rust names before choosing suffixes. Only rename synthetic
+/// wire names on flattened typed entries; named CDDL keys stay unchanged.
 ///
 /// See https://github.com/anweiss/cddl/issues/640
 fn deduplicate_field_names(fields: &mut [RustField]) {
-  let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-
+  let reserved: BTreeSet<String> = fields.iter().map(|field| field.name.clone()).collect();
+  let mut used = BTreeSet::new();
+  let mut suffixes = BTreeMap::new();
   for field in fields.iter_mut() {
     let base = field.name.clone();
-    let count = seen.entry(base.clone()).or_insert(0);
-    *count += 1;
-
-    if *count > 1 {
-      let unique = format!("{}_{}", base, *count - 1);
-      if field.original_name == base {
-        field.original_name = unique.clone();
-      }
-      field.name = unique;
+    if used.insert(base.clone()) {
+      continue;
     }
+    let suffix = suffixes.entry(base.clone()).or_insert(0);
+    let unique = loop {
+      *suffix += 1;
+      let candidate = format!("{base}_{suffix}");
+      if !reserved.contains(&candidate) && !used.contains(&candidate) {
+        break candidate;
+      }
+    };
+    used.insert(unique.clone());
+    if field.flatten && field.original_name == base {
+      field.original_name = unique.clone();
+    }
+    field.name = unique;
   }
 }
 
@@ -1371,6 +1889,8 @@ fn group_entry_to_fields(
       Ok(Some(vec![RustField {
         name: field_name,
         original_name: ident.to_string(),
+        source_rule: None,
+        integer_key: None,
         rust_type,
         is_optional,
         doc,
@@ -1378,6 +1898,9 @@ fn group_entry_to_fields(
         tag: tagged_prelude(ident),
         encoding: None,
         flatten: false,
+        flatten_group: false,
+        flatten_object: false,
+        group_keys: Vec::new(),
       }]))
     }
     GroupEntry::InlineGroup { group, occur, .. } => {
@@ -1415,6 +1938,15 @@ fn value_member_key_to_field(
       let s = literal_text_key(t1).unwrap();
       (to_snake_case(s), s.to_string())
     }
+    Some(MemberKey::Type1 { t1, .. }) if literal_integer_key(t1).is_some() => {
+      let key = literal_integer_key(t1).unwrap();
+      let field_name = if key < 0 {
+        format!("n_neg{}", key.unsigned_abs())
+      } else {
+        format!("n{}", key)
+      };
+      (field_name, key.to_string())
+    }
     Some(MemberKey::Type1 { t1, .. }) => {
       let key_type = type1_to_rust_string(t1, opts)?;
       let value_type = type_to_rust_string(&vmke.entry_type, opts)?;
@@ -1422,6 +1954,8 @@ fn value_member_key_to_field(
       return Ok(Some(RustField {
         name: "entries".to_string(),
         original_name: "entries".to_string(),
+        source_rule: None,
+        integer_key: None,
         rust_type,
         is_optional: false,
         doc,
@@ -1429,6 +1963,9 @@ fn value_member_key_to_field(
         tag: None,
         encoding: None,
         flatten: true,
+        flatten_group: false,
+        flatten_object: false,
+        group_keys: Vec::new(),
       }));
     }
     None => {
@@ -1436,6 +1973,8 @@ fn value_member_key_to_field(
       return Ok(Some(RustField {
         name: "value".to_string(),
         original_name: "value".to_string(),
+        source_rule: None,
+        integer_key: None,
         rust_type,
         is_optional: false,
         doc,
@@ -1443,6 +1982,9 @@ fn value_member_key_to_field(
         tag: type_tagged_prelude(&vmke.entry_type),
         encoding: None,
         flatten: false,
+        flatten_group: false,
+        flatten_object: false,
+        group_keys: Vec::new(),
       }));
     }
     _ => return Ok(None),
@@ -1471,6 +2013,11 @@ fn value_member_key_to_field(
   Ok(Some(RustField {
     name: field_name,
     original_name,
+    source_rule: None,
+    integer_key: match &vmke.member_key {
+      Some(MemberKey::Type1 { t1, .. }) => literal_integer_key(t1),
+      _ => None,
+    },
     rust_type: final_type,
     is_optional,
     doc,
@@ -1484,6 +2031,9 @@ fn value_member_key_to_field(
     },
     encoding: None,
     flatten: false,
+    flatten_group: false,
+    flatten_object: false,
+    group_keys: Vec::new(),
   }))
 }
 
@@ -1495,6 +2045,20 @@ fn literal_text_key<'a>(t1: &'a Type1<'_>) -> Option<&'a str> {
     Type2::TextValue { value, .. } => Some(value),
     Type2::ParenthesizedType { pt, .. } if pt.type_choices.len() == 1 => {
       literal_text_key(&pt.type_choices[0].type1)
+    }
+    _ => None,
+  }
+}
+
+fn literal_integer_key(t1: &Type1<'_>) -> Option<i128> {
+  if t1.operator.is_some() {
+    return None;
+  }
+  match &t1.type2 {
+    Type2::IntValue { value, .. } => Some(*value as i128),
+    Type2::UintValue { value, .. } => Some(*value as i128),
+    Type2::ParenthesizedType { pt, .. } if pt.type_choices.len() == 1 => {
+      literal_integer_key(&pt.type_choices[0].type1)
     }
     _ => None,
   }
@@ -2129,6 +2693,7 @@ fn needs_explicit_tags(defs: &[RustTypeDef]) -> bool {
 
 fn render_type_defs(defs: &[RustTypeDef], opts: &CodegenOptions) -> Result<String, CodegenError> {
   let mut output = String::new();
+  let key_aliases = known_type_aliases(defs);
 
   let tags = collect_tags(defs);
   render_tag_helpers(
@@ -2144,8 +2709,21 @@ fn render_type_defs(defs: &[RustTypeDef], opts: &CodegenOptions) -> Result<Strin
       output.push('\n');
     }
     match def {
-      RustTypeDef::Struct { name, fields, doc } => {
-        render_struct(&mut output, name, fields, doc, TAG_HELPER_MOD, opts)?;
+      RustTypeDef::Struct {
+        name,
+        fields,
+        doc,
+        deny_unknown_fields,
+      } => {
+        render_struct(
+          &mut output,
+          name,
+          fields,
+          doc,
+          TAG_HELPER_MOD,
+          opts,
+          *deny_unknown_fields,
+        )?;
       }
       RustTypeDef::TypeAlias { name, target, doc } => {
         render_type_alias(&mut output, name, target, doc)?;
@@ -2154,8 +2732,17 @@ fn render_type_defs(defs: &[RustTypeDef], opts: &CodegenOptions) -> Result<Strin
         name,
         variants,
         doc,
+        group_choice,
       } => {
-        render_enum(&mut output, name, variants, doc, opts)?;
+        render_enum(
+          &mut output,
+          name,
+          variants,
+          doc,
+          opts,
+          &key_aliases,
+          *group_choice,
+        )?;
       }
     }
   }
@@ -2261,6 +2848,37 @@ fn split_generic_args(args: &str) -> Vec<String> {
   out
 }
 
+fn ensure_disjoint_group_keys(fields: &[RustField]) -> Result<(), CodegenError> {
+  let mut routed = BTreeSet::new();
+  for field in fields.iter().filter(|field| field.flatten_group) {
+    for key in &field.group_keys {
+      if !routed.insert(key) {
+        return Err(CodegenError::ConfigurationError(format!(
+          "overlapping flattened group keys ('{key}') require backtracking and are not supported"
+        )));
+      }
+    }
+  }
+  Ok(())
+}
+
+fn validate_group_layout(fields: &[RustField]) -> Result<(), CodegenError> {
+  ensure_disjoint_group_keys(fields)?;
+  if fields
+    .iter()
+    .any(|field| field.flatten_group || field.flatten_object)
+    && fields
+      .iter()
+      .any(|field| field.flatten || field.integer_key.is_some())
+  {
+    return Err(CodegenError::ConfigurationError(
+      "flattened groups and group choices combined with typed map entries or integer literal keys are not supported"
+        .into(),
+    ));
+  }
+  Ok(())
+}
+
 fn render_struct(
   output: &mut String,
   name: &str,
@@ -2268,7 +2886,9 @@ fn render_struct(
   doc: &[String],
   tag_mod: &str,
   opts: &CodegenOptions,
+  deny_unknown_fields: bool,
 ) -> Result<(), CodegenError> {
+  validate_group_layout(fields)?;
   render_doc(output, doc, "")?;
 
   // Byte-string fields need serde_with to encode as CBOR major type 2 rather
@@ -2290,25 +2910,168 @@ fn render_struct(
 
   // serde's flatten buffers unknown entries in a format-neutral representation
   // that drops CBOR tags and cannot dispatch between differently keyed maps, so
-  // structs with typed-key entries decode through a generated map visitor.
-  let custom_de = fields.iter().any(|f| f.flatten);
+  // typed-key entries and integer literal keys decode through a generated map
+  // visitor. Group-choice fields use serde's flattened enum handling instead.
+  let custom_de = fields.iter().any(|f| f.flatten || f.integer_key.is_some());
   let derives = if custom_de {
     "Clone, Debug, serde::Serialize"
   } else {
     "Clone, Debug, serde::Deserialize, serde::Serialize"
   };
   writeln!(output, "#[derive({})]", derives)?;
+  if deny_unknown_fields {
+    writeln!(output, "#[serde(deny_unknown_fields)]")?;
+  }
   if opts.non_exhaustive {
     writeln!(output, "#[non_exhaustive]")?;
   }
   writeln!(output, "pub struct {} {{", name)?;
-  for (field, spec) in fields.iter().zip(&field_specs) {
-    render_struct_field(output, field, spec.clone(), tag_mod)?;
-  }
-  writeln!(output, "}}")?;
+  render_struct_fields(output, name, fields, &field_specs, tag_mod)?;
   if custom_de {
     render_flatten_deserialize(output, name, fields, &field_specs, tag_mod)?;
   }
+  Ok(())
+}
+
+fn render_struct_fields(
+  output: &mut String,
+  name: &str,
+  fields: &[RustField],
+  specs: &[Option<String>],
+  tag_mod: &str,
+) -> Result<(), CodegenError> {
+  for (field, spec) in fields.iter().zip(specs) {
+    if field.flatten_group {
+      writeln!(
+        output,
+        "    #[serde(deserialize_with = {:?})]",
+        format!("__cddl_group_{}_{}", name, field.name)
+      )?;
+    }
+    let serializer = field
+      .integer_key
+      .map(|_| format!("__cddl_integer_{}_{}", to_snake_case(name), field.name));
+    render_struct_field(output, field, spec.clone(), tag_mod, serializer.as_deref())?;
+  }
+  writeln!(output, "}}")?;
+  for (field, spec) in fields.iter().zip(specs) {
+    if let Some(key) = field.integer_key {
+      render_integer_field_serializer(output, name, field, key, spec.as_deref(), tag_mod)?;
+    } else if field.flatten_group {
+      render_group_field_deserializer(output, name, field)?;
+    }
+  }
+  Ok(())
+}
+
+fn render_group_field_deserializer(
+  output: &mut String,
+  name: &str,
+  field: &RustField,
+) -> Result<(), CodegenError> {
+  let helper = format!("__cddl_group_{}_{}", name, field.name);
+  let field_type = wrap_field_type(field, field.rust_type.clone());
+  writeln!(output, "#[allow(non_snake_case)]")?;
+  writeln!(
+    output,
+    "fn {helper}<'de, D: serde::Deserializer<'de>>(d: D) -> Result<{field_type}, D::Error> {{"
+  )?;
+  writeln!(output, "    struct Routed<D>(D);")?;
+  writeln!(
+    output,
+    "    impl<'de, D: serde::Deserializer<'de>> serde::Deserializer<'de> for Routed<D> {{"
+  )?;
+  writeln!(output, "        type Error = D::Error;")?;
+  // FlatMapDeserializer claims the struct's known keys before the untagged
+  // enum buffers the map. Unrelated sibling entries remain unconsumed.
+  writeln!(output, "        fn deserialize_any<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {{")?;
+  writeln!(
+    output,
+    "            self.0.deserialize_struct(\"CDDL group choice\", &{:?}, visitor)",
+    field.group_keys
+  )?;
+  writeln!(output, "        }}")?;
+  writeln!(
+    output,
+    "        fn is_human_readable(&self) -> bool {{ self.0.is_human_readable() }}"
+  )?;
+  writeln!(output, "        serde::forward_to_deserialize_any! {{ bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map struct enum identifier ignored_any }}")?;
+  writeln!(output, "    }}")?;
+  if field.is_optional {
+    let inner_type = if field.is_boxed {
+      format!("Box<{}>", field.rust_type)
+    } else {
+      field.rust_type.clone()
+    };
+    writeln!(
+      output,
+      "    #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)] struct Empty {{}}"
+    )?;
+    writeln!(output, "    #[derive(serde::Deserialize)] #[serde(untagged)] enum Optional {{ Absent(Empty), Present({inner_type}) }}")?;
+    writeln!(output, "    match <Optional as serde::Deserialize>::deserialize(Routed(d))? {{ Optional::Absent(_) => Ok(None), Optional::Present(value) => Ok(Some(value)) }}")?;
+  } else {
+    writeln!(
+      output,
+      "    <{field_type} as serde::Deserialize>::deserialize(Routed(d))"
+    )?;
+  }
+  writeln!(output, "}}")?;
+  Ok(())
+}
+
+fn render_integer_field_serializer(
+  output: &mut String,
+  name: &str,
+  field: &RustField,
+  key: i128,
+  spec: Option<&str>,
+  tag_mod: &str,
+) -> Result<(), CodegenError> {
+  let helper = format!("__cddl_integer_{}_{}", to_snake_case(name), field.name);
+  let value_type = if field.is_boxed {
+    format!("Box<{}>", field.rust_type)
+  } else {
+    field.rust_type.clone()
+  };
+  writeln!(
+    output,
+    "fn {helper}<__CddlSerializer: serde::Serializer>(value: &{}, serializer: __CddlSerializer) -> Result<__CddlSerializer::Ok, __CddlSerializer::Error> {{",
+    wrap_field_type(field, field.rust_type.clone())
+  )?;
+  writeln!(output, "    use serde::ser::SerializeMap;")?;
+  writeln!(
+    output,
+    "    struct __CddlIntegerValue<'a>(&'a {value_type});"
+  )?;
+  writeln!(output, "    impl serde::Serialize for __CddlIntegerValue<'_> {{\n        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {{")?;
+  let serialize = if let Some(spec) = spec {
+    format!("serde_with::As::<{spec}>::serialize")
+  } else if let Some(tag) = field.tag {
+    format!("{}::{}::serialize", tag_mod, tag.ident.replace('-', "_"))
+  } else {
+    "serde::Serialize::serialize".into()
+  };
+  writeln!(
+    output,
+    "            {serialize}(self.0, serializer)\n        }}\n    }}"
+  )?;
+  if field.is_optional {
+    writeln!(output, "    let mut map = serializer.serialize_map(Some(usize::from(value.is_some())))?;\n    if let Some(value) = value {{")?;
+  } else {
+    writeln!(
+      output,
+      "    let mut map = serializer.serialize_map(Some(1))?;"
+    )?;
+  }
+  let key_type = if key < 0 { "i64" } else { "u64" };
+  writeln!(
+    output,
+    "    map.serialize_entry(&({key}{key_type}), &__CddlIntegerValue(value))?;"
+  )?;
+  if field.is_optional {
+    writeln!(output, "    }}")?;
+  }
+  writeln!(output, "    map.end()\n}}")?;
   Ok(())
 }
 
@@ -2324,10 +3087,13 @@ fn render_flatten_deserialize(
   writeln!(output, "impl<'de> serde::Deserialize<'de> for {} {{", name)?;
   writeln!(
     output,
-    "    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {{"
+    "    fn deserialize<__CddlDeserializer: serde::Deserializer<'de>>(d: __CddlDeserializer) -> Result<Self, __CddlDeserializer::Error> {{"
   )?;
   for (i, (field, spec)) in fields.iter().zip(specs).enumerate() {
     render_flatten_value_wrapper(output, i, field, spec.clone(), tag_mod)?;
+    if let Some(key) = field.integer_key {
+      render_literal_key_wrapper(output, i, key)?;
+    }
   }
   let keys: Vec<Option<(String, Option<String>)>> = fields
     .iter()
@@ -2347,13 +3113,43 @@ fn render_flatten_deserialize(
   )?;
   writeln!(output, "            type Value = {};", name)?;
   writeln!(output, "            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {{ f.write_str(\"a map\") }}")?;
-  writeln!(output, "            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {{")?;
+  writeln!(output, "            fn visit_map<__CddlMapAccess: serde::de::MapAccess<'de>>(self, mut map: __CddlMapAccess) -> Result<Self::Value, __CddlMapAccess::Error> {{")?;
   render_flatten_visit_body(output, name, fields, &keys)?;
   writeln!(output, "            }}\n        }}")?;
   writeln!(
     output,
     "        d.deserialize_map(__CddlVisitor)\n    }}\n}}"
   )?;
+  Ok(())
+}
+
+fn render_literal_key_wrapper(
+  output: &mut String,
+  index: usize,
+  key: i128,
+) -> Result<(), CodegenError> {
+  let wire_type = if key < 0 { "i64" } else { "u64" };
+  writeln!(output, "        struct __CddlLiteralKey{};", index)?;
+  writeln!(
+    output,
+    "        impl<'de> serde::Deserialize<'de> for __CddlLiteralKey{} {{",
+    index
+  )?;
+  writeln!(
+    output,
+    "            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {{"
+  )?;
+  writeln!(
+    output,
+    "                let value = <{} as serde::Deserialize>::deserialize(d)? as i128;",
+    wire_type
+  )?;
+  writeln!(
+    output,
+    "                if value == {} {{ Ok(Self) }} else {{ Err(serde::de::Error::custom(\"unexpected integer map key\")) }}",
+    key
+  )?;
+  writeln!(output, "            }}\n        }}")?;
   Ok(())
 }
 
@@ -2419,9 +3215,11 @@ fn render_flatten_value_wrapper(
       .unwrap_or_else(|| field.rust_type.clone());
     (value_type, value_spec)
   } else {
+    let mut value_field = field.clone();
+    value_field.is_optional = false;
     (
-      wrap_field_type(field, field.rust_type.clone()),
-      spec.map(|s| wrap_field_type(field, s)),
+      wrap_field_type(&value_field, field.rust_type.clone()),
+      spec.map(|spec| wrap_field_type(&value_field, spec)),
     )
   };
   if spec.is_some() {
@@ -2436,13 +3234,11 @@ fn render_flatten_value_wrapper(
     writeln!(output, "            #[serde_as(as = \"{}\")]", spec)?;
   }
   if let Some(t) = field.tag.filter(|_| !field.flatten) {
-    let suffix = if field.is_optional { "_opt" } else { "" };
     writeln!(
       output,
-      "            #[serde(with = \"{}::{}{}\")]",
+      "            #[serde(with = \"{}::{}\")]",
       tag_mod,
-      t.ident.replace('-', "_"),
-      suffix
+      t.ident.replace('-', "_")
     )?;
   }
   writeln!(output, "            {},\n        );", ty)?;
@@ -2455,13 +3251,17 @@ fn render_flatten_keys(
   fields: &[RustField],
   keys: &[Option<(String, Option<String>)>],
 ) -> Result<(), CodegenError> {
-  let named = fields.iter().any(|f| !f.flatten);
+  let named = fields.iter().any(|f| !f.flatten && f.integer_key.is_none());
   if named {
     writeln!(
       output,
       "        #[derive(serde::Deserialize)]\n        enum __CddlField {{"
     )?;
-    for (i, field) in fields.iter().enumerate().filter(|(_, f)| !f.flatten) {
+    for (i, field) in fields
+      .iter()
+      .enumerate()
+      .filter(|(_, f)| !f.flatten && f.integer_key.is_none())
+    {
       writeln!(
         output,
         "            #[serde(rename = {:?})] F{},",
@@ -2474,6 +3274,11 @@ fn render_flatten_keys(
     output,
     "        #[derive(serde::Deserialize)]\n        #[serde(untagged)]\n        enum __CddlKey {{"
   )?;
+  for (i, field) in fields.iter().enumerate() {
+    if field.integer_key.is_some() {
+      writeln!(output, "            Literal{}(__CddlLiteralKey{}),", i, i)?;
+    }
+  }
   if named {
     writeln!(output, "            Field(__CddlField),")?;
   }
@@ -2547,6 +3352,12 @@ fn render_flatten_match_arm(
       "k"
     };
     writeln!(output, "                        __CddlKey::Entries{i}(k) => {{ __f{i}.insert({key_expr}, map.next_value::<__CddlValue{i}>()?.0); }}")?;
+  } else if field.integer_key.is_some() {
+    writeln!(
+      output,
+      "                        __CddlKey::Literal{i}(_) => {{\n                            if __f{i}.is_some() {{ return Err(serde::de::Error::duplicate_field({:?})); }}\n                            __f{i} = Some(map.next_value::<__CddlValue{i}>()?.0);\n                        }}",
+      field.original_name
+    )?;
   } else {
     writeln!(output, "                        __CddlKey::Field(__CddlField::F{i}) => {{\n                            if __f{i}.is_some() {{ return Err(serde::de::Error::duplicate_field({:?})); }}\n                            __f{i} = Some(map.next_value::<__CddlValue{i}>()?.0);\n                        }}", field.original_name)?;
   }
@@ -2569,11 +3380,7 @@ fn render_flatten_field_init(
       )?;
     }
     (true, false) => writeln!(output, "                    {}: __f{},", field.name, i)?,
-    (false, true) => writeln!(
-      output,
-      "                    {}: __f{}.flatten(),",
-      field.name, i
-    )?,
+    (false, true) => writeln!(output, "                    {}: __f{},", field.name, i)?,
     (false, false) => writeln!(
       output,
       "                    {}: __f{}.ok_or_else(|| serde::de::Error::missing_field({:?}))?,",
@@ -2600,9 +3407,13 @@ fn render_struct_field(
   field: &RustField,
   spec: Option<String>,
   tag_mod: &str,
+  integer_serializer: Option<&str>,
 ) -> Result<(), CodegenError> {
   render_doc(output, &field.doc, "    ")?;
-  if field.flatten {
+  if let Some(serializer) = integer_serializer {
+    return render_integer_struct_field(output, field, serializer);
+  }
+  if field.flatten || field.flatten_group || field.flatten_object {
     writeln!(output, "    #[serde(flatten)]")?;
   }
   if let Some(spec) = spec {
@@ -2637,6 +3448,31 @@ fn render_struct_field(
   Ok(())
 }
 
+fn render_integer_struct_field(
+  output: &mut String,
+  field: &RustField,
+  serializer: &str,
+) -> Result<(), CodegenError> {
+  writeln!(
+    output,
+    "    #[serde(flatten, serialize_with = {:?})]",
+    serializer
+  )?;
+  if field.is_optional {
+    writeln!(
+      output,
+      "    #[serde(skip_serializing_if = \"Option::is_none\")]"
+    )?;
+  }
+  writeln!(
+    output,
+    "    pub {}: {},",
+    field.name,
+    wrap_field_type(field, field.rust_type.clone())
+  )?;
+  Ok(())
+}
+
 fn render_type_alias(
   output: &mut String,
   name: &str,
@@ -2648,13 +3484,48 @@ fn render_type_alias(
   Ok(())
 }
 
+fn unique_enum_variants(variants: &[RustEnumVariant]) -> Vec<RustEnumVariant> {
+  let mut seen = BTreeSet::new();
+  let mut unique: Vec<_> = variants
+    .iter()
+    .filter(|v| seen.insert((v.name.clone(), v.inner_type.clone(), v.rename.clone())))
+    .cloned()
+    .collect();
+  let mut reserved: BTreeSet<_> = unique.iter().map(|v| v.name.clone()).collect();
+  let mut used = BTreeSet::new();
+  for variant in &mut unique {
+    if used.insert(variant.name.clone()) {
+      continue;
+    }
+    // Keep distinct payloads and wire literals even when their Rust names
+    // collide, without taking a name belonging to a later variant.
+    let mut suffix = 2;
+    let mut name = format!("{}{}", variant.name, suffix);
+    while reserved.contains(&name) {
+      suffix += 1;
+      name = format!("{}{}", variant.name, suffix);
+    }
+    reserved.insert(name.clone());
+    used.insert(name.clone());
+    variant.name = name;
+  }
+  unique
+}
+
 fn render_enum(
   output: &mut String,
   name: &str,
   variants: &[RustEnumVariant],
   doc: &[String],
   opts: &CodegenOptions,
+  aliases: &BTreeMap<String, String>,
+  group_choice: bool,
 ) -> Result<(), CodegenError> {
+  let mut opts = opts.clone();
+  opts.other_variant &= !group_choice;
+  let opts = &opts;
+  let unique = unique_enum_variants(variants);
+  let variants = unique.as_slice();
   // An enum whose variants are all string literals (`a = "x" / "y"`) is a
   // closed set of strings on the wire. serde's untagged representation cannot
   // express that -- it deserializes a unit variant from `null` only -- so such
@@ -2665,19 +3536,33 @@ fn render_enum(
     return render_string_enum(output, name, variants, doc, opts);
   }
   if variants.iter().any(is_string_literal_variant) {
-    return render_mixed_enum(output, name, variants, doc, opts);
+    return render_mixed_enum(output, name, variants, doc, opts, aliases);
   }
 
   render_doc(output, doc, "")?;
   writeln!(
     output,
-    "#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]"
+    "#[derive(Clone, Debug, serde::Deserialize, serde::Serialize{})]",
+    enum_key_derives(variants, aliases)
   )?;
   writeln!(output, "#[serde(untagged)]")?;
   if opts.non_exhaustive {
     writeln!(output, "#[non_exhaustive]")?;
   }
   writeln!(output, "pub enum {} {{", name)?;
+  render_untagged_variants(output, variants)?;
+  if opts.other_variant && !variants.iter().any(|v| v.name == "Other") {
+    render_other_variant_doc(output)?;
+    writeln!(output, "    Other(String),")?;
+  }
+  writeln!(output, "}}")?;
+  Ok(())
+}
+
+fn render_untagged_variants(
+  output: &mut String,
+  variants: &[RustEnumVariant],
+) -> Result<(), CodegenError> {
   for variant in variants {
     render_doc(output, &variant.doc, "    ")?;
     if let Some(rename) = &variant.rename {
@@ -2689,16 +3574,41 @@ fn render_enum(
       writeln!(output, "    {},", variant.name)?;
     }
   }
-  if opts.other_variant && !variants.iter().any(|v| v.name == "Other") {
-    render_other_variant_doc(output)?;
-    writeln!(output, "    Other(String),")?;
-  }
-  writeln!(output, "}}")?;
   Ok(())
 }
 
 fn is_string_literal_variant(variant: &RustEnumVariant) -> bool {
   variant.inner_type.is_none() && variant.rename.is_some()
+}
+
+fn enum_key_derives(
+  variants: &[RustEnumVariant],
+  aliases: &BTreeMap<String, String>,
+) -> &'static str {
+  // Only derive for payloads known to implement all three traits. Floats,
+  // generated structs and user-supplied types need not implement Eq or Hash.
+  if variants.iter().all(|variant| {
+    variant
+      .inner_type
+      .as_deref()
+      .is_none_or(|inner| hashable_payload(inner, aliases))
+  }) {
+    ", PartialEq, Eq, Hash"
+  } else {
+    ""
+  }
+}
+
+fn hashable_payload(inner: &str, aliases: &BTreeMap<String, String>) -> bool {
+  let mut inner = inner;
+  let mut seen = BTreeSet::new();
+  while let Some(target) = aliases.get(inner) {
+    if !seen.insert(inner) {
+      return false;
+    }
+    inner = target;
+  }
+  matches!(inner, "i64" | "u64" | "bool" | "String" | "Vec<u8>" | "()")
 }
 
 /// Keep literal unit variants on the public enum, but decode them through a
@@ -2709,6 +3619,7 @@ fn render_mixed_enum(
   variants: &[RustEnumVariant],
   doc: &[String],
   opts: &CodegenOptions,
+  aliases: &BTreeMap<String, String>,
 ) -> Result<(), CodegenError> {
   let mut variants = variants.to_vec();
   if opts.other_variant && !variants.iter().any(|v| v.name == "Other") {
@@ -2720,7 +3631,11 @@ fn render_mixed_enum(
     });
   }
   render_doc(output, doc, "")?;
-  writeln!(output, "#[derive(Clone, Debug)]")?;
+  writeln!(
+    output,
+    "#[derive(Clone, Debug{})]",
+    enum_key_derives(&variants, aliases)
+  )?;
   if opts.non_exhaustive {
     writeln!(output, "#[non_exhaustive]")?;
   }
@@ -2893,7 +3808,7 @@ fn render_string_enum(
   opts: &CodegenOptions,
 ) -> Result<(), CodegenError> {
   render_doc(output, doc, "")?;
-  writeln!(output, "#[derive(Clone, Debug, PartialEq, Eq)]")?;
+  writeln!(output, "#[derive(Clone, Debug, PartialEq, Eq, Hash)]")?;
   if opts.non_exhaustive {
     writeln!(output, "#[non_exhaustive]")?;
   }
@@ -3107,6 +4022,54 @@ fn is_rust_keyword(s: &str) -> bool {
 mod tests {
   use super::*;
   use cddl::parser::cddl_from_str;
+
+  #[test]
+  fn helper_closure_includes_root_group_enum_payloads_but_not_external_types() {
+    let cddl = cddl_from_str("item = { a: int // b: int }\nouter = item / tstr", true).unwrap();
+    let defs =
+      collect_type_defs(&cddl, &CommentMap::default(), &CodegenOptions::default()).unwrap();
+    let (root, variants) = defs
+      .iter()
+      .find_map(|def| match def {
+        RustTypeDef::Enum {
+          name,
+          variants,
+          group_choice: true,
+          ..
+        } => Some((name, variants)),
+        _ => None,
+      })
+      .unwrap();
+    let helpers = included_group_helpers(&defs, root);
+    for payload in variants
+      .iter()
+      .filter_map(|variant| variant.inner_type.as_ref())
+    {
+      assert!(helpers
+        .iter()
+        .any(|def| matches!(def, RustTypeDef::Struct {name, ..} if name == payload)));
+    }
+    assert!(included_group_helpers(&defs, "Outer").is_empty());
+  }
+
+  #[test]
+  fn deduplication_ignores_docs_but_preserves_distinct_payloads() {
+    let first = RustEnumVariant {
+      name: "Value".into(),
+      inner_type: Some("String".into()),
+      doc: vec!["First alternative".into()],
+      rename: None,
+    };
+    let mut duplicate = first.clone();
+    duplicate.doc = vec!["Second alternative".into()];
+    let mut distinct = first.clone();
+    distinct.inner_type = Some("u64".into());
+    let unique = unique_enum_variants(&[first.clone(), distinct, duplicate]);
+    assert_eq!(unique.len(), 2);
+    assert_eq!(unique[0], first);
+    assert_eq!(unique[1].name, "Value2");
+    assert_eq!(unique[1].inner_type.as_deref(), Some("u64"));
+  }
 
   #[test]
   fn fundamental_aliases_are_opt_in_and_preserve_builtin_representations() {
@@ -3432,11 +4395,59 @@ mod tests {
   }
 
   #[test]
+  fn test_integer_literal_map_keys_are_optional_fields() {
+    let result = gen("h = { ? 1 => int, ? 4 => bstr, }");
+    assert!(result.contains("pub n1: Option<i64>,"));
+    assert!(result.contains("pub n4: Option<Vec<u8>>,"));
+    assert!(result.contains("__CddlLiteralKey0"));
+    assert!(result.contains("__CddlLiteralKey1"));
+    assert!(!result.contains("HashMap"));
+  }
+
+  #[test]
   fn test_type_choices_enum() {
     let result = gen(r#"value = int / tstr / bool"#);
     assert!(result.contains("pub enum Value"));
     assert!(result.contains("Int(i64)"));
     assert!(result.contains("Tstr(String)"));
+  }
+
+  #[test]
+  fn test_enum_map_keys_derive_equality_and_hash() {
+    let result = gen("label = int / tstr\nm = { * label => any, }");
+    assert!(result.contains("serde::Serialize, PartialEq, Eq, Hash)]"));
+    assert!(result.contains("std::collections::HashMap<Label, serde_json::Value>"));
+    assert!(result.contains("#[serde(untagged)]"));
+
+    let literals = gen(r#"label = "a" / "b""#);
+    assert!(literals.contains("#[derive(Clone, Debug, PartialEq, Eq, Hash)]"));
+    let mixed = gen(r#"label = "a" / int"#);
+    assert!(mixed.contains("#[derive(Clone, Debug, PartialEq, Eq, Hash)]"));
+  }
+
+  #[test]
+  fn test_enum_key_derives_do_not_require_non_hashable_payloads() {
+    for source in [
+      "value = float / tstr",
+      "value = any / int",
+      "value = record / int\nrecord = { name: tstr }",
+      r#"value = "a" / float"#,
+    ] {
+      let result = gen(source);
+      assert!(!result.contains("PartialEq, Eq, Hash"));
+    }
+
+    let options = CodegenOptions {
+      substitutions: [("integer-label".into(), "custom::Integer".into())].into(),
+      ..Default::default()
+    };
+    let result = generate_rust_code_with_options(
+      "integer-label = int\nvalue = integer-label / tstr",
+      &options,
+    )
+    .unwrap();
+    assert!(result.contains("custom::Integer"));
+    assert!(!result.contains("PartialEq, Eq, Hash"));
   }
 
   /// An enum of string literals is a closed set of strings on the wire.
