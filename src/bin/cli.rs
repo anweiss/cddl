@@ -272,12 +272,12 @@ fn log_enabled_features(features: &[&str]) {
   info!("enabled features: [{}]", formatted);
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "additional-controls"))]
+#[cfg(not(target_arch = "wasm32"))]
 fn validate_json_files(
   cddl: &str,
   files: Option<&[String]>,
   ci: bool,
-  enabled_features: Option<&[&str]>,
+  #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
 ) -> Result<(), Box<dyn Error>> {
   let Some(files) = files else {
     return Ok(());
@@ -288,57 +288,23 @@ fn validate_json_files(
       error!(ci, "File {:?} does not exist", path);
       continue;
     }
-    let result = validate_json_from_str(cddl, &fs::read_to_string(file)?, enabled_features);
+    let result = validate_json_from_str(
+      cddl,
+      &fs::read_to_string(file)?,
+      #[cfg(feature = "additional-controls")]
+      enabled_features,
+    );
     report_file_result(result, path, ci)?;
   }
   Ok(())
-}
-
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "additional-controls")))]
-fn validate_json_files(
-  cddl: &str,
-  files: Option<&[String]>,
-  ci: bool,
-) -> Result<(), Box<dyn Error>> {
-  let Some(files) = files else {
-    return Ok(());
-  };
-  for file in files {
-    let path = Path::new(file);
-    if !path.exists() {
-      error!(ci, "File {:?} does not exist", path);
-      continue;
-    }
-    let result = validate_json_from_str(cddl, &fs::read_to_string(file)?);
-    report_file_result(result, path, ci)?;
-  }
-  Ok(())
-}
-
-#[cfg(all(not(target_arch = "wasm32"), feature = "additional-controls"))]
-fn validate_cbor_files(
-  cddl: &str,
-  files: Option<&[String]>,
-  ci: bool,
-  _enabled_features: Option<&[&str]>,
-) -> Result<(), Box<dyn Error>> {
-  validate_cbor_files_inner(cddl, files, ci)
-}
-
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "additional-controls")))]
-fn validate_cbor_files(
-  cddl: &str,
-  files: Option<&[String]>,
-  ci: bool,
-) -> Result<(), Box<dyn Error>> {
-  validate_cbor_files_inner(cddl, files, ci)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn validate_cbor_files_inner(
+fn validate_cbor_files(
   cddl: &str,
   files: Option<&[String]>,
   ci: bool,
+  #[cfg(feature = "additional-controls")] _enabled_features: Option<&[&str]>,
 ) -> Result<(), Box<dyn Error>> {
   let Some(files) = files else {
     return Ok(());
@@ -352,43 +318,24 @@ fn validate_cbor_files_inner(
     let mut file = File::open(path)?;
     let mut data = Vec::new();
     file.read_to_end(&mut data)?;
-    #[cfg(feature = "additional-controls")]
-    let result = validate_cbor_from_slice(cddl, &data, None);
-    #[cfg(not(feature = "additional-controls"))]
-    let result = validate_cbor_from_slice(cddl, &data);
+    let result = validate_cbor_from_slice(
+      cddl,
+      &data,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
     report_file_result(result, path, ci)?;
   }
   Ok(())
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "additional-controls"))]
+#[cfg(not(target_arch = "wasm32"))]
 fn validate_csv_files(
   cddl: &str,
   files: Option<&[String]>,
   csv_header: bool,
   ci: bool,
-  enabled_features: Option<&[&str]>,
-) -> Result<(), Box<dyn Error>> {
-  validate_csv_files_inner(cddl, files, csv_header, ci, enabled_features)
-}
-
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "additional-controls")))]
-fn validate_csv_files(
-  cddl: &str,
-  files: Option<&[String]>,
-  csv_header: bool,
-  ci: bool,
-) -> Result<(), Box<dyn Error>> {
-  validate_csv_files_inner(cddl, files, csv_header, ci)
-}
-
-#[cfg(all(not(target_arch = "wasm32"), feature = "additional-controls"))]
-fn validate_csv_files_inner(
-  cddl: &str,
-  files: Option<&[String]>,
-  csv_header: bool,
-  ci: bool,
-  enabled_features: Option<&[&str]>,
+  #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
 ) -> Result<(), Box<dyn Error>> {
   let has_header = csv_header.then_some(true);
   let Some(files) = files else {
@@ -404,31 +351,9 @@ fn validate_csv_files_inner(
       cddl,
       &fs::read_to_string(file)?,
       has_header,
+      #[cfg(feature = "additional-controls")]
       enabled_features,
     );
-    report_file_result(result, path, ci)?;
-  }
-  Ok(())
-}
-
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "additional-controls")))]
-fn validate_csv_files_inner(
-  cddl: &str,
-  files: Option<&[String]>,
-  csv_header: bool,
-  ci: bool,
-) -> Result<(), Box<dyn Error>> {
-  let has_header = csv_header.then_some(true);
-  let Some(files) = files else {
-    return Ok(());
-  };
-  for file in files {
-    let path = Path::new(file);
-    if !path.exists() {
-      error!(ci, "CSV file {:?} does not exist", path);
-      continue;
-    }
-    let result = validate_csv_from_str(cddl, &fs::read_to_string(file)?, has_header);
     report_file_result(result, path, ci)?;
   }
   Ok(())
@@ -454,30 +379,30 @@ fn report_file_result<T, E: std::fmt::Display>(
   Ok(())
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "additional-controls"))]
+#[cfg(not(target_arch = "wasm32"))]
 fn validate_stdin(
   cddl: &str,
   ci: bool,
-  enabled_features: Option<&[&str]>,
+  #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
 ) -> Result<(), Box<dyn Error>> {
   let mut data = Vec::new();
   io::stdin().lock().read_to_end(&mut data)?;
   if let Ok(json) = std::str::from_utf8(&data) {
-    report_stdin_result(validate_json_from_str(cddl, json, None), ci)?;
+    let result = validate_json_from_str(
+      cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    report_stdin_result(result, ci)?;
   } else {
-    report_stdin_result(validate_cbor_from_slice(cddl, &data, enabled_features), ci)?;
-  }
-  Ok(())
-}
-
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "additional-controls")))]
-fn validate_stdin(cddl: &str, ci: bool) -> Result<(), Box<dyn Error>> {
-  let mut data = Vec::new();
-  io::stdin().lock().read_to_end(&mut data)?;
-  if let Ok(json) = std::str::from_utf8(&data) {
-    report_stdin_result(validate_json_from_str(cddl, json), ci)?;
-  } else {
-    report_stdin_result(validate_cbor_from_slice(cddl, &data), ci)?;
+    let result = validate_cbor_from_slice(
+      cddl,
+      &data,
+      #[cfg(feature = "additional-controls")]
+      enabled_features,
+    );
+    report_stdin_result(result, ci)?;
   }
   Ok(())
 }
