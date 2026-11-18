@@ -31,7 +31,7 @@ jobs:
             cddl-lsp/package-lock.json
             cddl-lsp/client/package-lock.json
             cddl-lsp/server/package-lock.json
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
@@ -82,7 +82,7 @@ jobs:
         run: |
           npm exec playwright install --with-deps chromium
           npm run test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: quality-reports

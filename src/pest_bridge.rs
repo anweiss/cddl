@@ -895,7 +895,7 @@ fn skip_rule_whitespace(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
 #[cfg(target_arch = "wasm32")]
 fn consume_rule_generic_params(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
   let mut depth = 0i32;
-  while let Some(c) = chars.next() {
+  for c in chars.by_ref() {
     match c {
       '<' => depth += 1,
       '>' => {

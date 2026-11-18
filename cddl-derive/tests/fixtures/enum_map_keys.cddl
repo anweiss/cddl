@@ -1,0 +1,12 @@
+label = int / tstr
+m = { * label => any, }
+
+literal-label = "first" / "second"
+literal-map = { * literal-label => int }
+mixed-label = "first" / int
+mixed-map = { * mixed-label => int }
+
+float-choice = float / tstr
+record = { name: tstr }
+record-choice = record / int
+any-choice = any / int
