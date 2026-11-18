@@ -868,7 +868,7 @@ fn is_rule_start(line: &str) -> bool {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn consume_rule_identifier(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+fn consume_rule_identifier(chars: &mut core::iter::Peekable<core::str::Chars<'_>>) -> bool {
   match chars.peek() {
     Some(&c) if c.is_ascii_alphabetic() || c == '_' || c == '$' || c == '@' => {
       chars.next();
@@ -886,14 +886,14 @@ fn consume_rule_identifier(chars: &mut std::iter::Peekable<std::str::Chars<'_>>)
 }
 
 #[cfg(target_arch = "wasm32")]
-fn skip_rule_whitespace(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+fn skip_rule_whitespace(chars: &mut core::iter::Peekable<core::str::Chars<'_>>) {
   while matches!(chars.peek(), Some(' ' | '\t')) {
     chars.next();
   }
 }
 
 #[cfg(target_arch = "wasm32")]
-fn consume_rule_generic_params(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+fn consume_rule_generic_params(chars: &mut core::iter::Peekable<core::str::Chars<'_>>) {
   let mut depth = 0i32;
   for c in chars.by_ref() {
     match c {
@@ -910,7 +910,7 @@ fn consume_rule_generic_params(chars: &mut std::iter::Peekable<std::str::Chars<'
 }
 
 #[cfg(target_arch = "wasm32")]
-fn consume_rule_extension_operator(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+fn consume_rule_extension_operator(chars: &mut core::iter::Peekable<core::str::Chars<'_>>) -> bool {
   chars.next();
   match chars.peek() {
     Some(&'=') => true,
