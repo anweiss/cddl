@@ -55,9 +55,9 @@ fn computed_controls_skip_operand_domain_prefilters() {
     assert!(!accepts(&schema, b"\x61a"), "{}", schema);
     assert!(!accepts(&schema, &[0x01]), "{}", schema);
   }
-  assert!(accepts("x = v .plus 1\nv = 1 / tstr", &[0x02]));
-  assert!(!accepts("x = v .plus 1\nv = 1 / tstr", &[0x01]));
-  assert!(!accepts("x = v .plus 1\nv = 1 / tstr", b"\x61a"));
+  assert!(accepts("x = v .plus 1\nv = 1 / (uint .lt 0)", &[0x02]));
+  assert!(!accepts("x = v .plus 1\nv = 1 / (uint .lt 0)", &[0x01]));
+  assert!(!accepts("x = v .plus 1\nv = 1 / (uint .lt 0)", b"\x61a"));
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
@@ -644,10 +644,10 @@ fn numeric_probe_cache_preserves_generic_context() {
     &[0x00]
   ));
   assert!(accepts(&format!("x = check<1,1>{rules}"), &[0x01]));
-  let rules = "\ncheck<T> = uint .gt bound<T>\nbound<T> = g<T> .eq 1\ng<T> = uint .eq T";
-  assert!(accepts(&format!("x = check<0> / check<1>{rules}"), &[0x02]));
+  let rules = "\ncheck<T> = uint .gt bound<T>\nbound<T> = g<T> .eq T\ng<T> = uint .eq T";
+  assert!(accepts(&format!("x = check<2> / check<1>{rules}"), &[0x02]));
   assert!(!accepts(
-    &format!("x = check<0> / check<0>{rules}"),
+    &format!("x = check<2> / check<2>{rules}"),
     &[0x02]
   ));
 }
@@ -730,8 +730,8 @@ fn generic_controller_children_keep_size_and_bits_context() {
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn comparison_controller_chain_proofs_are_reused() {
-  let mut schema = String::from("x = n24\nn0 = uint .eq 1\n");
-  for level in 1..=24 {
+  let mut schema = String::from("x = n16\nn0 = uint .eq 1\n");
+  for level in 1..=16 {
     schema.push_str(&format!(
       "n{level} = n{0} .ge b{level}\nb{level} = n{0} .eq 1\n",
       level - 1
@@ -744,8 +744,8 @@ fn comparison_controller_chain_proofs_are_reused() {
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn generic_literal_controller_proofs_are_shared() {
-  let mut schema = String::from("x = n24\nliteral<T> = T\nn0 = uint .eq 1\n");
-  for level in 1..=24 {
+  let mut schema = String::from("x = n16\nliteral<T> = T\nn0 = uint .eq 1\n");
+  for level in 1..=16 {
     schema.push_str(&format!(
       "n{level} = n{prev} .ge b{level}\nb{level} = n{prev} .eq literal<1>\n",
       prev = level - 1
@@ -753,6 +753,31 @@ fn generic_literal_controller_proofs_are_shared() {
   }
   assert!(accepts(&schema, &[0x01]));
   assert!(!accepts(&schema, &[0x02]));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn comparison_controller_chains_preserve_the_resolution_depth_limit() {
+  for literal in ["1", "literal<1>"] {
+    let mut schema = String::from("x = n24\nliteral<T> = T\nn0 = uint .eq 1\n");
+    for level in 1..=24 {
+      schema.push_str(&format!(
+        "n{level} = n{prev} .ge b{level}\nb{level} = n{prev} .eq {literal}\n",
+        prev = level - 1
+      ));
+    }
+    #[cfg(feature = "additional-controls")]
+    let error = cddl::validator::validate_cbor_from_slice(&schema, &[0x01], None).unwrap_err();
+    #[cfg(not(feature = "additional-controls"))]
+    let error = cddl::validator::validate_cbor_from_slice(&schema, &[0x01]).unwrap_err();
+    #[cfg(target_arch = "wasm32")]
+    let error = serde_wasm_bindgen::from_value::<serde_json::Value>(error).unwrap();
+    assert!(
+      error.to_string().contains("resolution limit exceeded"),
+      "{}",
+      error
+    );
+  }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

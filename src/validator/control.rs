@@ -44,31 +44,6 @@ pub fn string_literals_from_ident<'a>(
   literals
 }
 
-/// Retrieve all numeric values from a given rule identifier. Used for
-/// proposed .cat control operator.
-pub fn numeric_values_from_ident<'a>(cddl: &'a CDDL<'a>, ident: &Identifier) -> Vec<&'a Type2<'a>> {
-  let mut literals = Vec::new();
-  for r in cddl.rules.iter() {
-    if let Rule::Type { rule, .. } = r {
-      if rule.name == *ident {
-        for tc in rule.value.type_choices.iter() {
-          match &tc.type1.type2 {
-            t @ Type2::IntValue { .. }
-            | t @ Type2::UintValue { .. }
-            | t @ Type2::FloatValue { .. } => literals.push(t),
-            Type2::Typename { ident, .. } => {
-              literals.append(&mut numeric_values_from_ident(cddl, ident))
-            }
-            _ => continue,
-          }
-        }
-      }
-    }
-  }
-
-  literals
-}
-
 #[cfg(feature = "additional-controls")]
 /// Concatenate target and controller. The Vec return type is to accomodate more
 /// than one type choice in the controller.
@@ -598,148 +573,153 @@ pub fn plus_operation<'a>(
   target: &Type2,
   controller: &Type2,
 ) -> Result<Vec<Type2<'a>>, String> {
+  let mut remaining = super::MAX_NUMERIC_RESOLUTION_WORK;
+  plus_operation_bounded(cddl, target, controller, 0, &mut remaining)
+}
+
+#[cfg(feature = "additional-controls")]
+fn charge_plus_work(depth: usize, remaining: &mut usize) -> Result<(), String> {
+  if depth >= super::MAX_NUMERIC_RESOLUTION_DEPTH || *remaining == 0 {
+    return Err("numeric arithmetic resolution limit exceeded".to_string());
+  }
+  *remaining -= 1;
+  Ok(())
+}
+
+#[cfg(feature = "additional-controls")]
+fn numeric_values_for_plus<'a>(
+  cddl: &'a CDDL<'a>,
+  ident: &Identifier,
+  depth: usize,
+  remaining: &mut usize,
+) -> Result<Vec<&'a Type2<'a>>, String> {
+  charge_plus_work(depth, remaining)?;
+  let mut values = Vec::new();
+  for rule in cddl.rules.iter() {
+    if let Rule::Type { rule, .. } = rule {
+      if rule.name == *ident {
+        for choice in &rule.value.type_choices {
+          charge_plus_work(depth, remaining)?;
+          match &choice.type1.type2 {
+            value @ (Type2::IntValue { .. }
+            | Type2::UintValue { .. }
+            | Type2::FloatValue { .. }) => values.push(value),
+            Type2::Typename { ident, .. } => values.append(&mut numeric_values_for_plus(
+              cddl,
+              ident,
+              depth + 1,
+              remaining,
+            )?),
+            _ => {}
+          }
+        }
+      }
+    }
+  }
+  Ok(values)
+}
+
+#[cfg(feature = "additional-controls")]
+fn plus_numeric_target<'a>(
+  cddl: &'a CDDL<'a>,
+  target: &Type2,
+  controller: &Type2,
+  depth: usize,
+  remaining: &mut usize,
+) -> Result<Vec<Type2<'a>>, String> {
+  let mut values = Vec::new();
+  match controller {
+    Type2::Typename { ident, .. } => {
+      let controllers = numeric_values_for_plus(cddl, ident, depth + 1, remaining)?;
+      if controllers.is_empty() {
+        return Err(format!(
+          "controller of type rule {} is not a numeric value",
+          ident
+        ));
+      }
+      for controller in controllers {
+        values.append(&mut plus_operation_bounded(
+          cddl,
+          target,
+          controller,
+          depth + 1,
+          remaining,
+        )?);
+      }
+    }
+    Type2::ParenthesizedType { pt, .. } => {
+      for choice in &pt.type_choices {
+        match &choice.type1.operator {
+          Some(Operator {
+            operator:
+              RangeCtlOp::CtlOp {
+                ctrl: ControlOperator::PLUS,
+                ..
+              },
+            type2,
+            ..
+          }) => {
+            for value in
+              plus_operation_bounded(cddl, &choice.type1.type2, type2, depth + 1, remaining)?
+            {
+              values.append(&mut plus_operation_bounded(
+                cddl,
+                target,
+                &value,
+                depth + 1,
+                remaining,
+              )?);
+            }
+          }
+          None => values.append(&mut plus_operation_bounded(
+            cddl,
+            target,
+            &choice.type1.type2,
+            depth + 1,
+            remaining,
+          )?),
+          _ => return Err("nested operator must be .plus".to_string()),
+        }
+      }
+    }
+    _ => return Err("invalid controller used for .plus operation".to_string()),
+  }
+  Ok(values)
+}
+
+#[cfg(feature = "additional-controls")]
+fn plus_operation_bounded<'a>(
+  cddl: &'a CDDL<'a>,
+  target: &Type2,
+  controller: &Type2,
+  depth: usize,
+  remaining: &mut usize,
+) -> Result<Vec<Type2<'a>>, String> {
+  charge_plus_work(depth, remaining)?;
+  if let (Some(left), Some(right)) = (
+    super::numeric_literal(target),
+    super::numeric_literal(controller),
+  ) {
+    return super::checked_numeric_addition(&left, &right)
+      .map(|value| vec![crate::ast::Type1::from(value).type2])
+      .map_err(super::NumericProofFailure::message);
+  }
   let mut values = Vec::new();
   match target {
-    Type2::UintValue { value, .. } => match controller {
-      Type2::UintValue {
-        value: controller, ..
-      } => values.push((value + controller).into()),
-      Type2::IntValue {
-        value: controller, ..
-      } => values.push(((*value as isize + controller) as usize).into()),
-      Type2::FloatValue {
-        value: controller, ..
-      } => values.push(((*value as isize + *controller as isize) as usize).into()),
-      Type2::Typename { ident, .. } => {
-        let nv = numeric_values_from_ident(cddl, ident);
-        if nv.is_empty() {
-          return Err(format!(
-            "controller of type rule {} is not a numeric value",
-            ident
-          ));
-        }
-        for controller in nv.iter() {
-          println!("controller: {}", controller);
-          values.append(&mut plus_operation(cddl, target, controller)?)
-        }
-      }
-      Type2::ParenthesizedType { pt: controller, .. } => {
-        for controller in controller.type_choices.iter() {
-          match &controller.type1.operator {
-            Some(Operator {
-              operator:
-                RangeCtlOp::CtlOp {
-                  ctrl: ControlOperator::PLUS,
-                  ..
-                },
-              type2: nested_controller,
-              ..
-            }) => {
-              for v in plus_operation(cddl, &controller.type1.type2, nested_controller)?.iter() {
-                values.append(&mut plus_operation(cddl, target, v)?);
-              }
-            }
-            None => values.append(&mut plus_operation(cddl, target, &controller.type1.type2)?),
-            _ => return Err("nested operator must be .plus".to_string()),
-          }
-        }
-      }
-      _ => return Err("invalid controller used for .plus operation".to_string()),
-    },
-    Type2::IntValue { value, .. } => match controller {
-      Type2::IntValue {
-        value: controller, ..
-      } => values.push((value + controller).into()),
-      Type2::UintValue {
-        value: controller, ..
-      } => values.push((value + *controller as isize).into()),
-      Type2::FloatValue {
-        value: controller, ..
-      } => values.push((value + *controller as isize).into()),
-      Type2::Typename { ident, .. } => {
-        let nv = numeric_values_from_ident(cddl, ident);
-        if nv.is_empty() {
-          return Err(format!(
-            "controller of type rule {} is not a numeric value",
-            ident
-          ));
-        }
-        for controller in nv.iter() {
-          println!("controller: {}", controller);
-          values.append(&mut plus_operation(cddl, target, controller)?)
-        }
-      }
-      Type2::ParenthesizedType { pt: controller, .. } => {
-        for controller in controller.type_choices.iter() {
-          match &controller.type1.operator {
-            Some(Operator {
-              operator:
-                RangeCtlOp::CtlOp {
-                  ctrl: ControlOperator::PLUS,
-                  ..
-                },
-              type2: nested_controller,
-              ..
-            }) => {
-              for v in plus_operation(cddl, &controller.type1.type2, nested_controller)?.iter() {
-                values.append(&mut plus_operation(cddl, target, v)?);
-              }
-            }
-            None => values.append(&mut plus_operation(cddl, target, &controller.type1.type2)?),
-            _ => return Err("nested operator must be .plus".to_string()),
-          }
-        }
-      }
-      _ => return Err("invalid controller used for .plus operation".to_string()),
-    },
-    Type2::FloatValue { value, .. } => match controller {
-      Type2::IntValue {
-        value: controller, ..
-      } => values.push((value + *controller as f64).into()),
-      Type2::FloatValue {
-        value: controller, ..
-      } => values.push((value + controller).into()),
-      Type2::Typename { ident, .. } => {
-        let nv = numeric_values_from_ident(cddl, ident);
-        if nv.is_empty() {
-          return Err(format!(
-            "controller of type rule {} is not a numeric value",
-            ident
-          ));
-        }
-        for controller in nv.iter() {
-          println!("controller: {}", controller);
-          values.append(&mut plus_operation(cddl, target, controller)?)
-        }
-      }
-      Type2::ParenthesizedType { pt: controller, .. } => {
-        for controller in controller.type_choices.iter() {
-          match &controller.type1.operator {
-            Some(Operator {
-              operator:
-                RangeCtlOp::CtlOp {
-                  ctrl: ControlOperator::PLUS,
-                  ..
-                },
-              type2: nested_controller,
-              ..
-            }) => {
-              for v in plus_operation(cddl, &controller.type1.type2, nested_controller)?.iter() {
-                values.append(&mut plus_operation(cddl, target, v)?);
-              }
-            }
-            None => values.append(&mut plus_operation(cddl, target, &controller.type1.type2)?),
-            _ => return Err("nested operator must be .plus".to_string()),
-          }
-        }
-      }
-      _ => return Err("invalid controller used for .plus operation".to_string()),
-    },
+    Type2::UintValue { .. } | Type2::IntValue { .. } | Type2::FloatValue { .. } => {
+      return plus_numeric_target(cddl, target, controller, depth, remaining);
+    }
     Type2::Typename { ident, .. } => {
       // Only grab the first type choice value from the target per
       // https://github.com/cbor-wg/cddl-control/issues/2#issuecomment-729253368
-      if let Some(value) = numeric_values_from_ident(cddl, ident).first() {
-        values.append(&mut plus_operation(cddl, value, controller)?);
+      if let Some(value) = numeric_values_for_plus(cddl, ident, depth + 1, remaining)?.first() {
+        values.append(&mut plus_operation_bounded(
+          cddl,
+          value,
+          controller,
+          depth + 1,
+          remaining,
+        )?);
       } else {
         return Err("invalid controller used for .plus operation".to_string());
       }
@@ -758,11 +738,31 @@ pub fn plus_operation<'a>(
             type2: nested_controller,
             ..
           }) => {
-            for v in plus_operation(cddl, &tc.type1.type2, nested_controller)?.iter() {
-              values.append(&mut plus_operation(cddl, v, controller)?);
+            for v in plus_operation_bounded(
+              cddl,
+              &tc.type1.type2,
+              nested_controller,
+              depth + 1,
+              remaining,
+            )?
+            .iter()
+            {
+              values.append(&mut plus_operation_bounded(
+                cddl,
+                v,
+                controller,
+                depth + 1,
+                remaining,
+              )?);
             }
           }
-          None => values.append(&mut plus_operation(cddl, &tc.type1.type2, controller)?),
+          None => values.append(&mut plus_operation_bounded(
+            cddl,
+            &tc.type1.type2,
+            controller,
+            depth + 1,
+            remaining,
+          )?),
           _ => return Err("nested operator must be .plus".to_string()),
         }
       } else {
