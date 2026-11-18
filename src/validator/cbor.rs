@@ -175,6 +175,10 @@ struct NumericTargetIdentity {
 struct NumericTargetProbeKey {
   identity: NumericTargetIdentity,
   data_location: String,
+  is_multi_type_choice: bool,
+  is_multi_group_choice: bool,
+  is_group_to_choice_enum: bool,
+  type_group_name_entry: Option<String>,
 }
 
 #[derive(Clone)]
@@ -488,6 +492,10 @@ impl<'a> CBORValidator<'a> {
         features,
       },
       data_location: self.state.data_location.clone(),
+      is_multi_type_choice: self.state.is_multi_type_choice,
+      is_multi_group_choice: self.state.is_multi_group_choice,
+      is_group_to_choice_enum: self.state.is_group_to_choice_enum,
+      type_group_name_entry: self.state.type_group_name_entry.map(str::to_owned),
     }
   }
 
@@ -527,6 +535,10 @@ impl<'a> CBORValidator<'a> {
     let mut probe = self.new_with_recursion_state(self.cbor.clone());
     probe.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
     probe.state.data_location = self.state.data_location.clone();
+    probe.state.is_multi_type_choice = self.state.is_multi_type_choice;
+    probe.state.is_multi_group_choice = self.state.is_multi_group_choice;
+    probe.state.is_group_to_choice_enum = self.state.is_group_to_choice_enum;
+    probe.state.type_group_name_entry = self.state.type_group_name_entry;
     let recursion_count = self
       .numeric_probe_recursions
       .lock()
@@ -6692,6 +6704,42 @@ mod tests {
         valid
       );
       assert_eq!(validator.errors, errors);
+    }
+  }
+
+  #[test]
+  fn cached_target_diagnostics_follow_choice_context() {
+    let cddl = crate::cddl_from_str("root = t\nt = uint .eq 1", true).unwrap();
+    let Rule::Type { rule, .. } = &cddl.rules[0] else {
+      unreachable!();
+    };
+    let target = &rule.value.type_choices[0].type1.type2;
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(0.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    for mask in 0..8 {
+      for group in [None, Some("t")] {
+        validator.state.is_multi_type_choice = mask & 1 != 0;
+        validator.state.is_multi_group_choice = mask & 2 != 0;
+        validator.state.is_group_to_choice_enum = mask & 4 != 0;
+        validator.state.type_group_name_entry = group;
+        for _ in 0..2 {
+          validator.errors.clear();
+          assert!(!validator
+            .probe_numeric_target::<std::io::Error>(target)
+            .unwrap());
+          assert!(!validator.errors.is_empty());
+          for error in &validator.errors {
+            assert_eq!(error.is_multi_type_choice, mask & 1 != 0);
+            assert_eq!(error.is_multi_group_choice, mask & 2 != 0);
+            assert_eq!(error.is_group_to_choice_enum, mask & 4 != 0);
+            assert_eq!(error.type_group_name_entry.as_deref(), group);
+          }
+        }
+      }
     }
   }
 
