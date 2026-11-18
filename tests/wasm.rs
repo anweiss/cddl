@@ -12,6 +12,9 @@ mod json_no_cut_fallthrough;
 #[path = "float_prelude_representability.rs"]
 mod float_prelude_representability;
 
+#[path = "date_time_validation.rs"]
+mod date_time_validation;
+
 #[wasm_bindgen_test]
 fn pass() {
   let input = indoc!(

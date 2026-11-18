@@ -20,7 +20,6 @@ use clap::{ArgAction, ArgGroup, Args, Parser, Subcommand};
 use simplelog::*;
 use std::{
   error::Error,
-  fmt::Write,
   fs::{self, File},
   io::{self, BufReader, IsTerminal, Read},
   path::Path,
@@ -160,224 +159,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     ColorChoice::Auto,
   )?;
 
-  let cli = Cli::parse();
+  run_command(&Cli::parse())
+}
 
+#[cfg(not(target_arch = "wasm32"))]
+fn run_command(cli: &Cli) -> Result<(), Box<dyn Error>> {
   match &cli.command {
-    Commands::CompileCddl { file } => {
-      let p = Path::new(file);
-      if !p.exists() {
-        error!(cli.ci, "CDDL document {:?} does not exist", p);
-        return Ok(());
-      }
-
-      let file_content = fs::read_to_string(file)?;
-      cddl_from_str(&file_content, true).map(|_| ())?;
-
-      info!("{} is conformant", file);
-    }
-    Commands::CompileJson { file } => {
-      let p = Path::new(file);
-      if !p.exists() {
-        error!(cli.ci, "JSON document {:?} does not exist", p);
-
-        return Ok(());
-      }
-
-      let file = File::open(file)?;
-      let reader = BufReader::new(file);
-      let _: serde_json::Value = serde_json::from_reader(reader)?;
-
-      return Ok(());
-    }
-    Commands::Validate(validate) => {
-      #[cfg(feature = "additional-controls")]
-      let enabled_features: Option<Vec<&str>> = validate
-        .features
-        .as_ref()
-        .map(|f| f.iter().map(|s| s.as_str()).collect());
-
-      #[cfg(feature = "additional-controls")]
-      if let Some(enabled_features) = &enabled_features {
-        let mut feature_str = String::from("enabled features: [");
-        for (idx, feature) in enabled_features.iter().enumerate() {
-          if idx == 0 {
-            let _ = write!(feature_str, "\"{}\"", feature);
-          } else {
-            let _ = write!(feature_str, ", \"{}\"", feature);
-          }
-        }
-        feature_str.push(']');
-
-        info!("{}", feature_str);
-      }
-
-      let p = Path::new(&validate.cddl);
-      if !p.exists() {
-        error!(cli.ci, "CDDL document {:?} does not exist", p);
-
-        return Ok(());
-      }
-
-      let cddl_str = fs::read_to_string(&validate.cddl)?;
-
-      info!(
-        "Root type for validation: {}",
-        root_type_name_from_cddl_str(&cddl_str)?
-      );
-
-      if let Some(files) = &validate.json {
-        for file in files {
-          let p = Path::new(file);
-          if !p.exists() {
-            error!(cli.ci, "File {:?} does not exist", p);
-
-            continue;
-          }
-
-          #[cfg(feature = "additional-controls")]
-          let r = validate_json_from_str(
-            &cddl_str,
-            &fs::read_to_string(file)?,
-            enabled_features.as_deref(),
-          );
-          #[cfg(not(feature = "additional-controls"))]
-          let r = validate_json_from_str(&cddl_str, &fs::read_to_string(file)?);
-
-          match r {
-            Ok(_) => {
-              info!("Validation of {:?} is successful", p);
-            }
-            Err(e) => {
-              error!(
-                cli.ci,
-                "Validation of {:?} failed: {}",
-                p,
-                e.to_string().trim_end()
-              );
-            }
-          }
-        }
-      }
-
-      if let Some(files) = &validate.cbor {
-        for file in files {
-          let p = Path::new(file);
-          if !p.exists() {
-            error!(cli.ci, "CBOR binary file {:?} does not exist", p);
-
-            continue;
-          }
-          let mut f = File::open(p)?;
-          let mut data = Vec::new();
-          f.read_to_end(&mut data)?;
-
-          #[cfg(feature = "additional-controls")]
-          let c = validate_cbor_from_slice(&cddl_str, &data, None);
-          #[cfg(not(feature = "additional-controls"))]
-          let c = validate_cbor_from_slice(&cddl_str, &data);
-
-          match c {
-            Ok(_) => {
-              info!("Validation of {:?} is successful", p);
-            }
-            Err(e) => {
-              error!(
-                cli.ci,
-                "Validation of {:?} failed: {}",
-                p,
-                e.to_string().trim_end()
-              );
-            }
-          }
-        }
-      }
-
-      if let Some(files) = &validate.csv {
-        let has_header = if validate.csv_header {
-          Some(true)
-        } else {
-          None
-        };
-
-        for file in files {
-          let p = Path::new(file);
-          if !p.exists() {
-            error!(cli.ci, "CSV file {:?} does not exist", p);
-
-            continue;
-          }
-
-          #[cfg(feature = "additional-controls")]
-          let r = validate_csv_from_str(
-            &cddl_str,
-            &fs::read_to_string(file)?,
-            has_header,
-            enabled_features.as_deref(),
-          );
-          #[cfg(not(feature = "additional-controls"))]
-          let r = validate_csv_from_str(&cddl_str, &fs::read_to_string(file)?, has_header);
-
-          match r {
-            Ok(_) => {
-              info!("Validation of {:?} is successful", p);
-            }
-            Err(e) => {
-              error!(
-                cli.ci,
-                "Validation of {:?} failed: {}",
-                p,
-                e.to_string().trim_end()
-              );
-            }
-          }
-        }
-      }
-
-      if validate.stdin {
-        let stdin = io::stdin();
-
-        let mut reader = stdin.lock();
-        let mut data = Vec::new();
-        reader.read_to_end(&mut data)?;
-        if let Ok(json) = std::str::from_utf8(&data) {
-          #[cfg(feature = "additional-controls")]
-          let r = validate_json_from_str(&cddl_str, json, None);
-          #[cfg(not(feature = "additional-controls"))]
-          let r = validate_json_from_str(&cddl_str, json);
-
-          match r {
-            Ok(_) => {
-              info!("Validation from stdin is successful");
-            }
-            Err(e) => {
-              error!(
-                cli.ci,
-                "Validation from stdin failed: {}",
-                e.to_string().trim_end()
-              );
-            }
-          }
-        } else {
-          #[cfg(feature = "additional-controls")]
-          let c = validate_cbor_from_slice(&cddl_str, &data, enabled_features.as_deref());
-          #[cfg(not(feature = "additional-controls"))]
-          let c = validate_cbor_from_slice(&cddl_str, &data);
-
-          match c {
-            Ok(_) => {
-              info!("Validation from stdin is successful");
-            }
-            Err(e) => {
-              error!(
-                cli.ci,
-                "Validation from stdin failed: {}",
-                e.to_string().trim_end()
-              );
-            }
-          }
-        }
-      }
-    }
+    Commands::CompileCddl { file } => compile_cddl(file, cli.ci)?,
+    Commands::CompileJson { file } => compile_json(file, cli.ci)?,
+    Commands::Validate(validate) => validate_command(validate, cli.ci)?,
     #[cfg(feature = "modules")]
     Commands::ResolveModules {
       file,
@@ -387,6 +177,251 @@ fn main() -> Result<(), Box<dyn Error>> {
     } => resolve_modules_command(file.as_deref(), imports, start, include_path.as_deref())?,
   }
 
+  Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compile_cddl(file: &str, ci: bool) -> Result<(), Box<dyn Error>> {
+  let path = Path::new(file);
+  if !path.exists() {
+    error!(ci, "CDDL document {:?} does not exist", path);
+    return Ok(());
+  }
+  let file_content = fs::read_to_string(file)?;
+  cddl_from_str(&file_content, true).map(|_| ())?;
+  info!("{} is conformant", file);
+  Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compile_json(file: &str, ci: bool) -> Result<(), Box<dyn Error>> {
+  let path = Path::new(file);
+  if !path.exists() {
+    error!(ci, "JSON document {:?} does not exist", path);
+    return Ok(());
+  }
+  let file = File::open(file)?;
+  let reader = BufReader::new(file);
+  let _: serde_json::Value = serde_json::from_reader(reader)?;
+  Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_command(validate: &Validate, ci: bool) -> Result<(), Box<dyn Error>> {
+  #[cfg(feature = "additional-controls")]
+  let enabled_features = validate
+    .features
+    .as_ref()
+    .map(|features| features.iter().map(String::as_str).collect::<Vec<_>>());
+
+  #[cfg(feature = "additional-controls")]
+  if let Some(features) = &enabled_features {
+    log_enabled_features(features);
+  }
+
+  let path = Path::new(&validate.cddl);
+  if !path.exists() {
+    error!(ci, "CDDL document {:?} does not exist", path);
+    return Ok(());
+  }
+  let cddl = fs::read_to_string(&validate.cddl)?;
+  info!(
+    "Root type for validation: {}",
+    root_type_name_from_cddl_str(&cddl)?
+  );
+  validate_json_files(
+    &cddl,
+    validate.json.as_deref(),
+    ci,
+    #[cfg(feature = "additional-controls")]
+    enabled_features.as_deref(),
+  )?;
+  validate_cbor_files(
+    &cddl,
+    validate.cbor.as_deref(),
+    ci,
+    #[cfg(feature = "additional-controls")]
+    enabled_features.as_deref(),
+  )?;
+  validate_csv_files(
+    &cddl,
+    validate.csv.as_deref(),
+    validate.csv_header,
+    ci,
+    #[cfg(feature = "additional-controls")]
+    enabled_features.as_deref(),
+  )?;
+  if validate.stdin {
+    validate_stdin(
+      &cddl,
+      ci,
+      #[cfg(feature = "additional-controls")]
+      enabled_features.as_deref(),
+    )?;
+  }
+  Ok(())
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "additional-controls"))]
+fn log_enabled_features(features: &[&str]) {
+  let formatted = features
+    .iter()
+    .map(|feature| format!("\"{}\"", feature))
+    .collect::<Vec<_>>()
+    .join(", ");
+  info!("enabled features: [{}]", formatted);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_json_files(
+  cddl: &str,
+  files: Option<&[String]>,
+  ci: bool,
+  #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
+) -> Result<(), Box<dyn Error>> {
+  let Some(files) = files else {
+    return Ok(());
+  };
+  for file in files {
+    let path = Path::new(file);
+    if !path.exists() {
+      error!(ci, "File {:?} does not exist", path);
+      continue;
+    }
+    let result = validate_json_from_str(
+      cddl,
+      &fs::read_to_string(file)?,
+      #[cfg(feature = "additional-controls")]
+      enabled_features,
+    );
+    report_file_result(result, path, ci)?;
+  }
+  Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_cbor_files(
+  cddl: &str,
+  files: Option<&[String]>,
+  ci: bool,
+  #[cfg(feature = "additional-controls")] _enabled_features: Option<&[&str]>,
+) -> Result<(), Box<dyn Error>> {
+  let Some(files) = files else {
+    return Ok(());
+  };
+  for file in files {
+    let path = Path::new(file);
+    if !path.exists() {
+      error!(ci, "CBOR binary file {:?} does not exist", path);
+      continue;
+    }
+    let mut file = File::open(path)?;
+    let mut data = Vec::new();
+    file.read_to_end(&mut data)?;
+    let result = validate_cbor_from_slice(
+      cddl,
+      &data,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    report_file_result(result, path, ci)?;
+  }
+  Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_csv_files(
+  cddl: &str,
+  files: Option<&[String]>,
+  csv_header: bool,
+  ci: bool,
+  #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
+) -> Result<(), Box<dyn Error>> {
+  let has_header = csv_header.then_some(true);
+  let Some(files) = files else {
+    return Ok(());
+  };
+  for file in files {
+    let path = Path::new(file);
+    if !path.exists() {
+      error!(ci, "CSV file {:?} does not exist", path);
+      continue;
+    }
+    let result = validate_csv_from_str(
+      cddl,
+      &fs::read_to_string(file)?,
+      has_header,
+      #[cfg(feature = "additional-controls")]
+      enabled_features,
+    );
+    report_file_result(result, path, ci)?;
+  }
+  Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn report_file_result<T, E: std::fmt::Display>(
+  result: Result<T, E>,
+  path: &Path,
+  ci: bool,
+) -> Result<(), Box<dyn Error>> {
+  match result {
+    Ok(_) => info!("Validation of {:?} is successful", path),
+    Err(error) => {
+      error!(
+        ci,
+        "Validation of {:?} failed: {}",
+        path,
+        error.to_string().trim_end()
+      );
+    }
+  }
+  Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_stdin(
+  cddl: &str,
+  ci: bool,
+  #[cfg(feature = "additional-controls")] enabled_features: Option<&[&str]>,
+) -> Result<(), Box<dyn Error>> {
+  let mut data = Vec::new();
+  io::stdin().lock().read_to_end(&mut data)?;
+  if let Ok(json) = std::str::from_utf8(&data) {
+    let result = validate_json_from_str(
+      cddl,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    report_stdin_result(result, ci)?;
+  } else {
+    let result = validate_cbor_from_slice(
+      cddl,
+      &data,
+      #[cfg(feature = "additional-controls")]
+      enabled_features,
+    );
+    report_stdin_result(result, ci)?;
+  }
+  Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn report_stdin_result<T, E: std::fmt::Display>(
+  result: Result<T, E>,
+  ci: bool,
+) -> Result<(), Box<dyn Error>> {
+  match result {
+    Ok(_) => info!("Validation from stdin is successful"),
+    Err(error) => {
+      error!(
+        ci,
+        "Validation from stdin failed: {}",
+        error.to_string().trim_end()
+      );
+    }
+  }
   Ok(())
 }
 

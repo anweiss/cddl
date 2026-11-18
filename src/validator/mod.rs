@@ -29,6 +29,7 @@ use crate::{
 };
 
 use std::collections::{HashMap, HashSet};
+use std::convert::TryFrom;
 use std::error::Error;
 use std::rc::Rc;
 
@@ -64,6 +65,64 @@ pub trait Validator<'a, 'b, E: Error>: Visitor<'a, 'b, E> {
   fn validate(&mut self) -> std::result::Result<(), E>;
   /// Collect validation errors
   fn add_error(&mut self, reason: String);
+}
+
+fn valid_time_integer(seconds: i128) -> bool {
+  i64::try_from(seconds)
+    .ok()
+    .is_some_and(|seconds| jiff::Timestamp::from_second(seconds).is_ok())
+}
+
+fn valid_time_float(seconds: f64) -> bool {
+  seconds.is_finite() && jiff::Timestamp::from_millisecond((seconds * 1000.0) as i64).is_ok()
+}
+
+fn valid_tdate_prefix(bytes: &[u8]) -> bool {
+  bytes.len() >= 20
+    && bytes[0..4].iter().all(u8::is_ascii_digit)
+    && bytes[4] == b'-'
+    && bytes[5..7].iter().all(u8::is_ascii_digit)
+    && bytes[7] == b'-'
+    && bytes[8..10].iter().all(u8::is_ascii_digit)
+    && matches!(bytes[10], b'T' | b't' | b' ')
+    && bytes[11..13].iter().all(u8::is_ascii_digit)
+    && bytes[13] == b':'
+    && bytes[14..16].iter().all(u8::is_ascii_digit)
+    && bytes[16] == b':'
+    && bytes[17..19].iter().all(u8::is_ascii_digit)
+}
+
+fn valid_tdate(value: &str) -> bool {
+  let bytes = value.as_bytes();
+  if !valid_tdate_prefix(bytes) {
+    return false;
+  }
+  let mut tail = &bytes[19..];
+  let mut fraction_digits = 0;
+  if tail.first() == Some(&b'.') {
+    tail = &tail[1..];
+    fraction_digits = tail.iter().take_while(|b| b.is_ascii_digit()).count();
+    if fraction_digits == 0 {
+      return false;
+    }
+    tail = &tail[fraction_digits..];
+  }
+  let valid_offset = matches!(tail, [b'Z' | b'z'])
+    || (tail.len() == 6
+      && matches!(tail[0], b'+' | b'-')
+      && tail[1..3].iter().all(u8::is_ascii_digit)
+      && &tail[1..3] <= b"23"
+      && tail[3] == b':'
+      && tail[4..6].iter().all(u8::is_ascii_digit));
+  if !valid_offset {
+    return false;
+  }
+  if fraction_digits > 9 {
+    let truncated = format!("{}{}", &value[..29], &value[20 + fraction_digits..]);
+    truncated.parse::<jiff::Timestamp>().is_ok()
+  } else {
+    value.parse::<jiff::Timestamp>().is_ok()
+  }
 }
 
 /// Generic rule representation used during validation.

@@ -1741,82 +1741,14 @@ fn format_single_arg(
   precision: Option<usize>,
 ) -> Result<String, String> {
   let raw = match specifier {
-    'd' | 'i' => {
-      let val = extract_int(arg)?;
-      format!("{}", val)
-    }
-    'u' => {
-      let val = extract_uint(arg)?;
-      format!("{}", val)
-    }
-    'x' => {
-      let val = extract_uint(arg)?;
-      if flags.contains('#') {
-        format!("0x{:x}", val)
-      } else {
-        format!("{:x}", val)
-      }
-    }
-    'X' => {
-      let val = extract_uint(arg)?;
-      if flags.contains('#') {
-        format!("0X{:X}", val)
-      } else {
-        format!("{:X}", val)
-      }
-    }
-    'o' => {
-      let val = extract_uint(arg)?;
-      if flags.contains('#') {
-        format!("0{:o}", val)
-      } else {
-        format!("{:o}", val)
-      }
-    }
-    'b' => {
-      let val = extract_uint(arg)?;
-      format!("{:b}", val)
-    }
-    'B' => {
-      let val = extract_uint(arg)?;
-      format!("{:b}", val) // Same as %b in C23
-    }
-    'f' | 'F' => {
-      let val = extract_float(arg)?;
-      match precision {
-        Some(p) => format!("{:.prec$}", val, prec = p),
-        None => format!("{:.6}", val), // Default precision is 6
-      }
-    }
-    'e' => {
-      let val = extract_float(arg)?;
-      let p = precision.unwrap_or(6);
-      format!("{:.prec$e}", val, prec = p)
-    }
-    'E' => {
-      let val = extract_float(arg)?;
-      let p = precision.unwrap_or(6);
-      format!("{:.prec$E}", val, prec = p)
-    }
-    'g' | 'G' => {
-      let val = extract_float(arg)?;
-      // Use shortest representation
-      match precision {
-        Some(p) => format!("{:.prec$}", val, prec = p),
-        None => format!("{}", val),
-      }
-    }
+    'd' | 'i' => format!("{}", extract_int(arg)?),
+    'u' | 'x' | 'X' | 'o' | 'b' | 'B' => format_unsigned_arg(arg, specifier, flags)?,
+    'f' | 'F' | 'e' | 'E' | 'g' | 'G' => format_float_arg(arg, specifier, precision)?,
     's' => match arg {
       Type2::TextValue { value, .. } => value.to_string(),
       _ => return Err("expected text string for %s conversion".to_string()),
     },
-    'c' => {
-      let val = extract_uint(arg)?;
-      match char::from_u32(val as u32) {
-        Some(c) => c.to_string(),
-        None => return Err(format!("invalid Unicode scalar value for %c: {}", val)),
-      }
-    }
+    'c' => format_char_arg(arg)?,
     _ => {
       return Err(format!(
         "unsupported printf conversion specifier: %{}",
@@ -1827,6 +1759,68 @@ fn format_single_arg(
 
   // Apply width and alignment
   apply_width_flags(&raw, flags, width)
+}
+
+#[cfg(feature = "additional-controls")]
+fn format_unsigned_arg(arg: &Type2<'_>, specifier: char, flags: &str) -> Result<String, String> {
+  let val = extract_uint(arg)?;
+  Ok(match specifier {
+    'u' => format!("{}", val),
+    'x' => {
+      if flags.contains('#') {
+        format!("0x{:x}", val)
+      } else {
+        format!("{:x}", val)
+      }
+    }
+    'X' => {
+      if flags.contains('#') {
+        format!("0X{:X}", val)
+      } else {
+        format!("{:X}", val)
+      }
+    }
+    'o' => {
+      if flags.contains('#') {
+        format!("0{:o}", val)
+      } else {
+        format!("{:o}", val)
+      }
+    }
+    'b' | 'B' => format!("{:b}", val),
+    _ => unreachable!("unsigned format specifier was checked by the caller"),
+  })
+}
+
+#[cfg(feature = "additional-controls")]
+fn format_float_arg(
+  arg: &Type2<'_>,
+  specifier: char,
+  precision: Option<usize>,
+) -> Result<String, String> {
+  let val = extract_float(arg)?;
+  let formatted = match specifier {
+    'f' | 'F' => match precision {
+      Some(p) => format!("{:.prec$}", val, prec = p),
+      None => format!("{:.6}", val),
+    },
+    'e' => format!("{:.prec$e}", val, prec = precision.unwrap_or(6)),
+    'E' => format!("{:.prec$E}", val, prec = precision.unwrap_or(6)),
+    'g' | 'G' => match precision {
+      Some(p) => format!("{:.prec$}", val, prec = p),
+      None => format!("{}", val),
+    },
+    _ => unreachable!("float format specifier was checked by the caller"),
+  };
+  Ok(formatted)
+}
+
+#[cfg(feature = "additional-controls")]
+fn format_char_arg(arg: &Type2<'_>) -> Result<String, String> {
+  let val = extract_uint(arg)?;
+  char::from_u32(val as u32)
+    .map(|c| c.to_string())
+    .ok_or_else(|| format!("invalid Unicode scalar value for %c: {}", val))
 }
 
 #[cfg(feature = "additional-controls")]

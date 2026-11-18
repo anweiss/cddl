@@ -1017,13 +1017,17 @@ function updateProblems(errors) {
     else warningCount++;
   }
 
-  // Badge
   if (problemsBadge) {
     problemsBadge.textContent = String(count);
     problemsBadge.classList.toggle('zero', count === 0);
   }
+  updateProblemStatus(errorCount, warningCount);
+  if (!problemsBody) return;
+  renderProblemRows(errors, problemsBody);
+}
 
-  // Status pill
+/** @param {number} errorCount @param {number} warningCount */
+function updateProblemStatus(errorCount, warningCount) {
   if (statusPill) statusPill.className = 'status-pill';
   if (errorCount > 0) {
     if (statusPill) statusPill.classList.add('invalid');
@@ -1039,13 +1043,14 @@ function updateProblems(errors) {
     if (statusPill) statusPill.classList.add('valid');
     if (statusText) statusText.textContent = 'Valid';
   }
+}
 
-  // Body — batch DOM writes with a document fragment
-  if (!problemsBody) return;
-
+/** @param {Diagnostic[]} errors @param {HTMLElement} body */
+function renderProblemRows(errors, body) {
+  const count = errors.length;
   if (count === 0) {
-    problemsBody.innerHTML = '';
-    problemsBody.appendChild(createEmptyState());
+    body.innerHTML = '';
+    body.appendChild(createEmptyState());
     return;
   }
 
@@ -1074,8 +1079,8 @@ function updateProblems(errors) {
 
     frag.appendChild(row);
   }
-  problemsBody.innerHTML = '';
-  problemsBody.appendChild(frag);
+  body.innerHTML = '';
+  body.appendChild(frag);
 }
 
 function createEmptyState() {

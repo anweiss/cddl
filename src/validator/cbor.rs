@@ -9,7 +9,6 @@ use crate::{
   visitor::{self, *},
 };
 
-use core::convert::TryInto;
 use std::{
   borrow::Cow,
   convert::TryFrom,
@@ -17,7 +16,6 @@ use std::{
 };
 
 use super::cbor_value::{decode_cbor, Value};
-use chrono::{TimeZone, Utc};
 use serde_json;
 
 #[cfg(feature = "additional-controls")]
@@ -4568,9 +4566,7 @@ where
         } else if numeric_ident_matches_cbor_value(self.state.cddl, ident, &self.cbor) {
           Ok(())
         } else if is_ident_time_data_type(self.state.cddl, ident) {
-          if let chrono::LocalResult::None =
-            Utc.timestamp_millis_opt((i128::from(*i) * 1000) as i64)
-          {
+          if !super::valid_time_integer(i128::from(*i)) {
             let i = *i;
             self.add_error(format!(
               "expected time data type, invalid UNIX timestamp {:?}",
@@ -4588,7 +4584,7 @@ where
         if numeric_ident_matches_cbor_value(self.state.cddl, ident, &self.cbor) {
           Ok(())
         } else if is_ident_time_data_type(self.state.cddl, ident) {
-          if let chrono::LocalResult::None = Utc.timestamp_millis_opt((*f * 1000f64) as i64) {
+          if !super::valid_time_float(*f) {
             let f = *f;
             self.add_error(format!(
               "expected time data type, invalid UNIX timestamp {:?}",
@@ -4610,8 +4606,11 @@ where
         } else if is_ident_b64url_data_type(self.state.cddl, ident) {
           self.add_error("expected b64url tag 33 with a text payload".into());
         } else if is_ident_tdate_data_type(self.state.cddl, ident) {
-          if let Err(e) = chrono::DateTime::parse_from_rfc3339(s) {
-            self.add_error(format!("expected tdate data type, decoding error: {}", e));
+          if !super::valid_tdate(s) {
+            self.add_error(
+              "expected tdate data type, invalid RFC 3339 timestamp or outside the supported timestamp range"
+                .into(),
+            );
           }
         } else if is_ident_string_data_type(self.state.cddl, ident) {
           return Ok(());
@@ -4639,8 +4638,11 @@ where
           0 => {
             if is_ident_tdate_data_type(self.state.cddl, ident) {
               if let Value::Text(value) = value.as_ref() {
-                if let Err(e) = chrono::DateTime::parse_from_rfc3339(value) {
-                  self.add_error(format!("expected tdate data type, decoding error: {}", e));
+                if !super::valid_tdate(value) {
+                  self.add_error(
+                    "expected tdate data type, invalid RFC 3339 timestamp or outside the supported timestamp range"
+                      .into(),
+                  );
                 }
               } else {
                 self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
@@ -4652,18 +4654,14 @@ where
           1 => {
             if is_ident_time_data_type(self.state.cddl, ident) {
               if let Value::Integer(value) = *value.as_ref() {
-                let dt = Utc.timestamp_opt(value.try_into().unwrap(), 0);
-                if let chrono::LocalResult::None = dt {
+                if !super::valid_time_integer(i128::from(value)) {
                   self.add_error(format!(
                     "expected time data type, invalid UNIX timestamp {:?}",
                     self.cbor
                   ));
                 }
               } else if let Value::Float(value) = value.as_ref() {
-                let seconds = value.trunc() as i64;
-                let nanoseconds = (value.fract() * 1e9) as u32;
-                let dt = Utc.timestamp_opt(seconds, nanoseconds);
-                if let chrono::LocalResult::None = dt {
+                if !super::valid_time_float(*value) {
                   self.add_error(format!(
                     "expected time data type, invalid UNIX timestamp {:?}",
                     self.cbor
