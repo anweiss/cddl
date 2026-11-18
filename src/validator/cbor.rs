@@ -4926,7 +4926,10 @@ where
           self.add_error("expected b64url tag 33 with a text payload".into());
         } else if is_ident_tdate_data_type(self.state.cddl, ident) {
           if !super::valid_tdate(s) {
-            self.add_error("expected tdate data type, invalid RFC 3339 timestamp".into());
+            self.add_error(
+              "expected tdate data type, invalid RFC 3339 timestamp or outside the supported timestamp range"
+                .into(),
+            );
           }
         } else if is_ident_string_data_type(self.state.cddl, ident) {
           return Ok(());
@@ -4953,7 +4956,10 @@ where
             if is_ident_tdate_data_type(self.state.cddl, ident) {
               if let Value::Text(value) = value.as_ref() {
                 if !super::valid_tdate(value) {
-                  self.add_error("expected tdate data type, invalid RFC 3339 timestamp".into());
+                  self.add_error(
+                    "expected tdate data type, invalid RFC 3339 timestamp or outside the supported timestamp range"
+                      .into(),
+                  );
                 }
               } else {
                 self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));

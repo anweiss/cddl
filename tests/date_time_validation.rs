@@ -1,5 +1,51 @@
 #![cfg(all(feature = "std", not(feature = "lsp")))]
 
+#[cfg(all(any(feature = "json", feature = "cbor"), not(target_arch = "wasm32")))]
+fn error_text(error: impl std::fmt::Display) -> String {
+  error.to_string()
+}
+
+#[cfg(all(any(feature = "json", feature = "cbor"), target_arch = "wasm32"))]
+fn error_text(error: wasm_bindgen::JsValue) -> String {
+  serde_wasm_bindgen::from_value::<serde_json::Value>(error)
+    .unwrap()
+    .to_string()
+}
+
+#[cfg(any(feature = "json", feature = "cbor"))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn date_errors_explain_timestamp_range() {
+  #[cfg(feature = "json")]
+  {
+    let error = cddl::validator::validate_json_from_str(
+      "root = tdate",
+      r#""9999-12-31T00:00:00Z""#,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
+    assert!(error_text(error).contains("supported timestamp range"));
+  }
+  #[cfg(feature = "cbor")]
+  {
+    let value = ciborium::value::Value::Tag(
+      0,
+      Box::new(ciborium::value::Value::Text("9999-12-31T00:00:00Z".into())),
+    );
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(&value, &mut bytes).unwrap();
+    let error = cddl::validator::validate_cbor_from_slice(
+      "root = tdate",
+      &bytes,
+      #[cfg(feature = "additional-controls")]
+      None,
+    )
+    .unwrap_err();
+    assert!(error_text(error).contains("supported timestamp range"));
+  }
+}
+
 #[cfg(feature = "json")]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
