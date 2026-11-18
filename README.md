@@ -618,7 +618,7 @@ The following types and features of CDDL are supported by this crate for validat
 | `uri` | string (valid RFC3986 URI)                                  |
 | `tdate` | string (valid RFC3339 date/time)                            |
 | `b64url` | string (base64url-encoded)                                  |
-| `time` | number (valid UNIX timestamp integer in seconds)            |
+| `time` | number (valid UNIX timestamp in seconds)                    |
 | `number / int / float` | number<sup>[2](#number)</sup>                               |
 | `bool / true / false` | boolean                                                     |
 | `null / nil` | null                                                        |
@@ -627,6 +627,10 @@ The following types and features of CDDL are supported by this crate for validat
 | unwrap ( `~` )           | any JSON that matches unwrapped type from map, array or tag |
 
 CDDL groups, generics, sockets/plugs and group-to-choice enumerations can all be used when validating JSON.
+
+For JSON and CBOR, `time` and `tdate` are limited to jiff's representable timestamp range
+(-377705023201 through 253402207200 seconds, inclusive). Fractional `time` values are
+checked at millisecond precision.
 
 Since JSON objects only support keys whose types are JSON strings, when validating JSON, member keys defined in CDDL structs must use either the colon syntax ( `mykey: tstr` or `"mykey": tstr` ) or the double arrow syntax provided that the member key is either a text string value ( `"mykey" => tstr` ) or a bareword that resolves to either a string data type ( `text` or `tstr` ) or another text string value ( `* tstr => any` ).
 

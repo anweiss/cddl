@@ -870,37 +870,22 @@ function generateNode(node, key, ctx, depth, visiting, env, label) {
     ctx.warnings.push(`Recursion depth exceeded${label ? ` at "${label}"` : ''}.`);
     return UNSATISFIABLE;
   }
+  if (node.kind === 'unwrap' || node.kind === 'range')
+    return generateWrappedNode(node, key, ctx, depth, visiting, env, label);
 
   switch (node.kind) {
     case 'literal':
-      return node.value;
     case 'bytesLiteral':
-      markNotJsonRepresentable(ctx, 'byte strings');
-      ctx.warnings.push(`Byte string literal ${node.raw} represented as a JSON string.`);
-      return 'AQID';
+      return generateLiteralNode(node, ctx);
     case 'ref':
       return generateRef(node.name, node.args, key, ctx, depth, visiting, env);
-    case 'unwrap':
-      return generateNode(node.ref, key, ctx, depth + 1, visiting, env, label);
-    case 'range':
-      return generateNode(node.lower, key, ctx, depth + 1, visiting, env, label);
     case 'choice': {
-      const option = chooseOption(node.options, ctx.model, env);
-      ctx.warnings.push(
-        `Using ${option === node.options[0] ? 'first' : 'a later'} alternative of choice${node.label ? ` "${node.label}"` : ''}.`,
-      );
-      if (option !== node.options[0])
-        ctx.warnings.push(
-          'Skipped an earlier choice alternative with a prelude-name map key that does not validate as a JSON object key.',
-        );
-      return generateNode(option, key, ctx, depth + 1, visiting, env, label);
+      return generateChoiceNode(node, key, ctx, depth, visiting, env, label);
     }
     case 'control':
       return generateControl(node, key, ctx, depth, visiting, env, label);
     case 'tag':
-      markNotJsonRepresentable(ctx, 'CBOR tags');
-      ctx.warnings.push(`CBOR tag ${node.tag || ''} was dropped for JSON output.`.trim());
-      return generateNode(node.inner, key, ctx, depth + 1, visiting, env, label);
+      return generateTaggedNode(node, key, ctx, depth, visiting, env, label);
     case 'map':
       return generateMap(node.entries, ctx, depth + 1, visiting, env);
     case 'array':
@@ -914,16 +899,91 @@ function generateNode(node, key, ctx, depth, visiting, env, label) {
     case 'groupMerge':
       return generateGroupMerge(node.options, ctx, depth + 1, visiting, env);
     case 'enumRef': {
-      const value = generateNode(node.ref, key, ctx, depth + 1, visiting, env, label);
-      return value && typeof value === 'object' && !Array.isArray(value)
-        ? (Object.values(value)[0] ?? null)
-        : value;
+      return generateEnumReference(node, key, ctx, depth, visiting, env, label);
     }
-    case 'unknown':
     default:
-      ctx.warnings.push(`Unsupported construct "${node.name || node.kind}"; emitted null.`);
-      return null;
+      return generateUnknownNode(node, ctx);
   }
+}
+
+/**
+ * @param {Extract<AstNode, {kind: 'unwrap'|'range'}>} node
+ * @param {string|null} key
+ * @param {Context} ctx
+ * @param {number} depth
+ * @param {Set<string>} visiting
+ * @param {Environment} env
+ * @param {string|null} label
+ */
+function generateWrappedNode(node, key, ctx, depth, visiting, env, label) {
+  const child = node.kind === 'unwrap' ? node.ref : node.lower;
+  return generateNode(child, key, ctx, depth + 1, visiting, env, label);
+}
+
+/** @param {Extract<AstNode, {kind: 'literal'|'bytesLiteral'}>} node @param {Context} ctx */
+function generateLiteralNode(node, ctx) {
+  if (node.kind === 'literal') return node.value;
+  markNotJsonRepresentable(ctx, 'byte strings');
+  ctx.warnings.push(`Byte string literal ${node.raw} represented as a JSON string.`);
+  return 'AQID';
+}
+
+/**
+ * @param {Extract<AstNode, {kind: 'choice'}>} node
+ * @param {string|null} key
+ * @param {Context} ctx
+ * @param {number} depth
+ * @param {Set<string>} visiting
+ * @param {Environment} env
+ * @param {string|null} label
+ */
+function generateChoiceNode(node, key, ctx, depth, visiting, env, label) {
+  const option = chooseOption(node.options, ctx.model, env);
+  ctx.warnings.push(
+    `Using ${option === node.options[0] ? 'first' : 'a later'} alternative of choice${node.label ? ` "${node.label}"` : ''}.`,
+  );
+  if (option !== node.options[0])
+    ctx.warnings.push(
+      'Skipped an earlier choice alternative with a prelude-name map key that does not validate as a JSON object key.',
+    );
+  return generateNode(option, key, ctx, depth + 1, visiting, env, label);
+}
+
+/**
+ * @param {Extract<AstNode, {kind: 'tag'}>} node
+ * @param {string|null} key
+ * @param {Context} ctx
+ * @param {number} depth
+ * @param {Set<string>} visiting
+ * @param {Environment} env
+ * @param {string|null} label
+ */
+function generateTaggedNode(node, key, ctx, depth, visiting, env, label) {
+  markNotJsonRepresentable(ctx, 'CBOR tags');
+  ctx.warnings.push(`CBOR tag ${node.tag || ''} was dropped for JSON output.`.trim());
+  return generateNode(node.inner, key, ctx, depth + 1, visiting, env, label);
+}
+
+/**
+ * @param {Extract<AstNode, {kind: 'enumRef'}>} node
+ * @param {string|null} key
+ * @param {Context} ctx
+ * @param {number} depth
+ * @param {Set<string>} visiting
+ * @param {Environment} env
+ * @param {string|null} label
+ */
+function generateEnumReference(node, key, ctx, depth, visiting, env, label) {
+  const value = generateNode(node.ref, key, ctx, depth + 1, visiting, env, label);
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (Object.values(value)[0] ?? null)
+    : value;
+}
+
+/** @param {Extract<AstNode, {kind: 'unknown'}>} node @param {Context} ctx */
+function generateUnknownNode(node, ctx) {
+  ctx.warnings.push(`Unsupported construct "${node.name || node.kind}"; emitted null.`);
+  return null;
 }
 
 /** @type {(node: import('./sample-types.js').ControlNode, key: string | null, ctx: Context, depth: number, visiting: Set<string>, env: Environment, label: string | null) => GeneratedValue} */
@@ -1111,30 +1171,10 @@ function stringForKey(key) {
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
   if (normalized.includes('email')) return 'user@example.com';
-  if (
-    normalized.includes('url') ||
-    normalized.includes('uri') ||
-    normalized === 'href' ||
-    normalized.includes('regid')
-  )
-    return 'https://example.com';
+  if (isUrlKey(normalized)) return 'https://example.com';
   if (normalized.includes('uuid')) return '123e4567-e89b-12d3-a456-426614174000';
-  if (
-    normalized === 'id' ||
-    normalized.endsWith('id') ||
-    normalized.includes('identifier') ||
-    normalized.includes('jti')
-  )
-    return '123e4567-e89b-12d3-a456-426614174000';
-  if (
-    normalized.includes('date') ||
-    normalized.includes('time') ||
-    normalized === 'iat' ||
-    normalized === 'nbf' ||
-    normalized === 'exp' ||
-    normalized.includes('expire')
-  )
-    return '2026-08-17T16:56:23Z';
+  if (isIdentifierKey(normalized)) return '123e4567-e89b-12d3-a456-426614174000';
+  if (isTimeKey(normalized)) return '2026-08-17T16:56:23Z';
   if (normalized.includes('phone')) return '+1-555-0100';
   if (normalized.includes('name')) return 'example name';
   if (normalized.includes('address') || normalized.includes('street')) return '123 Example Street';
@@ -1146,65 +1186,127 @@ function stringForKey(key) {
   return 'string';
 }
 
+/** @param {string} key */
+function isUrlKey(key) {
+  return key.includes('url') || key.includes('uri') || key === 'href' || key.includes('regid');
+}
+
+/** @param {string} key */
+function isIdentifierKey(key) {
+  return key === 'id' || key.endsWith('id') || key.includes('identifier') || key.includes('jti');
+}
+
+/** @param {string} key */
+function isTimeKey(key) {
+  return (
+    key.includes('date') ||
+    key.includes('time') ||
+    key === 'iat' ||
+    key === 'nbf' ||
+    key === 'exp' ||
+    key.includes('expire')
+  );
+}
+
 /** @type {(entries: GroupEntry[], ctx: Context, depth: number, visiting: Set<string>, env: Environment, target?: JsonObject) => JsonObject} */
 function generateMap(entries, ctx, depth, visiting, env, target) {
   const object = target || {};
   for (const entry of entries) {
     if (!entry) continue;
-    if (entry.kind === 'groupChoice') {
-      ctx.warnings.push('Using first alternative of group choice.');
-      mergeMembers(object, generateMap(entry.options[0], ctx, depth + 1, visiting, env));
-      continue;
-    }
-
-    if (entry.kind === 'group') {
-      if (skipOptional(entry, ctx)) continue;
-      const count = repeatCount(entry.occurrence, ctx);
-      // Repeated groups generate into the same object so dynamic keys stay distinct.
-      for (let i = 0; i < count; i++)
-        generateMap(entry.entries, ctx, depth + 1, visiting, env, object);
-      continue;
-    }
-    if (entry.kind === 'member') {
-      if (skipOptional(entry, ctx)) continue;
-      const count = repeatCount(entry.occurrence, ctx);
-      for (let i = 0; i < count; i++) {
-        const baseKey = keyToString(entry.key, ctx, depth, visiting, env, entry.arrow);
-        // A map cannot hold duplicate keys, so repeated members need distinct ones.
-        const taken = Object.prototype.hasOwnProperty.call(object, baseKey);
-        const key = i === 0 && !taken ? baseKey : distinctKey(object, baseKey, entry, ctx, i);
-        const before = ctx.warnings.length;
-        const placed = placeAtOccurrence(
-          generateNode(entry.value, key, ctx, depth + 1, visiting, env, key),
-          entry.occurrence,
-          ctx,
-          `Member "${key}"`,
-        );
-        if (placed.omit) continue;
-        setMember(object, key, placed.value);
-        if (entry.occurrence.optional && ctx.warnings.length > before) {
-          ctx.warnings.push(`Optional member "${key}" was included using a heuristic value.`);
-        }
-      }
-      continue;
-    }
-    if (entry.kind === 'element') {
-      const placed = placeAtOccurrence(
-        generateNode(entry.value, null, ctx, depth + 1, visiting, env, null),
-        entry.occurrence,
-        ctx,
-        'Group entry',
-      );
-      if (placed.omit) continue;
-      const value = placed.value;
-      if (value && typeof value === 'object' && !Array.isArray(value)) mergeMembers(object, value);
-      else if (value !== null) {
-        ctx.warnings.push('Group entry did not produce an object member; stored it under "value".');
-        setMember(object, 'value', value);
-      }
-    }
+    generateMapEntry(entry, object, ctx, depth, visiting, env);
   }
   return object;
+}
+
+/**
+ * @param {GroupEntry} entry
+ * @param {JsonObject} object
+ * @param {Context} ctx
+ * @param {number} depth
+ * @param {Set<string>} visiting
+ * @param {Environment} env
+ */
+function generateMapEntry(entry, object, ctx, depth, visiting, env) {
+  if (entry.kind === 'groupChoice') {
+    ctx.warnings.push('Using first alternative of group choice.');
+    mergeMembers(object, generateMap(entry.options[0], ctx, depth + 1, visiting, env));
+  } else if (entry.kind === 'group') {
+    generateMapGroup(entry, object, ctx, depth, visiting, env);
+  } else if (entry.kind === 'member') {
+    generateMapMember(entry, object, ctx, depth, visiting, env);
+  } else {
+    generateMapElement(entry, object, ctx, depth, visiting, env);
+  }
+}
+
+/**
+ * @param {Extract<GroupEntry, {kind: 'group'}>} entry
+ * @param {JsonObject} object
+ * @param {Context} ctx
+ * @param {number} depth
+ * @param {Set<string>} visiting
+ * @param {Environment} env
+ */
+function generateMapGroup(entry, object, ctx, depth, visiting, env) {
+  if (skipOptional(entry, ctx)) return;
+  const count = repeatCount(entry.occurrence, ctx);
+  // Repeated groups generate into the same object so dynamic keys stay distinct.
+  for (let i = 0; i < count; i++) generateMap(entry.entries, ctx, depth + 1, visiting, env, object);
+}
+
+/**
+ * @param {Extract<GroupEntry, {kind: 'member'}>} entry
+ * @param {JsonObject} object
+ * @param {Context} ctx
+ * @param {number} depth
+ * @param {Set<string>} visiting
+ * @param {Environment} env
+ */
+function generateMapMember(entry, object, ctx, depth, visiting, env) {
+  if (skipOptional(entry, ctx)) return;
+  const count = repeatCount(entry.occurrence, ctx);
+  for (let i = 0; i < count; i++) {
+    const baseKey = keyToString(entry.key, ctx, depth, visiting, env, entry.arrow);
+    // A map cannot hold duplicate keys, so repeated members need distinct ones.
+    const taken = Object.prototype.hasOwnProperty.call(object, baseKey);
+    const key = i === 0 && !taken ? baseKey : distinctKey(object, baseKey, entry, ctx, i);
+    const before = ctx.warnings.length;
+    const placed = placeAtOccurrence(
+      generateNode(entry.value, key, ctx, depth + 1, visiting, env, key),
+      entry.occurrence,
+      ctx,
+      `Member "${key}"`,
+    );
+    if (placed.omit) continue;
+    setMember(object, key, placed.value);
+    if (entry.occurrence.optional && ctx.warnings.length > before) {
+      ctx.warnings.push(`Optional member "${key}" was included using a heuristic value.`);
+    }
+  }
+}
+
+/**
+ * @param {Extract<GroupEntry, {kind: 'element'}>} entry
+ * @param {JsonObject} object
+ * @param {Context} ctx
+ * @param {number} depth
+ * @param {Set<string>} visiting
+ * @param {Environment} env
+ */
+function generateMapElement(entry, object, ctx, depth, visiting, env) {
+  const placed = placeAtOccurrence(
+    generateNode(entry.value, null, ctx, depth + 1, visiting, env, null),
+    entry.occurrence,
+    ctx,
+    'Group entry',
+  );
+  if (placed.omit) return;
+  const value = placed.value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) mergeMembers(object, value);
+  else if (value !== null) {
+    ctx.warnings.push('Group entry did not produce an object member; stored it under "value".');
+    setMember(object, 'value', value);
+  }
 }
 
 /** @type {(object: JsonObject, baseKey: string, entry: Extract<GroupEntry, {kind: 'member'}>, ctx: Context, index: number) => string} */

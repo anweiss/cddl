@@ -1,6 +1,5 @@
 //! Custom CBOR value type that extends ciborium's Value with support for
-//! non-standard simple values (CBOR major type 7, values outside of
-//! false/true/null/undefined).
+//! simple values, including undefined (CBOR major type 7, value 23).
 //!
 //! This module exists because ciborium's deserializer intentionally rejects
 //! unassigned simple values (see <https://github.com/enarx/ciborium/issues/60>),
@@ -12,6 +11,7 @@
 #![cfg(feature = "cbor")]
 #![cfg(not(feature = "lsp"))]
 
+use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::fmt;
 
@@ -22,7 +22,8 @@ use ciborium_ll::{simple, Decoder, Header};
 /// A CBOR value representation that supports non-standard simple values.
 ///
 /// This mirrors `ciborium::value::Value` but adds a `Simple(u8)` variant for
-/// CBOR simple values outside the well-known set (false, true, null, undefined).
+/// CBOR simple values other than false, true and null. Undefined is `Simple(23)`,
+/// distinct from `Null`, as required by RFC 8949 section 3.3.
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Value {
   /// An integer
@@ -43,11 +44,11 @@ pub enum Value {
   Array(Vec<Value>),
   /// A map
   Map(Vec<(Value, Value)>),
-  /// A non-standard CBOR simple value (major type 7).
+  /// A CBOR simple value (major type 7), including undefined as `Simple(23)`.
   ///
-  /// Standard simple values (false=20, true=21, null=22, undefined=23) are
+  /// Standard simple values (false=20, true=21, null=22) are
   /// represented by their dedicated variants (`Bool`, `Null`). This variant
-  /// captures all other simple values (e.g. `#7.0` through `#7.19`, `#7.32`
+  /// captures undefined and other simple values (e.g. `#7.0` through `#7.19`, `#7.32`
   /// through `#7.255`).
   Simple(u8),
 }
@@ -99,7 +100,9 @@ impl Value {
 /// This conversion never produces `Value::Simple` since ciborium itself
 /// cannot parse non-standard simple values. It exists for interoperability
 /// with code that constructs `ciborium::value::Value` directly (e.g. tests
-/// that use `ciborium::ser`).
+/// that use `ciborium::ser`). Ciborium also collapses undefined to null;
+/// that distinction cannot be recovered here. Use [`decode_cbor`] when it
+/// matters for validation.
 impl From<ciborium::value::Value> for Value {
   fn from(v: ciborium::value::Value) -> Self {
     match v {
@@ -129,7 +132,8 @@ impl From<ciborium::value::Value> for Value {
 ///
 /// Note: `Value::Simple` is mapped to `ciborium::value::Value::Null` since
 /// ciborium has no `Simple` variant. This is only used for interoperability
-/// and should not be relied upon for simple value round-tripping.
+/// and should not be relied upon for simple value (including undefined)
+/// round-tripping. Validation uses this module's lossless representation.
 impl From<Value> for ciborium::value::Value {
   fn from(v: Value) -> Self {
     match v {
@@ -173,6 +177,8 @@ pub enum DecodeError {
   UnexpectedEof,
   /// Unexpected break marker
   UnexpectedBreak,
+  /// A map contains byte-for-byte identical text keys.
+  DuplicateTextKey,
 }
 
 impl fmt::Display for DecodeError {
@@ -182,6 +188,7 @@ impl fmt::Display for DecodeError {
       DecodeError::Syntax(offset) => write!(f, "syntax error at offset {}", offset),
       DecodeError::UnexpectedEof => write!(f, "unexpected end of input"),
       DecodeError::UnexpectedBreak => write!(f, "unexpected break"),
+      DecodeError::DuplicateTextKey => write!(f, "unexpected key: duplicate text key in CBOR map"),
     }
   }
 }
@@ -211,6 +218,10 @@ impl From<ciborium_ll::Error<std::io::Error>> for DecodeError {
 /// unassigned simple values (CBOR major type 7 with values outside
 /// false/true/null/undefined). Such values are represented as
 /// `Value::Simple(n)`.
+///
+/// Undefined is preserved as `Value::Simple(23)`, not null. Duplicate text
+/// map keys are rejected, including different encodings of the same text.
+/// Equivalence checking for non-text map keys is not yet implemented.
 pub fn decode_cbor(input: &[u8]) -> Result<Value, DecodeError> {
   let cursor = std::io::Cursor::new(input);
   let mut decoder = Decoder::from(cursor);
@@ -218,7 +229,29 @@ pub fn decode_cbor(input: &[u8]) -> Result<Value, DecodeError> {
   if decoder.offset() != input.len() {
     return Err(DecodeError::Syntax(decoder.offset()));
   }
+  if has_duplicate_text_keys(&value) {
+    return Err(DecodeError::DuplicateTextKey);
+  }
   Ok(value)
+}
+
+/// Text keys have an unambiguous equivalence rule in RFC 8949 section 5.6.1.
+/// Other key kinds need a separate generic-equivalence implementation; Rust's
+/// `PartialEq` is insufficient for NaNs and order-independent map keys.
+pub(crate) fn has_duplicate_text_keys(value: &Value) -> bool {
+  match value {
+    Value::Map(entries) => {
+      let mut seen = HashSet::new();
+      entries.iter().any(|(key, value)| {
+        matches!(key, Value::Text(text) if !seen.insert(text))
+          || has_duplicate_text_keys(key)
+          || has_duplicate_text_keys(value)
+      })
+    }
+    Value::Array(items) => items.iter().any(has_duplicate_text_keys),
+    Value::Tag(_, inner) => has_duplicate_text_keys(inner),
+    _ => false,
+  }
 }
 
 fn decode_value<R: ciborium_io::Read>(decoder: &mut Decoder<R>) -> Result<Value, DecodeError>
@@ -248,7 +281,7 @@ where
     Header::Simple(s) => match s {
       simple::FALSE => Ok(Value::Bool(false)),
       simple::TRUE => Ok(Value::Bool(true)),
-      simple::NULL | simple::UNDEFINED => Ok(Value::Null),
+      simple::NULL => Ok(Value::Null),
       _ => Ok(Value::Simple(s)),
     },
     Header::Bytes(len) => {
@@ -432,7 +465,11 @@ mod tests {
     // null (0xf6)
     assert_eq!(decode_cbor(&[0xf6]).unwrap(), Value::Null);
     // undefined (0xf7)
-    assert_eq!(decode_cbor(&[0xf7]).unwrap(), Value::Null);
+    assert_eq!(
+      decode_cbor(&[0xf7]).unwrap(),
+      Value::Simple(simple::UNDEFINED)
+    );
+    assert_eq!(decode_cbor(&[0xf7]).unwrap().to_string(), "simple(23)");
   }
 
   #[test]

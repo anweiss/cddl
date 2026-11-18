@@ -781,81 +781,140 @@ pub fn generate_rust_code_for_rule_from_ast(
   apply_alias_encodings(cddl, &mut type_defs, opts, Some(&rust_rule_name))?;
   let mut key_aliases = known_type_aliases(&type_defs);
   let mut group_helpers = included_group_helpers(&type_defs, &rust_rule_name);
-  let mut matching = type_defs
+  let mut matching = find_type_def(type_defs, &rust_rule_name, rule_name)?;
+  let mut output = String::new();
+  let emit_name = output_name.unwrap_or(&rust_rule_name);
+  render_fundamental_aliases(
+    &mut output,
+    &mut matching,
+    &mut group_helpers,
+    &fundamental_aliases,
+    emit_name,
+    &mut key_aliases,
+  )?;
+  let exact_name = emit_name.strip_prefix("r#").unwrap_or(emit_name);
+  scope_group_helpers(
+    &mut matching,
+    &mut group_helpers,
+    &rust_rule_name,
+    emit_name,
+    &format!("__cddl_groups_{}", exact_name),
+  );
+  render_single_type(
+    &mut output,
+    &matching,
+    emit_name,
+    opts,
+    &group_helpers,
+    &key_aliases,
+  )?;
+  Ok(output)
+}
+
+fn find_type_def(
+  type_defs: Vec<RustTypeDef>,
+  rust_rule_name: &str,
+  rule_name: &str,
+) -> Result<RustTypeDef, CodegenError> {
+  type_defs
     .into_iter()
     .find(|d| match d {
       RustTypeDef::Struct { name, .. }
       | RustTypeDef::TypeAlias { name, .. }
-      | RustTypeDef::Enum { name, .. } => name == &rust_rule_name,
+      | RustTypeDef::Enum { name, .. } => name == rust_rule_name,
     })
     .ok_or_else(|| {
       CodegenError::ParseError(format!(
         "no rule matching '{}' found in CDDL definition",
         rule_name
       ))
-    })?;
+    })
+}
 
-  let mut output = String::new();
-  let emit_name = output_name.unwrap_or(&rust_rule_name);
+fn render_fundamental_aliases(
+  output: &mut String,
+  matching: &mut RustTypeDef,
+  group_helpers: &mut [RustTypeDef],
+  fundamental_aliases: &[RustTypeDef],
+  emit_name: &str,
+  key_aliases: &mut BTreeMap<String, String>,
+) -> Result<(), CodegenError> {
   let exact_name = emit_name.strip_prefix("r#").unwrap_or(emit_name);
   let alias_mod = format!("__cddl_prelude_{}", exact_name);
-  let mut scoped_defs = group_helpers.clone();
+  let mut scoped_defs = group_helpers.to_vec();
   scoped_defs.push(matching.clone());
   let used = referenced_fundamental_aliases(&scoped_defs);
-  let mut scoped = BTreeMap::new();
   let aliases: Vec<_> = fundamental_aliases
     .iter()
     .filter(|def| matches!(def, RustTypeDef::TypeAlias { name, .. } if used.contains(name)))
     .collect();
-  if !aliases.is_empty() {
-    writeln!(output, "#[doc(hidden)]")?;
-    writeln!(output, "#[allow(non_snake_case)]")?;
-    writeln!(output, "pub mod {} {{", alias_mod)?;
-    // Unqualified configured types retain their caller-module meaning.
-    writeln!(output, "    #[allow(unused_imports)] use super::*;")?;
-    for def in aliases {
-      if let RustTypeDef::TypeAlias { name, target, doc } = def {
-        // A helper module is one level below the caller's configured paths.
-        let paths: BTreeMap<_, _> = target
-          .split(|c: char| !c.is_alphanumeric() && c != '_' && c != ':' && c != '#')
-          .filter_map(|token| {
-            if let Some(path) = token.strip_prefix("self::") {
-              Some((token.into(), format!("super::{}", path)))
-            } else if token.starts_with("super::") {
-              Some((token.into(), format!("super::{}", token)))
-            } else {
-              None
-            }
-          })
-          .collect();
-        let mut target = target.clone();
-        rewrite_type(&mut target, &paths, DEFAULT_ANY_TYPE);
-        render_type_alias(&mut output, name, &target, doc)?;
-        scoped.insert(name.clone(), format!("{}::{}", alias_mod, name));
-        key_aliases.insert(format!("{}::{}", alias_mod, name), target.clone());
-      }
-    }
-    writeln!(output, "}}")?;
-    for def in std::iter::once(&mut matching).chain(group_helpers.iter_mut()) {
-      rewrite_def_types(def, &scoped);
+  if aliases.is_empty() {
+    return Ok(());
+  }
+
+  writeln!(output, "#[doc(hidden)]")?;
+  writeln!(output, "#[allow(non_snake_case)]")?;
+  writeln!(output, "pub mod {} {{", alias_mod)?;
+  // Unqualified configured types retain their caller-module meaning.
+  writeln!(output, "    #[allow(unused_imports)] use super::*;")?;
+  let mut scoped: BTreeMap<String, String> = BTreeMap::new();
+  for def in aliases {
+    if let RustTypeDef::TypeAlias { name, target, doc } = def {
+      let target = render_fundamental_alias(output, name, target, doc, &alias_mod, &mut scoped)?;
+      key_aliases.insert(format!("{}::{}", alias_mod, name), target);
     }
   }
+  writeln!(output, "}}")?;
+  for def in std::iter::once(matching).chain(group_helpers.iter_mut()) {
+    rewrite_def_types(def, &scoped);
+  }
+  Ok(())
+}
+
+fn render_fundamental_alias(
+  output: &mut String,
+  name: &str,
+  target: &str,
+  doc: &[String],
+  alias_mod: &str,
+  scoped: &mut BTreeMap<String, String>,
+) -> Result<String, CodegenError> {
+  let paths: BTreeMap<_, _> = target
+    .split(|c: char| !c.is_alphanumeric() && c != '_' && c != ':' && c != '#')
+    .filter_map(|token| {
+      if let Some(path) = token.strip_prefix("self::") {
+        Some((token.into(), format!("super::{}", path)))
+      } else if token.starts_with("super::") {
+        Some((token.into(), format!("super::{}", token)))
+      } else {
+        None
+      }
+    })
+    .collect();
+  let mut target = target.to_string();
+  rewrite_type(&mut target, &paths, DEFAULT_ANY_TYPE);
+  render_type_alias(output, name, &target, doc)?;
+  scoped.insert(name.to_string(), format!("{}::{}", alias_mod, name));
+  Ok(target)
+}
+
+fn render_single_type(
+  output: &mut String,
+  matching: &RustTypeDef,
+  emit_name: &str,
+  opts: &CodegenOptions,
+  group_helpers: &[RustTypeDef],
+  key_aliases: &BTreeMap<String, String>,
+) -> Result<(), CodegenError> {
+  let exact_name = emit_name.strip_prefix("r#").unwrap_or(emit_name);
   let group_mod = format!("__cddl_groups_{}", exact_name);
-  scope_group_helpers(
-    &mut matching,
-    &mut group_helpers,
-    &rust_rule_name,
-    emit_name,
-    &group_mod,
-  );
-  match &matching {
+  match matching {
     RustTypeDef::Struct {
-      name,
       fields,
       doc,
       deny_unknown_fields,
+      ..
     } => {
-      let emit_name = output_name.unwrap_or(name);
       // Scope the helper module to this type, so several single-type macro
       // invocations can coexist in one file without colliding.
       let suffix = if opts.fundamental_aliases {
@@ -864,18 +923,18 @@ pub fn generate_rust_code_for_rule_from_ast(
         to_snake_case(emit_name)
       };
       let tag_mod = format!("{}_{}", TAG_HELPER_MOD, suffix);
-      let mut scoped_defs = group_helpers.clone();
+      let mut scoped_defs = group_helpers.to_vec();
       scoped_defs.push(matching.clone());
       let tags = collect_tags(&scoped_defs);
       render_tag_helpers(
-        &mut output,
+        output,
         &tag_mod,
         &tags,
         needs_tag_adapters(&scoped_defs),
         needs_explicit_tags(&scoped_defs),
       )?;
       render_struct(
-        &mut output,
+        output,
         emit_name,
         fields,
         doc,
@@ -890,7 +949,7 @@ pub fn generate_rust_code_for_rule_from_ast(
         )?;
         writeln!(output, "    #[allow(unused_imports)] use super::*;")?;
       }
-      for helper in &group_helpers {
+      for helper in group_helpers {
         match helper {
           RustTypeDef::Struct {
             name,
@@ -899,7 +958,7 @@ pub fn generate_rust_code_for_rule_from_ast(
             deny_unknown_fields,
           } => {
             render_struct(
-              &mut output,
+              output,
               name,
               fields,
               doc,
@@ -915,12 +974,12 @@ pub fn generate_rust_code_for_rule_from_ast(
             group_choice,
           } => {
             render_enum(
-              &mut output,
+              output,
               name,
               variants,
               doc,
               opts,
-              &key_aliases,
+              key_aliases,
               *group_choice,
             )?;
           }
@@ -931,29 +990,27 @@ pub fn generate_rust_code_for_rule_from_ast(
         writeln!(output, "}}")?;
       }
     }
-    RustTypeDef::TypeAlias { name, target, doc } => {
-      let emit_name = output_name.unwrap_or(name);
-      render_type_alias(&mut output, emit_name, target, doc)?;
+    RustTypeDef::TypeAlias { target, doc, .. } => {
+      render_type_alias(output, emit_name, target, doc)?;
     }
     RustTypeDef::Enum {
-      name,
       variants,
       doc,
       group_choice,
+      ..
     } => {
-      let emit_name = output_name.unwrap_or(name);
       render_enum(
-        &mut output,
+        output,
         emit_name,
         variants,
         doc,
         opts,
-        &key_aliases,
+        key_aliases,
         *group_choice,
       )?;
     }
   }
-  Ok(output)
+  Ok(())
 }
 
 fn rewrite_def_types(def: &mut RustTypeDef, replacements: &BTreeMap<String, String>) {
@@ -2492,7 +2549,21 @@ fn render_tag_helpers(
   writeln!(output, "pub mod {} {{", mod_name)?;
 
   if explicit_tags {
-    output.push_str(r#"
+    render_explicit_tag_wrapper(output);
+  }
+
+  for t in tags {
+    render_tag_module(output, *t, adapters)?;
+    render_optional_tag_module(output, *t)?;
+  }
+
+  writeln!(output, "}}")?;
+  writeln!(output)?;
+  Ok(())
+}
+
+fn render_explicit_tag_wrapper(output: &mut String) {
+  output.push_str(r#"
     pub struct Tagged<const TAG: u64, A>(std::marker::PhantomData<A>);
     impl<T: ?Sized, const TAG: u64, A: serde_with::SerializeAs<T>> serde_with::SerializeAs<T> for Tagged<TAG, A> {
         fn serialize_as<S: serde::Serializer>(v: &T, s: S) -> Result<S::Ok, S::Error> {
@@ -2515,126 +2586,170 @@ fn render_tag_helpers(
         }
     }
 "#);
-  }
+}
 
-  for t in tags {
-    let TaggedPrelude { ident, tag, inner } = *t;
-    let module = ident.replace('-', "_");
-
-    writeln!(
-      output,
-      "    /// serde helper for CDDL `{}` (CBOR tag {}).",
-      ident, tag
-    )?;
-    writeln!(output, "    pub mod {} {{", module)?;
-    writeln!(
-      output,
-      "        use serde::{{Deserialize, Deserializer, Serialize, Serializer}};"
-    )?;
-    writeln!(output)?;
-    writeln!(
-      output,
-      "        pub fn serialize<S: Serializer>(v: &{}, s: S) -> Result<S::Ok, S::Error> {{",
-      inner
-    )?;
-    writeln!(output, "            if s.is_human_readable() {{")?;
-    writeln!(output, "                v.serialize(s)")?;
-    writeln!(output, "            }} else {{")?;
-    writeln!(
-      output,
-      "                ciborium::tag::Required::<&{}, {}>(v).serialize(s)",
-      inner, tag
-    )?;
-    writeln!(output, "            }}")?;
-    writeln!(output, "        }}")?;
-    writeln!(output)?;
-    writeln!(
-      output,
-      "        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<{}, D::Error> {{",
-      inner
-    )?;
-    writeln!(output, "            if d.is_human_readable() {{")?;
-    writeln!(output, "                {}::deserialize(d)", inner)?;
-    writeln!(output, "            }} else {{")?;
-    writeln!(
-      output,
-      "                Ok(ciborium::tag::Accepted::<{}, {}>::deserialize(d)?.0)",
-      inner, tag
-    )?;
-    writeln!(output, "            }}")?;
-    writeln!(output, "        }}")?;
-    if adapters {
-      writeln!(output, "        pub struct Adapter;")?;
-      writeln!(
-        output,
-        "        impl serde_with::SerializeAs<{}> for Adapter {{",
-        inner
-      )?;
-      writeln!(output, "            fn serialize_as<S: Serializer>(v: &{}, s: S) -> Result<S::Ok, S::Error> {{ serialize(v, s) }}", inner)?;
-      writeln!(output, "        }}")?;
-      writeln!(
-        output,
-        "        impl<'de> serde_with::DeserializeAs<'de, {}> for Adapter {{",
-        inner
-      )?;
-      writeln!(output, "            fn deserialize_as<D: Deserializer<'de>>(d: D) -> Result<{}, D::Error> {{ deserialize(d) }}", inner)?;
-      writeln!(output, "        }}")?;
-    }
-    writeln!(output, "    }}")?;
-    writeln!(output)?;
-
-    writeln!(
-      output,
-      "    /// serde helper for an optional CDDL `{}`.",
-      ident
-    )?;
-    writeln!(output, "    pub mod {}_opt {{", module)?;
-    writeln!(
-      output,
-      "        use serde::{{Deserialize, Deserializer, Serializer}};"
-    )?;
-    writeln!(output)?;
-    writeln!(
-      output,
-      "        pub fn serialize<S: Serializer>(v: &Option<{}>, s: S) -> Result<S::Ok, S::Error> {{",
-      inner
-    )?;
-    writeln!(output, "            match v {{")?;
-    writeln!(output, "                Some(v) => {{")?;
-    writeln!(output, "                    if s.is_human_readable() {{")?;
-    writeln!(output, "                        s.serialize_some(v)")?;
-    writeln!(output, "                    }} else {{")?;
-    writeln!(
-      output,
-      "                        s.serialize_some(&ciborium::tag::Required::<&{}, {}>(v))",
-      inner, tag
-    )?;
-    writeln!(output, "                    }}")?;
-    writeln!(output, "                }}")?;
-    writeln!(output, "                None => s.serialize_none(),")?;
-    writeln!(output, "            }}")?;
-    writeln!(output, "        }}")?;
-    writeln!(output)?;
-    writeln!(output, "        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<{}>, D::Error> {{", inner)?;
-    writeln!(output, "            if d.is_human_readable() {{")?;
-    writeln!(
-      output,
-      "                Option::<{}>::deserialize(d)",
-      inner
-    )?;
-    writeln!(output, "            }} else {{")?;
-    writeln!(
-      output,
-      "                Ok(Option::<ciborium::tag::Accepted<{}, {}>>::deserialize(d)?.map(|a| a.0))",
-      inner, tag
-    )?;
-    writeln!(output, "            }}")?;
-    writeln!(output, "        }}")?;
-    writeln!(output, "    }}")?;
-  }
-
-  writeln!(output, "}}")?;
+fn render_tag_module(
+  output: &mut String,
+  tagged: TaggedPrelude,
+  adapters: bool,
+) -> Result<(), CodegenError> {
+  let TaggedPrelude { ident, tag, inner } = tagged;
+  let module = ident.replace('-', "_");
+  writeln!(
+    output,
+    "    /// serde helper for CDDL `{}` (CBOR tag {}).",
+    ident, tag
+  )?;
+  writeln!(output, "    pub mod {} {{", module)?;
+  writeln!(
+    output,
+    "        use serde::{{Deserialize, Deserializer, Serialize, Serializer}};"
+  )?;
   writeln!(output)?;
+  render_tag_serialize_fn(output, inner, tag)?;
+  render_tag_deserialize_fn(output, inner, tag)?;
+  if adapters {
+    render_tag_adapter(output, inner)?;
+  }
+  writeln!(output, "    }}")?;
+  writeln!(output)?;
+  Ok(())
+}
+
+fn render_tag_serialize_fn(output: &mut String, inner: &str, tag: u64) -> Result<(), CodegenError> {
+  writeln!(
+    output,
+    "        pub fn serialize<S: Serializer>(v: &{}, s: S) -> Result<S::Ok, S::Error> {{",
+    inner
+  )?;
+  writeln!(output, "            if s.is_human_readable() {{")?;
+  writeln!(output, "                v.serialize(s)")?;
+  writeln!(output, "            }} else {{")?;
+  writeln!(
+    output,
+    "                ciborium::tag::Required::<&{}, {}>(v).serialize(s)",
+    inner, tag
+  )?;
+  writeln!(output, "            }}")?;
+  writeln!(output, "        }}")?;
+  writeln!(output)?;
+  Ok(())
+}
+
+fn render_tag_deserialize_fn(
+  output: &mut String,
+  inner: &str,
+  tag: u64,
+) -> Result<(), CodegenError> {
+  writeln!(
+    output,
+    "        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<{}, D::Error> {{",
+    inner
+  )?;
+  writeln!(output, "            if d.is_human_readable() {{")?;
+  writeln!(output, "                {}::deserialize(d)", inner)?;
+  writeln!(output, "            }} else {{")?;
+  writeln!(
+    output,
+    "                Ok(ciborium::tag::Accepted::<{}, {}>::deserialize(d)?.0)",
+    inner, tag
+  )?;
+  writeln!(output, "            }}")?;
+  writeln!(output, "        }}")?;
+  Ok(())
+}
+
+fn render_tag_adapter(output: &mut String, inner: &str) -> Result<(), CodegenError> {
+  writeln!(output, "        pub struct Adapter;")?;
+  writeln!(
+    output,
+    "        impl serde_with::SerializeAs<{}> for Adapter {{",
+    inner
+  )?;
+  writeln!(output, "            fn serialize_as<S: Serializer>(v: &{}, s: S) -> Result<S::Ok, S::Error> {{ serialize(v, s) }}", inner)?;
+  writeln!(output, "        }}")?;
+  writeln!(
+    output,
+    "        impl<'de> serde_with::DeserializeAs<'de, {}> for Adapter {{",
+    inner
+  )?;
+  writeln!(output, "            fn deserialize_as<D: Deserializer<'de>>(d: D) -> Result<{}, D::Error> {{ deserialize(d) }}", inner)?;
+  writeln!(output, "        }}")?;
+  Ok(())
+}
+
+fn render_optional_tag_module(
+  output: &mut String,
+  tagged: TaggedPrelude,
+) -> Result<(), CodegenError> {
+  let TaggedPrelude { ident, tag, inner } = tagged;
+  let module = ident.replace('-', "_");
+  writeln!(
+    output,
+    "    /// serde helper for an optional CDDL `{}`.",
+    ident
+  )?;
+  writeln!(output, "    pub mod {}_opt {{", module)?;
+  writeln!(
+    output,
+    "        use serde::{{Deserialize, Deserializer, Serializer}};"
+  )?;
+  writeln!(output)?;
+  render_optional_tag_serialize_fn(output, inner, tag)?;
+  render_optional_tag_deserialize_fn(output, inner, tag)?;
+  writeln!(output, "    }}")?;
+  Ok(())
+}
+
+fn render_optional_tag_serialize_fn(
+  output: &mut String,
+  inner: &str,
+  tag: u64,
+) -> Result<(), CodegenError> {
+  writeln!(
+    output,
+    "        pub fn serialize<S: Serializer>(v: &Option<{}>, s: S) -> Result<S::Ok, S::Error> {{",
+    inner
+  )?;
+  writeln!(output, "            match v {{")?;
+  writeln!(output, "                Some(v) => {{")?;
+  writeln!(output, "                    if s.is_human_readable() {{")?;
+  writeln!(output, "                        s.serialize_some(v)")?;
+  writeln!(output, "                    }} else {{")?;
+  writeln!(
+    output,
+    "                        s.serialize_some(&ciborium::tag::Required::<&{}, {}>(v))",
+    inner, tag
+  )?;
+  writeln!(output, "                    }}")?;
+  writeln!(output, "                }}")?;
+  writeln!(output, "                None => s.serialize_none(),")?;
+  writeln!(output, "            }}")?;
+  writeln!(output, "        }}")?;
+  writeln!(output)?;
+  Ok(())
+}
+
+fn render_optional_tag_deserialize_fn(
+  output: &mut String,
+  inner: &str,
+  tag: u64,
+) -> Result<(), CodegenError> {
+  writeln!(output, "        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<{}>, D::Error> {{", inner)?;
+  writeln!(output, "            if d.is_human_readable() {{")?;
+  writeln!(
+    output,
+    "                Option::<{}>::deserialize(d)",
+    inner
+  )?;
+  writeln!(output, "            }} else {{")?;
+  writeln!(
+    output,
+    "                Ok(Option::<ciborium::tag::Accepted<{}, {}>>::deserialize(d)?.map(|a| a.0))",
+    inner, tag
+  )?;
+  writeln!(output, "            }}")?;
+  writeln!(output, "        }}")?;
   Ok(())
 }
 
