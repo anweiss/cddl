@@ -40,7 +40,7 @@ impl Fixtures {
       ("invalid.cbor", b"\xff"),
       ("good.csv", b"hello\n"),
       ("wrong.csv", b"hello,world\n"),
-      ("header.csv", b"name\nhello\n"),
+      ("header.csv", b"1\nhello\n"),
     ] {
       fs::write(fixtures.0.join(name), data).unwrap();
     }
@@ -119,6 +119,7 @@ fn validate_files_preserves_ci_exit_codes() {
       ("boolean.cddl", "--cbor", "missing", false),
       ("rows.cddl", "--csv", "good.csv", true),
       ("rows.cddl", "--csv", "wrong.csv", false),
+      ("rows.cddl", "--csv", "header.csv", false),
       ("rows.cddl", "--csv", "missing", false),
     ] {
       assert_exit(
