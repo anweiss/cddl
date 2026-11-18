@@ -4570,7 +4570,10 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
           }
         } else if is_ident_tdate_data_type(self.state.cddl, ident) {
           if !super::valid_tdate(s) {
-            self.add_error("expected tdate data type, invalid RFC 3339 timestamp".into());
+            self.add_error(
+              "expected tdate data type, invalid RFC 3339 timestamp or outside the supported timestamp range"
+                .into(),
+            );
           }
         } else if is_ident_string_data_type(self.state.cddl, ident) {
           return Ok(());
