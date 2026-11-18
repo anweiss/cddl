@@ -186,159 +186,167 @@ function performEnhancedValidation(
   cddl: any,
   settings: ExampleSettings,
 ): Diagnostic[] {
-  let diagnostics: Diagnostic[] = [];
-  let text = textDocument.getText();
-  let lines = text.split("\n");
-
-  // Track defined and used rules
-  let definedRules: Set<string> = new Set();
-  let usedRules: Set<string> = new Set();
-  let ruleDefinitions: Map<string, { line: number; range: Range; nameRange: Range }> = new Map();
-
-  // Add control operator validation
+  const diagnostics: Diagnostic[] = [];
+  const lines = textDocument.getText().split("\n");
   if (settings.diagnostics?.controlOperators) {
     diagnostics.push(...validateControlOperators(textDocument, cddl, lines));
-
-    // Add pattern-based control operator validation (fallback for cases AST doesn't catch)
     diagnostics.push(...validateControlOperatorPatterns(textDocument, lines));
   }
 
-  // Collect all defined rules
+  const { definedRules, ruleDefinitions, firstRuleName } = collectRuleDefinitions(cddl, lines);
+  const usedRules = findUsedRules(lines, definedRules, firstRuleName);
+  diagnostics.push(...findUnusedRuleDiagnostics(lines, definedRules, usedRules, ruleDefinitions));
+  diagnostics.push(...findCircularDependencyDiagnostics(cddl, ruleDefinitions));
+  diagnostics.push(...findStyleDiagnostics(lines, settings));
+  return diagnostics;
+}
+
+function collectRuleDefinitions(
+  cddl: any,
+  lines: string[],
+): {
+  definedRules: Set<string>;
+  ruleDefinitions: Map<string, { line: number; range: Range; nameRange: Range }>;
+  firstRuleName: string | null;
+} {
+  const definedRules = new Set<string>();
+  const ruleDefinitions = new Map<string, { line: number; range: Range; nameRange: Range }>();
   let firstRuleName: string | null = null;
   for (let rule of cddl.rules) {
     if (rule.Group) {
-      let ruleName = rule.Group.rule.name.ident;
-      definedRules.add(ruleName);
-      let range = findRuleRange(ruleName, lines);
-      let nameRange = findRuleNameRange(ruleName, lines);
-      ruleDefinitions.set(ruleName, {
-        line: range.start.line,
-        range,
-        nameRange,
-      });
-      // According to RFC 8610, the first rule is the root/entry point
-      if (firstRuleName === null) {
-        firstRuleName = ruleName;
-      }
+      firstRuleName = addRuleDefinition(
+        rule.Group.rule.name.ident,
+        lines,
+        definedRules,
+        ruleDefinitions,
+        firstRuleName,
+      );
     }
     if (rule.Type) {
-      let ruleName = rule.Type.rule.name.ident;
-      definedRules.add(ruleName);
-      let range = findRuleRange(ruleName, lines);
-      let nameRange = findRuleNameRange(ruleName, lines);
-      ruleDefinitions.set(ruleName, {
-        line: range.start.line,
-        range,
-        nameRange,
-      });
-      // According to RFC 8610, the first rule is the root/entry point
-      if (firstRuleName === null) {
-        firstRuleName = ruleName;
-      }
+      firstRuleName = addRuleDefinition(
+        rule.Type.rule.name.ident,
+        lines,
+        definedRules,
+        ruleDefinitions,
+        firstRuleName,
+      );
     }
   }
+  return { definedRules, ruleDefinitions, firstRuleName };
+}
 
-  // Mark the first rule as used (it's the root according to RFC 8610)
+function addRuleDefinition(
+  ruleName: string,
+  lines: string[],
+  definedRules: Set<string>,
+  ruleDefinitions: Map<string, { line: number; range: Range; nameRange: Range }>,
+  firstRuleName: string | null,
+): string {
+  definedRules.add(ruleName);
+  const range = findRuleRange(ruleName, lines);
+  const nameRange = findRuleNameRange(ruleName, lines);
+  ruleDefinitions.set(ruleName, { line: range.start.line, range, nameRange });
+  return firstRuleName ?? ruleName;
+}
+
+function findUsedRules(
+  lines: string[],
+  definedRules: Set<string>,
+  firstRuleName: string | null,
+): Set<string> {
+  const usedRules = new Set<string>();
   if (firstRuleName !== null) {
     usedRules.add(firstRuleName);
   }
-
-  // Find rule references in the text
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i];
-
-    // For lines with assignments, only check the right side of the assignment
-    if (line.includes("=")) {
-      let assignmentMatch = line.match(/^([^=]*)(\/\/=|\/=|=)(.*)$/);
-      if (assignmentMatch) {
-        let rightSide = assignmentMatch[3]; // Everything after the assignment operator
-
-        // Look for rule references on the right side of assignments
-        for (let ruleName of definedRules) {
-          // Use custom word boundaries for CDDL identifiers (including hyphens)
-          let regex = new RegExp(
-            `(?<![a-zA-Z0-9_-])${escapeRegex(ruleName)}(?![a-zA-Z0-9_-])`,
-            "g",
-          );
-          if (regex.test(rightSide)) {
-            usedRules.add(ruleName);
-          }
-        }
-      }
-    } else {
-      // For lines without assignments, check the entire line
-      for (let ruleName of definedRules) {
-        let regex = new RegExp(`(?<![a-zA-Z0-9_-])${escapeRegex(ruleName)}(?![a-zA-Z0-9_-])`, "g");
-        if (regex.test(line)) {
-          usedRules.add(ruleName);
-        }
-      }
-    }
-
-    // Check for map key references (rule-name =>)
-    for (let ruleName of definedRules) {
-      let mapKeyRegex = new RegExp(`(?<![a-zA-Z0-9_-])${escapeRegex(ruleName)}\\s*=>`, "g");
-      if (mapKeyRegex.test(line)) {
-        usedRules.add(ruleName);
-      }
-    }
-
-    // Also check for socket/plug references ($$rule-name)
-    let socketPlugMatches = line.match(/\$\$([a-zA-Z][a-zA-Z0-9-_]*)/g);
-    if (socketPlugMatches) {
-      for (let match of socketPlugMatches) {
-        let plugName = match.substring(2); // Remove $$
-        if (definedRules.has(plugName)) {
-          usedRules.add(plugName);
-        }
-      }
-    }
-
-    // Check for $rule references (choice sockets)
-    let choiceSocketMatches = line.match(/\$([a-zA-Z][a-zA-Z0-9-_]*)/g);
-    if (choiceSocketMatches) {
-      for (let match of choiceSocketMatches) {
-        let choiceName = match.substring(1); // Remove $
-        if (definedRules.has(choiceName)) {
-          usedRules.add(choiceName);
-        }
-      }
-    }
+  for (const line of lines) {
+    markLineRuleReferences(line, definedRules, usedRules);
   }
+  return usedRules;
+}
 
-  // Report unused rules
+function markLineRuleReferences(
+  line: string,
+  definedRules: Set<string>,
+  usedRules: Set<string>,
+): void {
+  if (line.includes("=")) {
+    const assignmentMatch = line.match(/^([^=]*)(\/\/=|\/=|=)(.*)$/);
+    if (assignmentMatch) {
+      markNamedRuleReferences(assignmentMatch[3], definedRules, usedRules);
+    }
+  } else {
+    markNamedRuleReferences(line, definedRules, usedRules);
+  }
+  for (const ruleName of definedRules) {
+    const mapKeyRegex = new RegExp(`(?<![a-zA-Z0-9_-])${escapeRegex(ruleName)}\\s*=>`, "g");
+    if (mapKeyRegex.test(line)) usedRules.add(ruleName);
+  }
+  markSocketReferences(line, /\$\$([a-zA-Z][a-zA-Z0-9-_]*)/g, 2, definedRules, usedRules);
+  markSocketReferences(line, /\$([a-zA-Z][a-zA-Z0-9-_]*)/g, 1, definedRules, usedRules);
+}
+
+function markNamedRuleReferences(
+  text: string,
+  definedRules: Set<string>,
+  usedRules: Set<string>,
+): void {
   for (let ruleName of definedRules) {
-    if (!usedRules.has(ruleName)) {
-      let ruleInfo = ruleDefinitions.get(ruleName);
-      if (ruleInfo) {
-        // Skip warning for certain patterns that are typically used as external references
-        // - Integer constant definitions (rule = number)
-        // - String constant definitions (rule = "string")
-        let ruleLineText = lines[ruleInfo.line] || "";
-
-        // Check if this is an integer constant definition
-        let isIntegerConstant = /=\s*\d+\s*$/.test(ruleLineText.trim());
-
-        // Check if this is a string constant definition
-        let isStringConstant = /=\s*"[^"]*"\s*$/.test(ruleLineText.trim());
-
-        if (!isIntegerConstant && !isStringConstant) {
-          diagnostics.push({
-            severity: DiagnosticSeverity.Warning,
-            range: ruleInfo.nameRange, // Use nameRange instead of range for unused rule warnings
-            message: `Rule '${ruleName}' is defined but never used`,
-            source: "cddl-lint",
-            code: "unused-rule",
-          });
-        }
-      }
+    const regex = new RegExp(`(?<![a-zA-Z0-9_-])${escapeRegex(ruleName)}(?![a-zA-Z0-9_-])`, "g");
+    if (regex.test(text)) {
+      usedRules.add(ruleName);
     }
   }
+}
 
-  // Check for potential circular dependencies (simple check)
-  let circularDeps = findCircularDependencies(cddl);
-  for (let dep of circularDeps) {
-    let ruleInfo = ruleDefinitions.get(dep);
+function markSocketReferences(
+  line: string,
+  pattern: RegExp,
+  prefixLength: number,
+  definedRules: Set<string>,
+  usedRules: Set<string>,
+): void {
+  const matches = line.match(pattern);
+  if (!matches) return;
+  for (const match of matches) {
+    const ruleName = match.substring(prefixLength);
+    if (definedRules.has(ruleName)) usedRules.add(ruleName);
+  }
+}
+
+function findUnusedRuleDiagnostics(
+  lines: string[],
+  definedRules: Set<string>,
+  usedRules: Set<string>,
+  ruleDefinitions: Map<string, { line: number; range: Range; nameRange: Range }>,
+): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  for (const ruleName of definedRules) {
+    if (usedRules.has(ruleName)) continue;
+    const ruleInfo = ruleDefinitions.get(ruleName);
+    if (!ruleInfo) continue;
+    const ruleLineText = lines[ruleInfo.line] || "";
+    const isIntegerConstant = /=\s*\d+\s*$/.test(ruleLineText.trim());
+    const isStringConstant = /=\s*"[^"]*"\s*$/.test(ruleLineText.trim());
+    if (!isIntegerConstant && !isStringConstant) {
+      diagnostics.push({
+        severity: DiagnosticSeverity.Warning,
+        range: ruleInfo.nameRange,
+        message: `Rule '${ruleName}' is defined but never used`,
+        source: "cddl-lint",
+        code: "unused-rule",
+      });
+    }
+  }
+  return diagnostics;
+}
+
+function findCircularDependencyDiagnostics(
+  cddl: any,
+  ruleDefinitions: Map<string, { line: number; range: Range; nameRange: Range }>,
+): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  for (const dep of findCircularDependencies(cddl)) {
+    const ruleInfo = ruleDefinitions.get(dep);
     if (ruleInfo) {
       diagnostics.push({
         severity: DiagnosticSeverity.Error,
@@ -349,16 +357,17 @@ function performEnhancedValidation(
       });
     }
   }
+  return diagnostics;
+}
 
-  // Check for common style issues
+function findStyleDiagnostics(lines: string[], settings: ExampleSettings): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
   for (let i = 0; i < lines.length; i++) {
-    let line = lines[i];
-
-    // Check for missing spaces around operators
+    const line = lines[i];
     if (/\w[=/]{1,2}=\w/.test(line)) {
-      let match = line.match(/\w[=/]{1,2}=\w/);
+      const match = line.match(/\w[=/]{1,2}=\w/);
       if (match) {
-        let startChar = line.indexOf(match[0]);
+        const startChar = line.indexOf(match[0]);
         diagnostics.push({
           severity: DiagnosticSeverity.Information,
           range: {
@@ -371,8 +380,6 @@ function performEnhancedValidation(
         });
       }
     }
-
-    // Check for trailing commas in single-line definitions
     if (
       settings.diagnostics?.trailingCommas &&
       line.trim().endsWith(",") &&
@@ -391,7 +398,6 @@ function performEnhancedValidation(
       });
     }
   }
-
   return diagnostics;
 }
 
