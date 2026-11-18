@@ -118,6 +118,9 @@ jobs:
       - name: Test standalone derive consumer
         run: cargo +${{ matrix.rust_toolchain }} test --locked --manifest-path cddl-derive/tests/consumer/Cargo.toml
 
+      - name: Test CLI without additional-controls
+        run: cargo +${{ matrix.rust_toolchain }} test --locked --no-default-features --features std,json,cbor,csv-validate --test cli
+
   wasm-test-suite:
     name: wasm test suite
     runs-on: ubuntu-latest
