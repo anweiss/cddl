@@ -7,6 +7,17 @@ fn json_dates_and_times() {
   for (schema, input, expected) in [
     ("root = tdate", r#""2024-02-29T12:34:56Z""#, true),
     ("root = tdate", r#""2024-02-29t12:34:56.123+02:30""#, true),
+    ("root = tdate", r#""2024-02-29T12:34:56+23:59""#, true),
+    ("root = tdate", r#""2024-02-29T12:34:56-23:59""#, true),
+    ("root = tdate", r#""2024-02-29T12:34:56+24:00""#, false),
+    ("root = tdate", r#""2024-02-29T12:34:56-24:00""#, false),
+    ("root = tdate", r#""2024-02-29T12:34:56+25:59""#, false),
+    ("root = tdate", r#""2024-02-29T12:34:56+23:60""#, false),
+    (
+      "root = tdate",
+      r#""2024-02-29T12:34:56.123456789123-24:00""#,
+      false,
+    ),
     (
       "root = tdate",
       r#""2024-02-29T12:34:56.123456789123Z""#,
@@ -51,6 +62,41 @@ fn cbor_dates_and_times() {
     (
       "root = tdate",
       Value::Text("2023-02-29T12:34:56Z".into()),
+      false,
+    ),
+    (
+      "root = tdate",
+      Value::Text("2024-02-29T12:34:56+23:59".into()),
+      true,
+    ),
+    (
+      "root = tdate",
+      Value::Text("2024-02-29T12:34:56-23:59".into()),
+      true,
+    ),
+    (
+      "root = tdate",
+      Value::Text("2024-02-29T12:34:56+24:00".into()),
+      false,
+    ),
+    (
+      "root = tdate",
+      Value::Text("2024-02-29T12:34:56-24:00".into()),
+      false,
+    ),
+    (
+      "root = tdate",
+      Value::Text("2024-02-29T12:34:56+25:59".into()),
+      false,
+    ),
+    (
+      "root = tdate",
+      Value::Text("2024-02-29T12:34:56+23:60".into()),
+      false,
+    ),
+    (
+      "root = tdate",
+      Value::Text("2024-02-29T12:34:56.123456789123-24:00".into()),
       false,
     ),
     (
