@@ -41,7 +41,7 @@ jobs:
 
       - name: Draft Release
         id: draft_release
-        uses: release-drafter/release-drafter@v6
+        uses: release-drafter/release-drafter@v7
         with:
           config-name: vscode-extension-release-drafter.yml
           version: ${{ steps.get_version.outputs.version }}
