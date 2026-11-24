@@ -1439,6 +1439,10 @@ fn cbor_named_alias_keys_match_like_their_inline_type() {
   let required = "root = { ? 1 => int, k => any }\nk = int";
   check_cbor(required, "a12001", true);
   check_cbor(required, "a1616101", false);
+  // Structured key types match through an alias as they do inline.
+  check_cbor("root = { k => any }\nk = { a: uint }", "a1a161610101", true);
+  check_cbor("root = { k => any }\nk = { a: uint }", "a1616101", false);
+  check_cbor("root = { k => any }\nk = [uint]", "a1810101", true);
   // The value is still validated through the alias.
   check_cbor("root = { * k => tstr }\nk = int", "a12001", false);
 }
@@ -1484,6 +1488,13 @@ fn json_named_alias_keys_match_like_their_inline_type() {
     (
       "root = { ? \"a\" => int, * k => any }\nk = int",
       r#"{"b":1}"#,
+      false,
+    ),
+    // A structured key type cannot match a JSON object key.
+    ("root = { k => any }\nk = { a: uint }", r#"{"a":1}"#, false),
+    (
+      "root = { * k => any }\nk = { * tstr => any }",
+      r#"{"a":1}"#,
       false,
     ),
   ] {

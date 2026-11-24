@@ -3176,10 +3176,15 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         if accepted {
           // Clear any accumulated errors and return success
           self.errors.truncate(initial_error_count);
-          if self.state.is_member_key {
+          if self.state.is_member_key
+            && (choice_validator.map_entry_candidates.is_some()
+              || choice_validator.object_value.is_some())
+          {
             // A member key named by a rule (`k = int`) relays the map pairs
             // it matched to its group entry, as the inline type does, so
-            // keep the successful choice's key-matching state.
+            // keep the successful choice's key-matching state. A choice that
+            // relays nothing, such as a map type validating the containing
+            // object, must not leak the keys it validated.
             choice_validator.errors = std::mem::take(&mut self.errors);
             *self = choice_validator;
           }
