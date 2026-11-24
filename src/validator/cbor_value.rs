@@ -238,20 +238,29 @@ pub fn decode_cbor(input: &[u8]) -> Result<Value, DecodeError> {
 /// Text keys have an unambiguous equivalence rule in RFC 8949 section 5.6.1.
 /// Other key kinds need a separate generic-equivalence implementation; Rust's
 /// `PartialEq` is insufficient for NaNs and order-independent map keys.
+///
+/// Uses an explicit work stack so deeply nested constructed values cannot
+/// exhaust the call stack.
 pub(crate) fn has_duplicate_text_keys(value: &Value) -> bool {
-  match value {
-    Value::Map(entries) => {
-      let mut seen = HashSet::new();
-      entries.iter().any(|(key, value)| {
-        matches!(key, Value::Text(text) if !seen.insert(text))
-          || has_duplicate_text_keys(key)
-          || has_duplicate_text_keys(value)
-      })
+  let mut pending = vec![value];
+  while let Some(value) = pending.pop() {
+    match value {
+      Value::Map(entries) => {
+        let mut seen = HashSet::new();
+        for (key, value) in entries {
+          if matches!(key, Value::Text(text) if !seen.insert(text)) {
+            return true;
+          }
+          pending.push(value);
+          pending.push(key);
+        }
+      }
+      Value::Array(items) => pending.extend(items.iter().rev()),
+      Value::Tag(_, inner) => pending.push(inner),
+      _ => {}
     }
-    Value::Array(items) => items.iter().any(has_duplicate_text_keys),
-    Value::Tag(_, inner) => has_duplicate_text_keys(inner),
-    _ => false,
   }
+  false
 }
 
 fn decode_value<R: ciborium_io::Read>(decoder: &mut Decoder<R>) -> Result<Value, DecodeError>
@@ -584,5 +593,38 @@ mod tests {
     let cv = ciborium::value::Value::Tag(1, Box::new(ciborium::value::Value::Text("hello".into())));
     let v: Value = cv.into();
     assert_eq!(v, Value::Tag(1, Box::new(Value::Text("hello".into()))));
+  }
+
+  #[cfg(not(target_arch = "wasm32"))]
+  #[test]
+  fn duplicate_text_key_scan_handles_deep_nesting() {
+    fn nested(leaf: Value) -> Value {
+      (0..200_000).fold(leaf, |inner, depth| {
+        if depth % 2 == 0 {
+          Value::Array(vec![inner])
+        } else {
+          Value::Tag(24, Box::new(inner))
+        }
+      })
+    }
+    let key = || Value::Text("k".into());
+    std::thread::Builder::new()
+      .stack_size(256 * 1024)
+      .spawn(move || {
+        let duplicate = nested(Value::Map(vec![(key(), Value::Null), (key(), Value::Null)]));
+        let unique = nested(Value::Map(vec![(key(), Value::Null)]));
+        let results = (
+          has_duplicate_text_keys(&duplicate),
+          has_duplicate_text_keys(&unique),
+        );
+        // Dropping these values is itself recursive; this test targets the scan.
+        std::mem::forget(duplicate);
+        std::mem::forget(unique);
+        results
+      })
+      .unwrap()
+      .join()
+      .map(|results| assert_eq!(results, (true, false)))
+      .unwrap();
   }
 }
