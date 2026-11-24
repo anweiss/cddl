@@ -1,4 +1,4 @@
-lizard==1.25.1
+lizard==1.26.0
 pathspec==1.1.1
 Pygments==2.21.0
-ruff==0.17.4
+ruff==0.17.5
