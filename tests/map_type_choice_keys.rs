@@ -1490,6 +1490,11 @@ fn json_named_alias_keys_match_like_their_inline_type() {
       r#"{"b":1}"#,
       false,
     ),
+    // An optional named key may be absent, with or without a cut.
+    ("root = { ? k ^ => uint }\nk = tstr", "{}", true),
+    ("root = { ? k => uint }\nk = tstr", "{}", true),
+    ("root = { ? k ^ => uint }\nk = tstr", r#"{"a":1}"#, true),
+    ("root = { ? k ^ => uint }\nk = tstr", r#"{"a":"x"}"#, false),
     // A structured key type cannot match a JSON object key.
     ("root = { k => any }\nk = { a: uint }", r#"{"a":1}"#, false),
     (

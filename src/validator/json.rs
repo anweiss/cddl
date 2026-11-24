@@ -549,6 +549,21 @@ pub struct JSONValidator<'a> {
 }
 
 impl<'a> JSONValidator<'a> {
+  /// Keep what a successful member-key choice resolved through a named rule
+  /// (`k = tstr`), as the inline type would leave it. A choice that relayed a
+  /// matched pair hands over its key-matching state. Otherwise only its
+  /// absence signal is kept, so a structured type that validated the
+  /// containing object cannot leak the keys it covered.
+  fn adopt_member_key_choice(&mut self, mut choice: JSONValidator<'a>) {
+    if choice.map_entry_candidates.is_some() || choice.object_value.is_some() {
+      choice.errors = std::mem::take(&mut self.errors);
+      *self = choice;
+    } else if choice.state.advance_to_next_entry {
+      self.state.advance_to_next_entry = true;
+      self.state.occurrence = choice.state.occurrence;
+    }
+  }
+
   fn visit_enumeration_choice(&mut self, choice: &GroupChoice<'a>) -> visitor::Result<Error> {
     let previous = self.numeric_context.begin_evaluation();
     let result = self.evaluate_enumeration_choice(choice);
@@ -3176,17 +3191,8 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
         if accepted {
           // Clear any accumulated errors and return success
           self.errors.truncate(initial_error_count);
-          if self.state.is_member_key
-            && (choice_validator.map_entry_candidates.is_some()
-              || choice_validator.object_value.is_some())
-          {
-            // A member key named by a rule (`k = int`) relays the map pairs
-            // it matched to its group entry, as the inline type does, so
-            // keep the successful choice's key-matching state. A choice that
-            // relays nothing, such as a map type validating the containing
-            // object, must not leak the keys it validated.
-            choice_validator.errors = std::mem::take(&mut self.errors);
-            *self = choice_validator;
+          if self.state.is_member_key {
+            self.adopt_member_key_choice(choice_validator);
           }
           return Ok(());
         }
