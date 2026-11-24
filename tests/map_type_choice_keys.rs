@@ -1416,6 +1416,10 @@ fn cbor_named_alias_keys_match_like_their_inline_type() {
     "root = { ? 1 => int, * k => any }\nk = j\nj = int",
     "root = { ? 1 => int, * k<int> => any }\nk<T> = T",
     "root = t<k>\nt<K> = { ? 1 => int, * K => any }\nk = int",
+    "root = { ? 1 => int, * k => any }\nk = id<int>\nid<T> = T",
+    "root = { ? 1 => int, * k => any }\nk = j\nj = (id<int>)\nid<T> = T",
+    "root = { ? 1 => int, * (id<int>) => any }\nid<T> = T",
+    "root = t<id<int>>\nt<K> = { ? 1 => int, * K => any }\nid<T> = T",
   ] {
     check_cbor(schema, "a12001", true);
     check_cbor(schema, "a10101", true);
@@ -1458,6 +1462,21 @@ fn json_named_alias_keys_match_like_their_inline_type() {
       "root = { ? \"a\" => int, * k<tstr> => any }\nk<T> = T",
       r#"{"b":1}"#,
       true,
+    ),
+    (
+      "root = { * k => any }\nk = id<tstr>\nid<T> = T",
+      r#"{"b":1}"#,
+      true,
+    ),
+    (
+      "root = { * (id<tstr>) => any }\nid<T> = T",
+      r#"{"b":1}"#,
+      true,
+    ),
+    (
+      "root = { * k => any }\nk = (id<int>)\nid<T> = T",
+      r#"{"b":1}"#,
+      false,
     ),
     ("root = { k => any }\nk = \"b\"", r#"{"b":1}"#, true),
     ("root = { k => any }\nk = \"b\"", r#"{"c":1}"#, false),
