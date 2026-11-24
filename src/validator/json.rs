@@ -4541,7 +4541,7 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
 
             return Ok(());
           } else if let Some(n) = n.as_f64() {
-            // truncates fractional milliseconds when validating
+            // bounds apply to the decoded f64
             if !super::valid_time_float(n) {
               self.add_error(format!(
                 "expected time data type, invalid UNIX timestamp {}",
