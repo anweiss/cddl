@@ -134,7 +134,9 @@ their alternatives are also checked. Such a member claims a key/value pair only
 when the value also matches, so a failing pair stays available to later
 members; with a cut (`^`), a matching key whose value fails rejects the map.
 Occurrence bounds count matching pairs across all alternatives, not separately
-for each alternative.
+for each alternative. A key named by a rule, including an alias chain or a
+generic instantiation (`* k => any` with `k = int`), matches the same keys as
+the type it names.
 
 Optional JSON members without a cut also match complete pairs. If a key
 matches but its value does not, the member can be absent, leaving that pair
