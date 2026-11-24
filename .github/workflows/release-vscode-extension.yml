@@ -41,15 +41,14 @@ jobs:
 
       - name: Draft Release
         id: draft_release
-        uses: release-drafter/release-drafter@v6
+        uses: release-drafter/release-drafter@v7
         with:
           config-name: vscode-extension-release-drafter.yml
           version: ${{ steps.get_version.outputs.version }}
           tag: ${{ steps.get_version.outputs.version }}-vscode-extension
           name: VSCode Extension v${{ steps.get_version.outputs.version }}
           publish: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Output release info
         run: |

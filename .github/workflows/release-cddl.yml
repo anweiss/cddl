@@ -111,12 +111,11 @@ jobs:
 
       - name: Draft Release
         id: draft_release
-        uses: release-drafter/release-drafter@v6
+        uses: release-drafter/release-drafter@v7
         with:
           config-name: cddl-release-drafter.yml
           publish: ${{ startsWith(github.ref, 'refs/tags') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Output release info
         run: |
