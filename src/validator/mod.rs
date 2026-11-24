@@ -74,7 +74,11 @@ fn valid_time_integer(seconds: i128) -> bool {
 }
 
 fn valid_time_float(seconds: f64) -> bool {
-  seconds.is_finite() && jiff::Timestamp::from_millisecond((seconds * 1000.0) as i64).is_ok()
+  // Millisecond conversion truncates toward zero, so bound the seconds first.
+  seconds.is_finite()
+    && seconds >= jiff::Timestamp::MIN.as_second() as f64
+    && seconds <= jiff::Timestamp::MAX.as_second() as f64
+    && jiff::Timestamp::from_millisecond((seconds * 1000.0) as i64).is_ok()
 }
 
 fn valid_tdate_prefix(bytes: &[u8]) -> bool {
