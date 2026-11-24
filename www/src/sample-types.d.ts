@@ -42,12 +42,16 @@ export type AstNode =
   | { kind: 'literal'; value: JsonValue; raw: string }
   | { kind: 'bytesLiteral'; raw: string }
   | ReferenceNode
-  | { kind: 'choice' | 'groupMerge'; options: AstNode[]; label: string }
+  | { kind: 'choice'; options: AstNode[]; label: string }
+  | { kind: 'groupMerge'; options: AstNode[]; label: string }
   | { kind: 'range'; inclusive: boolean; lower: AstNode; upper: AstNode }
   | ControlNode
-  | { kind: 'unwrap' | 'enumRef'; ref: ReferenceNode }
+  | { kind: 'unwrap'; ref: ReferenceNode }
+  | { kind: 'enumRef'; ref: ReferenceNode }
   | { kind: 'tag'; tag: string; inner: AstNode }
-  | { kind: 'map' | 'array' | 'enum'; entries: GroupEntry[] }
+  | { kind: 'map'; entries: GroupEntry[] }
+  | { kind: 'array'; entries: GroupEntry[] }
+  | { kind: 'enum'; entries: GroupEntry[] }
   | GroupNode
   | { kind: 'unknown'; name: string };
 interface Rule {

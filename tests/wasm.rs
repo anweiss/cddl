@@ -1,5 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
+#[path = "cbor_primitive_domains.rs"]
+mod cbor_primitive_domains;
+
 use wasm_bindgen_test::*;
 
 use cddl::{ast::Type2, cddl_from_str, token::ByteValue};
@@ -11,6 +14,9 @@ mod json_no_cut_fallthrough;
 
 #[path = "float_prelude_representability.rs"]
 mod float_prelude_representability;
+
+#[path = "date_time_validation.rs"]
+mod date_time_validation;
 
 #[wasm_bindgen_test]
 fn pass() {
