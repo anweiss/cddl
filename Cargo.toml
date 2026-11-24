@@ -45,8 +45,8 @@ crate-type = ["cdylib", "rlib"]
 base16 = { version = "0.2.1", default-features = false }
 # base64 = { version = "0.21.0", default-features = false }
 data-encoding = { version = "2.11.0", default-features = false }
+jiff = { version = "0.2.35", default-features = false, features = ["std"], optional = true }
 half = { version = "2.7.1", default-features = false, optional = true }
-chrono = { version = "0.4.45", optional = true }
 clap = { version = "4.6", optional = true, features = ["derive"] }
 codespan-reporting = { version = "0.13.1", optional = true }
 hexf-parse = { version = "0.2.1", optional = true }
@@ -71,17 +71,17 @@ base64-url = { version = "4.0.1", optional = true }
 base45 = { version = "3.2.0", optional = true }
 hex = { version = "0.4.3", optional = true }
 abnf_to_pest = { version = "0.6.0", optional = true }
-pest_meta = { version = "=2.9.5", optional = true }
-pest_vm = { version = "=2.9.5", optional = true }
-pest = { version = "=2.9.5", default-features = false }
-pest_derive = { version = "=2.9.5", default-features = false }
+pest_meta = { version = "=2.9.6", optional = true }
+pest_vm = { version = "=2.9.6", optional = true }
+pest = { version = "=2.9.6", default-features = false }
+pest_derive = { version = "=2.9.6", default-features = false }
 pest_stack_guard = { version = "=1.0.1", optional = true }
 displaydoc = { version = "0.2.3", default-features = false }
 log = { version = "0.4.32", optional = true }
 simplelog = { version = "0.12.1", optional = true }
 
 [build-dependencies]
-pest_generator = { version = "=2.9.5", optional = true, default-features = false }
+pest_generator = { version = "=2.9.6", optional = true, default-features = false }
 proc-macro2 = { version = "1.0", optional = true }
 
 [dev-dependencies]
@@ -120,7 +120,7 @@ std = [
     "ciborium-ll",
     "ciborium-io",
     "serde",
-    "chrono",
+    "dep:jiff",
     "wasm-bindgen",
     "serde-wasm-bindgen",
     "clap",

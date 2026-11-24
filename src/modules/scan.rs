@@ -317,156 +317,201 @@ fn generic_params_end(bytes: &[u8], open: usize) -> Option<usize> {
 
 /// Scan `src`, recovering rule extents and identifier occurrences.
 pub(crate) fn scan(src: &str) -> Scan {
-  let bytes = src.as_bytes();
-  let mut idents: Vec<IdentToken> = Vec::new();
-  // Byte offsets of assignment operators found at bracket depth zero.
-  let mut top_level_assigns: Vec<usize> = Vec::new();
-
-  let mut i = 0usize;
-  let mut depth = 0usize;
-  while i < bytes.len() {
-    let b = bytes[i];
-
-    if let Some(end) = literal_end(bytes, i) {
-      i = end;
-      continue;
-    }
-
-    match b {
-      b' ' | b'\t' | b'\r' | b'\n' => {
-        i += 1;
-      }
-
-      // Comment (including a `;#` directive line) runs to end of line.
-      b';' => {
-        while i < bytes.len() && bytes[i] != b'\n' {
-          i += 1;
-        }
-      }
-
-      b'b' if bytes[i..].starts_with(b"b64'") => {
-        i += 3;
-      }
-
-      b'(' | b'[' | b'{' => {
-        depth += 1;
-        i += 1;
-      }
-
-      b')' | b']' | b'}' => {
-        depth = depth.saturating_sub(1);
-        i += 1;
-      }
-
-      // A dot that reaches here is never part of an identifier (`ident_end`
-      // consumes `cose.label` whole), so a single dot introduces a control
-      // operator. The grammar allows spacing and comments between the dot
-      // and the operator name; either way the name is not a reference.
-      b'.' => {
-        let start = i;
-        i += 1;
-        // `..` and `...` are range operators, not control operators.
-        while i < bytes.len() && bytes[i] == b'.' {
-          i += 1;
-        }
-        let single = i == start + 1;
-        if single {
-          i = skip_spacing(bytes, i);
-        }
-        if single && i < bytes.len() && is_ident_start(bytes[i]) {
-          let start = i;
-          while i < bytes.len() && (is_ident_continue(bytes[i]) || bytes[i] == b'-') {
-            i += 1;
-          }
-          idents.push(IdentToken {
-            start,
-            end: i,
-            text: src[start..i].to_string(),
-            role: IdentRole::ControlName,
-          });
-        }
-      }
-
-      // Generic parameters: a `<` group that is immediately followed by an
-      // assignment operator, i.e. the head of `messages<a, b> = ...`. Anywhere
-      // else a `<` group holds generic *arguments*, whose identifiers are real
-      // references and are scanned normally.
-      b'<' if depth == 0 => match generic_params_end(bytes, i) {
-        Some(close) => {
-          i = skip_spacing(bytes, i + 1);
-          while i < close {
-            if is_ident_start(bytes[i]) {
-              let start = i;
-              i = ident_end(bytes, i);
-              idents.push(IdentToken {
-                start,
-                end: i,
-                text: src[start..i].to_string(),
-                role: IdentRole::GenericParam,
-              });
-            } else {
-              i += 1;
-            }
-            i = skip_spacing(bytes, i);
-          }
-          i = close + 1;
-        }
-        None => i += 1,
-      },
-
-      // Assignment operators: `=`, `/=`, `//=`. `=>` is an entry separator and
-      // must not be mistaken for one.
-      b'=' if i + 1 >= bytes.len() || bytes[i + 1] != b'>' => {
-        if depth == 0 {
-          top_level_assigns.push(i);
-        }
-        i += 1;
-      }
-
-      // Keep a tag's separator out of decimal-fraction scanning.
-      b'#' => {
-        i = tag_end(bytes, i);
-      }
-
-      b'*' => {
-        i = occurrence_end(bytes, i);
-      }
-
-      b'0'..=b'9' => {
-        i = number_end(bytes, i);
-      }
-
-      _ if is_ident_start(b) => {
-        let start = i;
-        i = ident_end(bytes, i);
-        idents.push(IdentToken {
-          start,
-          end: i,
-          text: src[start..i].to_string(),
-          role: if bytes.get(skip_spacing(bytes, i)) == Some(&b':') {
-            IdentRole::BarewordKey
-          } else {
-            IdentRole::Reference
-          },
-        });
-      }
-
-      _ => {
-        i += 1;
-      }
-    }
-  }
-
+  let mut scanner = Scanner::new(src);
+  scanner.scan_tokens();
   // The head of a rule is the last plain reference occurring before its
   // assignment operator; generic parameters and control names are excluded by
   // construction.
-  let heads = assignment_heads(&idents, &top_level_assigns);
+  let heads = assignment_heads(&scanner.idents, &scanner.top_level_assigns);
+  let rules = build_rule_spans(src, &mut scanner.idents, &heads);
+  Scan {
+    idents: scanner.idents,
+    rules,
+  }
+}
 
-  for (idx, _) in &heads {
-    idents[*idx].role = IdentRole::RuleHead;
+struct Scanner<'a> {
+  source: &'a str,
+  bytes: &'a [u8],
+  idents: Vec<IdentToken>,
+  top_level_assigns: Vec<usize>,
+  index: usize,
+  depth: usize,
+}
+
+impl<'a> Scanner<'a> {
+  fn new(source: &'a str) -> Self {
+    Self {
+      source,
+      bytes: source.as_bytes(),
+      idents: Vec::new(),
+      top_level_assigns: Vec::new(),
+      index: 0,
+      depth: 0,
+    }
   }
 
-  let mut rules: Vec<RuleSpan> = Vec::new();
+  fn scan_tokens(&mut self) {
+    while self.index < self.bytes.len() {
+      self.scan_next();
+    }
+  }
+
+  fn scan_next(&mut self) {
+    if let Some(end) = literal_end(self.bytes, self.index) {
+      self.index = end;
+      return;
+    }
+    if self.scan_spacing_or_comment()
+      || self.scan_group_delimiter()
+      || self.scan_control_operator()
+      || self.scan_generic_params()
+      || self.scan_operator_or_number()
+    {
+      return;
+    }
+    if !self.scan_identifier() {
+      self.index += 1;
+    }
+  }
+
+  fn scan_spacing_or_comment(&mut self) -> bool {
+    match self.bytes[self.index] {
+      b' ' | b'\t' | b'\r' | b'\n' => self.index += 1,
+      // Comment (including a `;#` directive line) runs to end of line.
+      b';' => {
+        while self.index < self.bytes.len() && self.bytes[self.index] != b'\n' {
+          self.index += 1;
+        }
+      }
+      b'b' if self.bytes[self.index..].starts_with(b"b64'") => self.index += 3,
+      _ => return false,
+    }
+    true
+  }
+
+  fn scan_group_delimiter(&mut self) -> bool {
+    match self.bytes[self.index] {
+      b'(' | b'[' | b'{' => self.depth += 1,
+      b')' | b']' | b'}' => self.depth = self.depth.saturating_sub(1),
+      _ => return false,
+    }
+    self.index += 1;
+    true
+  }
+
+  fn scan_control_operator(&mut self) -> bool {
+    if self.bytes[self.index] != b'.' {
+      return false;
+    }
+    // A dot that reaches here is never part of an identifier (`ident_end`
+    // consumes `cose.label` whole), so a single dot introduces a control
+    // operator. The grammar allows spacing and comments between the dot
+    // and the operator name; either way the name is not a reference.
+    let start = self.index;
+    self.index += 1;
+    // `..` and `...` are range operators, not control operators.
+    while self.index < self.bytes.len() && self.bytes[self.index] == b'.' {
+      self.index += 1;
+    }
+    if self.index != start + 1 {
+      return true;
+    }
+    self.index = skip_spacing(self.bytes, self.index);
+    if self.index < self.bytes.len() && is_ident_start(self.bytes[self.index]) {
+      let start = self.index;
+      while self.index < self.bytes.len()
+        && (is_ident_continue(self.bytes[self.index]) || self.bytes[self.index] == b'-')
+      {
+        self.index += 1;
+      }
+      self.idents.push(IdentToken {
+        start,
+        end: self.index,
+        text: self.source[start..self.index].to_string(),
+        role: IdentRole::ControlName,
+      });
+    }
+    true
+  }
+
+  fn scan_generic_params(&mut self) -> bool {
+    if self.bytes[self.index] != b'<' || self.depth != 0 {
+      return false;
+    }
+    // Generic parameters are only special when the group follows a rule head.
+    // Elsewhere `<...>` is generic arguments and contains normal references.
+    let Some(close) = generic_params_end(self.bytes, self.index) else {
+      self.index += 1;
+      return true;
+    };
+    self.index = skip_spacing(self.bytes, self.index + 1);
+    while self.index < close {
+      if is_ident_start(self.bytes[self.index]) {
+        let start = self.index;
+        self.index = ident_end(self.bytes, self.index);
+        self.idents.push(IdentToken {
+          start,
+          end: self.index,
+          text: self.source[start..self.index].to_string(),
+          role: IdentRole::GenericParam,
+        });
+      } else {
+        self.index += 1;
+      }
+      self.index = skip_spacing(self.bytes, self.index);
+    }
+    self.index = close + 1;
+    true
+  }
+
+  fn scan_operator_or_number(&mut self) -> bool {
+    match self.bytes[self.index] {
+      // Assignment operators: `=`, `/=`, `//=`. `=>` is an entry separator.
+      b'=' if self.index + 1 >= self.bytes.len() || self.bytes[self.index + 1] != b'>' => {
+        if self.depth == 0 {
+          self.top_level_assigns.push(self.index);
+        }
+        self.index += 1;
+      }
+      // Keep a tag's separator out of decimal-fraction scanning.
+      b'#' => self.index = tag_end(self.bytes, self.index),
+      b'*' => self.index = occurrence_end(self.bytes, self.index),
+      b'0'..=b'9' => self.index = number_end(self.bytes, self.index),
+      _ => return false,
+    }
+    true
+  }
+
+  fn scan_identifier(&mut self) -> bool {
+    if !is_ident_start(self.bytes[self.index]) {
+      return false;
+    }
+    let start = self.index;
+    self.index = ident_end(self.bytes, self.index);
+    self.idents.push(IdentToken {
+      start,
+      end: self.index,
+      text: self.source[start..self.index].to_string(),
+      role: if self.bytes.get(skip_spacing(self.bytes, self.index)) == Some(&b':') {
+        IdentRole::BarewordKey
+      } else {
+        IdentRole::Reference
+      },
+    });
+    true
+  }
+}
+
+fn build_rule_spans(
+  src: &str,
+  idents: &mut [IdentToken],
+  heads: &[(usize, usize)],
+) -> Vec<RuleSpan> {
+  for (idx, _) in heads {
+    idents[*idx].role = IdentRole::RuleHead;
+  }
+  let mut rules = Vec::new();
   for (n, (idx, assign)) in heads.iter().enumerate() {
     let next = heads
       .get(n + 1)
@@ -484,15 +529,12 @@ pub(crate) fn scan(src: &str) -> Scan {
     }
 
     let start = idents[*idx].start;
-    let end = match heads.get(n + 1) {
-      Some((next, _)) => idents[*next].start,
-      None => src.len(),
-    };
+    let end = heads
+      .get(n + 1)
+      .map(|(next, _)| idents[*next].start)
+      .unwrap_or(src.len());
     let end = src[start..end].trim_end().len() + start;
-
-    // `/=` and `//=` extend an existing rule; the `/` directly precedes `=`.
-    let extension = assign > &0 && bytes[assign - 1] == b'/';
-
+    let extension = *assign > 0 && src.as_bytes()[assign - 1] == b'/';
     rules.push(RuleSpan {
       name: idents[*idx].text.clone(),
       start,
@@ -501,8 +543,7 @@ pub(crate) fn scan(src: &str) -> Scan {
       params,
     });
   }
-
-  Scan { idents, rules }
+  rules
 }
 
 /// Both lists are source-ordered, so recovering heads needs only one pass.
