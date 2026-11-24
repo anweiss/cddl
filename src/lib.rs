@@ -467,8 +467,14 @@
 //! all be used when validating JSON.
 //!
 //! For JSON and CBOR, `time` and `tdate` are limited to jiff's representable
-//! timestamp range (-377705023201 through 253402207200 seconds, inclusive).
-//! Fractional `time` values are checked at millisecond precision.
+//! timestamp range. `time` accepts -377705023201 through 253402207200
+//! seconds, inclusive; fractional values are checked at millisecond
+//! precision, so values past either integer bound are rejected. `tdate`
+//! accepts RFC 3339 four-digit years through
+//! 9999-12-30T22:00:00.999999999Z (UTC).
+//! Fractional seconds beyond nanosecond precision are truncated for
+//! validation, except that nonzero truncated digits at the maximum are
+//! rejected.
 //!
 //! Since JSON objects only support keys whose types are JSON strings, when
 //! validating JSON, member keys defined in CDDL structs must use either the

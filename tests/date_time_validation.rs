@@ -69,6 +69,17 @@ fn json_dates_and_times() {
       r#""2024-02-29T12:34:56.123456789123Z""#,
       true,
     ),
+    ("root = tdate", r#""9999-12-30T22:00:00.9999999990Z""#, true),
+    (
+      "root = tdate",
+      r#""9999-12-30T22:00:00.9999999991Z""#,
+      false,
+    ),
+    (
+      "root = tdate",
+      r#""9999-12-31T00:00:00.9999999991+02:00""#,
+      false,
+    ),
     ("root = tdate", r#""2023-02-29T12:34:56Z""#, false),
     ("root = tdate", r#""2024-02-29T12:34:56""#, false),
     ("root = tdate", r#""20240229T123456Z""#, false),
@@ -76,6 +87,7 @@ fn json_dates_and_times() {
     ("root = time", "0", true),
     ("root = time", "-1.25", true),
     ("root = time", "253402207200", true),
+    ("root = time", "253402207200.5", false),
     ("root = time", "253402207201", false),
     ("root = time", "-377705023201", true),
     ("root = time", "-377705023202", false),
@@ -148,6 +160,16 @@ fn cbor_dates_and_times() {
     (
       "root = tdate",
       Value::Text("20240229T123456Z".into()),
+      false,
+    ),
+    (
+      "root = tdate",
+      Value::Text("9999-12-30T22:00:00.9999999990Z".into()),
+      true,
+    ),
+    (
+      "root = tdate",
+      Value::Text("9999-12-30T22:00:00.9999999991Z".into()),
       false,
     ),
     ("root = time", Value::Integer(Integer::from(0)), true),
