@@ -75,6 +75,7 @@ fn valid_time_integer(seconds: i128) -> bool {
 
 fn valid_time_float(seconds: f64) -> bool {
   // Millisecond conversion truncates toward zero, so bound the seconds first.
+  // Bounds apply to the decoded f64; decimals that round onto a bound pass.
   seconds.is_finite()
     && seconds >= jiff::Timestamp::MIN.as_second() as f64
     && seconds <= jiff::Timestamp::MAX.as_second() as f64
