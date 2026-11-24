@@ -781,9 +781,18 @@ pub(crate) fn choice_member_key_for_depth<'e, 'a>(
   // it without end, even when a single alternative remains. A control over a
   // choice (`(int / tstr) .and any`) also matches each key on its own, by
   // probing the complete constrained type. So does a range (`10..20`), which
-  // constrains each key, not the map.
+  // constrains each key, not the map. A generic instantiation (`k<int>`)
+  // validates in a child that cannot relay its key matches, so it also uses
+  // its expanded alternatives.
   let choice = alternatives.len() > 1
     || !acyclic
+    || matches!(
+      &t1.type2,
+      Type2::Typename {
+        generic_args: Some(_),
+        ..
+      }
+    )
     || alternatives.first().is_some_and(|alternative| {
       control_targets_choice(state, alternative)
         || matches!(

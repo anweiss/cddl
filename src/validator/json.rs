@@ -3168,27 +3168,20 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       // If this choice validates successfully (no errors), use it
       if choice_validator.errors.is_empty() {
         #[cfg(feature = "additional-controls")]
-        if !choice_validator.state.has_feature_errors
-          || choice_validator.state.disabled_features.is_some()
-        {
-          // Clear any accumulated errors and return success
-          let type_choice_error_count = self.errors.len() - initial_error_count;
-          if type_choice_error_count > 0 {
-            for _ in 0..type_choice_error_count {
-              self.errors.pop();
-            }
-          }
-          return Ok(());
-        }
-
+        let accepted = !choice_validator.state.has_feature_errors
+          || choice_validator.state.disabled_features.is_some();
         #[cfg(not(feature = "additional-controls"))]
-        {
+        let accepted = true;
+
+        if accepted {
           // Clear any accumulated errors and return success
-          let type_choice_error_count = self.errors.len() - initial_error_count;
-          if type_choice_error_count > 0 {
-            for _ in 0..type_choice_error_count {
-              self.errors.pop();
-            }
+          self.errors.truncate(initial_error_count);
+          if self.state.is_member_key {
+            // A member key named by a rule (`k = int`) relays the map pairs
+            // it matched to its group entry, as the inline type does, so
+            // keep the successful choice's key-matching state.
+            choice_validator.errors = std::mem::take(&mut self.errors);
+            *self = choice_validator;
           }
           return Ok(());
         }
