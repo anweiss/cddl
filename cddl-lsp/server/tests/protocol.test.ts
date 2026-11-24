@@ -90,6 +90,30 @@ describe("language-server stdio protocol with real WASM", () => {
     });
     expect((await corrected).diagnostics).toEqual([]);
   });
+  it("publishes unused-rule and style diagnostics from enhanced validation", async () => {
+    const published = await open(
+      [
+        "root = [used, $$ext, $choice]",
+        "used = tstr",
+        "$$ext //= ( a: uint )",
+        "$choice /= uint",
+        "$choice/=tstr",
+        "unused = { a: uint }",
+        "version = 1",
+      ].join("\n"),
+    );
+    const lint = published.diagnostics.map(({ code, range }) => ({ code, range }));
+    expect(lint).toEqual([
+      {
+        code: "unused-rule",
+        range: { start: { line: 5, character: 0 }, end: { line: 5, character: 6 } },
+      },
+      {
+        code: "spacing-around-operators",
+        range: { start: { line: 4, character: 6 }, end: { line: 4, character: 10 } },
+      },
+    ]);
+  });
   it("offers prelude completions and document symbols", async () => {
     await open("root = uint\nother = tstr");
     const items = await connection.sendRequest<CompletionItem[]>("textDocument/completion", {
