@@ -52,9 +52,9 @@ isolated loopback static server and close it afterwards.
 
 Commit npm and Cargo lockfiles. Use `npm run check:versions` when editing
 manifests. Keep `pest`, `pest_derive`, `pest_generator`, `pest_meta` and
-`pest_vm` pinned to the same exact release; the supported family is 2.9.5.
+`pest_vm` pinned to the same exact release; the supported family is 2.9.6.
 Pest's stack-guard path uses `stacker`/`psm` and requires a host C toolchain.
-Pest 2.9.5 makes stacker checks opt-in for non-native targets; do not enable
+Since Pest 2.9.5, stacker checks are opt-in for non-native targets; do not enable
 that feature for WASM without validating the target. Before changing the
 family, run `npm run build:wasm` (web and Node/LSP targets), native tests,
 MSRV checks and the downstream consumer test. Do not use `npm audit fix
