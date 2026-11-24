@@ -12,8 +12,8 @@ This crate supports the following CDDL-related RFCs:
 | [RFC 9165](https://datatracker.ietf.org/doc/html/rfc9165) | Additional Control Operators for CDDL | ✔️ `.cat` , `.det` , `.plus` , `.abnf` , `.abnfb` , `.feature` |
 | [RFC 9682](https://datatracker.ietf.org/doc/html/rfc9682) | Updates to CDDL (Empty Data Models, `\u{hex}` Escapes, Non-Literal Tag Numbers) | ✔️ Full grammar and parser support |
 | [RFC 9741](https://datatracker.ietf.org/doc/html/rfc9741) | Additional Control Operators for Text in CDDL | ✔️ `.b64u` , `.b64c` , `.hex` , `.hexlc` , `.hexuc` , `.b32` , `.h32` , `.b45` , `.base10` , `.printf` , `.json` , `.join` and sloppy variants |
-| [draft-bormann-cbor-cddl-csv-08](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/08/) | Using CDDL for CSV | ✔️ CSV validation via generic data model mapping |
-| [draft-bormann-cbor-cddl-freezer-17](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-17) | CDDL Feature Freezer | ✔️ `.pcre` (PCRE2), `.iregexp` (RFC 9485), `.bitfield` |
+| [draft-bormann-cbor-cddl-csv-09](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/09/) | Using CDDL for CSV | ✔️ CSV validation via generic data model mapping |
+| [draft-bormann-cbor-cddl-freezer-18](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-18) | CDDL Feature Freezer | ✔️ `.pcre` (PCRE2), `.iregexp` (RFC 9485), `.bitfield` |
 | [draft-ietf-cbor-cddl-modules-07](https://datatracker.ietf.org/doc/draft-ietf-cbor-cddl-modules/07/) | CDDL Module Structure | ✔️ `;#` directives, `import` / `include`, `from` selection and `as` namespacing — behind the default-off `modules` feature |
 
 This crate uses [Pest](https://pest.rs/) (a PEG parser generator for Rust) to parse CDDL. The grammar is defined in [ `cddl.pest` ](cddl.pest) and closely follows the ABNF grammar in [Appendix B.](https://tools.ietf.org/html/rfc8610#appendix-B) of the spec. All CDDL must use UTF-8 for its encoding per the spec.
@@ -357,7 +357,7 @@ Enable CBOR validation. Enabled by default.
 
 **`--feature csv-validate`**
 
-Enable CSV validation per [draft-bormann-cbor-cddl-csv-08](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/08/). Enabled by default.
+Enable CSV validation per [draft-bormann-cbor-cddl-csv-09](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/09/). Enabled by default.
 
 **`--feature additional-controls`**
 
@@ -365,7 +365,7 @@ Enable validation support for the additional control operators defined in [RFC 9
 
 **`--feature freezer`**
 
-Enable control operators from the [CDDL Feature Freezer](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-17) draft. Enabled by default. Includes:
+Enable control operators from the [CDDL Feature Freezer](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-18) draft. Enabled by default. Includes:
 
 - `.pcre` — PCRE2 regular expressions via `fancy-regex` (supports lookahead, lookbehind, backreferences). Patterns are anchored on both sides per the spec.
 - `.iregexp` — [RFC 9485](https://datatracker.ietf.org/doc/html/rfc9485) interoperable regular expressions. Anchored matching.
@@ -660,7 +660,7 @@ Below is the table of supported control operators:
 
 <a name="number">2</a>: While JSON itself does not distinguish between integers and floating-point numbers, this crate does provide the ability to validate numbers against a more specific numerical CBOR type, provided that its equivalent representation is allowed by JSON. Refer to [Appendix E.](https://tools.ietf.org/html/rfc8610#appendix-E) of the standard for more details on the implications of using CDDL with JSON numbers.
 
-<a name="regex">3</a>: Due to Perl-Compatible Regular Expressions (PCREs) being more widely used than XSD regular expressions, this crate also provides support for the `.pcre` control operator from the [CDDL Feature Freezer](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-17). When the `freezer` feature is enabled, `.pcre` uses the `fancy-regex` crate for full PCRE2 support (lookahead, lookbehind, backreferences). Patterns are anchored on both sides per the spec. When `freezer` is disabled, `.pcre` falls back to the same XSD regex engine as `.regexp`.
+<a name="regex">3</a>: Due to Perl-Compatible Regular Expressions (PCREs) being more widely used than XSD regular expressions, this crate also provides support for the `.pcre` control operator from the [CDDL Feature Freezer](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-18). When the `freezer` feature is enabled, `.pcre` uses the `fancy-regex` crate for full PCRE2 support (lookahead, lookbehind, backreferences). Patterns are anchored on both sides per the spec. When `freezer` is disabled, `.pcre` falls back to the same XSD regex engine as `.regexp`.
 
 If you've enabled the `additional-controls` feature, the control operators from RFC 9165 below are also available for use:
 
@@ -692,7 +692,7 @@ The text content control operators from RFC 9741 are also available:
 | `.json` | ✔️ Validates text as JSON matching a CDDL type |
 | `.join` | ✔️ Validates text as concatenation of array element values |
 
-If you've enabled the `freezer` feature, the control operators from the [CDDL Feature Freezer](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-17) draft are also available:
+If you've enabled the `freezer` feature, the control operators from the [CDDL Feature Freezer](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-18) draft are also available:
 
 | Control operator | Supported |
 | ---------------- | --------- |
@@ -728,7 +728,7 @@ let csv = "Alice,30\nBob,25\n";
 assert!(validate_csv_from_str(cddl, csv, None, None).is_ok())
 ```
 
-This crate implements CSV validation as described in [draft-bormann-cbor-cddl-csv-08](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/08/). CSV data is parsed according to [RFC 4180](https://datatracker.ietf.org/doc/html/rfc4180) and mapped to the CDDL generic data model:
+This crate implements CSV validation as described in [draft-bormann-cbor-cddl-csv-09](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/09/). CSV data is parsed according to [RFC 4180](https://datatracker.ietf.org/doc/html/rfc4180) and mapped to the CDDL generic data model:
 
 ```cddl
 csv = [?header, *record]

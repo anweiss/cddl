@@ -350,7 +350,7 @@
 //! **`--feature csv-validate`**
 //!
 //! Enable CSV validation per
-//! [draft-bormann-cbor-cddl-csv-08](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/08/).
+//! [draft-bormann-cbor-cddl-csv-09](https://datatracker.ietf.org/doc/draft-bormann-cbor-cddl-csv/09/).
 //! Enabled by default.
 //!
 //! **`--feature additional-controls`**
@@ -522,7 +522,7 @@
 //! `.regexp` operator (see
 //! [Discussion](https://tools.ietf.org/html/rfc8610#section-3.8.3.2) and
 //! [CDDL-Freezer
-//! proposal](https://tools.ietf.org/html/draft-bormann-cbor-cddl-freezer-03#section-5.1)).
+//! proposal](https://datatracker.ietf.org/doc/html/draft-bormann-cbor-cddl-freezer-18#section-4.1)).
 //! Ensure that your regex string is properly JSON escaped when using this
 //! control.
 //!
