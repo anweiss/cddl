@@ -11,11 +11,13 @@ use crate::{
 
 use std::{
   borrow::Cow,
+  collections::{HashMap, HashSet},
   convert::TryFrom,
   fmt::{self, Write},
+  sync::{Arc, Mutex},
 };
 
-use super::cbor_value::{decode_cbor, Value};
+use super::cbor_value::{decode_cbor, has_duplicate_text_keys, Value};
 use serde_json;
 
 #[cfg(feature = "additional-controls")]
@@ -75,7 +77,7 @@ impl<T: std::fmt::Debug + 'static> std::error::Error for Error<T> {
 }
 
 /// cbor validation error
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ValidationError {
   /// Error message
   pub reason: String,
@@ -124,6 +126,17 @@ impl std::error::Error for ValidationError {
 }
 
 impl<T: std::fmt::Debug> Error<T> {
+  #[cfg(not(target_arch = "wasm32"))]
+  pub(crate) fn from_decode_error(error: super::cbor_value::DecodeError) -> Self {
+    match error {
+      super::cbor_value::DecodeError::DuplicateTextKey => {
+        Self::CBORParsing(ciborium::de::Error::Semantic(None, error.to_string()))
+      }
+      // Preserve the existing public classification of unrelated decode errors.
+      _ => Self::CDDLParsing(error.to_string()),
+    }
+  }
+
   fn from_validator(cv: &CBORValidator, reason: String) -> Self {
     Error::Validation(vec![ValidationError {
       cddl_location: cv.state.cddl_location.clone(),
@@ -148,6 +161,64 @@ struct SingleMapEntryClaim<'a> {
   entry_index: usize,
   entry: Option<ValueMemberKeyEntry<'a>>,
   generic_context: Option<GenericEvaluationContext<'a>>,
+}
+
+#[derive(Eq, Hash, PartialEq)]
+struct NumericTargetIdentity {
+  cddl: usize,
+  target: String,
+  generic_bindings: String,
+  features: String,
+}
+
+#[derive(Eq, Hash, PartialEq)]
+struct NumericTargetProbeKey {
+  identity: NumericTargetIdentity,
+  data_location: String,
+  is_multi_type_choice: bool,
+  is_multi_group_choice: bool,
+  is_group_to_choice_enum: bool,
+  type_group_name_entry: Option<String>,
+}
+
+#[derive(Clone)]
+enum NumericTargetProbeResult {
+  Match,
+  NoMatch(Vec<ValidationError>),
+}
+
+#[derive(Eq, Hash, PartialEq)]
+enum ControllerOperandKey {
+  Integer(String),
+  Float(u64),
+  Bytes(Vec<u8>),
+  Text(String),
+  Other(String),
+}
+
+impl From<&Value> for ControllerOperandKey {
+  fn from(value: &Value) -> Self {
+    match value {
+      Value::Integer(value) => Self::Integer(format!("{value:?}")),
+      Value::Float(value) => Self::Float(value.to_bits()),
+      Value::Bytes(value) => Self::Bytes(value.clone()),
+      Value::Text(value) => Self::Text(value.clone()),
+      _ => Self::Other(format!("{value:?}")),
+    }
+  }
+}
+
+#[derive(Eq, Hash, PartialEq)]
+struct ControllerDomainProbeKey {
+  operand: ControllerOperandKey,
+  target: NumericTargetIdentity,
+}
+
+#[derive(Clone)]
+struct ControllerDomain<'a> {
+  target: Type2<'a>,
+  generic_rules: Vec<GenericRule<'a>>,
+  generic_rule: Option<&'a str>,
 }
 
 /// cbor validator type
@@ -175,6 +246,12 @@ pub struct CBORValidator<'a> {
   // Isolated compatibility probes must not recursively start another map
   // assignment search when the tested pair does not match.
   probing_single_entry_assignment: bool,
+  // Shared only by validator copies of this immutable CBOR value.
+  numeric_target_checks: Arc<Mutex<HashMap<NumericTargetProbeKey, NumericTargetProbeResult>>>,
+  numeric_probe_recursions: Arc<Mutex<usize>>,
+  controller_domain_checks: Arc<Mutex<HashMap<ControllerDomainProbeKey, NumericTargetProbeResult>>>,
+  numeric_controller_checks: Arc<Mutex<HashMap<ControllerDomainProbeKey, bool>>>,
+  controller_domains: Vec<ControllerDomain<'a>>,
   // Candidate batch produced while visiting one repeating map member's key.
   // `visit_value_member_key_entry` immediately takes this relay field so the
   // physical indices cannot affect a later group entry.
@@ -214,12 +291,10 @@ impl<'a> CBORValidator<'a> {
       self.add_error("empty group enumeration has no members".to_string());
       return Ok(());
     }
-    let initial = self.errors.len();
-    for choice in &choices {
-      let before = self.errors.len();
-      let previous = std::mem::replace(&mut self.state.is_group_to_choice_enum, true);
-      let mut result = self.visit_type_choice(choice);
-      for error in &mut self.errors[before..] {
+    self.visit_isolated_alternatives::<T, _, _>(&choices, |candidate, choice| {
+      let previous = std::mem::replace(&mut candidate.state.is_group_to_choice_enum, true);
+      let mut result = candidate.visit_type_choice(choice);
+      for error in &mut candidate.errors {
         error.is_group_to_choice_enum = true;
       }
       if let Err(Error::Validation(errors)) = &mut result {
@@ -227,13 +302,9 @@ impl<'a> CBORValidator<'a> {
           error.is_group_to_choice_enum = true;
         }
       }
-      self.state.is_group_to_choice_enum = previous;
-      result?;
-      if self.errors.len() == before {
-        self.errors.truncate(initial);
-        return Ok(());
-      }
-    }
+      candidate.state.is_group_to_choice_enum = previous;
+      result
+    })?;
     Ok(())
   }
 
@@ -242,6 +313,7 @@ impl<'a> CBORValidator<'a> {
     marker: &str,
     message: String,
   ) -> visitor::Result<Error<T>> {
+    self.note_numeric_probe_recursion();
     match self.numeric_context.recursion(marker) {
       NumericRecursion::Cut => {
         self.add_error(message);
@@ -269,6 +341,20 @@ impl<'a> CBORValidator<'a> {
     self.add_error("expected b64url tag 33 with a text payload".into());
   }
 
+  fn visit_structural_prelude<T: std::fmt::Debug + 'static>(
+    &mut self,
+    token: &Token,
+  ) -> Option<visitor::Result<Error<T>>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    if self.state.is_member_key && matches!(self.cbor, Value::Map(_)) {
+      return None;
+    }
+    structural_prelude_type(token, &self.cbor)
+      .map(|tagged_data_type| self.visit_type2(&tagged_data_type))
+  }
+
   #[cfg(not(target_arch = "wasm32"))]
   #[cfg(feature = "additional-controls")]
   /// New cborValidation from CDDL AST and cbor value
@@ -284,6 +370,11 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
+      numeric_target_checks: Arc::default(),
+      numeric_probe_recursions: Arc::default(),
+      controller_domain_checks: Arc::default(),
+      numeric_controller_checks: Arc::default(),
+      controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -305,6 +396,11 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
+      numeric_target_checks: Arc::default(),
+      numeric_probe_recursions: Arc::default(),
+      controller_domain_checks: Arc::default(),
+      numeric_controller_checks: Arc::default(),
+      controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -326,6 +422,11 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
+      numeric_target_checks: Arc::default(),
+      numeric_probe_recursions: Arc::default(),
+      controller_domain_checks: Arc::default(),
+      numeric_controller_checks: Arc::default(),
+      controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -347,6 +448,11 @@ impl<'a> CBORValidator<'a> {
       single_entry_claims: Vec::new(),
       active_single_entry_claim: None,
       probing_single_entry_assignment: false,
+      numeric_target_checks: Arc::default(),
+      numeric_probe_recursions: Arc::default(),
+      controller_domain_checks: Arc::default(),
+      numeric_controller_checks: Arc::default(),
+      controller_domains: Vec::new(),
       map_entry_candidates: None,
       validating_value: false,
       range_upper: None,
@@ -356,6 +462,321 @@ impl<'a> CBORValidator<'a> {
   /// Extract the underlying CBOR Value.
   pub fn extract_cbor(self) -> Value {
     self.cbor
+  }
+
+  fn numeric_target_probe_key(&self, target: &Type2<'a>) -> NumericTargetProbeKey {
+    #[cfg(feature = "additional-controls")]
+    let features = format!("{:?}", self.state.enabled_features);
+    #[cfg(not(feature = "additional-controls"))]
+    let features = String::new();
+    let generic_bindings = match target {
+      Type2::Typename {
+        ident,
+        generic_args,
+        ..
+      } => generic_args
+        .as_ref()
+        .map(|args| format!("{:?}", resolved_generic_args(&self.state, args)))
+        .or_else(|| {
+          super::generic_argument_for_param(&self.state, ident.ident)
+            .map(|arg| format!("{:?}", resolve_generic_argument(&self.state, &arg)))
+        })
+        .unwrap_or_default(),
+      _ => String::new(),
+    };
+    NumericTargetProbeKey {
+      identity: NumericTargetIdentity {
+        cddl: self.state.cddl as *const CDDL<'a> as usize,
+        target: format!("{target:?}"),
+        generic_bindings,
+        features,
+      },
+      data_location: self.state.data_location.clone(),
+      is_multi_type_choice: self.state.is_multi_type_choice,
+      is_multi_group_choice: self.state.is_multi_group_choice,
+      is_group_to_choice_enum: self.state.is_group_to_choice_enum,
+      type_group_name_entry: self.state.type_group_name_entry.map(str::to_owned),
+    }
+  }
+
+  fn extend_unique_errors(&mut self, errors: Vec<ValidationError>) {
+    let mut seen: HashSet<_> = self.errors.iter().cloned().collect();
+    self.errors.extend(
+      errors
+        .into_iter()
+        .filter(|error| seen.insert(error.clone())),
+    );
+  }
+
+  fn probe_numeric_target<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let key = self.numeric_target_probe_key(target);
+    let cached = self
+      .numeric_target_checks
+      .lock()
+      .ok()
+      .and_then(|checks| checks.get(&key).cloned());
+    match cached {
+      Some(NumericTargetProbeResult::Match) => return Ok(true),
+      Some(NumericTargetProbeResult::NoMatch(errors)) => {
+        self.extend_unique_errors(errors);
+        return Ok(false);
+      }
+      None => {}
+    }
+
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    tests::NUMERIC_TARGET_PROBE_MISSES.with(|count| count.set(count.get() + 1));
+    let mut probe = self.new_with_recursion_state(self.cbor.clone());
+    probe.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
+    probe.state.data_location = self.state.data_location.clone();
+    probe.state.is_multi_type_choice = self.state.is_multi_type_choice;
+    probe.state.is_multi_group_choice = self.state.is_multi_group_choice;
+    probe.state.is_group_to_choice_enum = self.state.is_group_to_choice_enum;
+    probe.state.type_group_name_entry = self.state.type_group_name_entry;
+    let recursion_count = self
+      .numeric_probe_recursions
+      .lock()
+      .ok()
+      .map(|count| *count);
+    probe.visit_type2(target)?;
+    let cacheable_match = recursion_count.is_some_and(|count| {
+      count != usize::MAX
+        && self
+          .numeric_probe_recursions
+          .lock()
+          .is_ok_and(|current| *current == count)
+    });
+    if !probe.errors.is_empty() {
+      // A cycle cut can reject a branch that succeeds from another entry path.
+      if cacheable_match {
+        if let Ok(mut checks) = self.numeric_target_checks.lock() {
+          checks.insert(key, NumericTargetProbeResult::NoMatch(probe.errors.clone()));
+        }
+      }
+      self.extend_unique_errors(probe.errors);
+      return Ok(false);
+    }
+    // Neither successful nor failed cycle-dependent probes are complete proofs.
+    if cacheable_match {
+      if let Ok(mut checks) = self.numeric_target_checks.lock() {
+        checks.insert(key, NumericTargetProbeResult::Match);
+      }
+    }
+    Ok(true)
+  }
+
+  fn note_numeric_probe_recursion(&self) {
+    if let Ok(mut count) = self.numeric_probe_recursions.lock() {
+      *count = count.saturating_add(1);
+    }
+  }
+
+  fn visit_numeric_controller<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    self.controller_domains.push(ControllerDomain {
+      target: target.clone(),
+      generic_rules: self.state.generic_rules.clone(),
+      generic_rule: self.state.eval_generic_rule,
+    });
+    let result = self.visit_type2(controller);
+    self.controller_domains.pop();
+    result
+  }
+
+  fn controller_value_matches_domains<T: std::fmt::Debug + 'static>(
+    &mut self,
+    value: &token::Value<'a>,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    for domain in self.controller_domains.clone() {
+      let value = token_value_into_cbor_value(value.clone());
+      let mut probe = self.new_with_recursion_state(value.clone());
+      probe.state.generic_rules = domain.generic_rules;
+      probe.state.eval_generic_rule = domain.generic_rule;
+      probe.state.data_location = self.state.data_location.clone();
+      let key = ControllerDomainProbeKey {
+        operand: ControllerOperandKey::from(&value),
+        target: probe.numeric_target_probe_key(&domain.target).identity,
+      };
+      let cached = probe
+        .controller_domain_checks
+        .lock()
+        .ok()
+        .and_then(|checks| checks.get(&key).cloned());
+      match cached {
+        Some(NumericTargetProbeResult::Match) => continue,
+        Some(NumericTargetProbeResult::NoMatch(errors)) => {
+          self.replay_controller_errors(errors);
+          return Ok(false);
+        }
+        None => {}
+      }
+      let recursion_count = probe
+        .numeric_probe_recursions
+        .lock()
+        .ok()
+        .map(|count| *count);
+      probe.visit_type2(&domain.target)?;
+      let cacheable = recursion_count.is_some_and(|count| {
+        count != usize::MAX
+          && probe
+            .numeric_probe_recursions
+            .lock()
+            .is_ok_and(|current| *current == count)
+      });
+      if !probe.errors.is_empty() {
+        for error in &mut probe.errors {
+          error.reason = format!("numeric controller: {}", error.reason);
+          error.cbor_location = error
+            .cbor_location
+            .strip_prefix(&self.state.data_location)
+            .unwrap_or(&error.cbor_location)
+            .to_owned();
+        }
+        if cacheable {
+          if let Ok(mut checks) = probe.controller_domain_checks.lock() {
+            checks.insert(key, NumericTargetProbeResult::NoMatch(probe.errors.clone()));
+          }
+        }
+        self.replay_controller_errors(probe.errors);
+        return Ok(false);
+      }
+      if cacheable {
+        if let Ok(mut checks) = probe.controller_domain_checks.lock() {
+          checks.insert(key, NumericTargetProbeResult::Match);
+        }
+      }
+    }
+    Ok(true)
+  }
+
+  fn replay_controller_errors(&mut self, mut errors: Vec<ValidationError>) {
+    for error in &mut errors {
+      error.cbor_location = format!("{}{}", self.state.data_location, error.cbor_location);
+      error.is_multi_type_choice = self.state.is_multi_type_choice;
+      error.is_multi_group_choice = self.state.is_multi_group_choice;
+      error.is_group_to_choice_enum = self.state.is_group_to_choice_enum;
+      error.type_group_name_entry = self.state.type_group_name_entry.map(str::to_owned);
+    }
+    self.extend_unique_errors(errors);
+  }
+
+  fn visit_group_entry_alternatives<T: std::fmt::Debug + 'static>(
+    &mut self,
+    entries: &[&GroupEntry<'a>],
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    if entries.is_empty() {
+      return Ok(false);
+    }
+    self.visit_isolated_alternatives::<T, _, _>(entries, |candidate, entry| {
+      candidate.visit_group_entry(entry)
+    })
+  }
+
+  fn visit_isolated_alternatives<T: std::fmt::Debug + 'static, A, F>(
+    &mut self,
+    entries: &[A],
+    mut visit: F,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+    F: FnMut(&mut Self, &A) -> visitor::Result<Error<T>>,
+  {
+    if entries.is_empty() {
+      return Ok(false);
+    }
+    let checkpoint = self.clone();
+    let mut errors = Vec::new();
+    for entry in entries {
+      let mut candidate = checkpoint.clone();
+      candidate.errors.clear();
+      visit(&mut candidate, entry)?;
+      if candidate.errors.is_empty() {
+        candidate.errors = checkpoint.errors;
+        *self = candidate;
+        return Ok(true);
+      }
+      errors.extend(candidate.errors);
+    }
+    self.extend_unique_errors(errors);
+    Ok(false)
+  }
+
+  #[cfg(feature = "additional-controls")]
+  fn visit_computed_alternatives<T: std::fmt::Debug + 'static>(
+    &mut self,
+    values: &[Type2<'a>],
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    self.visit_isolated_alternatives::<T, _, _>(values, |candidate, value| {
+      candidate.visit_type2(value)
+    })?;
+    Ok(())
+  }
+
+  #[cfg(feature = "additional-controls")]
+  fn visit_feature_control<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let Some(features) = &self.state.enabled_features else {
+      return Ok(());
+    };
+    let feature = match text_value_from_type2(self.state.cddl, controller) {
+      Some(Type2::TextValue { value, .. }) => value.to_string(),
+      Some(Type2::UTF8ByteString { value, .. }) => std::str::from_utf8(value)
+        .map_err(Error::UTF8Parsing)?
+        .to_owned(),
+      _ => return Ok(()),
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let enabled = features.contains(&feature.as_str());
+    #[cfg(target_arch = "wasm32")]
+    let enabled = features.contains(&JsValue::from_str(&feature));
+    if !enabled {
+      self
+        .state
+        .disabled_features
+        .get_or_insert_with(Vec::new)
+        .push(feature);
+      return Ok(());
+    }
+
+    // A feature gate changes availability, not an inherited operand operation.
+    let previous_ctrl = self.state.ctrl;
+    if previous_ctrl.is_none() || is_target_validating_context(previous_ctrl.as_ref()) {
+      self.state.ctrl = Some(ControlOperator::FEATURE);
+    }
+    let error_count = self.errors.len();
+    let result = self.visit_type2(target);
+    self.state.ctrl = previous_ctrl;
+    if self.errors.len() > error_count {
+      self.state.has_feature_errors = true;
+    }
+    result
   }
 
   fn validate_equality_control<T: std::fmt::Debug + 'static>(
@@ -371,7 +792,19 @@ impl<'a> CBORValidator<'a> {
         if is_ident_string_data_type(self.state.cddl, ident)
           || is_ident_numeric_data_type(self.state.cddl, ident)
         {
-          return self.visit_type2(controller);
+          if is_numeric_controller_context(self.state.ctrl.as_ref()) {
+            if is_ident_numeric_data_type(self.state.cddl, ident) {
+              return self.visit_numeric_controller::<T>(target, controller);
+            }
+            return self.visit_type2(controller);
+          }
+          let previous_ctrl = self.state.ctrl;
+          if is_target_validating_context(previous_ctrl.as_ref()) {
+            self.state.ctrl = None;
+          }
+          let result = self.visit_type2(controller);
+          self.state.ctrl = previous_ctrl;
+          return result;
         }
       }
       Type2::Array { .. } => {
@@ -1155,12 +1588,14 @@ impl<'a> CBORValidator<'a> {
     } else if ident_numeric_kind(self.state.cddl, ident).is_some() {
       let cddl = self.state.cddl;
       self.find_single_map_entry_matching(entries, |key| {
-        numeric_ident_matches_cbor_value(cddl, ident, key)
+        numeric_ident_matches_cbor_value(cddl, ident, key) || is_bignum_value(cddl, ident, key)
       })
     } else if is_ident_bool_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Bool(_)))
     } else if is_ident_null_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Null))
+    } else if matches!(lookup_ident(ident.ident), Token::UNDEFINED) {
+      self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Simple(23)))
     } else if is_ident_byte_string_data_type(self.state.cddl, ident) {
       self.find_single_map_entry_matching(entries, |key| matches!(key, Value::Bytes(_)))
     } else if is_ident_bignum_data_type(self.state.cddl, ident) {
@@ -1173,7 +1608,7 @@ impl<'a> CBORValidator<'a> {
     Some(entry)
   }
 
-  /// Create a new CBORValidator with inherited recursion state
+  /// Create a validator copy that shares recursion and proof-cache state.
   fn new_with_recursion_state(&self, cbor: Value) -> CBORValidator<'a> {
     #[cfg(all(feature = "additional-controls", target_arch = "wasm32"))]
     let mut cv = CBORValidator::new(self.state.cddl, cbor, self.state.enabled_features.clone());
@@ -1185,12 +1620,30 @@ impl<'a> CBORValidator<'a> {
     cv.state.generic_rules = self.state.generic_rules.clone();
     cv.state.eval_generic_rule = self.state.eval_generic_rule;
     cv.state.visited_rules = self.state.visited_rules.clone();
+    cv.numeric_probe_recursions = Arc::clone(&self.numeric_probe_recursions);
+    cv.controller_domain_checks = Arc::clone(&self.controller_domain_checks);
+    cv.numeric_controller_checks = Arc::clone(&self.numeric_controller_checks);
     cv.state.is_group_to_choice_enum = self.state.is_group_to_choice_enum;
     cv.numeric_context = self.numeric_context.clone();
     cv
   }
 
   fn validate_numeric_control<T: std::fmt::Debug + 'static>(
+    &mut self,
+    target: &Type2<'a>,
+    ctrl: ControlOperator,
+    controller: &Type2<'a>,
+  ) -> visitor::Result<Error<T>>
+  where
+    cbor::Error<T>: From<cbor::Error<std::io::Error>>,
+  {
+    let previous = self.numeric_context.begin_evaluation();
+    let result = self.evaluate_numeric_control(target, ctrl, controller);
+    self.numeric_context.work = previous;
+    result
+  }
+
+  fn evaluate_numeric_control<T: std::fmt::Debug + 'static>(
     &mut self,
     target: &Type2<'a>,
     ctrl: ControlOperator,
@@ -1216,42 +1669,19 @@ impl<'a> CBORValidator<'a> {
     // Use the ordinary evaluator rather than classifying an alias by its
     // first primitive: choices, literals, inner controls and generics all
     // contribute to the target's complete value domain.
-    let mut probe = self.new_with_recursion_state(self.cbor.clone());
-    let work = self.numeric_context.work.clone().unwrap_or_else(|| {
-      std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
-        MAX_NUMERIC_RESOLUTION_WORK,
-      ))
-    });
-    probe.numeric_context.work = Some(work.clone());
-    probe.state.data_location = self.state.data_location.clone();
-    let marker = numeric_recursion_marker(
-      &self.state,
-      &self.numeric_context,
-      "#numeric-target",
-      target,
-    )
-    .ok_or_else(|| {
-      Error::from_validator(self, "numeric target resolution limit exceeded".to_string())
-    })?;
-    if !probe.state.visited_rules.insert(marker.clone()) {
-      self.record_numeric_cycle(&marker, "recursive numeric target binding".to_string())?;
-      return Ok(());
-    }
-    probe.visit_type2(target)?;
-    if !probe.errors.is_empty() {
-      self.add_error(format!("expected type {}, got {:?}", target, self.cbor));
+    if !self.probe_numeric_target::<T>(target)? {
       return Ok(());
     }
 
     if matches!(ctrl, ControlOperator::EQ | ControlOperator::NE) {
       let mut probe = self.new_with_recursion_state(self.cbor.clone());
-      probe.numeric_context.work = Some(work);
+      probe.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
       probe.state.data_location = self.state.data_location.clone();
       if ctrl == ControlOperator::NE {
         probe.numeric_context.enter_negative(&self.state);
       }
-      probe.visit_type2(controller)?;
-      if probe.errors.is_empty() == (ctrl == ControlOperator::NE) {
+      let matches = probe.probe_numeric_target::<T>(controller)?;
+      if matches == (ctrl == ControlOperator::NE) {
         self.add_error(format!(
           "expected {} {}, got {:?}",
           ctrl, controller, self.cbor
@@ -1328,8 +1758,7 @@ impl<'a> CBORValidator<'a> {
             "recursive numeric controller proof".to_string(),
           ));
         }
-        probe.visit_type1(alternative)?;
-        Ok(probe.errors.is_empty())
+        probe.probe_numeric_controller(alternative, candidate)
       });
     match result {
       Ok(value) => Ok(value),
@@ -1342,6 +1771,49 @@ impl<'a> CBORValidator<'a> {
         "numeric controller resolution limit exceeded".to_string(),
       )),
     }
+  }
+
+  fn probe_numeric_controller<T: std::fmt::Debug + 'static>(
+    &mut self,
+    alternative: &Type1<'a>,
+    candidate: &token::Value<'a>,
+  ) -> std::result::Result<bool, Error<T>>
+  where
+    Error<T>: From<Error<std::io::Error>>,
+  {
+    let key = ControllerDomainProbeKey {
+      operand: ControllerOperandKey::from(&token_value_into_cbor_value(candidate.clone())),
+      target: self
+        .numeric_target_probe_key(&bound_type2(alternative))
+        .identity,
+    };
+    if let Some(matches) = self
+      .numeric_controller_checks
+      .lock()
+      .ok()
+      .and_then(|checks| checks.get(&key).copied())
+    {
+      return Ok(matches);
+    }
+    let before = self
+      .numeric_probe_recursions
+      .lock()
+      .ok()
+      .map(|count| *count);
+    self.visit_type1(alternative)?;
+    let matches = self.errors.is_empty();
+    if before.is_some_and(|count| {
+      count != usize::MAX
+        && self
+          .numeric_probe_recursions
+          .lock()
+          .is_ok_and(|after| *after == count)
+    }) {
+      if let Ok(mut checks) = self.numeric_controller_checks.lock() {
+        checks.insert(key, matches);
+      }
+    }
+    Ok(matches)
   }
 
   #[cfg(feature = "additional-controls")]
@@ -1492,9 +1964,8 @@ impl<'a> CBORValidator<'a> {
     Ok(())
   }
 
-  /// Validate every definition contributing to a named type choice from one
-  /// error checkpoint. Failed arms are tentative; their errors are retained
-  /// only when every arm fails.
+  /// Validate named type contributions from isolated checkpoints, committing
+  /// the successful arm's state or deduplicating diagnostics if every arm fails.
   fn visit_named_type_choice<T: std::fmt::Debug + 'static>(
     &mut self,
     ident: &Identifier<'a>,
@@ -1525,16 +1996,13 @@ impl<'a> CBORValidator<'a> {
         self.state.is_multi_type_choice_type_rule_validating_array = true;
       }
 
-      let error_count = self.errors.len();
-      for choice in choices {
-        let current_error_count = self.errors.len();
-        self.visit_type(choice)?;
-        if self.errors.len() == current_error_count {
-          self.errors.truncate(error_count);
-          return Ok(());
-        }
-      }
-
+      let alternatives: Vec<_> = choices
+        .iter()
+        .flat_map(|choice| choice.type_choices.iter())
+        .collect();
+      self.visit_isolated_alternatives::<T, _, _>(&alternatives, |candidate, choice| {
+        candidate.visit_type_choice(choice)
+      })?;
       return Ok(());
     }
 
@@ -1585,6 +2053,13 @@ impl<'a> CBORValidator<'a> {
       )
     })?;
     let mut child = self.new_with_recursion_state(self.cbor.clone());
+    child.numeric_target_checks = Arc::clone(&self.numeric_target_checks);
+    child.controller_domains = self.controller_domains.clone();
+    child.state.ctrl = self
+      .state
+      .ctrl
+      .filter(|ctrl| !is_target_validating_context(Some(ctrl)));
+    child.state.is_multi_group_choice = self.state.is_multi_group_choice;
     child.state.data_location = self.state.data_location.clone();
     if let Some(binding) = child
       .state
@@ -2185,7 +2660,7 @@ impl<'a> CBORValidator<'a> {
 
     for group_choice in group.group_choices.iter() {
       let mut candidate = checkpoint.clone();
-      candidate.errors.truncate(initial_error_count);
+      candidate.errors.clear();
       let error_count = candidate.errors.len();
       candidate.visit_group_choice(group_choice)?;
 
@@ -2212,22 +2687,19 @@ impl<'a> CBORValidator<'a> {
         }
       }
 
-      if has_parent_visible_unexpected_key {
+      if has_parent_visible_unexpected_key || candidate.errors.len() == error_count {
+        let errors = std::mem::replace(&mut candidate.errors, checkpoint.errors.clone());
+        candidate.extend_unique_errors(errors);
         *self = candidate;
         return Ok(());
       }
 
-      if candidate.errors.len() == error_count {
-        *self = candidate;
-        return Ok(());
-      }
-
-      choice_errors.extend(candidate.errors.into_iter().skip(initial_error_count));
+      choice_errors.extend(candidate.errors);
     }
 
     *self = checkpoint;
     self.errors.truncate(initial_error_count);
-    self.errors.extend(choice_errors);
+    self.extend_unique_errors(choice_errors);
     Ok(())
   }
 }
@@ -2246,6 +2718,17 @@ where
   cbor::Error<T>: From<cbor::Error<std::io::Error>>,
 {
   fn validate(&mut self) -> std::result::Result<(), cbor::Error<T>> {
+    self.numeric_target_checks = Arc::default();
+    self.numeric_probe_recursions = Arc::default();
+    self.controller_domain_checks = Arc::default();
+    self.numeric_controller_checks = Arc::default();
+    self.controller_domains.clear();
+    // RFC 8949 sections 5.3.1 and 5.6.1: text map keys compare byte-for-byte,
+    // independently of their wire encoding and of the enclosing CDDL type.
+    if has_duplicate_text_keys(&self.cbor) {
+      self.add_error("unexpected key: duplicate text key in CBOR map".into());
+      return Err(Error::Validation(self.errors.clone()));
+    }
     reset_numeric_context(&mut self.numeric_context, &self.state);
     for r in self.state.cddl.rules.iter() {
       // First type rule is root
@@ -2327,17 +2810,8 @@ where
       self.state.is_multi_group_choice = true;
     }
 
-    let error_count = self.errors.len();
-    for ge in group_choice_alternates {
-      let cur_errors = self.errors.len();
-      self.visit_group_entry(ge)?;
-      if self.errors.len() == cur_errors {
-        for _ in 0..self.errors.len() - error_count {
-          self.errors.pop();
-        }
-
-        return Ok(());
-      }
+    if self.visit_group_entry_alternatives::<T>(&group_choice_alternates)? {
+      return Ok(());
     }
 
     self.visit_group_entry(&gr.entry)
@@ -2348,49 +2822,42 @@ where
       self.state.is_multi_type_choice = true;
     }
 
-    let initial_error_count = self.errors.len();
-    let mut choice_validation_succeeded = false;
+    if matches!(self.cbor, Value::Array(_))
+      && !self.state.is_multi_type_choice_type_rule_validating_array
+    {
+      let prior_errors = std::mem::take(&mut self.errors);
+      let mut choice_errors = Vec::new();
+      let mut choice_validation_succeeded = false;
 
-    for type_choice in t.type_choices.iter() {
-      if matches!(self.cbor, Value::Array(_))
-        && !self.state.is_multi_type_choice_type_rule_validating_array
-      {
-        let error_count = self.errors.len();
-
+      for type_choice in t.type_choices.iter() {
+        self.errors.clear();
         self.visit_type_choice(type_choice)?;
 
         #[cfg(feature = "additional-controls")]
-        if self.errors.len() == error_count
+        let choice_succeeded = self.errors.is_empty()
           && !self.state.has_feature_errors
-          && self.state.disabled_features.is_none()
-        {
-          // Disregard invalid type choice validation errors if one of the
-          // choices validates successfully
-          let type_choice_error_count = self.errors.len() - initial_error_count;
-          if type_choice_error_count > 0 {
-            for _ in 0..type_choice_error_count {
-              self.errors.pop();
-            }
-          }
-          choice_validation_succeeded = true;
-        }
+          && self.state.disabled_features.is_none();
 
         #[cfg(not(feature = "additional-controls"))]
-        if self.errors.len() == error_count {
-          // Disregard invalid type choice validation errors if one of the
-          // choices validates successfully
-          let type_choice_error_count = self.errors.len() - initial_error_count;
-          if type_choice_error_count > 0 {
-            for _ in 0..type_choice_error_count {
-              self.errors.pop();
-            }
-          }
-          choice_validation_succeeded = true;
-        }
+        let choice_succeeded = self.errors.is_empty();
 
-        continue;
+        if choice_succeeded {
+          choice_validation_succeeded = true;
+        } else {
+          choice_errors.append(&mut self.errors);
+        }
       }
 
+      self.errors = prior_errors;
+      if !choice_validation_succeeded {
+        self.extend_unique_errors(choice_errors);
+      }
+      return Ok(());
+    }
+
+    let initial_error_count = self.errors.len();
+
+    for type_choice in t.type_choices.iter() {
       // Create a copy of the validator to test this choice in isolation
       let mut choice_validator = self.clone();
       choice_validator.errors.clear();
@@ -2426,17 +2893,10 @@ where
         }
       } else {
         // This choice failed, accumulate its errors
-        self.errors.extend(choice_validator.errors);
+        self.extend_unique_errors(choice_validator.errors);
       }
     }
 
-    // If we got here and choice_validation_succeeded is true (for array case),
-    // then validation succeeded; drop errors accumulated by other, failing
-    // alternatives so they don't leak into the overall result
-    if choice_validation_succeeded {
-      self.errors.truncate(initial_error_count);
-      return Ok(());
-    }
     Ok(())
   }
 
@@ -2552,6 +3012,7 @@ where
     ctrl: ControlOperator,
     controller: &Type2<'a>,
   ) -> visitor::Result<Error<T>> {
+    let mut numeric_target_validated = false;
     if let Type2::Typename {
       ident: target_ident,
       generic_args: None,
@@ -2575,7 +3036,6 @@ where
     }
     #[cfg(feature = "additional-controls")]
     if ctrl == ControlOperator::PLUS {
-      // The result's domain need not match either operand's domain.
       return self.visit_addition_control::<T>(target, controller);
     }
     if matches!(self.cbor, Value::Integer(_) | Value::Float(_))
@@ -2597,53 +3057,58 @@ where
       ..
     } = target
     {
-      // Validate that the CBOR value matches the target type before applying control operators
-      if is_ident_string_data_type(self.state.cddl, target_ident)
-        && !matches!(self.cbor, Value::Text(_))
-      {
-        self.add_error(format!("expected type tstr, got {:?}", self.cbor));
-        return Ok(());
-      } else if is_ident_byte_string_data_type(self.state.cddl, target_ident)
-        && !matches!(self.cbor, Value::Bytes(_))
-      {
-        self.add_error(format!("expected type bstr, got {:?}", self.cbor));
-        return Ok(());
-      } else if is_ident_uint_data_type(self.state.cddl, target_ident) {
-        // For uint, we need to check that it's an integer and it's non-negative,
-        // then fall through so the control operator is enforced
-        match &self.cbor {
-          Value::Integer(i) if i128::from(*i) >= 0 => {}
-          _ => {
-            self.add_error(format!("expected type uint, got {:?}", self.cbor));
+      #[cfg(feature = "additional-controls")]
+      if ctrl == ControlOperator::FEATURE {
+        return self.visit_feature_control::<T>(target, controller);
+      }
+
+      // Computed controls validate their result, not membership in an operand domain.
+      if !is_computed_control(&ctrl) {
+        if ident_numeric_kind(self.state.cddl, target_ident).is_none()
+          && is_ident_string_data_type(self.state.cddl, target_ident)
+          && !matches!(self.cbor, Value::Text(_))
+        {
+          self.add_error(format!("expected type tstr, got {:?}", self.cbor));
+          return Ok(());
+        } else if ident_numeric_kind(self.state.cddl, target_ident).is_none()
+          && is_ident_byte_string_data_type(self.state.cddl, target_ident)
+          && !matches!(self.cbor, Value::Bytes(_))
+        {
+          self.add_error(format!("expected type bstr, got {:?}", self.cbor));
+          return Ok(());
+        } else if ident_numeric_kind(self.state.cddl, target_ident).is_some() {
+          let numeric_context = is_numeric_controller_context(self.state.ctrl.as_ref());
+          let numeric_instance = matches!(
+            self.cbor,
+            Value::Integer(_) | Value::Float(_) | Value::Tag(..)
+          );
+          let needs_target_probe = numeric_control_needs_target_probe(&ctrl) && !numeric_context;
+          if !numeric_instance && !numeric_context && !needs_target_probe {
+            self.add_error(format!(
+              "expected numeric type {}, got {:?}",
+              target_ident, self.cbor
+            ));
             return Ok(());
           }
-        }
-      } else if let Some(kind) = ident_numeric_kind(self.state.cddl, target_ident) {
-        let matches_kind = match kind {
-          NumericKind::Int => matches!(self.cbor, Value::Integer(_)),
-          NumericKind::Float => matches!(self.cbor, Value::Float(_)),
-          // e.g. number = int / float, which admits both
-          NumericKind::Both => matches!(self.cbor, Value::Integer(_) | Value::Float(_)),
-        };
-        if !matches_kind {
-          let expected = match kind {
-            NumericKind::Int => "int".to_string(),
-            NumericKind::Float => "float".to_string(),
-            NumericKind::Both => target_ident.to_string(),
-          };
-          self.add_error(format!("expected type {}, got {:?}", expected, self.cbor));
+          if needs_target_probe {
+            // A numeric choice may also contain nonnumeric or constrained arms.
+            // Domain prefilters alone cannot establish target membership.
+            if !self.probe_numeric_target::<T>(target)? {
+              return Ok(());
+            }
+            numeric_target_validated = true;
+          }
+        } else if is_ident_bool_data_type(self.state.cddl, target_ident)
+          && !matches!(self.cbor, Value::Bool(_))
+        {
+          self.add_error(format!("expected type bool, got {:?}", self.cbor));
+          return Ok(());
+        } else if is_ident_null_data_type(self.state.cddl, target_ident)
+          && !matches!(self.cbor, Value::Null)
+        {
+          self.add_error(format!("expected type null, got {:?}", self.cbor));
           return Ok(());
         }
-      } else if is_ident_bool_data_type(self.state.cddl, target_ident)
-        && !matches!(self.cbor, Value::Bool(_))
-      {
-        self.add_error(format!("expected type bool, got {:?}", self.cbor));
-        return Ok(());
-      } else if is_ident_null_data_type(self.state.cddl, target_ident)
-        && !matches!(self.cbor, Value::Null)
-      {
-        self.add_error(format!("expected type null, got {:?}", self.cbor));
-        return Ok(());
       }
     }
 
@@ -2724,7 +3189,9 @@ where
       },
       ControlOperator::AND => {
         self.state.ctrl = Some(ctrl);
-        self.visit_type2(target)?;
+        if !numeric_target_validated {
+          self.visit_type2(target)?;
+        }
         self.visit_type2(controller)?;
         self.state.ctrl = None;
         Ok(())
@@ -2732,7 +3199,9 @@ where
       ControlOperator::WITHIN => {
         self.state.ctrl = Some(ctrl);
         let error_count = self.errors.len();
-        self.visit_type2(target)?;
+        if !numeric_target_validated {
+          self.visit_type2(target)?;
+        }
         let no_errors = self.errors.len() == error_count;
         self.visit_type2(controller)?;
         if no_errors && self.errors.len() > error_count {
@@ -2753,7 +3222,9 @@ where
       ControlOperator::DEFAULT => {
         self.state.ctrl = Some(ctrl);
         let error_count = self.errors.len();
-        self.visit_type2(target)?;
+        if !numeric_target_validated {
+          self.visit_type2(target)?;
+        }
         if self.errors.len() != error_count {
           #[cfg(feature = "ast-span")]
           if let Some(Occur::Optional { .. }) = self.state.occurrence.take() {
@@ -3043,22 +3514,7 @@ where
         self.state.ctrl = Some(ctrl);
 
         match cat_operation(self.state.cddl, target, controller, false) {
-          Ok(values) => {
-            let error_count = self.errors.len();
-            for v in values.iter() {
-              let cur_errors = self.errors.len();
-
-              self.visit_type2(v)?;
-
-              if self.errors.len() == cur_errors {
-                for _ in 0..self.errors.len() - error_count {
-                  self.errors.pop();
-                }
-
-                break;
-              }
-            }
-          }
+          Ok(values) => self.visit_computed_alternatives::<T>(&values)?,
           Err(e) => self.add_error(e),
         }
 
@@ -3071,22 +3527,7 @@ where
         self.state.ctrl = Some(ctrl);
 
         match cat_operation(self.state.cddl, target, controller, true) {
-          Ok(values) => {
-            let error_count = self.errors.len();
-
-            for v in values.iter() {
-              let cur_errors = self.errors.len();
-              self.visit_type2(v)?;
-
-              if self.errors.len() == cur_errors {
-                for _ in 0..self.errors.len() - error_count {
-                  self.errors.pop();
-                }
-
-                break;
-              }
-            }
-          }
+          Ok(values) => self.visit_computed_alternatives::<T>(&values)?,
           Err(e) => self.add_error(e),
         }
 
@@ -3121,22 +3562,7 @@ where
 
                 if let Some(result) = complex_ctrl_result {
                   match result {
-                    Ok(values) => {
-                      let error_count = self.errors.len();
-                      for v in values.iter() {
-                        let cur_errors = self.errors.len();
-
-                        self.visit_type2(v)?;
-
-                        if self.errors.len() == cur_errors {
-                          for _ in 0..self.errors.len() - error_count {
-                            self.errors.pop();
-                          }
-
-                          break;
-                        }
-                      }
-                    }
+                    Ok(values) => self.visit_computed_alternatives::<T>(&values)?,
                     Err(e) => self.add_error(e),
                   }
                 } else {
@@ -3186,22 +3612,7 @@ where
 
                 if let Some(result) = complex_ctrl_result {
                   match result {
-                    Ok(values) => {
-                      let error_count = self.errors.len();
-                      for v in values.iter() {
-                        let cur_errors = self.errors.len();
-
-                        self.visit_type2(v)?;
-
-                        if self.errors.len() == cur_errors {
-                          for _ in 0..self.errors.len() - error_count {
-                            self.errors.pop();
-                          }
-
-                          break;
-                        }
-                      }
-                    }
+                    Ok(values) => self.visit_computed_alternatives::<T>(&values)?,
                     Err(e) => self.add_error(e),
                   }
                 } else {
@@ -3225,95 +3636,7 @@ where
         Ok(())
       }
       #[cfg(feature = "additional-controls")]
-      #[cfg(not(target_arch = "wasm32"))]
-      ControlOperator::FEATURE => {
-        self.state.ctrl = Some(ctrl);
-
-        if let Some(ef) = self.state.enabled_features {
-          let tv = text_value_from_type2(self.state.cddl, controller);
-          if let Some(Type2::TextValue { value, .. }) = tv {
-            if ef.contains(&&**value) {
-              let err_count = self.errors.len();
-              self.visit_type2(target)?;
-              if self.errors.len() > err_count {
-                self.state.has_feature_errors = true;
-              }
-              self.state.ctrl = None;
-            } else {
-              self
-                .state
-                .disabled_features
-                .get_or_insert(vec![value.to_string()])
-                .push(value.to_string());
-            }
-          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
-            let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
-            if ef.contains(&value) {
-              let err_count = self.errors.len();
-              self.visit_type2(target)?;
-              if self.errors.len() > err_count {
-                self.state.has_feature_errors = true;
-              }
-              self.state.ctrl = None;
-            } else {
-              self
-                .state
-                .disabled_features
-                .get_or_insert(vec![value.to_string()])
-                .push(value.to_string());
-            }
-          }
-        }
-
-        self.state.ctrl = None;
-
-        Ok(())
-      }
-      #[cfg(feature = "additional-controls")]
-      #[cfg(target_arch = "wasm32")]
-      ControlOperator::FEATURE => {
-        self.state.ctrl = Some(ctrl);
-
-        if let Some(ef) = &self.state.enabled_features {
-          let tv = text_value_from_type2(self.state.cddl, controller);
-          if let Some(Type2::TextValue { value, .. }) = tv {
-            if ef.contains(&JsValue::from(value.as_ref())) {
-              let err_count = self.errors.len();
-              self.visit_type2(target)?;
-              if self.errors.len() > err_count {
-                self.state.has_feature_errors = true;
-              }
-              self.state.ctrl = None;
-            } else {
-              self
-                .state
-                .disabled_features
-                .get_or_insert(vec![value.to_string()])
-                .push(value.to_string());
-            }
-          } else if let Some(Type2::UTF8ByteString { value, .. }) = tv {
-            let value = std::str::from_utf8(value).map_err(Error::UTF8Parsing)?;
-            if ef.contains(&JsValue::from(value)) {
-              let err_count = self.errors.len();
-              self.visit_type2(target)?;
-              if self.errors.len() > err_count {
-                self.state.has_feature_errors = true;
-              }
-              self.state.ctrl = None;
-            } else {
-              self
-                .state
-                .disabled_features
-                .get_or_insert(vec![value.to_string()])
-                .push(value.to_string());
-            }
-          }
-        }
-
-        self.state.ctrl = None;
-
-        Ok(())
-      }
+      ControlOperator::FEATURE => self.visit_feature_control::<T>(target, controller),
       #[cfg(feature = "additional-controls")]
       ControlOperator::B64U => {
         match target {
@@ -4478,6 +4801,7 @@ where
       if let Some(r) = evaluation_rule_from_ident(&self.state, ident) {
         // Check for recursion to prevent stack overflow
         if self.state.visited_rules.contains(&visited_key) {
+          self.note_numeric_probe_recursion();
           return self.record_numeric_cycle(
             &visited_key,
             format!("Recursive rule reference detected: {}", ident),
@@ -4497,6 +4821,7 @@ where
       // 2.2.2). Such a choice has no base rule for `rule_from_ident` to find.
       if !type_choice_types_from_ident(self.state.cddl, ident).is_empty() {
         if self.state.visited_rules.contains(&visited_key) {
+          self.note_numeric_probe_recursion();
           return self.record_numeric_cycle(
             &visited_key,
             format!("Recursive rule reference detected: {}", ident),
@@ -4533,16 +4858,16 @@ where
       }
     }
 
-    // Handle standard prelude tagged types (decfrac, bigfloat) through the generic TaggedData path
+    // Preserve the semantic checks for dates/time and base64url. Other tagged
+    // prelude leaves use their declared tag and payload type.
     let token = lookup_ident(ident.ident);
-    if let Token::DECFRAC | Token::BIGFLOAT = token {
-      if let Some(tagged_data_type) = tag_from_token(&token) {
-        return self.visit_type2(&tagged_data_type);
-      }
+    if let Some(result) = self.visit_structural_prelude::<T>(&token) {
+      return result;
     }
 
     match &self.cbor {
       Value::Null if is_ident_null_data_type(self.state.cddl, ident) => Ok(()),
+      Value::Simple(23) if matches!(token, Token::UNDEFINED) => Ok(()),
       Value::Bytes(_) if is_ident_byte_string_data_type(self.state.cddl, ident) => Ok(()),
       Value::Bool(b) => {
         if is_ident_bool_data_type(self.state.cddl, ident) {
@@ -4557,13 +4882,7 @@ where
         Ok(())
       }
       Value::Integer(i) => {
-        if is_ident_uint_data_type(self.state.cddl, ident) {
-          if i128::from(*i).is_negative() {
-            self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
-          }
-
-          Ok(())
-        } else if numeric_ident_matches_cbor_value(self.state.cddl, ident, &self.cbor) {
+        if numeric_ident_matches_cbor_value(self.state.cddl, ident, &self.cbor) {
           Ok(())
         } else if is_ident_time_data_type(self.state.cddl, ident) {
           if !super::valid_time_integer(i128::from(*i)) {
@@ -4625,10 +4944,8 @@ where
           self.validate_base64_url_tag();
           return Ok(());
         }
-        if is_ident_bignum_data_type(self.state.cddl, ident) {
-          if !(ident_accepts_bignum_tag(self.state.cddl, ident, *tag)
-            && matches!(value.as_ref(), Value::Bytes(_)))
-          {
+        if has_bignum_domain(self.state.cddl, ident) {
+          if !is_bignum_value(self.state.cddl, ident, &self.cbor) {
             self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
           }
           return Ok(());
@@ -4674,7 +4991,7 @@ where
               self.add_error(format!("expected type {}, got {:?}", ident, self.cbor));
             }
           }
-          _ => (),
+          _ => self.add_error(format!("expected type {}, got {:?}", ident, self.cbor)),
         }
 
         Ok(())
@@ -4757,7 +5074,10 @@ where
               Some(Self::collect_unconsumed_map_entries_matching(
                 m,
                 claimed_entries,
-                |key| numeric_ident_matches_cbor_value(cddl, ident, key),
+                |key| {
+                  numeric_ident_matches_cbor_value(cddl, ident, key)
+                    || is_bignum_value(cddl, ident, key)
+                },
               ))
             } else if is_ident_bool_data_type(self.state.cddl, ident) {
               Some(Self::collect_unconsumed_map_entries_matching(
@@ -4776,6 +5096,12 @@ where
                 m,
                 claimed_entries,
                 |key| matches!(key, Value::Null),
+              ))
+            } else if matches!(token, Token::UNDEFINED) {
+              Some(Self::collect_unconsumed_map_entries_matching(
+                m,
+                claimed_entries,
+                |key| matches!(key, Value::Simple(23)),
               ))
             } else if is_ident_bignum_data_type(self.state.cddl, ident) {
               let cddl = self.state.cddl;
@@ -5044,21 +5370,12 @@ where
       }
     }
 
-    let error_count = self.errors.len();
     if !group_choice_alternates.is_empty() {
       self.state.is_multi_group_choice = true;
     }
 
-    for ge in group_choice_alternates {
-      let cur_errors = self.errors.len();
-      self.visit_group_entry(ge)?;
-      if self.errors.len() == cur_errors {
-        for _ in 0..self.errors.len() - error_count {
-          self.errors.pop();
-        }
-
-        return Ok(());
-      }
+    if self.visit_group_entry_alternatives::<T>(&group_choice_alternates)? {
+      return Ok(());
     }
 
     walk_type_groupname_entry(self, entry)?;
@@ -5123,6 +5440,9 @@ where
   }
 
   fn visit_value(&mut self, value: &token::Value<'a>) -> visitor::Result<Error<T>> {
+    if !self.controller_value_matches_domains::<T>(value)? {
+      return Ok(());
+    }
     let error: Option<String> = match &self.cbor {
       Value::Integer(i) => match value {
         token::Value::INT(v) => match &self.state.ctrl {
@@ -5590,9 +5910,50 @@ fn numeric_ident_matches_cbor_value(cddl: &CDDL, ident: &Identifier, v: &Value) 
   }
 }
 
-/// Scalar validation is lenient for some prelude types outside a map key's
-/// domain: it accepts positive integers for `nint` and ignores unrelated
-/// tags. Check an alternative's own domain before probing it, following
+fn numeric_control_needs_target_probe(ctrl: &ControlOperator) -> bool {
+  // Computed controls match the result rather than the target operand.
+  // Disabled features must not require target membership.
+  match ctrl {
+    #[cfg(feature = "additional-controls")]
+    ControlOperator::FEATURE => false,
+    _ => !is_computed_control(ctrl),
+  }
+}
+
+fn is_numeric_controller_context(ctrl: Option<&ControlOperator>) -> bool {
+  // Equality already checks the instance against the controller's own value.
+  matches!(
+    ctrl,
+    Some(
+      ControlOperator::SIZE
+        | ControlOperator::BITS
+        | ControlOperator::NE
+        | ControlOperator::LT
+        | ControlOperator::LE
+        | ControlOperator::GT
+        | ControlOperator::GE
+    )
+  )
+}
+
+fn is_target_validating_context(ctrl: Option<&ControlOperator>) -> bool {
+  matches!(
+    ctrl,
+    Some(ControlOperator::AND | ControlOperator::WITHIN | ControlOperator::DEFAULT)
+  )
+}
+
+fn structural_prelude_type<'a>(token: &Token, value: &Value) -> Option<Type2<'a>> {
+  if !matches!(value, Value::Tag(..))
+    || !matches!(token, Token::TDATE | Token::TIME | Token::B64URL)
+  {
+    tag_from_token(token)
+  } else {
+    None
+  }
+}
+
+/// Check an alternative's own domain before probing it, following
 /// aliases — including generic instantiations and active generic bindings —
 /// to the underlying prelude types, literals and tagged types. Range and
 /// control operators are left to the probe, which enforces them.
@@ -6114,7 +6475,15 @@ fn value_nesting_depth(value: &Value) -> usize {
 /// Is `v` a tagged byte string accepted by the bignum type `ident`?
 fn is_bignum_value(cddl: &CDDL, ident: &Identifier, v: &Value) -> bool {
   matches!(v, Value::Tag(tag, inner)
-    if ident_accepts_bignum_tag(cddl, ident, *tag) && matches!(inner.as_ref(), Value::Bytes(_)))
+    if (ident_accepts_bignum_tag(cddl, ident, *tag)
+      || matches!((lookup_ident(ident.ident), *tag),
+        (Token::UNSIGNED, 2) | (Token::INTEGER, 2 | 3)))
+      && matches!(inner.as_ref(), Value::Bytes(_)))
+}
+
+fn has_bignum_domain(cddl: &CDDL, ident: &Identifier) -> bool {
+  is_ident_bignum_data_type(cddl, ident)
+    || matches!(lookup_ident(ident.ident), Token::UNSIGNED | Token::INTEGER)
 }
 
 /// Converts a CDDL value type to our custom CBOR Value
@@ -6189,6 +6558,561 @@ mod tests {
   use super::*;
   use ciborium::cbor;
   use indoc::indoc;
+
+  std::thread_local! {
+    pub(super) static NUMERIC_TARGET_PROBE_MISSES: std::cell::Cell<usize> =
+      const { std::cell::Cell::new(0) };
+  }
+
+  #[test]
+  fn generic_group_controller_probes_have_linear_work() {
+    let depth = 8;
+    let mut schema = format!("root = n{depth}\nn0 = uint .eq 1\ng0<T> = (v: n0)\n");
+    for level in 1..=depth {
+      schema.push_str(&format!(
+        "n{level} = n{prev} .eq &g{prev}<1>\ng{level}<T> = (v: n{level})\n",
+        prev = level - 1
+      ));
+    }
+    let cddl = crate::cddl_from_str(&schema, true).unwrap();
+    for (value, valid) in [(1, true), (2, false)] {
+      let mut validator = CBORValidator::new(
+        &cddl,
+        Value::Integer(value.into()),
+        #[cfg(feature = "additional-controls")]
+        None,
+      );
+      NUMERIC_TARGET_PROBE_MISSES.with(|count| count.set(0));
+      assert_eq!(
+        Validator::<Error<std::io::Error>>::validate(&mut validator).is_ok(),
+        valid
+      );
+      let misses = NUMERIC_TARGET_PROBE_MISSES.with(std::cell::Cell::get);
+      println!("depth {depth}, value {value}: {misses} uncached target proofs");
+      assert!(
+        misses <= 16 * depth + 16,
+        "{} uncached target proofs",
+        misses
+      );
+    }
+  }
+
+  #[test]
+  fn generic_group_children_do_not_cache_recursion_assumptions() {
+    let cddl = crate::cddl_from_str("root = &g<1>\nn0 = uint .eq 1\ng<T> = (v: n0)", true).unwrap();
+    let Rule::Type { rule, .. } = &cddl.rules[0] else {
+      unreachable!();
+    };
+    let target = &rule.value.type_choices[0].type1.type2;
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(1.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.state.visited_rules.insert("n0\0".into());
+    assert!(!validator
+      .probe_numeric_target::<std::io::Error>(target)
+      .unwrap());
+    assert!(validator.numeric_target_checks.lock().unwrap().is_empty());
+    validator.state.visited_rules.clear();
+    validator.errors.clear();
+    assert!(validator
+      .probe_numeric_target::<std::io::Error>(target)
+      .unwrap());
+  }
+
+  #[test]
+  fn generic_group_invalid_controller_errors_follow_parent_data_locations() {
+    let cddl =
+      crate::cddl_from_str("root = int .gt &bound<1>\nbound<T> = (v: nint .eq T)", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(2.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    for location in ["root[0]", "root[1]"] {
+      validator.state.data_location = location.into();
+      validator.errors.clear();
+      let Err(Error::Validation(errors)) =
+        Visitor::<Error<std::io::Error>>::visit_rule(&mut validator, &cddl.rules[0])
+      else {
+        panic!("expected an invalid singleton controller");
+      };
+      assert!(!errors.is_empty());
+      assert!(errors.iter().all(|error| error.cbor_location == location));
+    }
+  }
+
+  #[test]
+  fn recursion_guard_assumptions_are_not_cached_as_membership() {
+    let cddl = crate::cddl_from_str("x = t\nt = uint .eq 1", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(1.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    let target = Type2::Typename {
+      ident: Identifier::from("t"),
+      generic_args: None,
+      #[cfg(feature = "ast-span")]
+      span: (0, 0, 0),
+    };
+
+    validator.state.visited_rules.insert("t\0".into());
+    assert!(!validator
+      .probe_numeric_target::<std::io::Error>(&target)
+      .unwrap());
+    assert!(validator.numeric_target_checks.lock().unwrap().is_empty());
+    validator.state.visited_rules.clear();
+    validator.errors.clear();
+    assert!(validator
+      .probe_numeric_target::<std::io::Error>(&target)
+      .unwrap());
+  }
+
+  #[test]
+  fn recursive_target_probes_isolate_guarded_failures_and_sibling_successes() {
+    let cddl = crate::cddl_from_str("x = t\nt = (t .and (uint .eq 1)) / uint .eq 2", true).unwrap();
+    let target = Type2::Typename {
+      ident: Identifier::from("t"),
+      generic_args: None,
+      #[cfg(feature = "ast-span")]
+      span: (0, 0, 0),
+    };
+    for (value, valid) in [(0, false), (1, false), (2, true)] {
+      let mut validator = CBORValidator::new(
+        &cddl,
+        Value::Integer(value.into()),
+        #[cfg(feature = "additional-controls")]
+        None,
+      );
+      validator.state.visited_rules.insert("t\0".into());
+      assert!(!validator
+        .probe_numeric_target::<std::io::Error>(&target)
+        .unwrap());
+      assert!(validator.numeric_target_checks.lock().unwrap().is_empty());
+      validator.state.visited_rules.clear();
+      validator.errors.clear();
+      assert_eq!(
+        validator
+          .probe_numeric_target::<std::io::Error>(&target)
+          .unwrap(),
+        valid
+      );
+      let errors = validator.errors.clone();
+      assert_eq!(
+        validator
+          .probe_numeric_target::<std::io::Error>(&target)
+          .unwrap(),
+        valid
+      );
+      assert_eq!(validator.errors, errors);
+    }
+  }
+
+  #[test]
+  fn cached_target_diagnostics_follow_choice_context() {
+    let cddl = crate::cddl_from_str("root = t\nt = uint .eq 1", true).unwrap();
+    let Rule::Type { rule, .. } = &cddl.rules[0] else {
+      unreachable!();
+    };
+    let target = &rule.value.type_choices[0].type1.type2;
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(0.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    for mask in 0..8 {
+      for group in [None, Some("t")] {
+        validator.state.is_multi_type_choice = mask & 1 != 0;
+        validator.state.is_multi_group_choice = mask & 2 != 0;
+        validator.state.is_group_to_choice_enum = mask & 4 != 0;
+        validator.state.type_group_name_entry = group;
+        for _ in 0..2 {
+          validator.errors.clear();
+          assert!(!validator
+            .probe_numeric_target::<std::io::Error>(target)
+            .unwrap());
+          assert!(!validator.errors.is_empty());
+          for error in &validator.errors {
+            assert_eq!(error.is_multi_type_choice, mask & 1 != 0);
+            assert_eq!(error.is_multi_group_choice, mask & 2 != 0);
+            assert_eq!(error.is_group_to_choice_enum, mask & 4 != 0);
+            assert_eq!(error.type_group_name_entry.as_deref(), group);
+          }
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn failed_numeric_target_proofs_are_cached_without_duplicate_errors() {
+    let cddl = crate::cddl_from_str("x = t\nt = uint .eq 1", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(0.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    let target = Type2::Typename {
+      ident: Identifier::from("t"),
+      generic_args: None,
+      #[cfg(feature = "ast-span")]
+      span: (0, 0, 0),
+    };
+
+    assert!(!validator
+      .probe_numeric_target::<std::io::Error>(&target)
+      .unwrap());
+    let error_count = validator.errors.len();
+    assert!(error_count > 0);
+    assert!(!validator
+      .probe_numeric_target::<std::io::Error>(&target)
+      .unwrap());
+    assert_eq!(validator.errors.len(), error_count);
+  }
+
+  #[test]
+  fn controller_domain_recursion_guard_assumptions_are_not_cached() {
+    let cddl = crate::cddl_from_str("x = t\nt = uint .eq 1", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(0.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.controller_domains.push(ControllerDomain {
+      target: Type2::Typename {
+        ident: Identifier::from("t"),
+        generic_args: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 0),
+      },
+      generic_rules: Vec::new(),
+      generic_rule: None,
+    });
+
+    validator.state.visited_rules.insert("t\0".into());
+    assert!(!validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(1))
+      .unwrap());
+    assert!(validator
+      .controller_domain_checks
+      .lock()
+      .unwrap()
+      .is_empty());
+    validator.state.visited_rules.clear();
+    validator.errors.clear();
+    assert!(validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(1))
+      .unwrap());
+  }
+
+  #[test]
+  fn controller_domain_cache_includes_operand_value() {
+    let cddl = crate::cddl_from_str("x = t\nt = uint .eq 1", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(0.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.controller_domains.push(ControllerDomain {
+      target: Type2::Typename {
+        ident: Identifier::from("t"),
+        generic_args: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 0),
+      },
+      generic_rules: Vec::new(),
+      generic_rule: None,
+    });
+
+    assert!(validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(1))
+      .unwrap());
+    assert!(!validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(2))
+      .unwrap());
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn controller_domain_cache_isolates_enabled_feature_sets() {
+    let cddl = crate::cddl_from_str("x = t\nt = (uint .eq 1) .feature \"enabled\"", true).unwrap();
+    let mut validator = CBORValidator::new(&cddl, Value::Integer(2.into()), None);
+    validator.controller_domains.push(ControllerDomain {
+      target: Type2::Typename {
+        ident: Identifier::from("t"),
+        generic_args: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 0),
+      },
+      generic_rules: Vec::new(),
+      generic_rule: None,
+    });
+    for (features, valid) in [
+      (None, true),
+      (Some(&["enabled"][..]), false),
+      (Some(&[][..]), true),
+      (Some(&["enabled"][..]), false),
+    ] {
+      validator.state.enabled_features = features;
+      validator.errors.clear();
+      assert_eq!(
+        validator
+          .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(2))
+          .unwrap(),
+        valid
+      );
+      assert_eq!(validator.errors.is_empty(), valid);
+    }
+    assert_eq!(validator.controller_domain_checks.lock().unwrap().len(), 3);
+  }
+
+  #[test]
+  fn controller_domain_proofs_are_reused_across_data_locations() {
+    let cddl = crate::cddl_from_str("x = t\nt = int .eq -40", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer((-40).into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.controller_domains.push(ControllerDomain {
+      target: Type2::Typename {
+        ident: Identifier::from("t"),
+        generic_args: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 0),
+      },
+      generic_rules: Vec::new(),
+      generic_rule: None,
+    });
+
+    validator.state.data_location = "root[0]".into();
+    assert!(validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::INT(-40))
+      .unwrap());
+    validator.state.data_location = "root[1]".into();
+    assert!(validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::INT(-40))
+      .unwrap());
+    assert_eq!(validator.controller_domain_checks.lock().unwrap().len(), 1);
+  }
+
+  #[test]
+  fn generic_invalid_controller_errors_follow_parent_data_locations() {
+    let cddl =
+      crate::cddl_from_str("root = int .gt bound<1>\nbound<T> = nint .eq T", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(2.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    for location in ["root[0]", "root[1]"] {
+      validator.state.data_location = location.into();
+      validator.errors.clear();
+      let Err(Error::Validation(errors)) =
+        Visitor::<Error<std::io::Error>>::visit_rule(&mut validator, &cddl.rules[0])
+      else {
+        panic!("expected an invalid singleton controller");
+      };
+      assert!(!errors.is_empty());
+      assert!(errors.iter().all(|error| error.cbor_location == location));
+    }
+  }
+
+  #[test]
+  fn failed_controller_domain_proofs_are_cached_and_relocated() {
+    let cddl = crate::cddl_from_str("x = t\nt = uint .eq 0", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Integer(1.into()),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.controller_domains.push(ControllerDomain {
+      target: Type2::Typename {
+        ident: Identifier::from("t"),
+        generic_args: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 0),
+      },
+      generic_rules: Vec::new(),
+      generic_rule: None,
+    });
+
+    validator.state.data_location = "root[0]".into();
+    assert!(!validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(1))
+      .unwrap());
+    assert_eq!(validator.controller_domain_checks.lock().unwrap().len(), 1);
+    let errors = validator.errors.clone();
+    assert!(!errors.is_empty());
+    assert!(!validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(1))
+      .unwrap());
+    assert_eq!(validator.errors, errors);
+
+    validator.errors.clear();
+    validator.state.data_location = "root[1]".into();
+    assert!(!validator
+      .controller_value_matches_domains::<std::io::Error>(&token::Value::UINT(1))
+      .unwrap());
+    assert_eq!(validator.errors.len(), errors.len());
+    assert!(validator
+      .errors
+      .iter()
+      .all(|error| error.cbor_location == "root[1]"));
+    assert_eq!(validator.controller_domain_checks.lock().unwrap().len(), 1);
+  }
+
+  #[test]
+  fn group_socket_alternatives_do_not_hide_failed_probes() {
+    for (last_choice, succeeds) in [("v .eq 2", false), ("uint .eq 1", true)] {
+      let schema = format!(
+        "root = {{ $$g }}\n$$g //= (v .eq 1)\n$$g //= ({last_choice})\nv = uint .and &(two: 2)"
+      );
+      let cddl = crate::cddl_from_str(&schema, true).unwrap();
+      let Rule::Type { rule, .. } = &cddl.rules[0] else {
+        panic!("expected root type rule");
+      };
+      let Type2::Map { group, .. } = &rule.value.type_choices[0].type1.type2 else {
+        panic!("expected root map");
+      };
+      let GroupEntry::TypeGroupname { ge, .. } = &group.group_choices[0].group_entries[0].0 else {
+        panic!("expected group socket");
+      };
+      let mut validator = CBORValidator::new(
+        &cddl,
+        Value::Integer(1.into()),
+        #[cfg(feature = "additional-controls")]
+        None,
+      );
+      Visitor::<Error<std::io::Error>>::visit_type_groupname_entry(&mut validator, ge).unwrap();
+      assert_eq!(validator.errors.is_empty(), succeeds);
+    }
+  }
+
+  #[cfg(feature = "additional-controls")]
+  #[test]
+  fn computed_alternatives_do_not_hide_failed_controller_proofs() {
+    let cddl = crate::cddl_from_str(
+      "root = 0 .plus values\nvalues = 1 / 1\nbound = uint .eq 2",
+      true,
+    )
+    .unwrap();
+    let mut validator = CBORValidator::new(&cddl, Value::Integer(1.into()), None);
+    validator.controller_domains.push(ControllerDomain {
+      target: Type2::Typename {
+        ident: Identifier::from("bound"),
+        generic_args: None,
+        #[cfg(feature = "ast-span")]
+        span: (0, 0, 0),
+      },
+      generic_rules: Vec::new(),
+      generic_rule: None,
+    });
+    Visitor::<Error<std::io::Error>>::visit_rule(&mut validator, &cddl.rules[0]).unwrap();
+    assert!(!validator.errors.is_empty());
+  }
+
+  #[test]
+  fn named_choices_commit_successful_map_claims() {
+    let cddl =
+      crate::cddl_from_str("root = t\nt = { a: uint, b: uint }\nt /= { a: uint }", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Map(vec![(Value::Text("a".into()), Value::Integer(1.into()))]),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.add_error("existing diagnostic".into());
+    let prior_errors = validator.errors.clone();
+    Visitor::<Error<std::io::Error>>::visit_identifier(&mut validator, &Identifier::from("t"))
+      .unwrap();
+    assert_eq!(validator.errors, prior_errors);
+    assert_eq!(validator.claimed_map_entries, vec![0]);
+    assert!(validator.state.visited_rules.is_empty());
+  }
+
+  #[test]
+  fn diagnostic_deduplication_preserves_order_identity_and_resets() {
+    let cddl = crate::cddl_from_str("root = any", true).unwrap();
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Null,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    validator.add_error("same reason".into());
+    let template = validator.errors[0].clone();
+    let mut expected = vec![template.clone()];
+    for index in 0..4096 {
+      let mut error = template.clone();
+      error.cbor_location = format!("root[{index}]");
+      expected.push(error);
+    }
+    let mut cddl_location = template.clone();
+    cddl_location.cddl_location = "other rule".into();
+    expected.push(cddl_location);
+    for mask in 1..8 {
+      let mut error = template.clone();
+      error.is_multi_type_choice = mask & 1 != 0;
+      error.is_multi_group_choice = mask & 2 != 0;
+      error.is_group_to_choice_enum = mask & 4 != 0;
+      expected.push(error);
+    }
+    let mut group_name = template;
+    group_name.type_group_name_entry = Some("group".into());
+    expected.push(group_name);
+
+    validator.extend_unique_errors(
+      expected
+        .iter()
+        .cloned()
+        .chain(expected.iter().cloned())
+        .collect(),
+    );
+    assert_eq!(validator.errors, expected);
+    let saved = std::mem::take(&mut validator.errors);
+    validator.extend_unique_errors(saved.iter().rev().cloned().collect());
+    assert_eq!(
+      validator.errors,
+      saved.into_iter().rev().collect::<Vec<_>>()
+    );
+    validator.errors.truncate(1);
+    validator.extend_unique_errors(expected.clone());
+    assert_eq!(validator.errors.len(), expected.len());
+    assert_eq!(validator.errors[0], expected.last().unwrap().clone());
+  }
+
+  #[test]
+  fn large_closed_maps_retain_all_unexpected_key_diagnostics() {
+    let cddl = crate::cddl_from_str("root = { a: uint }", true).unwrap();
+    let mut entries = vec![(Value::Text("a".into()), Value::Integer(1.into()))];
+    entries.extend((0..4096u64).map(|key| (Value::Integer(key.into()), Value::Null)));
+    let mut validator = CBORValidator::new(
+      &cddl,
+      Value::Map(entries),
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert!(Validator::<Error<std::io::Error>>::validate(&mut validator).is_err());
+    assert_eq!(validator.errors.len(), 4096);
+    for (index, error) in validator.errors.iter().enumerate() {
+      assert_eq!(
+        error.reason,
+        format!("unexpected key {:?}", Value::Integer((index as u64).into()))
+      );
+    }
+  }
 
   #[cfg(not(feature = "additional-controls"))]
   #[test]

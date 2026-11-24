@@ -202,7 +202,11 @@ fn cbor_dates_and_times() {
         #[cfg(feature = "additional-controls")]
         None,
       );
-      assert_eq!(result.is_ok(), expected, "{schema}: {value:?}: {result:?}");
+      assert_eq!(
+        result.is_ok(),
+        expected && tagged,
+        "{schema}: {value:?}: {result:?}"
+      );
     }
   }
 }
