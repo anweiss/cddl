@@ -840,9 +840,12 @@ pub(crate) fn choice_member_key_for_depth<'e, 'a>(
   // it without end, even when a single alternative remains. A control over a
   // choice (`(int / tstr) .and any`) also matches each key on its own, by
   // probing the complete constrained type. So does a range (`10..20`), which
-  // constrains each key, not the map.
+  // constrains each key, not the map. A generic instantiation (`k<int>`),
+  // even behind an alias or parentheses, validates in a child that cannot
+  // relay its key matches, so it also uses its expanded alternatives.
   let choice = alternatives.len() > 1
     || !acyclic
+    || key_reaches_generic_instantiation(state, t1, &mut HashSet::new())
     || alternatives.first().is_some_and(|alternative| {
       control_targets_choice(state, alternative)
         || matches!(
@@ -851,6 +854,43 @@ pub(crate) fn choice_member_key_for_depth<'e, 'a>(
         )
     });
   choice.then_some((t1.as_ref(), alternatives, *is_cut))
+}
+
+/// Whether a key type names a generic instantiation directly or through
+/// aliases, parentheses or a bound generic parameter.
+fn key_reaches_generic_instantiation(
+  state: &ValidationState,
+  t1: &Type1,
+  visited: &mut HashSet<String>,
+) -> bool {
+  match &t1.type2 {
+    Type2::Typename {
+      generic_args: Some(_),
+      ..
+    } => true,
+    Type2::Typename { ident, .. } => {
+      if let Some(arg) = ident
+        .socket
+        .is_none()
+        .then(|| generic_argument_for_param(state, ident.ident))
+        .flatten()
+      {
+        return key_reaches_generic_instantiation(state, &arg, visited);
+      }
+      if !visited.insert(qualified_ident_key(ident)) {
+        return false;
+      }
+      type_choice_types_from_ident(state.cddl, ident)
+        .iter()
+        .flat_map(|rule_type| rule_type.type_choices.iter())
+        .any(|choice| key_reaches_generic_instantiation(state, &choice.type1, visited))
+    }
+    Type2::ParenthesizedType { pt, .. } => pt
+      .type_choices
+      .iter()
+      .any(|choice| key_reaches_generic_instantiation(state, &choice.type1, visited)),
+    _ => false,
+  }
 }
 
 /// The occurrence and bounds of a choice-key member. An indicator inherited

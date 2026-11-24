@@ -548,6 +548,21 @@ pub struct JSONValidator<'a> {
 }
 
 impl<'a> JSONValidator<'a> {
+  /// Keep what a successful member-key choice resolved through a named rule
+  /// (`k = tstr`), as the inline type would leave it. A choice that relayed a
+  /// matched pair hands over its key-matching state. Otherwise only its
+  /// absence signal is kept, so a structured type that validated the
+  /// containing object cannot leak the keys it covered.
+  fn adopt_member_key_choice(&mut self, mut choice: JSONValidator<'a>) {
+    if choice.map_entry_candidates.is_some() || choice.object_value.is_some() {
+      choice.errors = std::mem::take(&mut self.errors);
+      *self = choice;
+    } else if choice.state.advance_to_next_entry {
+      self.state.advance_to_next_entry = true;
+      self.state.occurrence = choice.state.occurrence;
+    }
+  }
+
   fn visit_enumeration_choice(&mut self, choice: &GroupChoice<'a>) -> visitor::Result<Error> {
     let previous = self.numeric_context.begin_evaluation();
     let result = self.evaluate_enumeration_choice(choice);
@@ -3167,27 +3182,16 @@ impl<'a> Visitor<'a, '_, Error> for JSONValidator<'a> {
       // If this choice validates successfully (no errors), use it
       if choice_validator.errors.is_empty() {
         #[cfg(feature = "additional-controls")]
-        if !choice_validator.state.has_feature_errors
-          || choice_validator.state.disabled_features.is_some()
-        {
-          // Clear any accumulated errors and return success
-          let type_choice_error_count = self.errors.len() - initial_error_count;
-          if type_choice_error_count > 0 {
-            for _ in 0..type_choice_error_count {
-              self.errors.pop();
-            }
-          }
-          return Ok(());
-        }
-
+        let accepted = !choice_validator.state.has_feature_errors
+          || choice_validator.state.disabled_features.is_some();
         #[cfg(not(feature = "additional-controls"))]
-        {
+        let accepted = true;
+
+        if accepted {
           // Clear any accumulated errors and return success
-          let type_choice_error_count = self.errors.len() - initial_error_count;
-          if type_choice_error_count > 0 {
-            for _ in 0..type_choice_error_count {
-              self.errors.pop();
-            }
+          self.errors.truncate(initial_error_count);
+          if self.state.is_member_key {
+            self.adopt_member_key_choice(choice_validator);
           }
           return Ok(());
         }

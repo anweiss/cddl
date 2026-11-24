@@ -251,6 +251,7 @@ fn repeated_transparent_alias_keys_preserve_bounds_and_claims() {
     "root = { * (label => uint) } label = next next = text",
     "root = { * fields } fields = (label => uint) label = any",
     "root = { * fields<uint> } fields<T> = (label => T) label = tstr",
+    "root = { * fields<uint> } fields<key> = (label => uint) label = key key = tstr",
   ] {
     assert!(validates(schema, &input), "{}", schema);
   }
@@ -272,10 +273,10 @@ fn repeated_transparent_alias_keys_preserve_bounds_and_claims() {
       "root = { * fields<uint> } fields<label> = (label => uint) label = tstr",
       r#"{"a":1}"#,
     ),
-    // Preserve the existing visitor's alias-binding result; this is a
-    // compatibility check, not a claim about CDDL lexical scoping.
+    // A generic parameter is scoped to its rule (RFC 8610 §3.10), so
+    // `label = key` names the rule `key`, not the argument bound to `fields`.
     (
-      "root = { * fields<uint> } fields<key> = (label => uint) label = key key = tstr",
+      "root = { * fields<tstr> } fields<key> = (label => uint) label = key key = int",
       r#"{"a":1}"#,
     ),
     (

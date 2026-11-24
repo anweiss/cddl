@@ -1396,3 +1396,123 @@ fn generic_choice_keys_expand_socket_arguments() {
   }
   let _ = schema;
 }
+
+#[cfg(feature = "cbor")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cbor_named_alias_keys_match_like_their_inline_type() {
+  // Issue #929: `{-1: 1}` and `{"a": 1}` against each neighbouring form.
+  let choice = "root = { ? 1 => int, * label => values }\nlabel = int / tstr\nvalues = any";
+  check_cbor(choice, "a12001", true);
+  check_cbor(choice, "a1616101", true);
+  check_cbor(
+    "root = { ? 1 => int, * (int / tstr) => any }",
+    "a12001",
+    true,
+  );
+  check_cbor("root = { ? 1 => int, * int => any }", "a12001", true);
+  for schema in [
+    "root = { ? 1 => int, * k => any }\nk = int",
+    "root = { ? 1 => int, * k => any }\nk = j\nj = int",
+    "root = { ? 1 => int, * k<int> => any }\nk<T> = T",
+    "root = t<k>\nt<K> = { ? 1 => int, * K => any }\nk = int",
+    "root = { ? 1 => int, * k => any }\nk = id<int>\nid<T> = T",
+    "root = { ? 1 => int, * k => any }\nk = j\nj = (id<int>)\nid<T> = T",
+    "root = { ? 1 => int, * (id<int>) => any }\nid<T> = T",
+    "root = t<id<int>>\nt<K> = { ? 1 => int, * K => any }\nid<T> = T",
+  ] {
+    check_cbor(schema, "a12001", true);
+    check_cbor(schema, "a10101", true);
+    check_cbor(schema, "a1616101", false);
+  }
+  for (schema, accepted, rejected) in [
+    ("root = { * k => any }\nk = tstr", "a1616101", "a12001"),
+    ("root = { * k => any }\nk = bstr", "a1416101", "a1616101"),
+    ("root = { * k => any }\nk = uint", "a10501", "a12001"),
+    ("root = { * k => any }\nk = nint", "a12001", "a10501"),
+    ("root = { k => any }\nk = \"a\"", "a1616101", "a1616201"),
+    ("root = { k => any }\nk = 5", "a10501", "a10601"),
+  ] {
+    check_cbor(schema, accepted, true);
+    check_cbor(schema, rejected, false);
+  }
+  let required = "root = { ? 1 => int, k => any }\nk = int";
+  check_cbor(required, "a12001", true);
+  check_cbor(required, "a1616101", false);
+  // Structured key types match through an alias as they do inline.
+  check_cbor("root = { k => any }\nk = { a: uint }", "a1a161610101", true);
+  check_cbor("root = { k => any }\nk = { a: uint }", "a1616101", false);
+  check_cbor("root = { k => any }\nk = [uint]", "a1810101", true);
+  // The value is still validated through the alias.
+  check_cbor("root = { * k => tstr }\nk = int", "a12001", false);
+}
+
+#[cfg(feature = "json")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn json_named_alias_keys_match_like_their_inline_type() {
+  for (schema, json, expected) in [
+    (
+      "root = { ? \"a\" => int, * k => any }\nk = tstr",
+      r#"{"b":1}"#,
+      true,
+    ),
+    (
+      "root = { ? \"a\" => int, * k => any }\nk = j\nj = text",
+      r#"{"b":1}"#,
+      true,
+    ),
+    (
+      "root = { ? \"a\" => int, * k<tstr> => any }\nk<T> = T",
+      r#"{"b":1}"#,
+      true,
+    ),
+    (
+      "root = { * k => any }\nk = id<tstr>\nid<T> = T",
+      r#"{"b":1}"#,
+      true,
+    ),
+    (
+      "root = { * (id<tstr>) => any }\nid<T> = T",
+      r#"{"b":1}"#,
+      true,
+    ),
+    (
+      "root = { * k => any }\nk = (id<int>)\nid<T> = T",
+      r#"{"b":1}"#,
+      false,
+    ),
+    ("root = { k => any }\nk = \"b\"", r#"{"b":1}"#, true),
+    ("root = { k => any }\nk = \"b\"", r#"{"c":1}"#, false),
+    ("root = { * k => uint }\nk = tstr", r#"{"b":"x"}"#, false),
+    (
+      "root = { ? \"a\" => int, * k => any }\nk = int",
+      r#"{"b":1}"#,
+      false,
+    ),
+    // An optional named key may be absent, with or without a cut.
+    ("root = { ? k ^ => uint }\nk = tstr", "{}", true),
+    ("root = { ? k => uint }\nk = tstr", "{}", true),
+    ("root = { ? k ^ => uint }\nk = tstr", r#"{"a":1}"#, true),
+    ("root = { ? k ^ => uint }\nk = tstr", r#"{"a":"x"}"#, false),
+    // A structured key type cannot match a JSON object key.
+    ("root = { k => any }\nk = { a: uint }", r#"{"a":1}"#, false),
+    (
+      "root = { * k => any }\nk = { * tstr => any }",
+      r#"{"a":1}"#,
+      false,
+    ),
+  ] {
+    let result = cddl::validator::validate_json_from_str(
+      schema,
+      json,
+      #[cfg(feature = "additional-controls")]
+      None,
+    );
+    assert_eq!(
+      result.is_ok(),
+      expected,
+      "schema: {schema}, JSON: {json}, result: {result:?}"
+    );
+  }
+}
