@@ -74,7 +74,9 @@ fn valid_time_integer(seconds: i128) -> bool {
 }
 
 fn valid_time_float(seconds: f64) -> bool {
-  seconds.is_finite() && jiff::Timestamp::from_millisecond((seconds * 1000.0) as i64).is_ok()
+  // Inclusive bounds on the decoded f64; decimals that round onto a bound pass.
+  (jiff::Timestamp::MIN.as_second() as f64..=jiff::Timestamp::MAX.as_second() as f64)
+    .contains(&seconds)
 }
 
 fn valid_tdate_prefix(bytes: &[u8]) -> bool {
@@ -118,11 +120,22 @@ fn valid_tdate(value: &str) -> bool {
     return false;
   }
   if fraction_digits > 9 {
-    let truncated = format!("{}{}", &value[..29], &value[20 + fraction_digits..]);
-    truncated.parse::<jiff::Timestamp>().is_ok()
+    valid_truncated_tdate(value, fraction_digits)
   } else {
     value.parse::<jiff::Timestamp>().is_ok()
   }
+}
+
+// jiff only parses nanosecond precision, so extra fractional digits are
+// truncated; nonzero discarded digits at the maximum would exceed the range.
+fn valid_truncated_tdate(value: &str, fraction_digits: usize) -> bool {
+  let discarded_nonzero = value.as_bytes()[29..20 + fraction_digits]
+    .iter()
+    .any(|b| *b != b'0');
+  let truncated = format!("{}{}", &value[..29], &value[20 + fraction_digits..]);
+  truncated
+    .parse::<jiff::Timestamp>()
+    .is_ok_and(|timestamp| !(discarded_nonzero && timestamp == jiff::Timestamp::MAX))
 }
 
 /// Generic rule representation used during validation.
